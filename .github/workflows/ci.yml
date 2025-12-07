@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2025 Alexandre Gomes Gaigalas <alganet@gmail.com>
+#
+# SPDX-License-Identifier: ISC
+
+name: CI
+on: [push]
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt update
+          sudo apt install -y xvfb gjs imagemagick x11-xserver-utils gir1.2-webkit2-4.1 \
+            || sudo apt install -y xvfb gjs imagemagick x11-xserver-utils gir1.2-webkit2-4.0
+      - run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          Xvfb :99 -screen 0 1024x768x24 &
+          sleep 5
+          xsetroot -solid "#112233" &
+          gjs webview.js &
+          sleep 10
+          import -window root ~/linux-screenshot.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-screenshot
+          path: ~/linux-screenshot.png
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - shell: pwsh
+        run: |
+          .\windows.bat
+          Start-Sleep -Seconds 10
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+          $graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size)
+          $bitmap.Save("$env:USERPROFILE\windows-screenshot.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $bitmap.Dispose()
+          $graphics.Dispose()
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-screenshot
+          path: C:\Users\runneradmin\windows-screenshot.png   
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          osascript -l JavaScript webview.js &
+          sleep 3
+          screencapture -x ~/macos-screenshot.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-screenshot
+          path: ~/macos-screenshot.png
