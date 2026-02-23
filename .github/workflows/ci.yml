@@ -33,7 +33,13 @@ jobs:
       - shell: pwsh
         run: |
           .\windows.bat
-          Start-Sleep -Seconds 10
+          $deadline = (Get-Date).AddSeconds(30)
+          do {
+            $p = Get-Process windows-app -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($p -and $p.MainWindowHandle -ne 0) { break }
+            Start-Sleep -Milliseconds 500
+          } while ((Get-Date) -lt $deadline)
+          Start-Sleep -Seconds 15
           Add-Type -AssemblyName System.Drawing
           Add-Type -AssemblyName System.Windows.Forms
           $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -53,7 +59,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: |
           osascript -l JavaScript webview.js &
-          sleep 3
+          sleep 8
           screencapture -x ~/macos-screenshot.png
       - uses: actions/upload-artifact@v4
         with:

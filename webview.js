@@ -2,6 +2,16 @@
 //
 // SPDX-License-Identifier: ISC
 
+/*@cc_on
+    @if (@_jscript_version >= 7)
+        import System;
+        import System.IO;
+        import System.Drawing;
+        import System.Windows.Forms;
+        import System.Reflection;
+    @end
+@*/
+
 var NeutrinoWebview = {
     config: {
         title: "neutrino",
@@ -18,31 +28,17 @@ var NeutrinoWebview = {
         }
     },
 
-    detectRuntime: function () {
-        if (typeof System !== "undefined" && System.Windows && System.Windows.Forms) {
-            return "windows";
+    run: function () {
+        if (this.hasGlobalExpr("typeof System !== 'undefined' && System && System.Windows && System.Windows.Forms && System.Windows.Forms.Application")) {
+            this.runWindows();
+            return;
         }
         if (this.hasGlobalExpr("typeof ObjC !== 'undefined' && typeof $ !== 'undefined'")) {
-            return "macos";
-        }
-        if (this.hasGlobalExpr("typeof imports !== 'undefined' && !!imports.gi")) {
-            return "linux";
-        }
-        return "unknown";
-    },
-
-    run: function () {
-        var runtime = this.detectRuntime();
-        if (runtime === "macos") {
             this.runMacOS();
             return;
         }
-        if (runtime === "linux") {
+        if (this.hasGlobalExpr("typeof imports !== 'undefined' && !!imports.gi")) {
             this.runLinux();
-            return;
-        }
-        if (runtime === "windows") {
-            this.runWindows();
             return;
         }
         throw new Error("Unsupported JS runtime for webview.js");
@@ -66,6 +62,10 @@ var NeutrinoWebview = {
         );
 
         window.title = this.config.title + " - macOS";
+        try {
+            window.center();
+        } catch (_) {
+        }
 
         var webView = dollar.WKWebView.alloc.initWithFrameConfiguration(
             frame,
@@ -75,6 +75,10 @@ var NeutrinoWebview = {
 
         window.contentView = webView;
         window.makeKeyAndOrderFront(null);
+        try {
+            app.activateIgnoringOtherApps(true);
+        } catch (_) {
+        }
         app.run();
     },
 
@@ -108,6 +112,7 @@ var NeutrinoWebview = {
             default_width: this.config.width,
             default_height: this.config.height
         });
+        window.set_position(Gtk.WindowPosition.CENTER);
         window.connect("destroy", function () { Gtk.main_quit(); });
 
         var webView = new WebKit2.WebView();
@@ -119,79 +124,116 @@ var NeutrinoWebview = {
         Gtk.main();
     },
 
-    logWindows: function (message) {
-        if (typeof NeutrinoWindowsHost !== "undefined" &&
-            NeutrinoWindowsHost &&
-            typeof NeutrinoWindowsHost.Log === "function") {
-            NeutrinoWindowsHost.Log(message);
+    hasWebView2Assemblies: function (SystemRef, libDir) {
+        if (!libDir) {
+            return false;
+        }
+        return SystemRef.IO.File.Exists(SystemRef.IO.Path.Combine(libDir, "Microsoft.Web.WebView2.Core.dll")) &&
+            SystemRef.IO.File.Exists(SystemRef.IO.Path.Combine(libDir, "Microsoft.Web.WebView2.WinForms.dll"));
+    },
+
+    findWebView2LibDir: function (SystemRef, startupPath) {
+        var envLibDir = SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_WEBVIEW2_LIB_DIR");
+        if (this.hasWebView2Assemblies(SystemRef, envLibDir)) {
+            return envLibDir;
+        }
+
+        var directNet462 = SystemRef.IO.Path.Combine(startupPath, "packages", "Microsoft.Web.WebView2", "lib", "net462");
+        if (this.hasWebView2Assemblies(SystemRef, directNet462)) {
+            return directNet462;
+        }
+
+        var directNet45 = SystemRef.IO.Path.Combine(startupPath, "packages", "Microsoft.Web.WebView2", "lib", "net45");
+        if (this.hasWebView2Assemblies(SystemRef, directNet45)) {
+            return directNet45;
+        }
+
+        var packagesRoot = SystemRef.IO.Path.Combine(startupPath, "packages");
+        if (SystemRef.IO.Directory.Exists(packagesRoot)) {
+            var packageDirs = SystemRef.IO.Directory.GetDirectories(packagesRoot, "Microsoft.Web.WebView2*");
+            for (var i = 0; i < packageDirs.Length; i++) {
+                var candidateNet462 = SystemRef.IO.Path.Combine(packageDirs[i], "lib", "net462");
+                if (this.hasWebView2Assemblies(SystemRef, candidateNet462)) {
+                    return candidateNet462;
+                }
+
+                var candidateNet45 = SystemRef.IO.Path.Combine(packageDirs[i], "lib", "net45");
+                if (this.hasWebView2Assemblies(SystemRef, candidateNet45)) {
+                    return candidateNet45;
+                }
+            }
+        }
+
+        return null;
+    },
+
+    prependLoaderPaths: function (SystemRef, webView2LibDir) {
+        if (!webView2LibDir) {
+            return;
+        }
+
+        var packageRoot = SystemRef.IO.Path.GetFullPath(SystemRef.IO.Path.Combine(webView2LibDir, "..", ".."));
+        var loaderPaths = "";
+
+        var x86Loader = SystemRef.IO.Path.Combine(packageRoot, "runtimes", "win-x86", "native", "WebView2Loader.dll");
+        if (SystemRef.IO.File.Exists(x86Loader)) {
+            loaderPaths = SystemRef.IO.Path.GetDirectoryName(x86Loader) + ";" + loaderPaths;
+        }
+
+        var x64Loader = SystemRef.IO.Path.Combine(packageRoot, "runtimes", "win-x64", "native", "WebView2Loader.dll");
+        if (SystemRef.IO.File.Exists(x64Loader)) {
+            loaderPaths = SystemRef.IO.Path.GetDirectoryName(x64Loader) + ";" + loaderPaths;
+        }
+
+        var arm64Loader = SystemRef.IO.Path.Combine(packageRoot, "runtimes", "win-arm64", "native", "WebView2Loader.dll");
+        if (SystemRef.IO.File.Exists(arm64Loader)) {
+            loaderPaths = SystemRef.IO.Path.GetDirectoryName(arm64Loader) + ";" + loaderPaths;
+        }
+
+        if (loaderPaths) {
+            var currentPath = SystemRef.Environment.GetEnvironmentVariable("PATH");
+            if (!currentPath) {
+                currentPath = "";
+            }
+            SystemRef.Environment.SetEnvironmentVariable("PATH", loaderPaths + currentPath);
         }
     },
 
     runWindows: function () {
-        var startupPath = System.Windows.Forms.Application.StartupPath;
-        this.logWindows("Loading WebView2 assemblies from " + startupPath);
+        var SystemRef = eval("System");
+        var startupPath = SystemRef.Windows.Forms.Application.StartupPath;
+        var webView2LibDir = this.findWebView2LibDir(SystemRef, startupPath);
+        if (!webView2LibDir) {
+            SystemRef.Environment.Exit(1);
+            return;
+        }
 
-        System.Reflection.Assembly.LoadFrom(System.IO.Path.Combine(startupPath, "Microsoft.Web.WebView2.Core.dll"));
-        System.Reflection.Assembly.LoadFrom(System.IO.Path.Combine(startupPath, "Microsoft.Web.WebView2.WinForms.dll"));
+        SystemRef.Environment.SetEnvironmentVariable("NEUTRINO_WEBVIEW2_LIB_DIR", webView2LibDir);
+        this.prependLoaderPaths(SystemRef, webView2LibDir);
 
-        System.Windows.Forms.Application.EnableVisualStyles();
-        System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+        SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.Core.dll"));
+        var webViewWinFormsAssembly = SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.WinForms.dll"));
 
-        var window = new System.Windows.Forms.Form();
+        SystemRef.Windows.Forms.Application.EnableVisualStyles();
+        SystemRef.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+
+        var window = new SystemRef.Windows.Forms.Form();
         window.Text = this.config.title + " - Windows";
-        window.ClientSize = new System.Drawing.Size(this.config.width, this.config.height);
-        window.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
+        window.ClientSize = new SystemRef.Drawing.Size(this.config.width, this.config.height);
+        window.StartPosition = SystemRef.Windows.Forms.FormStartPosition.CenterScreen;
 
-        var webViewType = System.Type.GetType("Microsoft.Web.WebView2.WinForms.WebView2, Microsoft.Web.WebView2.WinForms");
+        var webViewType = webViewWinFormsAssembly.GetType("Microsoft.Web.WebView2.WinForms.WebView2");
         if (!webViewType) {
             throw new Error("Could not load Microsoft.Web.WebView2.WinForms.WebView2 type.");
         }
 
-        var webView = System.Activator.CreateInstance(webViewType);
-        webView.Dock = System.Windows.Forms.DockStyle.Fill;
-        webView.Source = new System.Uri(this.config.url);
+        var webView = SystemRef.Activator.CreateInstance(webViewType);
+        webView.Dock = SystemRef.Windows.Forms.DockStyle.Fill;
+        webView.Source = new SystemRef.Uri(this.config.url);
 
         window.Controls.Add(webView);
-        this.logWindows("Starting Windows message loop.");
-        System.Windows.Forms.Application.Run(window);
-    },
-
-    handleError: function (error) {
-        var message = String(error);
-        var runtime = this.detectRuntime();
-
-        if (runtime === "windows") {
-            if (typeof NeutrinoWindowsHost !== "undefined" &&
-                NeutrinoWindowsHost &&
-                typeof NeutrinoWindowsHost.Log === "function") {
-                NeutrinoWindowsHost.Log("Exception: " + message);
-            }
-            if (typeof NeutrinoWindowsHost !== "undefined" &&
-                NeutrinoWindowsHost &&
-                typeof NeutrinoWindowsHost.ShowError === "function") {
-                NeutrinoWindowsHost.ShowError(message);
-                return;
-            }
-            if (System && System.Windows && System.Windows.Forms) {
-                System.Windows.Forms.MessageBox.Show(
-                    message,
-                    this.config.title + " - Windows",
-                    System.Windows.Forms.MessageBoxButtons.OK,
-                    System.Windows.Forms.MessageBoxIcon.Error
-                );
-            }
-            return;
-        }
-
-        if (this.hasGlobalExpr("typeof print === 'function'")) {
-            eval("print")(message);
-        }
-        throw error;
+        SystemRef.Windows.Forms.Application.Run(window);
     }
 };
 
-try {
-    NeutrinoWebview.run();
-} catch (e) {
-    NeutrinoWebview.handleError(e);
-}
+NeutrinoWebview.run();
