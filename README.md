@@ -26,6 +26,26 @@ Legacy per-OS scripts are still present (`macos.js`, `linux.js`, `windows.js`) b
 
 Then it creates a titled native window and embeds a webview pointed at `https://alganet.github.io/`.
 
+By default the Windows build computes a user-data folder from the executable name and startup directory.  When `webview.js` or `webview.cmd` is run the resulting path is:
+
+```
+<startupDir>\<basename>\data
+```
+
+where `<basename>` is the script/exe name without the extension (e.g. `webview`).
+
+The same `<basename>` directory is used to locate the bundled WebView2 SDK files, so a typical layout looks like:
+
+```
+/                     # startupDir
+  webview.cmd         # script/executable
+  /webview            # folder named after basename
+    /data             # user data subfolder
+    /Microsoft.Web.WebView2  # WebView2 SDK package straight from nuget
+```
+
+There is no configuration or environment variable to override this behavior; the code always uses that default location.
+
 ## Running Locally
 
 ### macOS

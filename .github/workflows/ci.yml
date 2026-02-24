@@ -19,7 +19,7 @@ jobs:
           Xvfb :99 -screen 0 1024x768x24 &
           sleep 5
           xsetroot -solid "#112233" &
-          gjs webview.js &
+          bash webview.cmd &
           sleep 10
           import -window root ~/linux-screenshot.png
       - uses: actions/upload-artifact@v4
@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
       - shell: pwsh
         run: |
-          .\windows.bat
+          .\webview.cmd
           $deadline = (Get-Date).AddSeconds(30)
           do {
             $p = Get-Process windows-app -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -58,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          osascript -l JavaScript webview.js &
+          bash webview.cmd &
           sleep 8
           screencapture -x ~/macos-screenshot.png
       - uses: actions/upload-artifact@v4
