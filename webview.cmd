@@ -15,10 +15,8 @@ if (":" == "<!--") then : 0 /*\;:\
     )
 
     IF NOT EXIST "%JSC%" ( EXIT /B 1 )
-    IF NOT EXIST "%WEBVIEW2_ROOT%\" ( CALL :RUNTIME_DOWNLOAD )
-    IF NOT EXIST "%WEBVIEW2_ROOT%\" ( EXIT /B 1 )
 
-    "%JSC%" /nologo /debug- /t:winexe /out:"%SCRIPT_DIR%webview.exe" ^
+    "%JSC%" /nologo /debug- /t:winexe /out:"%SCRIPT_DIR%%SCRIPT_NAME%.exe" ^
         /autoref+ ^
         /lib:"%FX_DIR%" ^
         /r:"%FX_DIR%\mscorlib.dll" ^
@@ -27,26 +25,23 @@ if (":" == "<!--") then : 0 /*\;:\
         /r:"%FX_DIR%\Accessibility.dll" ^
         /r:"%FX_DIR%\System.Drawing.dll" ^
         /r:"%FX_DIR%\System.Windows.Forms.dll" ^
-        "%SCRIPT_DIR%webview.cmd"
+        "%~f0"
         IF ERRORLEVEL 1 EXIT /B 1
 
-    START "" /D "%SCRIPT_DIR%" "%SCRIPT_DIR%webview.exe"
+    START "" /D "%SCRIPT_DIR%" "%SCRIPT_DIR%%SCRIPT_NAME%.exe"
     IF ERRORLEVEL 1 EXIT /B 1
     EXIT /B 0
 
-    :RUNTIME_DOWNLOAD
-    IF NOT EXIST "%SCRIPT_DIR%%SCRIPT_NAME%" MKDIR "%SCRIPT_DIR%%SCRIPT_NAME%"
-    POWERSHELL -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $pkgPath = Join-Path $env:TEMP 'Microsoft.Web.WebView2.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2' -OutFile $pkgPath; if (Test-Path '%WEBVIEW2_ROOT%') { Remove-Item -Recurse -Force '%WEBVIEW2_ROOT%' }; Expand-Archive -Path $pkgPath -DestinationPath '%WEBVIEW2_ROOT%' -Force; Remove-Item -Force $pkgPath"
-    IF ERRORLEVEL 1 EXIT /B 1
-    EXIT /B 0
 EXIT
+script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 if command -v gjs
-then gjs webview.cmd
+then NEUTRINO_SCRIPT_PATH="$script_path" gjs "$script_path"
 elif command -v osascript
-then osascript -l JavaScript webview.cmd
+then NEUTRINO_SCRIPT_PATH="$script_path" osascript -l JavaScript "$script_path"
 else echo "No suitable JavaScript runtime found to run webview.js" >&2
 fi
 exit $?;:<<'//</script>' #-->
+<!doctype html><html><head><meta charset="utf-8"></head>
 <script type=text/javascript>//*/
 
     /*@cc_on
@@ -75,6 +70,64 @@ exit $?;:<<'//</script>' #-->
             }
         },
 
+        extractHtmlDocument: function (content) {
+            var text = String(content || "");
+            var lower = text.toLowerCase();
+            var doctypeIndex = lower.indexOf("<!doctype html");
+            if (doctypeIndex >= 0) {
+                return text.substring(doctypeIndex);
+            }
+            return text;
+        },
+
+        getMacScriptPath: function (ObjCRef, dollar) {
+            var fileManager = dollar.NSFileManager.defaultManager;
+            var currentDir = String(fileManager.currentDirectoryPath);
+
+            var envPathObj = dollar.NSProcessInfo.processInfo.environment.objectForKey("NEUTRINO_SCRIPT_PATH");
+            if (envPathObj) {
+                var envPath = String(envPathObj);
+                if (envPath && fileManager.fileExistsAtPath(envPath)) {
+                    return envPath;
+                }
+            }
+
+            var argv = [];
+            try {
+                argv = ObjCRef.deepUnwrap(dollar.NSProcessInfo.processInfo.arguments);
+            } catch (_) {
+                argv = [];
+            }
+
+            for (var i = argv.length - 1; i >= 0; i--) {
+                var candidate = String(argv[i] || "");
+                if (!candidate || /^-/.test(candidate)) {
+                    continue;
+                }
+
+                if (fileManager.fileExistsAtPath(candidate)) {
+                    return candidate;
+                }
+
+                var combined = currentDir + "/" + candidate;
+                if (fileManager.fileExistsAtPath(combined)) {
+                    return combined;
+                }
+            }
+
+            throw new Error("Could not resolve current script path on macOS.");
+        },
+
+        getLinuxScriptPath: function (importsRef) {
+            var GLib = importsRef["gi"]["GLib"];
+            var systemRef = importsRef["system"];
+            var programPath = String(systemRef.programPath);
+            if (!GLib.path_is_absolute(programPath)) {
+                programPath = GLib.build_filenamev([GLib.get_current_dir(), programPath]);
+            }
+            return programPath;
+        },
+
         run: function () {
             if (this.hasGlobalExpr("typeof System !== 'undefined' && System && System.Windows && System.Windows.Forms && System.Windows.Forms.Application")) {
                 this.runWindows();
@@ -88,7 +141,16 @@ exit $?;:<<'//</script>' #-->
                 this.runLinux();
                 return;
             }
+            if (this.hasGlobalExpr("typeof window !== 'undefined'")) {
+                this.runWeb();
+                return;
+            }
             throw new Error("Unsupported JS runtime for webview.js");
+        },
+
+        runWeb: function () {
+            var win = eval("window");
+            win.location = this.config.url;
         },
 
         runMacOS: function () {
@@ -118,7 +180,24 @@ exit $?;:<<'//</script>' #-->
                 frame,
                 dollar.WKWebViewConfiguration.alloc.init
             );
-            webView.loadRequest(dollar.NSURLRequest.requestWithURL(dollar.NSURL.URLWithString(this.config.url)));
+
+            var scriptPath = this.getMacScriptPath(ObjCRef, dollar);
+            var htmlData = dollar.NSData.dataWithContentsOfFile(scriptPath);
+            if (!htmlData) {
+                throw new Error("Could not read local document: " + scriptPath);
+            }
+
+            var htmlNSString = dollar.NSString.alloc.initWithDataEncoding(
+                htmlData,
+                dollar.NSUTF8StringEncoding
+            );
+            if (!htmlNSString) {
+                throw new Error("Could not decode local document as UTF-8: " + scriptPath);
+            }
+
+            var htmlText = this.extractHtmlDocument(ObjCRef.unwrap(htmlNSString));
+            var baseUrl = dollar.NSURL.fileURLWithPath(scriptPath).URLByDeletingLastPathComponent;
+            webView.loadHTMLStringBaseURL(htmlText, baseUrl);
 
             window.contentView = webView;
             window.makeKeyAndOrderFront(null);
@@ -151,6 +230,8 @@ exit $?;:<<'//</script>' #-->
 
             var Gtk = importsRef["gi"]["Gtk"];
             var WebKit2 = importsRef["gi"]["WebKit2"];
+            var GLib = importsRef["gi"]["GLib"];
+            var ByteArray = importsRef["byteArray"];
 
             Gtk.init(null);
 
@@ -163,7 +244,13 @@ exit $?;:<<'//</script>' #-->
             window.connect("destroy", function () { Gtk.main_quit(); });
 
             var webView = new WebKit2.WebView();
-            webView.load_uri(this.config.url);
+            var scriptPath = this.getLinuxScriptPath(importsRef);
+            var fileRead = GLib.file_get_contents(scriptPath);
+            if (!fileRead[0]) {
+                throw new Error("Could not read local document: " + scriptPath);
+            }
+            var htmlText = this.extractHtmlDocument(ByteArray.toString(fileRead[1]));
+            webView.load_html(htmlText, null);
 
             window.add(webView);
             window.show_all();
@@ -245,9 +332,203 @@ exit $?;:<<'//</script>' #-->
             }
         },
 
+        escapeForSingleQuotedPowerShell: function (value) {
+            if (!value) {
+                return "";
+            }
+            return String(value).replace(/'/g, "''");
+        },
+
+        extractArchiveWithPowerShell: function (SystemRef, archivePath, destinationPath) {
+            var psCommand = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Expand-Archive -LiteralPath '" +
+                this.escapeForSingleQuotedPowerShell(String(archivePath)) +
+                "' -DestinationPath '" +
+                this.escapeForSingleQuotedPowerShell(String(destinationPath)) +
+                "' -Force";
+
+            var encodedCommand = SystemRef.Convert.ToBase64String(SystemRef.Text.Encoding.Unicode.GetBytes(psCommand));
+
+            var startInfo = new SystemRef.Diagnostics.ProcessStartInfo();
+            startInfo.FileName = "powershell.exe";
+            startInfo.Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encodedCommand;
+            startInfo.UseShellExecute = false;
+            startInfo.CreateNoWindow = true;
+
+            var process = SystemRef.Diagnostics.Process.Start(startInfo);
+            process.WaitForExit();
+
+            if (process.ExitCode !== 0) {
+                throw new Error("Expand-Archive failed with exit code " + process.ExitCode + ".");
+            }
+        },
+
+        showWindowsError: function (SystemRef, title, message) {
+            try {
+                SystemRef.Windows.Forms.MessageBox.Show(
+                    String(message),
+                    String(title),
+                    SystemRef.Windows.Forms.MessageBoxButtons.OK,
+                    SystemRef.Windows.Forms.MessageBoxIcon.Error
+                );
+            } catch (_) {
+            }
+        },
+
+        downloadWebView2WithProgress: function (SystemRef, appFolder) {
+            var packageRoot = SystemRef.IO.Path.Combine(appFolder, "Microsoft.Web.WebView2");
+            var tempPackagePath = SystemRef.IO.Path.Combine(
+                SystemRef.IO.Path.GetTempPath(),
+                "Microsoft.Web.WebView2." + SystemRef.Guid.NewGuid().ToString("N") + ".zip"
+            );
+            var packageUrl = "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2";
+
+            var progressForm = new SystemRef.Windows.Forms.Form();
+            progressForm.Text = "Downloading WebView2 Runtime";
+            progressForm.FormBorderStyle = SystemRef.Windows.Forms.FormBorderStyle.FixedDialog;
+            progressForm.StartPosition = SystemRef.Windows.Forms.FormStartPosition.CenterScreen;
+            progressForm.ClientSize = new SystemRef.Drawing.Size(440, 92);
+            progressForm.ControlBox = false;
+            progressForm.TopMost = true;
+
+            var progressLabel = new SystemRef.Windows.Forms.Label();
+            progressLabel.AutoSize = false;
+            progressLabel.TextAlign = SystemRef.Drawing.ContentAlignment.MiddleLeft;
+            progressLabel.SetBounds(16, 12, 408, 20);
+            progressLabel.Text = "Starting download...";
+
+            var progressBar = new SystemRef.Windows.Forms.ProgressBar();
+            progressBar.SetBounds(16, 40, 408, 22);
+            progressBar.Minimum = 0;
+            progressBar.Maximum = 100;
+            progressBar.Style = SystemRef.Windows.Forms.ProgressBarStyle.Continuous;
+
+            progressForm.Controls.Add(progressLabel);
+            progressForm.Controls.Add(progressBar);
+            progressForm.Show();
+            progressForm.Refresh();
+            SystemRef.Windows.Forms.Application.DoEvents();
+
+            var response = null;
+            var responseStream = null;
+            var fileStream = null;
+
+            try {
+                if (SystemRef.IO.Directory.Exists(packageRoot)) {
+                    SystemRef.IO.Directory.Delete(packageRoot, true);
+                }
+
+                try {
+                    var tls12 = 3072;
+                    var tls11 = 768;
+                    var tls10 = 192;
+                    SystemRef.Net.ServicePointManager.SecurityProtocol = tls12 | tls11 | tls10;
+                } catch (_) {
+                }
+
+                var request = SystemRef.Net.WebRequest.Create(packageUrl);
+                response = request.GetResponse();
+                responseStream = response.GetResponseStream();
+
+                var totalBytes = response.ContentLength;
+                if (totalBytes <= 0) {
+                    progressBar.Style = SystemRef.Windows.Forms.ProgressBarStyle.Marquee;
+                    progressLabel.Text = "Downloading package...";
+                }
+
+                fileStream = new SystemRef.IO.FileStream(tempPackagePath, SystemRef.IO.FileMode.Create, SystemRef.IO.FileAccess.Write, SystemRef.IO.FileShare.None);
+                var buffer = System.Array.CreateInstance(System.Byte, 32768);
+                var downloadedBytes = 0;
+                var lastPercentage = -1;
+                var bytesRead = 0;
+
+                while ((bytesRead = responseStream.Read(buffer, 0, buffer.Length)) > 0) {
+                    fileStream.Write(buffer, 0, bytesRead);
+                    downloadedBytes += bytesRead;
+
+                    if (totalBytes > 0) {
+                        var percentage = System.Math.Min(100, System.Convert.ToInt32((downloadedBytes * 100.0) / totalBytes));
+                        if (percentage !== lastPercentage) {
+                            progressBar.Value = percentage;
+                            progressLabel.Text = "Downloading package... " + percentage + "%";
+                            lastPercentage = percentage;
+                        }
+                    }
+
+                    SystemRef.Windows.Forms.Application.DoEvents();
+                }
+
+                fileStream.Close();
+                fileStream = null;
+                responseStream.Close();
+                responseStream = null;
+                response.Close();
+                response = null;
+
+                if (totalBytes > 0) {
+                    progressBar.Value = 100;
+                }
+                progressLabel.Text = "Extracting package...";
+                SystemRef.Windows.Forms.Application.DoEvents();
+
+                this.extractArchiveWithPowerShell(SystemRef, tempPackagePath, packageRoot);
+            } catch (exDownload) {
+                var message = "Download/extract failed.";
+                try {
+                    if (exDownload && exDownload.message) {
+                        message = message + "\n\n" + String(exDownload.message);
+                    }
+                } catch (_) {
+                }
+                try {
+                    message = message + "\n\n" + String(exDownload);
+                } catch (_) {
+                }
+                throw new Error(message);
+            } finally {
+                if (fileStream) {
+                    fileStream.Close();
+                }
+                if (responseStream) {
+                    responseStream.Close();
+                }
+                if (response) {
+                    response.Close();
+                }
+                if (SystemRef.IO.File.Exists(tempPackagePath)) {
+                    SystemRef.IO.File.Delete(tempPackagePath);
+                }
+                progressForm.Close();
+                progressForm.Dispose();
+            }
+        },
+
+        ensureWebView2Package: function (SystemRef, appFolder) {
+            var existingLibDir = this.findWebView2LibDir(SystemRef, appFolder);
+            if (existingLibDir) {
+                return existingLibDir;
+            }
+
+            if (!SystemRef.IO.Directory.Exists(appFolder)) {
+                SystemRef.IO.Directory.CreateDirectory(appFolder);
+            }
+
+            this.downloadWebView2WithProgress(SystemRef, appFolder);
+
+            var libDir = this.findWebView2LibDir(SystemRef, appFolder);
+
+            if (!libDir) {
+                throw new Error("WebView2 package download completed but required assemblies were not found.");
+            }
+            return libDir;
+        },
+
         runWindows: function () {
             var SystemRef = eval("System");
-            var startupPath = SystemRef.Windows.Forms.Application.StartupPath;
+            try {
+                SystemRef.Windows.Forms.Application.EnableVisualStyles();
+                SystemRef.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+
+                var startupPath = SystemRef.Windows.Forms.Application.StartupPath;
 
             // compute base folder named after the executable (used for both
             // locating the WebView2 package and for deriving the user-data path)
@@ -262,20 +543,17 @@ exit $?;:<<'//</script>' #-->
                 userDataDir = null;
             }
 
-            var webView2LibDir = this.findWebView2LibDir(SystemRef, appFolder);
-            if (!webView2LibDir) {
-                SystemRef.Environment.Exit(1);
-                return;
-            }
+                var webView2LibDir = this.ensureWebView2Package(SystemRef, appFolder);
+                if (!webView2LibDir) {
+                    SystemRef.Environment.Exit(1);
+                    return;
+                }
 
             SystemRef.Environment.SetEnvironmentVariable("NEUTRINO_WEBVIEW2_LIB_DIR", webView2LibDir);
             this.prependLoaderPaths(SystemRef, webView2LibDir);
 
             SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.Core.dll"));
             var webViewWinFormsAssembly = SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.WinForms.dll"));
-
-            SystemRef.Windows.Forms.Application.EnableVisualStyles();
-            SystemRef.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
 
             var window = new SystemRef.Windows.Forms.Form();
             window.Text = this.config.title + " - Windows";
@@ -309,13 +587,34 @@ exit $?;:<<'//</script>' #-->
             }
 
             webView.Dock = SystemRef.Windows.Forms.DockStyle.Fill;
-            webView.Source = new SystemRef.Uri(this.config.url);
 
-            window.Controls.Add(webView);
-            SystemRef.Windows.Forms.Application.Run(window);
+            var exeNameForDoc = SystemRef.IO.Path.GetFileNameWithoutExtension(SystemRef.Windows.Forms.Application.ExecutablePath);
+            var scriptPath = SystemRef.IO.Path.Combine(startupPath, exeNameForDoc + ".cmd");
+
+            if (!SystemRef.IO.File.Exists(scriptPath)) {
+                throw new Error("Could not find local document: " + scriptPath);
+            }
+
+            var htmlText = this.extractHtmlDocument(SystemRef.IO.File.ReadAllText(scriptPath));
+            var dataUrl = "data:text/html;charset=utf-8," + SystemRef.Uri.EscapeDataString(htmlText);
+            webView.Source = new SystemRef.Uri(dataUrl);
+
+                window.Controls.Add(webView);
+                SystemRef.Windows.Forms.Application.Run(window);
+            } catch (ex) {
+                var detail = "Failed to initialize WebView2 package/download.";
+                try {
+                    if (ex && ex.message) {
+                        detail = detail + "\n\n" + String(ex.message);
+                    }
+                } catch (_) {
+                }
+                this.showWindowsError(SystemRef, "neutrino", detail);
+                SystemRef.Environment.Exit(1);
+            }
         }
     };
 
     NeutrinoWebview.run();
 
-//</script>
+//</script></head><body></body>
