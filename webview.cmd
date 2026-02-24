@@ -5,9 +5,11 @@ if (":" == "<!--") then : 0 /*\;:\
 
     SET "SCRIPT_NAME=%~n0"
     SET "SCRIPT_DIR=%~dp0"
+    SET "APP_FOLDER=%SCRIPT_DIR%%SCRIPT_NAME%"
     SET "FX_DIR=%WINDIR%\Microsoft.NET\Framework\v4.0.30319"
     SET "JSC=%FX_DIR%\jsc.exe"
-    SET "WEBVIEW2_ROOT=%SCRIPT_DIR%%SCRIPT_NAME%\Microsoft.Web.WebView2"
+    SET "MANIFEST=%APP_FOLDER%\%SCRIPT_NAME%.exe.manifest"
+    SET "WEBVIEW2_ROOT=%APP_FOLDER%\Microsoft.Web.WebView2"
 
     IF NOT EXIST "%JSC%" (
         SET "FX_DIR=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319"
@@ -16,7 +18,14 @@ if (":" == "<!--") then : 0 /*\;:\
 
     IF NOT EXIST "%JSC%" ( EXIT /B 1 )
 
-    "%JSC%" /nologo /debug- /t:winexe /out:"%SCRIPT_DIR%%SCRIPT_NAME%.exe" ^
+    IF NOT EXIST "%APP_FOLDER%" MKDIR "%APP_FOLDER%"
+    IF ERRORLEVEL 1 EXIT /B 1
+
+    IF EXIST "%APP_FOLDER%\%SCRIPT_NAME%.exe" (
+        GOTO :START_APP
+    )
+
+    "%JSC%" /nologo /debug- /t:winexe /out:"%APP_FOLDER%\%SCRIPT_NAME%.exe" ^
         /autoref+ ^
         /lib:"%FX_DIR%" ^
         /r:"%FX_DIR%\mscorlib.dll" ^
@@ -26,21 +35,186 @@ if (":" == "<!--") then : 0 /*\;:\
         /r:"%FX_DIR%\System.Drawing.dll" ^
         /r:"%FX_DIR%\System.Windows.Forms.dll" ^
         "%~f0"
-        IF ERRORLEVEL 1 EXIT /B 1
+        SET "JSC_EXIT=%ERRORLEVEL%"
+        IF NOT "%JSC_EXIT%"=="0" EXIT /B %JSC_EXIT%
 
-    START "" /D "%SCRIPT_DIR%" "%SCRIPT_DIR%%SCRIPT_NAME%.exe"
+    > "%MANIFEST%" (
+        ECHO ^<?xml version="1.0" encoding="UTF-8" standalone="yes"?^>
+        ECHO ^<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"^>
+        ECHO   ^<assemblyIdentity version="1.0.0.0" processorArchitecture="*" name="neutrino.webview" type="win32" /^>
+        ECHO   ^<description^>neutrino webview^</description^>
+        ECHO   ^<compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1"^>
+        ECHO     ^<application^>
+        ECHO       ^<supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" /^>
+        ECHO       ^<supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}" /^>
+        ECHO       ^<supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" /^>
+        ECHO       ^<supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}" /^>
+        ECHO       ^<supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}" /^>
+        ECHO     ^</application^>
+        ECHO   ^</compatibility^>
+        ECHO   ^<application xmlns="urn:schemas-microsoft-com:asm.v3"^>
+        ECHO     ^<windowsSettings^>
+        ECHO       ^<dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings"^>true/pm^</dpiAware^>
+        ECHO       ^<dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings"^>PerMonitorV2, PerMonitor^</dpiAwareness^>
+        ECHO     ^</windowsSettings^>
+        ECHO   ^</application^>
+        ECHO ^</assembly^>
+    )
+
+    :START_APP
+    SET "NEUTRINO_SCRIPT_PATH=%~f0"
+    START "" /D "%APP_FOLDER%" "%APP_FOLDER%\%SCRIPT_NAME%.exe"
     IF ERRORLEVEL 1 EXIT /B 1
     EXIT /B 0
 
 EXIT
 script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-if command -v gjs
+find_qt_runtime() {
+    if command -v qml6 >/dev/null 2>&1; then
+        command -v qml6
+        return 0
+    fi
+    if command -v qmlscene6 >/dev/null 2>&1; then
+        command -v qmlscene6
+        return 0
+    fi
+    if command -v qmlscene-qt6 >/dev/null 2>&1; then
+        command -v qmlscene-qt6
+        return 0
+    fi
+    if command -v qml >/dev/null 2>&1; then
+        command -v qml
+        return 0
+    fi
+    if command -v qmlscene >/dev/null 2>&1; then
+        command -v qmlscene
+        return 0
+    fi
+    if [ -x "/usr/lib/qt6/bin/qmlscene" ]; then
+        printf '%s\n' "/usr/lib/qt6/bin/qmlscene"
+        return 0
+    fi
+    if [ -x "/usr/lib/qt6/bin/qml" ]; then
+        printf '%s\n' "/usr/lib/qt6/bin/qml"
+        return 0
+    fi
+    if [ -x "/usr/lib/qt5/bin/qmlscene" ]; then
+        printf '%s\n' "/usr/lib/qt5/bin/qmlscene"
+        return 0
+    fi
+    if [ -x "/usr/lib/qt5/bin/qml" ]; then
+        printf '%s\n' "/usr/lib/qt5/bin/qml"
+        return 0
+    fi
+    return 1
+}
+
+extract_embedded_html() {
+    awk '
+        BEGIN { found = 0 }
+        {
+            lower = tolower($0)
+            if (!found && lower ~ /^<!doctype html><html><head><meta charset="utf-8"><\/head>/) {
+                found = 1
+            }
+            if (found) {
+                print
+            }
+        }
+    ' "$script_path"
+}
+
+run_qt() {
+    qml_runner="$1"
+    if [ -z "$qml_runner" ]; then
+        echo "No Qt QML runtime found (tried: qmlscene6, qmlscene-qt6, qml6, qmlscene)" >&2
+        return 1
+    fi
+
+    tmp_root="${TMPDIR:-/tmp}/neutrino-qt-${USER:-user}"
+    mkdir -p "$tmp_root" || return 1
+    tmp_qml="$tmp_root/window.qml"
+    qt_url="${NEUTRINO_QT_URL:-https://alganet.github.io/}"
+    esc_qt_url="$(printf '%s' "$qt_url" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    qml_imports='import QtQuick
+import QtQuick.Window
+import QtWebEngine'
+
+    case "$qml_runner" in
+        *qt6*)
+            ;;
+        *)
+            qml_imports='import QtQuick 2.12
+import QtQuick.Window 2.12
+import QtWebEngine 1.7'
+            ;;
+    esac
+
+    cat > "$tmp_qml" <<EOF
+${qml_imports}
+
+Window {
+    id: root
+    width: 900
+    height: 600
+    visible: true
+    title: "neutrino - Qt"
+
+    WebEngineView {
+        id: view
+        anchors.fill: parent
+        url: "${esc_qt_url}"
+    }
+}
+EOF
+
+    if [ ! -s "$tmp_qml" ]; then
+        echo "Qt entry QML file was not created: $tmp_qml" >&2
+        return 1
+    fi
+
+    echo "Qt launch: runner=$qml_runner qml=$tmp_qml" >&2
+
+    qt_qpa_platform="${QT_QPA_PLATFORM:-xcb}"
+    qt_libgl_software="${LIBGL_ALWAYS_SOFTWARE:-1}"
+    qt_disable_sandbox="${QTWEBENGINE_DISABLE_SANDBOX:-0}"
+    qt_chromium_flags="${QTWEBENGINE_CHROMIUM_FLAGS:---disable-dev-shm-usage}"
+
+    if [ "$qt_disable_sandbox" = "1" ]; then
+        qt_chromium_flags="$qt_chromium_flags --no-sandbox"
+    fi
+
+    case "$qml_runner" in
+        qmlscene6|qmlscene)
+            QT_QPA_PLATFORM="$qt_qpa_platform" \
+            LIBGL_ALWAYS_SOFTWARE="$qt_libgl_software" \
+            QTWEBENGINE_CHROMIUM_FLAGS="$qt_chromium_flags" \
+            "$qml_runner" "$tmp_qml"
+            ;;
+        qml6|qml)
+            QT_QPA_PLATFORM="$qt_qpa_platform" \
+            LIBGL_ALWAYS_SOFTWARE="$qt_libgl_software" \
+            QTWEBENGINE_CHROMIUM_FLAGS="$qt_chromium_flags" \
+            "$qml_runner" "$tmp_qml"
+            ;;
+        *)
+            QT_QPA_PLATFORM="$qt_qpa_platform" \
+            LIBGL_ALWAYS_SOFTWARE="$qt_libgl_software" \
+            QTWEBENGINE_CHROMIUM_FLAGS="$qt_chromium_flags" \
+            "$qml_runner" "$tmp_qml"
+            ;;
+    esac
+}
+
+if command -v gjs >/dev/null 2>&1
 then NEUTRINO_SCRIPT_PATH="$script_path" gjs "$script_path"
-elif command -v osascript
+elif qt_runner="$(find_qt_runtime)"
+then run_qt "$qt_runner"
+elif command -v osascript >/dev/null 2>&1
 then NEUTRINO_SCRIPT_PATH="$script_path" osascript -l JavaScript "$script_path"
-else echo "No suitable JavaScript runtime found to run webview.js" >&2
+else echo "No suitable runtime found (expected gjs, Qt QML runtime, or osascript)" >&2
 fi
-exit $?;:<<'//</script>' #-->
+exit $?;:<<'//</script></head><body></body>' #-->
 <!doctype html><html><head><meta charset="utf-8"></head>
 <script type=text/javascript>//*/
 
@@ -138,7 +312,7 @@ exit $?;:<<'//</script>' #-->
                 return;
             }
             if (this.hasGlobalExpr("typeof imports !== 'undefined' && !!imports.gi")) {
-                this.runLinux();
+                this.runGjs();
                 return;
             }
             if (this.hasGlobalExpr("typeof window !== 'undefined'")) {
@@ -223,7 +397,7 @@ exit $?;:<<'//</script>' #-->
             throw new Error("WebKit2 introspection typelibs not found");
         },
 
-        runLinux: function () {
+        runGtkWebView: function (platformLabel) {
             var importsRef = eval("imports");
             importsRef["gi"]["versions"]["Gtk"] = "3.0";
             importsRef["gi"]["versions"]["WebKit2"] = this.resolveLinuxWebKitVersion();
@@ -236,7 +410,7 @@ exit $?;:<<'//</script>' #-->
             Gtk.init(null);
 
             var window = new Gtk.Window({
-                title: this.config.title + " - Linux",
+                title: this.config.title + " - " + platformLabel,
                 default_width: this.config.width,
                 default_height: this.config.height
             });
@@ -256,6 +430,10 @@ exit $?;:<<'//</script>' #-->
             window.show_all();
 
             Gtk.main();
+        },
+
+        runGjs: function () {
+            this.runGtkWebView("Linux");
         },
 
         hasWebView2Assemblies: function (SystemRef, libDir) {
@@ -529,19 +707,8 @@ exit $?;:<<'//</script>' #-->
                 SystemRef.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
 
                 var startupPath = SystemRef.Windows.Forms.Application.StartupPath;
-
-            // compute base folder named after the executable (used for both
-            // locating the WebView2 package and for deriving the user-data path)
-            var appFolder = null;
-            var userDataDir = null;
-            try {
-                var exeName = SystemRef.IO.Path.GetFileNameWithoutExtension(SystemRef.Windows.Forms.Application.ExecutablePath);
-                appFolder = SystemRef.IO.Path.Combine(startupPath, exeName);
-                userDataDir = SystemRef.IO.Path.Combine(appFolder, "data");
-            } catch (_) {
-                appFolder = null;
-                userDataDir = null;
-            }
+                var appFolder = startupPath;
+                var userDataDir = SystemRef.IO.Path.Combine(appFolder, "data");
 
                 var webView2LibDir = this.ensureWebView2Package(SystemRef, appFolder);
                 if (!webView2LibDir) {
@@ -588,8 +755,10 @@ exit $?;:<<'//</script>' #-->
 
             webView.Dock = SystemRef.Windows.Forms.DockStyle.Fill;
 
-            var exeNameForDoc = SystemRef.IO.Path.GetFileNameWithoutExtension(SystemRef.Windows.Forms.Application.ExecutablePath);
-            var scriptPath = SystemRef.IO.Path.Combine(startupPath, exeNameForDoc + ".cmd");
+            var scriptPath = SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH");
+            if (!scriptPath) {
+                throw new Error("Environment variable NEUTRINO_SCRIPT_PATH was not set.");
+            }
 
             if (!SystemRef.IO.File.Exists(scriptPath)) {
                 throw new Error("Could not find local document: " + scriptPath);
