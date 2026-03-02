@@ -22,8 +22,9 @@ jobs:
           bash webview.cmd &
           sleep 10
           import -window root ~/gjs-screenshot.png
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
+          archive: false
           name: gjs-screenshot
           path: ~/gjs-screenshot.png
   kde:
@@ -60,8 +61,9 @@ jobs:
 
           kill "$APP_PID" >/dev/null 2>&1 || true
           kill "$XVFB_PID" >/dev/null 2>&1 || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
+          archive: false
           name: kde-screenshot
           path: ~/kde-screenshot.png
   windows:
@@ -87,8 +89,9 @@ jobs:
           $bitmap.Save("$env:USERPROFILE\windows-screenshot.png", [System.Drawing.Imaging.ImageFormat]::Png)
           $bitmap.Dispose()
           $graphics.Dispose()
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
+          archive: false
           name: windows-screenshot
           path: C:\Users\runneradmin\windows-screenshot.png   
   macos:
@@ -99,7 +102,8 @@ jobs:
           bash webview.cmd &
           sleep 8
           screencapture -x ~/macos-screenshot.png
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
+          archive: false
           name: macos-screenshot
           path: ~/macos-screenshot.png
