@@ -8,7 +8,7 @@ jobs:
   gjs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: |
           sudo apt update
           sudo apt install -y xvfb gjs imagemagick x11-xserver-utils gir1.2-webkit2-4.1 \
@@ -30,7 +30,7 @@ jobs:
   kde:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: |
           sudo apt update
           sudo apt install -y xvfb imagemagick x11-xserver-utils x11-utils mesa-utils libgl1-mesa-dri libegl-mesa0 qt6-declarative-dev-tools qml6-module-qtwebengine qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
@@ -69,7 +69,7 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - shell: pwsh
         run: |
           .\webview.cmd
@@ -97,7 +97,7 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: |
           bash webview.cmd &
           sleep 8
