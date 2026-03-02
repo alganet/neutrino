@@ -157,6 +157,8 @@ Window {
     id: root
     width: 900
     height: 600
+    x: (Screen.width - width) / 2
+    y: (Screen.height - height) / 2
     visible: true
     title: "neutrino - Qt"
 
