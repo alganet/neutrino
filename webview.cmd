@@ -70,42 +70,18 @@ if (":" == "<!--") then : 0 /*\;:\
 EXIT
 script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 find_qt_runtime() {
-    if command -v qml6 >/dev/null 2>&1; then
-        command -v qml6
-        return 0
-    fi
-    if command -v qmlscene6 >/dev/null 2>&1; then
-        command -v qmlscene6
-        return 0
-    fi
-    if command -v qmlscene-qt6 >/dev/null 2>&1; then
-        command -v qmlscene-qt6
-        return 0
-    fi
-    if command -v qml >/dev/null 2>&1; then
-        command -v qml
-        return 0
-    fi
-    if command -v qmlscene >/dev/null 2>&1; then
-        command -v qmlscene
-        return 0
-    fi
-    if [ -x "/usr/lib/qt6/bin/qmlscene" ]; then
-        printf '%s\n' "/usr/lib/qt6/bin/qmlscene"
-        return 0
-    fi
-    if [ -x "/usr/lib/qt6/bin/qml" ]; then
-        printf '%s\n' "/usr/lib/qt6/bin/qml"
-        return 0
-    fi
-    if [ -x "/usr/lib/qt5/bin/qmlscene" ]; then
-        printf '%s\n' "/usr/lib/qt5/bin/qmlscene"
-        return 0
-    fi
-    if [ -x "/usr/lib/qt5/bin/qml" ]; then
-        printf '%s\n' "/usr/lib/qt5/bin/qml"
-        return 0
-    fi
+    for cmd in qml6 qml qmlscene; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            command -v "$cmd"
+            return 0
+        fi
+    done
+    for path in /usr/lib/qt6/bin/qml /usr/lib/qt5/bin/qml /usr/lib/qt6/bin/qmlscene /usr/lib/qt5/bin/qmlscene; do
+        if [ -x "$path" ]; then
+            printf '%s\n' "$path"
+            return 0
+        fi
+    done
     return 1
 }
 
@@ -126,22 +102,18 @@ extract_embedded_html() {
 
 run_qt() {
     qml_runner="$1"
-    if [ -z "$qml_runner" ]; then
-        echo "No Qt QML runtime found (tried: qmlscene6, qmlscene-qt6, qml6, qmlscene)" >&2
-        return 1
-    fi
+    [ -z "$qml_runner" ] && return 1
 
     tmp_root="${TMPDIR:-/tmp}/neutrino-qt-${USER:-user}"
     mkdir -p "$tmp_root" || return 1
     tmp_qml="$tmp_root/window.qml"
-    qt_url="${NEUTRINO_QT_URL:-https://alganet.github.io/}"
+    qt_url="https://alganet.github.io/"
     esc_qt_url="$(printf '%s' "$qt_url" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-    qml_imports='import QtQuick
-import QtQuick.Window
-import QtWebEngine'
 
     case "$qml_runner" in
-        *qt6*)
+        *6*|*qt6*)
+            qml_imports='import QtQuick
+import QtWebEngine'
             ;;
         *)
             qml_imports='import QtQuick 2.12
@@ -152,7 +124,6 @@ import QtWebEngine 1.7'
 
     cat > "$tmp_qml" <<EOF
 ${qml_imports}
-
 Window {
     id: root
     width: 900
@@ -170,42 +141,13 @@ Window {
 }
 EOF
 
-    if [ ! -s "$tmp_qml" ]; then
-        echo "Qt entry QML file was not created: $tmp_qml" >&2
-        return 1
-    fi
+    [ ! -s "$tmp_qml" ] && return 1
+    [ "$QTWEBENGINE_DISABLE_SANDBOX" = "1" ] && QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS} --no-sandbox"
 
-    echo "Qt launch: runner=$qml_runner qml=$tmp_qml" >&2
-
-    qt_qpa_platform="${QT_QPA_PLATFORM:-xcb}"
-    qt_libgl_software="${LIBGL_ALWAYS_SOFTWARE:-1}"
-    qt_disable_sandbox="${QTWEBENGINE_DISABLE_SANDBOX:-0}"
-    qt_chromium_flags="${QTWEBENGINE_CHROMIUM_FLAGS:---disable-dev-shm-usage}"
-
-    if [ "$qt_disable_sandbox" = "1" ]; then
-        qt_chromium_flags="$qt_chromium_flags --no-sandbox"
-    fi
-
-    case "$qml_runner" in
-        qmlscene6|qmlscene)
-            QT_QPA_PLATFORM="$qt_qpa_platform" \
-            LIBGL_ALWAYS_SOFTWARE="$qt_libgl_software" \
-            QTWEBENGINE_CHROMIUM_FLAGS="$qt_chromium_flags" \
-            "$qml_runner" "$tmp_qml"
-            ;;
-        qml6|qml)
-            QT_QPA_PLATFORM="$qt_qpa_platform" \
-            LIBGL_ALWAYS_SOFTWARE="$qt_libgl_software" \
-            QTWEBENGINE_CHROMIUM_FLAGS="$qt_chromium_flags" \
-            "$qml_runner" "$tmp_qml"
-            ;;
-        *)
-            QT_QPA_PLATFORM="$qt_qpa_platform" \
-            LIBGL_ALWAYS_SOFTWARE="$qt_libgl_software" \
-            QTWEBENGINE_CHROMIUM_FLAGS="$qt_chromium_flags" \
-            "$qml_runner" "$tmp_qml"
-            ;;
-    esac
+    QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" \
+    LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}" \
+    QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---disable-dev-shm-usage}" \
+    "$qml_runner" "$tmp_qml"
 }
 
 if command -v gjs >/dev/null 2>&1

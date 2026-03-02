@@ -78,11 +78,6 @@ webview.cmd
 ### Page URL
 
 - Default URL is embedded in the script as `https://alganet.github.io/`.
-- For the Qt fallback path, you can override it with:
-
-```bash
-NEUTRINO_QT_URL="https://example.com" ./webview.cmd
-```
 
 ### Script path propagation
 

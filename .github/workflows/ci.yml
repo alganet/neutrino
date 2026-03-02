@@ -33,139 +33,37 @@ jobs:
       - run: |
           sudo apt update
           sudo apt install -y xvfb imagemagick x11-xserver-utils x11-utils mesa-utils libgl1-mesa-dri libegl-mesa0 qt6-declarative-dev-tools qml6-module-qtwebengine qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
-          export PATH="/usr/lib/qt6/bin:/usr/lib/qt5/bin:$PATH"
           if ! command -v qml6 >/dev/null 2>&1 && ! command -v qml >/dev/null 2>&1 && ! command -v qmlscene6 >/dev/null 2>&1 && ! command -v qmlscene-qt6 >/dev/null 2>&1; then
             sudo apt install -y qml6 || sudo apt install -y qml-qt6 || sudo apt install -y qmlscene-qt6 || true
           fi
-          if ! command -v qml6 >/dev/null 2>&1 \
-            && ! command -v qml >/dev/null 2>&1 \
-            && ! command -v qmlscene6 >/dev/null 2>&1 \
-            && ! command -v qmlscene-qt6 >/dev/null 2>&1 \
-            && ! command -v qmlscene >/dev/null 2>&1 \
-            && [ ! -x /usr/lib/qt6/bin/qmlscene ] \
-            && [ ! -x /usr/lib/qt6/bin/qml ] \
-            && [ ! -x /usr/lib/qt5/bin/qmlscene ] \
-            && [ ! -x /usr/lib/qt5/bin/qml ]; then
-            echo "No Qt QML launcher binary found after install" >&2
-            exit 1
-          fi
       - run: |
-          export PATH="/usr/lib/qt6/bin:/usr/lib/qt5/bin:$PATH"
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb
           export LIBGL_ALWAYS_SOFTWARE=1
-          export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
-          export GALLIUM_DRIVER=llvmpipe
           export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
 
-          KDE_DEBUG_LOG=~/kde-debug.log
-          KDE_STDOUT_LOG=~/kde-app.stdout.log
-          KDE_STDERR_LOG=~/kde-app.stderr.log
-          : > "$KDE_DEBUG_LOG"
-          : > "$KDE_STDOUT_LOG"
-          : > "$KDE_STDERR_LOG"
-
           Xvfb :99 -screen 0 1024x768x24 &
           XVFB_PID=$!
-          for i in $(seq 1 20); do
-            if xdpyinfo -display :99 >/dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
-
-          {
-            echo "=== environment ==="
-            id
-            uname -a
-            echo "DISPLAY=$DISPLAY"
-            echo "QT_QPA_PLATFORM=$QT_QPA_PLATFORM"
-            echo "LIBGL_ALWAYS_SOFTWARE=$LIBGL_ALWAYS_SOFTWARE"
-            echo "MESA_LOADER_DRIVER_OVERRIDE=$MESA_LOADER_DRIVER_OVERRIDE"
-            echo "GALLIUM_DRIVER=$GALLIUM_DRIVER"
-            echo "QTWEBENGINE_CHROMIUM_FLAGS=$QTWEBENGINE_CHROMIUM_FLAGS"
-            echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
-            echo
-            echo "=== binary detection ==="
-            for cmd in qml6 qml qmlscene6 qmlscene-qt6 qmlscene gjs; do
-              if command -v "$cmd" >/dev/null 2>&1; then
-                echo "$cmd => $(command -v "$cmd")"
-              else
-                echo "$cmd => not found"
-              fi
-            done
-            echo
-            echo "=== /usr/bin/qml* ==="
-            ls -1 /usr/bin/qml* 2>/dev/null || true
-            echo
-            echo "=== /usr/lib/qt6/bin/qml* ==="
-            ls -1 /usr/lib/qt6/bin/qml* 2>/dev/null || true
-            echo
-            echo "=== /usr/lib/qt5/bin/qml* ==="
-            ls -1 /usr/lib/qt5/bin/qml* 2>/dev/null || true
-          } >> "$KDE_DEBUG_LOG" 2>&1
+          sleep 5
 
           xsetroot -solid "#112233" &
 
-          {
-            echo
-            echo "=== x11 state before launch ==="
-            xdpyinfo | head -n 20
-            echo
-            echo "=== glxinfo -B ==="
-            glxinfo -B || true
-            xwininfo -root -tree
-          } >> "$KDE_DEBUG_LOG" 2>&1
-
-          dbus-run-session -- bash webview.cmd > "$KDE_STDOUT_LOG" 2> "$KDE_STDERR_LOG" &
+          dbus-run-session -- bash webview.cmd &
           APP_PID=$!
 
           sleep 15
 
-          {
-            echo
-            echo "=== process list after launch ==="
-            ps -ef | grep -E 'qml|QtWebEngine|webview\.cmd|Xvfb' | grep -v grep || true
-            echo
-            echo "=== x11 state after launch ==="
-            xwininfo -root -tree || true
-            echo
-            echo "=== generated qt temp files ==="
-            TMP_ROOT="/tmp/neutrino-qt-${USER:-user}"
-            if [ -d "$TMP_ROOT" ]; then
-              ls -la "$TMP_ROOT"
-              echo "--- window.qml (head) ---"
-              sed -n '1,220p' "$TMP_ROOT/window.qml" || true
-              echo "--- content.html (head) ---"
-              sed -n '1,160p' "$TMP_ROOT/content.html" || true
-            else
-              echo "missing: $TMP_ROOT"
-            fi
-          } >> "$KDE_DEBUG_LOG" 2>&1
-
           import -window root ~/kde-screenshot.png
 
-          {
-            echo
-            echo "=== process cleanup ==="
-            kill "$APP_PID" >/dev/null 2>&1 || true
-            kill "$XVFB_PID" >/dev/null 2>&1 || true
-          } >> "$KDE_DEBUG_LOG" 2>&1
+          kill "$APP_PID" >/dev/null 2>&1 || true
+          kill "$XVFB_PID" >/dev/null 2>&1 || true
       - uses: actions/upload-artifact@v4
         with:
           name: kde-screenshot
           path: ~/kde-screenshot.png
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kde-debug-logs
-          path: |
-            ~/kde-debug.log
-            ~/kde-app.stdout.log
-            ~/kde-app.stderr.log
   windows:
     runs-on: windows-latest
     steps:
