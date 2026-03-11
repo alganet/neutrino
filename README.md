@@ -2,7 +2,13 @@
 
 `neutrino` is a single-file, cross-platform launcher that opens a native desktop window containing a web page.
 
-<center><img width=300 src=assets/macos-screenshot.png><img width=300 src=assets/windows-screenshot.png></center>
+<table align="center"><tr>
+<td><img width=300 src=assets/macos-screenshot.png></td>
+<td><img width=300 src=assets/windows-screenshot.png></td>
+</tr><tr>
+<td><img width=300 src=assets/gjs-screenshot.png></td>
+<td><img width=300 src=assets/kde-screenshot.png></td>
+</tr></table>
 
 ---
 
