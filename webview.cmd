@@ -70,13 +70,13 @@ if (":" == "<!--") then : 0 /*\;:\
 EXIT
 script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 find_qt_runtime() {
-    for cmd in qml6 qml qmlscene; do
+    for cmd in qml6 qml; do
         if command -v "$cmd" >/dev/null 2>&1; then
             command -v "$cmd"
             return 0
         fi
     done
-    for path in /usr/lib/qt6/bin/qml /usr/lib/qt5/bin/qml /usr/lib/qt6/bin/qmlscene /usr/lib/qt5/bin/qmlscene; do
+    for path in /usr/lib/qt6/bin/qml; do
         if [ -x "$path" ]; then
             printf '%s\n' "$path"
             return 0
@@ -107,36 +107,34 @@ run_qt() {
     tmp_root="${TMPDIR:-/tmp}/neutrino-qt-${USER:-user}"
     mkdir -p "$tmp_root" || return 1
     tmp_qml="$tmp_root/window.qml"
-    qt_url="https://alganet.github.io/"
-    esc_qt_url="$(printf '%s' "$qt_url" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    tmp_js="$tmp_root/neutrino.js"
 
-    case "$qml_runner" in
-        *6*|*qt6*)
-            qml_imports='import QtQuick
-import QtWebEngine'
-            ;;
-        *)
-            qml_imports='import QtQuick 2.12
-import QtQuick.Window 2.12
-import QtWebEngine 1.7'
-            ;;
-    esac
+    _nw="NeutrinoWebview"
+    printf '.pragma library\n' > "$tmp_js"
+    sed -n "/var ${_nw} = {/,/${_nw}\.run()/{
+        /${_nw}\.run()/d
+        p
+    }" "$script_path" >> "$tmp_js"
 
-    cat > "$tmp_qml" <<EOF
-${qml_imports}
+    cat > "$tmp_qml" <<'EOF'
+import QtQuick
+import QtWebEngine
+import "neutrino.js" as Neutrino
+
 Window {
     id: root
-    width: 900
-    height: 600
+    readonly property var cfg: Neutrino.NeutrinoWebview.config
+    width: cfg.width
+    height: cfg.height
     x: (Screen.width - width) / 2
     y: (Screen.height - height) / 2
     visible: true
-    title: "neutrino - Qt"
+    title: cfg.title + " - Qt"
 
     WebEngineView {
         id: view
         anchors.fill: parent
-        url: "${esc_qt_url}"
+        url: cfg.url
     }
 }
 EOF
