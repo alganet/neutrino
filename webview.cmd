@@ -1,72 +1,89 @@
 if (":" == "<!--") then : 0 /*\;:\
 @ECHO OFF||:;fi;:||REM<<'EXIT'
+GOTO :W
+SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+SPDX-License-Identifier: ISC
+:W
+FOR /F %%E IN ('ECHO PROMPT $E ^| CMD') DO SET "ESC=%%E"
 <NUL SET /P =[1A[K[1A
-    SETLOCAL ENABLEEXTENSIONS
+SETLOCAL ENABLEEXTENSIONS ENABLEDELAYEDEXPANSION
+SET "SCRIPT_NAME=%~n0"
+SET "SCRIPT_DIR=%~dp0"
+SET "APP_FOLDER=%SCRIPT_DIR%%SCRIPT_NAME%"
+SET "FX_DIR=%WINDIR%\Microsoft.NET\Framework\v4.0.30319"
+SET "JSC=%FX_DIR%\jsc.exe"
+SET "MANIFEST=%APP_FOLDER%\%SCRIPT_NAME%.exe.manifest"
+SET "WEBVIEW2_ROOT=%APP_FOLDER%\Microsoft.Web.WebView2"
 
-    SET "SCRIPT_NAME=%~n0"
-    SET "SCRIPT_DIR=%~dp0"
-    SET "APP_FOLDER=%SCRIPT_DIR%%SCRIPT_NAME%"
-    SET "FX_DIR=%WINDIR%\Microsoft.NET\Framework\v4.0.30319"
+IF NOT EXIST "%JSC%" (
+    SET "FX_DIR=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319"
     SET "JSC=%FX_DIR%\jsc.exe"
-    SET "MANIFEST=%APP_FOLDER%\%SCRIPT_NAME%.exe.manifest"
-    SET "WEBVIEW2_ROOT=%APP_FOLDER%\Microsoft.Web.WebView2"
+)
 
-    IF NOT EXIST "%JSC%" (
-        SET "FX_DIR=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319"
-        SET "JSC=%FX_DIR%\jsc.exe"
-    )
+IF NOT EXIST "%JSC%" ( EXIT /B 1 )
 
-    IF NOT EXIST "%JSC%" ( EXIT /B 1 )
+IF NOT EXIST "%APP_FOLDER%" MKDIR "%APP_FOLDER%"
+IF ERRORLEVEL 1 EXIT /B 1
 
-    IF NOT EXIST "%APP_FOLDER%" MKDIR "%APP_FOLDER%"
-    IF ERRORLEVEL 1 EXIT /B 1
+IF EXIST "%APP_FOLDER%\%SCRIPT_NAME%.exe" (
+    GOTO :START_APP
+)
 
-    IF EXIST "%APP_FOLDER%\%SCRIPT_NAME%.exe" (
-        GOTO :START_APP
-    )
+SET "MSG=Your application is getting ready to run for the first time..."
+SET "N=0"
+FOR /F "tokens=2 delims=:" %%A IN ('MODE CON ^| FINDSTR [0-9]') DO (
+    SET /A N+=1
+    IF !N!==1 SET /A ROWS=%%A
+    IF !N!==2 SET /A COLS=%%A
+)
+SET /A HALF_ROW=ROWS / 2
+SET /A PAD="(COLS - 62) / 2"
+SET "SPACES="
+FOR /L %%I IN (1,1,!PAD!) DO SET "SPACES=!SPACES! "
+CLS
+<NUL SET /P =[!HALF_ROW!;1H!SPACES!!MSG!
 
-    "%JSC%" /nologo /debug- /t:winexe /out:"%APP_FOLDER%\%SCRIPT_NAME%.exe" ^
-        /autoref+ ^
-        /lib:"%FX_DIR%" ^
-        /r:"%FX_DIR%\mscorlib.dll" ^
-        /r:"%FX_DIR%\System.dll" ^
-        /r:"%FX_DIR%\System.Configuration.dll" ^
-        /r:"%FX_DIR%\Accessibility.dll" ^
-        /r:"%FX_DIR%\System.Drawing.dll" ^
-        /r:"%FX_DIR%\System.Windows.Forms.dll" ^
-        "%~f0"
-        SET "JSC_EXIT=%ERRORLEVEL%"
-        IF NOT "%JSC_EXIT%"=="0" EXIT /B %JSC_EXIT%
+"%JSC%" /nologo /debug- /t:winexe /out:"%APP_FOLDER%\%SCRIPT_NAME%.exe" ^
+    /autoref+ ^
+    /lib:"%FX_DIR%" ^
+    /r:"%FX_DIR%\mscorlib.dll" ^
+    /r:"%FX_DIR%\System.dll" ^
+    /r:"%FX_DIR%\System.Configuration.dll" ^
+    /r:"%FX_DIR%\Accessibility.dll" ^
+    /r:"%FX_DIR%\System.Drawing.dll" ^
+    /r:"%FX_DIR%\System.Windows.Forms.dll" ^
+    "%~f0"
+    SET "JSC_EXIT=%ERRORLEVEL%"
+    IF NOT "%JSC_EXIT%"=="0" EXIT /B %JSC_EXIT%
 
-    > "%MANIFEST%" (
-        ECHO ^<?xml version="1.0" encoding="UTF-8" standalone="yes"?^>
-        ECHO ^<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"^>
-        ECHO   ^<assemblyIdentity version="1.0.0.0" processorArchitecture="*" name="neutrino.webview" type="win32" /^>
-        ECHO   ^<description^>neutrino webview^</description^>
-        ECHO   ^<compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1"^>
-        ECHO     ^<application^>
-        ECHO       ^<supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" /^>
-        ECHO       ^<supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}" /^>
-        ECHO       ^<supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" /^>
-        ECHO       ^<supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}" /^>
-        ECHO       ^<supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}" /^>
-        ECHO     ^</application^>
-        ECHO   ^</compatibility^>
-        ECHO   ^<application xmlns="urn:schemas-microsoft-com:asm.v3"^>
-        ECHO     ^<windowsSettings^>
-        ECHO       ^<dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings"^>true/pm^</dpiAware^>
-        ECHO       ^<dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings"^>PerMonitorV2, PerMonitor^</dpiAwareness^>
-        ECHO     ^</windowsSettings^>
-        ECHO   ^</application^>
-        ECHO ^</assembly^>
-    )
+> "%MANIFEST%" (
+    ECHO ^<?xml version="1.0" encoding="UTF-8" standalone="yes"?^>
+    ECHO ^<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"^>
+    ECHO   ^<assemblyIdentity version="1.0.0.0" processorArchitecture="*" name="neutrino.webview" type="win32" /^>
+    ECHO   ^<description^>neutrino webview^</description^>
+    ECHO   ^<compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1"^>
+    ECHO     ^<application^>
+    ECHO       ^<supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" /^>
+    ECHO       ^<supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}" /^>
+    ECHO       ^<supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" /^>
+    ECHO       ^<supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}" /^>
+    ECHO       ^<supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}" /^>
+    ECHO     ^</application^>
+    ECHO   ^</compatibility^>
+    ECHO   ^<application xmlns="urn:schemas-microsoft-com:asm.v3"^>
+    ECHO     ^<windowsSettings^>
+    ECHO       ^<dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings"^>true/pm^</dpiAware^>
+    ECHO       ^<dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings"^>PerMonitorV2, PerMonitor^</dpiAwareness^>
+    ECHO     ^</windowsSettings^>
+    ECHO   ^</application^>
+    ECHO ^</assembly^>
+)
 
-    :START_APP
-    SET "NEUTRINO_SCRIPT_PATH=%~f0"
-    START "" /D "%APP_FOLDER%" "%APP_FOLDER%\%SCRIPT_NAME%.exe"
-    IF ERRORLEVEL 1 EXIT /B 1
-    EXIT /B 0
-
+:START_APP
+SET "NEUTRINO_SCRIPT_PATH=%~f0"
+START "" /D "%APP_FOLDER%" "%APP_FOLDER%\%SCRIPT_NAME%.exe"
+IF ERRORLEVEL 1 EXIT /B 1
+EXIT /B 0
 EXIT
 script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 find_qt_runtime() {

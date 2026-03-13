@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+
+SPDX-License-Identifier: ISC
+-->
+
 # neutrino
 
 `neutrino` is a single-file, cross-platform launcher that opens a native desktop window containing a web page.
