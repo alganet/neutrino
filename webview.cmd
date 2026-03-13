@@ -85,38 +85,28 @@ find_qt_runtime() {
     return 1
 }
 
-extract_embedded_html() {
-    awk '
-        BEGIN { found = 0 }
-        {
-            lower = tolower($0)
-            if (!found && lower ~ /^<!doctype html><html><head><meta charset="utf-8"><\/head>/) {
-                found = 1
-            }
-            if (found) {
-                print
-            }
-        }
-    ' "$script_path"
-}
-
 run_qt() {
     qml_runner="$1"
     [ -z "$qml_runner" ] && return 1
 
-    tmp_root="${TMPDIR:-/tmp}/neutrino-qt-${USER:-user}"
-    mkdir -p "$tmp_root" || return 1
-    tmp_qml="$tmp_root/window.qml"
-    tmp_js="$tmp_root/neutrino.js"
+    script_dir="$(dirname "$script_path")"
+    script_name="$(basename "$script_path")"
+    script_name="${script_name%.*}"
+    app_dir="$script_dir/$script_name"
+    mkdir -p "$app_dir" || return 1
+    app_qml="$app_dir/window.qml"
+    app_config_js="$app_dir/neutrino.js"
 
-    _nw="NeutrinoWebview"
-    printf '.pragma library\n' > "$tmp_js"
-    sed -n "/var ${_nw} = {/,/${_nw}\.run()/{
-        /${_nw}\.run()/d
-        p
-    }" "$script_path" >> "$tmp_js"
+    cat > "$app_config_js" <<JSEOF
+.pragma library
+var NeutrinoQml = true
+var xhr = new XMLHttpRequest()
+xhr.open("GET", "file://$script_path", false)
+xhr.send()
+eval(xhr.responseText)
+JSEOF
 
-    cat > "$tmp_qml" <<'EOF'
+    cat > "$app_qml" <<'EOF'
 import QtQuick
 import QtWebEngine
 import "neutrino.js" as Neutrino
@@ -139,13 +129,14 @@ Window {
 }
 EOF
 
-    [ ! -s "$tmp_qml" ] && return 1
+    [ ! -s "$app_qml" ] && return 1
     [ "$QTWEBENGINE_DISABLE_SANDBOX" = "1" ] && QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS} --no-sandbox"
 
+    QML_XHR_ALLOW_FILE_READ=1 \
     QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" \
     LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}" \
     QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---disable-dev-shm-usage}" \
-    "$qml_runner" "$tmp_qml"
+    "$qml_runner" "$app_qml"
 }
 
 if command -v gjs >/dev/null 2>&1
@@ -255,6 +246,9 @@ exit $?;:<<'//</script></head><body></body>' #-->
             }
             if (this.hasGlobalExpr("typeof imports !== 'undefined' && !!imports.gi")) {
                 this.runGjs();
+                return;
+            }
+            if (this.hasGlobalExpr("typeof NeutrinoQml !== 'undefined'")) {
                 return;
             }
             if (this.hasGlobalExpr("typeof window !== 'undefined'")) {
