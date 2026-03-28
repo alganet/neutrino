@@ -11,33 +11,45 @@ jobs:
       - uses: actions/checkout@v6
       - run: |
           sudo apt update
-          sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity gir1.2-webkit2-4.1 \
-            || sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity gir1.2-webkit2-4.0
+          sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity \
+            xdotool x11-utils \
+            gir1.2-webkit2-4.1 \
+            || sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity \
+            xdotool x11-utils \
+            gir1.2-webkit2-4.0
+      - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
           Xvfb :99 -screen 0 1024x768x24 &
-          sleep 5
+          sleep 3
           metacity &
-          xsetroot -solid "#112233" &
-          bash webview.cmd &
-          sleep 10
-          import -window root ~/gjs-screenshot.png
+          sleep 2
+          xsetroot -solid "#112233"
+          bash test/neutrinotest.cmd &
+          APP_PID=$!
+          bash test/verify-linux.sh ~/screenshots
+          TEST_EXIT=$?
+          kill "$APP_PID" 2>/dev/null || true
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          archive: false
-          name: gjs-screenshot
-          path: ~/gjs-screenshot.png
+          name: gjs-screenshots
+          path: ~/screenshots/
   kde:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - run: |
           sudo apt update
-          sudo apt install -y xvfb imagemagick x11-xserver-utils x11-utils mesa-utils libgl1-mesa-dri libegl-mesa0 openbox qt6-declarative-dev-tools qml6-module-qtwebengine qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
+          sudo apt install -y xvfb imagemagick x11-xserver-utils x11-utils mesa-utils libgl1-mesa-dri libegl-mesa0 openbox \
+            xdotool \
+            qt6-declarative-dev-tools qml6-module-qtwebengine qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
           if ! command -v qml6 >/dev/null 2>&1 && ! command -v qml >/dev/null 2>&1 && ! command -v qmlscene6 >/dev/null 2>&1 && ! command -v qmlscene-qt6 >/dev/null 2>&1; then
             sudo apt install -y qml6 || sudo apt install -y qml-qt6 || sudo apt install -y qmlscene-qt6 || true
           fi
+      - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: |
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb
@@ -48,64 +60,54 @@ jobs:
           chmod 700 "$XDG_RUNTIME_DIR"
 
           Xvfb :99 -screen 0 1024x768x24 &
-          XVFB_PID=$!
-          sleep 5
-
-          xsetroot -solid "#112233" &
-
+          sleep 3
           openbox &
-          dbus-run-session -- bash webview.cmd &
+          sleep 2
+          xsetroot -solid "#112233"
+          dbus-run-session -- bash test/neutrinotest.cmd &
           APP_PID=$!
-
-          sleep 15
-
-          import -window root ~/kde-screenshot.png
-
-          kill "$APP_PID" >/dev/null 2>&1 || true
-          kill "$XVFB_PID" >/dev/null 2>&1 || true
+          bash test/verify-linux.sh ~/screenshots
+          TEST_EXIT=$?
+          kill "$APP_PID" 2>/dev/null || true
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          archive: false
-          name: kde-screenshot
-          path: ~/kde-screenshot.png
+          name: kde-screenshots
+          path: ~/screenshots/
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+      - shell: bash
+        run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - shell: pwsh
         run: |
-          .\webview.cmd
-          $deadline = (Get-Date).AddSeconds(30)
-          do {
-            $p = Get-Process windows-app -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($p -and $p.MainWindowHandle -ne 0) { break }
-            Start-Sleep -Milliseconds 500
-          } while ((Get-Date) -lt $deadline)
-          Start-Sleep -Seconds 15
-          Add-Type -AssemblyName System.Drawing
-          Add-Type -AssemblyName System.Windows.Forms
-          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-          $graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size)
-          $bitmap.Save("$env:USERPROFILE\windows-screenshot.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          $bitmap.Dispose()
-          $graphics.Dispose()
+          .\test\neutrinotest.cmd
+          & .\test\verify-windows.ps1
+          $testExit = $LASTEXITCODE
+          Get-Process | Where-Object { $_.MainWindowTitle -ne "" } | Where-Object { $_.MainWindowTitle -like "*neutrino*" -or $_.MainWindowTitle -like "*STEP*" -or $_.MainWindowTitle -like "*TESTS DONE*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $testExit
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          archive: false
-          name: windows-screenshot
-          path: C:\Users\runneradmin\windows-screenshot.png   
+          name: windows-screenshots
+          path: C:\Users\runneradmin\*.png
   macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
+      - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: |
-          bash webview.cmd &
-          sleep 8
-          screencapture -x ~/macos-screenshot.png
+          echo "=== Launching app ==="
+          bash test/neutrinotest.cmd > ~/neutrino-stdout.log 2>&1 &
+          APP_PID=$!
+          bash test/verify-macos.sh ~/screenshots
+          TEST_EXIT=$?
+          kill "$APP_PID" 2>/dev/null || true
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          archive: false
-          name: macos-screenshot
-          path: ~/macos-screenshot.png
+          name: macos-screenshots
+          path: ~/screenshots/
