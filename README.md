@@ -6,7 +6,9 @@ SPDX-License-Identifier: ISC
 
 # neutrino
 
-`neutrino` is a single-file, cross-platform launcher that opens a native desktop window containing a web page.
+`neutrino` is a single-file, cross-platform desktop launcher that opens a native window containing a web page. 
+
+It uses one polyglot entrypoint (`webview.cmd`) that runs on Windows, Linux, and macOS with no dependencies beyond what each OS provides.
 
 <table align="center"><tr>
 <td><img width=300 src=assets/macos-screenshot.png></td>
@@ -18,33 +20,65 @@ SPDX-License-Identifier: ISC
 
 ---
 
-It uses one polyglot entrypoint (`webview.cmd`) that can run on:
+## Platforms
 
-- Windows (`cmd` + JScript.NET + WinForms/WebView2)
-- Linux (`sh` + `gjs`/GTK WebKit, with Qt QML fallback)
-- macOS (`sh` + `osascript`/JXA + Cocoa WebKit)
+| Platform        | Runtime                         | Web Engine             |
+|-----------------|---------------------------------|------------------------|
+| **Windows**     | `cmd` + JScript.NET (`jsc.exe`) | WebView2 (Chromium)    |
+| **Linux/GNOME** | `sh` + `gjs`                    | GTK WebKit2            |
+| **Linux/KDE**   | `sh` + Qt QML runtime           | QtWebEngine (Chromium) |
+| **macOS**       | `sh` + `osascript` (JXA)        | WKWebView (WebKit)     |
 
-Default page:
-
-- `https://alganet.github.io/` (for testing purposes, can be changed)
+On Unix-like systems, the script tries runtimes in order: `gjs` > Qt QML > `osascript`.
 
 ---
 
 ## How it works
 
-`webview.cmd` is intentionally written as a multi-runtime script.
+`webview.cmd` is a polyglot file that is simultaneously valid as a Windows batch script, a Unix shell script, JavaScript, and an HTML document. Each platform runtime loads the same file, creates a native window, and renders the embedded HTML in a webview.
 
-- On **Windows**, it compiles its embedded JScript.NET section with `jsc.exe` to an executable and launches it.
-- On **Linux/macOS**, it behaves like a shell script that invokes the best available runtime.
-- The same file also embeds an HTML payload used by the runtime-specific logic.
+The embedded JavaScript includes the `NeutrinoWebview` object which detects the runtime environment and dispatches to a platform-specific driver. Each driver implements a common interface (`createWindow`, `createWebView`, `loadHTML`, etc.) called by a shared `boot()` orchestrator.
 
-The script automatically tries available runtimes in this order on Unix-like systems:
+When the webview loads the HTML, the script runs again in the browser context and calls `runWeb()` , the entry point for the web application.
 
-1. `gjs`
-2. Qt QML runtime (`qml6`, `qmlscene6`, `qmlscene-qt6`, `qml`, `qmlscene`)
-3. `osascript` (macOS)
+---
 
-The QML runtime integration is currently experimental and under development.
+## Building apps
+
+Use `build.sh` to embed your JavaScript into a neutrino polyglot:
+
+```bash
+./build.sh myapp.js myapp.cmd
+```
+
+This replaces the `runWeb()` body (between `//#RUNWEB_START` and `//#RUNWEB_END` markers) with your JS file. The resulting `.cmd` file is a self-contained app that runs on all platforms.
+
+Your JS runs in the browser context with access to `document`, `window`, and the `window.neutrino` API.
+
+**Note:** Use `eval("window")` and `eval("document")` instead of bare globals to avoid JScript.NET compile errors (the same file is compiled by `jsc.exe` on Windows where these globals don't exist at compile time).
+
+---
+
+## IPC API
+
+The `window.neutrino` API is injected into the webview on all platforms, enabling web content to control the native window:
+
+```javascript
+var win = eval("window");
+
+// Window management
+win.neutrino.window.setTitle("My App");
+win.neutrino.window.resize(800, 600);
+win.neutrino.window.move(100, 50);
+
+// Shell integration
+win.neutrino.shell.openExternal("https://example.com");
+
+// Low-level message passing
+win.neutrino.send("actionName", { key: "value" });
+```
+
+All coordinates use top-left origin on every platform (macOS coordinates are normalized internally).
 
 ---
 
@@ -52,69 +86,56 @@ The QML runtime integration is currently experimental and under development.
 
 ### Windows
 
-- .NET Framework with `jsc.exe` (v4.x) - Available on modern Windows machines by default.
-- WebView2 runtime installed - Downloaded with progress bar upon first run.
+- .NET Framework with `jsc.exe` (v4.x), available on modern Windows by default.
+- WebView2 runtime, downloaded automatically with progress bar on first run.
 
 ### Linux
 
-- Preferred: `gjs` + GTK/WebKit2 bindings - Available on all major GNOME distros.
-- Fallback: Qt runtime with `QtWebEngine` - Available on all major KDE distros.
+- **GNOME:** `gjs` + GTK/WebKit2 bindings, available on all major GNOME distros.
+- **KDE:** Qt QML runtime + QtWebEngine, available on all major KDE distros.
 
 ### macOS
 
-- `osascript` with JavaScript support (JXA) - Available on macos by default.
+- `osascript` with JavaScript support (JXA), available by default.
 
 ---
 
 ## Run
 
-From the project root:
-
-### Linux / macOS
-
 ```bash
+# Linux / macOS
 chmod +x webview.cmd
 ./webview.cmd
-```
 
-### Windows
-
-```bat
+# Windows
 webview.cmd
 ```
 
 ---
 
-## Configuration
+## Testing
 
-### Page URL
+The test suite verifies IPC works end-to-end on all platforms:
 
-- Default URL is embedded in the script as `https://alganet.github.io/`.
+```bash
+# Build the test app
+./build.sh test/neutrinotest.js test/neutrinotest.cmd
 
-### Script path propagation
-
-- The launcher exports `NEUTRINO_SCRIPT_PATH` so child runtimes can resolve the source script consistently.
-
----
-
-## Output layout (Windows)
-
-When executed as `webview.cmd`, Windows creates/uses a sibling directory named after the script base name:
-
-```text
-./webview.cmd
-./webview/
-  webview.exe
-  webview.exe.manifest
-  ...runtime assets...
+# Run with verification (Linux, requires xdotool)
+bash test/neutrinotest.cmd &
+bash test/verify-linux.sh screenshots/
 ```
+
+Tests exercise `setTitle`, `resize`, and `move` with external scripts that poll window state and assert expected values. CI runs these automatically on all four platforms.
 
 ---
 
 ## Repository
 
-- `webview.cmd` — polyglot entrypoint and runtime implementation
-- `LICENSE` — ISC license
+- `webview.cmd`: polyglot entrypoint and runtime
+- `build.sh`: polyglot assembler (JS + template -> .cmd)
+- `test/`: test harness and platform verification scripts
+- `LICENSE`: ISC license
 
 ---
 
