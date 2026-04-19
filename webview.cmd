@@ -474,6 +474,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                             );
                         }
                     } catch (_) {}
+                    dollar.NSApp.setActivationPolicy(0);
                     app.run();
                 }
             };
