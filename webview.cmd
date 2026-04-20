@@ -349,6 +349,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
             var messageCallback = null;
             var lastDocTitle = "";
             var webViewRef = null;
+            var windowDelegateRef = null;
 
             return {
                 webMessageTransport: "function(m){document.title='__NEUTRINO__'+m;}",
@@ -356,6 +357,18 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     ObjCRef["import"]("Cocoa");
                     ObjCRef["import"]("WebKit");
                     app = dollar.NSApplication.sharedApplication;
+                    ObjCRef.registerSubclass({
+                        name: "NeutrinoWindowDelegate",
+                        superclass: "NSObject",
+                        methods: {
+                            "windowWillClose:": {
+                                types: ["void", ["id"]],
+                                implementation: function () {
+                                    try { app.terminate(null); } catch (_) {}
+                                }
+                            }
+                        }
+                    });
                 },
                 readFile: function (path) {
                     var data = dollar.NSData.dataWithContentsOfFile(path);
@@ -381,6 +394,8 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     );
                     win.title = config.title + " - macOS";
                     try { win.center(); } catch (_) {}
+                    windowDelegateRef = dollar.NeutrinoWindowDelegate.alloc.init;
+                    win["delegate"] = windowDelegateRef;
                     this.writeStatus(config.title + " - macOS", win);
                     return win;
                 },
@@ -426,6 +441,9 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     var macY = this.toMacY(y, frame.size.height);
                     win.setFrameDisplay(dollar.NSMakeRect(x, macY, frame.size.width, frame.size.height), true);
                     this.writeStatus(String(win.title), win);
+                },
+                "close": function (win) {
+                    win.performClose(null);
                 },
                 openExternal: function (url) {
                     dollar.NSWorkspace.sharedWorkspace.openURL(dollar.NSURL.URLWithString(url));
@@ -577,7 +595,8 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 'window:{' +
                 'setTitle:function(t){window.neutrino.send("setTitle",{title:t});},' +
                 'resize:function(w,h){window.neutrino.send("resize",{width:w,height:h});},' +
-                'move:function(x,y){window.neutrino.send("move",{x:x,y:y});}' +
+                'move:function(x,y){window.neutrino.send("move",{x:x,y:y});},' +
+                'close:function(){window.neutrino.send("close");}' +
                 '}' +
                 '};' +
                 '})();';
@@ -618,6 +637,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 if (driverRef.setTitle) actions.setTitle = function (m) { try { driverRef.setTitle(winRef, m.title); } catch (_) {} };
                 if (driverRef.resize) actions.resize = function (m) { try { driverRef.resize(winRef, m.width, m.height); } catch (_) {} };
                 if (driverRef.move) actions.move = function (m) { try { driverRef.move(winRef, m.x, m.y); } catch (_) {} };
+                if (typeof driverRef["close"] === "function") actions["close"] = function (m) { try { driverRef["close"](winRef); } catch (_) {} };
                 if (driverRef.openExternal) actions.openExternal = function (m) { try { driverRef.openExternal(m.url); } catch (_) {} };
                 driver.onWebMessage(function (json) {
                     self.routeMessage(actions, json);

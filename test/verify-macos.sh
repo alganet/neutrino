@@ -129,6 +129,23 @@ echo "=== Waiting for TESTS DONE ==="
 wait_for_title "TESTS DONE" || { echo "FAIL: tests never completed"; exit 1; }
 screenshot "05-done"
 
+echo "=== Step 4: close fires window delegate, terminates osascript ==="
+if [ -n "${APP_PID:-}" ]; then
+    exit_deadline=$((SECONDS + 10))
+    while [ $SECONDS -lt $exit_deadline ]; do
+        kill -0 "$APP_PID" 2>/dev/null || break
+        sleep $POLL_INTERVAL
+    done
+    if kill -0 "$APP_PID" 2>/dev/null; then
+        echo "  FAIL: process $APP_PID still running 10s after window.close()"
+        FAILURES=$((FAILURES + 1))
+    else
+        echo "  PASS: process $APP_PID exited after window.close()"
+    fi
+else
+    echo "  SKIP: APP_PID not provided"
+fi
+
 echo ""
 echo "=== Results: $FAILURES failure(s) ==="
 exit $FAILURES
