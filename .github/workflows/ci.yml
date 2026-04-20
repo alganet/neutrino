@@ -102,7 +102,7 @@ jobs:
           echo "=== Launching app ==="
           bash test/neutrinotest.cmd > ~/neutrino-stdout.log 2>&1 &
           APP_PID=$!
-          bash test/verify-macos.sh ~/screenshots
+          APP_PID=$APP_PID bash test/verify-macos.sh ~/screenshots
           TEST_EXIT=$?
           kill "$APP_PID" 2>/dev/null || true
           exit $TEST_EXIT
