@@ -200,7 +200,16 @@ EOF
 }
 
 if command -v gjs >/dev/null 2>&1
-then NEUTRINO_SCRIPT_PATH="$script_path" gjs "$script_path"
+then
+    # gjs is a system binary; a bundled caller (snap, flatpak, AppImage, ...)
+    # may export GLib/GTK loader overrides pointing at its own libraries,
+    # which then get loaded against the system glibc and crash. Clear them so
+    # gjs resolves modules from the system defaults.
+    unset GTK_PATH GTK_EXE_PREFIX GTK_IM_MODULE_FILE \
+          GDK_PIXBUF_MODULE_FILE GDK_PIXBUF_MODULEDIR \
+          GIO_MODULE_DIR GSETTINGS_SCHEMA_DIR LOCPATH \
+          LD_PRELOAD LD_LIBRARY_PATH
+    NEUTRINO_SCRIPT_PATH="$script_path" gjs "$script_path"
 elif qt_runner="$(find_qt_runtime)"
 then run_qt "$qt_runner"
 elif command -v osascript >/dev/null 2>&1
@@ -329,7 +338,10 @@ exit $?;:<<'//</script></head><body></body>' #-->
         resolveLinuxWebKitVersion: function () {
             var importsRef = eval("imports");
             var GIRepository = importsRef["gi"]["GIRepository"];
-            var repository = GIRepository["Repository"]["get_default"]();
+            var Repository = GIRepository["Repository"];
+            var repository = Repository["dup_default"]
+                ? Repository["dup_default"]()
+                : Repository["get_default"]();
             var versions = repository.enumerate_versions("WebKit2");
 
             if (versions.indexOf("4.1") !== -1) {
