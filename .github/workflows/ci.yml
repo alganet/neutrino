@@ -32,11 +32,21 @@ jobs:
           TEST_EXIT=$?
           kill "$APP_PID" 2>/dev/null || true
           exit $TEST_EXIT
+      - name: netinstall suite
+        timeout-minutes: 20
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
+          bash netinstall/test/run.sh
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: gjs-screenshots
-          path: ~/screenshots/
+          path: |
+            ~/screenshots/
+            ~/netinstall-screenshots/
   kde:
     runs-on: ubuntu-latest
     steps:
@@ -70,11 +80,27 @@ jobs:
           TEST_EXIT=$?
           kill "$APP_PID" 2>/dev/null || true
           exit $TEST_EXIT
+      - name: netinstall suite
+        timeout-minutes: 20
+        run: |
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export QTWEBENGINE_DISABLE_SANDBOX=1
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
+          dbus-run-session -- bash netinstall/test/run.sh
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: kde-screenshots
-          path: ~/screenshots/
+          path: |
+            ~/screenshots/
+            ~/netinstall-screenshots/
   windows:
     runs-on: windows-latest
     steps:
@@ -88,11 +114,24 @@ jobs:
           $testExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -ne "" } | Where-Object { $_.MainWindowTitle -like "*neutrino*" -or $_.MainWindowTitle -like "*STEP*" -or $_.MainWindowTitle -like "*TESTS DONE*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - name: netinstall suite
+        timeout-minutes: 20
+        shell: bash
+        env:
+          NETINSTALL_CC: zig cc
+        run: |
+          export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
+          bash netinstall/test/run.sh
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: windows-screenshots
-          path: C:\Users\runneradmin\*.png
+          path: |
+            C:\Users\runneradmin\*.png
+            C:\Users\runneradmin\netinstall-screenshots\
   macos:
     runs-on: macos-latest
     steps:
@@ -106,8 +145,28 @@ jobs:
           TEST_EXIT=$?
           kill "$APP_PID" 2>/dev/null || true
           exit $TEST_EXIT
+      - name: netinstall suite
+        timeout-minutes: 20
+        run: |
+          export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
+          bash netinstall/test/run.sh
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: macos-screenshots
-          path: ~/screenshots/
+          path: |
+            ~/screenshots/
+            ~/netinstall-screenshots/
+  netinstall-cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - run: bash netinstall/build.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: netinstall-binaries
+          path: netinstall/dist/

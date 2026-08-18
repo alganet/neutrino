@@ -3,6 +3,8 @@
 #
 # verify-windows.ps1 - External test verifier for Windows
 
+param([string]$ScreenshotDir = $env:USERPROFILE)
+
 $ErrorActionPreference = "Stop"
 
 Add-Type -AssemblyName System.Drawing
@@ -20,8 +22,9 @@ public class WinAPI {
 
 $Timeout = 120
 $PollInterval = 500
-$ScreenshotDir = $env:USERPROFILE
 $Failures = 0
+
+New-Item -ItemType Directory -Force -Path $ScreenshotDir | Out-Null
 
 function Take-Screenshot($name) {
     try {
