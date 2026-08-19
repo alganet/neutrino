@@ -135,7 +135,7 @@ and the network, so "deny everything" is not on the table.
 | **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted. |
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, plus read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles. |
-| **Windows** | Job object — process limits only. **No filesystem confinement.** |
+| **Windows** | Job object — process limits only. **No filesystem confinement** by default; see the tight tier. |
 | **FreeBSD** | None. |
 
 If nothing is available the binary **runs anyway and warns on stderr**, naming what was and
@@ -152,7 +152,7 @@ ABI 9, so an app can still reach whatever sockets exist:
 - **X11** lets any client keylog and screenshot every other client. On an X11 session, the
   filesystem restriction is the only thing that holds.
 
-### Why Linux restricts writes but not reads
+### Why Linux restricts writes but not reads by default
 
 A read allowlist forces WebKitGTK's `bubblewrap` and Chromium's zygote to fight our ruleset, and
 Landlock unconditionally denies `mount` and `pivot_root` to any domain that handles a filesystem
@@ -160,6 +160,45 @@ right — by design, even inside a fresh namespace. `PR_SET_NO_NEW_PRIVS`, which
 also neuters Chromium's SUID sandbox helper. Buying our allowlist by disabling the renderer's own
 sandbox trades protection from the app author for protection from web content, and that is not
 obviously a win. The XDG redirection above gets most of the benefit for none of that cost.
+
+### The tight tier (experimental)
+
+Building with `-DNEUTRINO_CONFINE_TIGHT` turns on a second, stronger tier. It means something
+different on each platform, because the mechanisms differ in what they can express:
+
+| Platform | What the tight tier adds |
+|---|---|
+| **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default. |
+| **macOS** | Seatbelt denies reads of all of `$HOME` rather than a named list of secrets. |
+| **Windows** | The process drops to low integrity, so writes outside the app dir fail. |
+| **OpenBSD** | Nothing — `unveil` is already an allowlist, so the default tier is the tight one. |
+
+On Linux and macOS the allowlist is the system tree plus the handful of `$HOME` subpaths a GTK,
+Qt or Cocoa app reads on the way up: fonts, icons, themes, and the toolkit's own settings.
+Everything else in `$HOME` is denied, which is what finally puts `~/.ssh`, `~/.gnupg`, `~/.aws`
+and browser profiles out of reach. `--info` reports `reads and writes confined to ...`.
+
+**Windows confines writes, not reads.** Low integrity is a no-write-up rule; a low-IL process can
+still read `~/.ssh` and browser cookie stores. Only an AppContainer would close that, and it is
+documented to break WebView2. The suite asserts this limitation explicitly rather than letting
+the tier look stronger than it is.
+
+**The Windows tier does not work for GUI apps.** Measured in CI, not assumed: `jsc.exe` does still
+compile at low integrity once `%TEMP%` is redirected, but WebView2 never renders a window, which
+is what Microsoft documents for low-IL hosts. So on Windows this tier is only useful for payloads
+that do not open a webview — which netinstall does run, since it is a general script runner. The
+suite records the outcome rather than failing on it, so it will tell you if that ever changes.
+
+Two consequences of the layout are worth knowing if you change it. The script sits one level
+above the writable directory so an app cannot rewrite its own launcher — and once reads are
+confined, that same split hides the script from `sh`, so the parent is granted read and execute
+and nothing more. On Windows the app dir must carry a Low mandatory label or the app cannot write
+its own files, and `%TEMP%` has to be redirected because it does not relocate on its own at low
+integrity, which would otherwise break `jsc.exe`.
+
+It is off by default because the benefit was not proven when it was written. `test/confine-strict.sh`
+is what settles it: it asserts the tier actually holds, then launches a real webview under it and
+fails if it cannot start.
 
 ### Why Windows gets so little
 
@@ -179,6 +218,10 @@ close would take the app down with it.
 ./build.sh host     # just this machine, needs cc
 ```
 
+Two build-time flags change behaviour rather than platform: `-DNEUTRINO_STRICT_SANDBOX` refuses to
+run when no confinement is available instead of warning, and `-DNEUTRINO_CONFINE_TIGHT` enables the
+experimental tier described above. Pass them through `NETINSTALL_CFLAGS`.
+
 Targets: `linux-{x86_64,aarch64}` (musl, static), `macos-{x86_64,arm64}`,
 `windows-{x86_64,aarch64}`. OpenBSD and FreeBSD build natively with `./build.sh host`.
 
@@ -188,10 +231,11 @@ Targets: `linux-{x86_64,aarch64}` (musl, static), `macos-{x86_64,arm64}`,
 test/run.sh
 ```
 
-Builds both a release and a `-DNEUTRINO_TESTING` binary and runs four suites: `names.sh` (the
-grammar, accepted and rejected), `verify.sh` (pin mismatch, non-text payloads, oversized
-responses, offline cache, tampered cache), `confine.sh` (a hostile script that tries to escape),
-and `e2e.sh` (a real neutrino polyglot fetched, verified and launched).
+Builds a release binary, a `-DNEUTRINO_TESTING` binary and a `-DNEUTRINO_CONFINE_TIGHT` one, then
+runs five suites: `names.sh` (the grammar, accepted and rejected), `verify.sh` (pin mismatch,
+non-text payloads, oversized responses, offline cache, tampered cache), `confine.sh` (a hostile
+script that tries to escape), `confine-strict.sh` (the tight tier, and whether a webview still
+starts under it), and `e2e.sh` (a real neutrino polyglot fetched, verified and launched).
 
 The `NEUTRINO_TEST_ORIGIN` override the suite needs to serve fixtures from loopback is compiled
 in only under `-DNEUTRINO_TESTING`; release binaries ignore it entirely.

@@ -45,6 +45,21 @@
  * IOCTL_DEV is likewise left unhandled: handling it means granting it on
  * /dev/dri or losing the GPU, for no benefit here.
  */
+/*
+ * Opt-in second tier. Handling read rights turns the ruleset into an allowlist
+ * for reads too, which is the only way to put $HOME/.ssh out of reach -- but it
+ * is also what risks starving WebKitGTK's bubblewrap and Chromium's zygote, so
+ * it is a build-time choice and the default stays writes-only.
+ */
+#ifdef NEUTRINO_CONFINE_TIGHT
+#define NT_READ_RIGHTS ( \
+    LANDLOCK_ACCESS_FS_READ_FILE | \
+    LANDLOCK_ACCESS_FS_READ_DIR | \
+    LANDLOCK_ACCESS_FS_EXECUTE)
+#else
+#define NT_READ_RIGHTS 0ULL
+#endif
+
 #define NT_WRITE_RIGHTS ( \
     LANDLOCK_ACCESS_FS_WRITE_FILE | \
     LANDLOCK_ACCESS_FS_REMOVE_DIR | \
@@ -90,11 +105,54 @@ static void nt_allow(int ruleset, const char *path, unsigned long long rights)
     close(fd);
 }
 
+#ifdef NEUTRINO_CONFINE_TIGHT
+/*
+ * Everything a GTK or Qt webview reads on the way up. Anything absent here is
+ * denied, which is the point: $HOME as a whole is not on the list.
+ */
+static void nt_allow_system_reads(int ruleset)
+{
+    static const char *const system_paths[] = {
+        "/usr", "/bin", "/sbin", "/lib", "/lib64", "/lib32", "/libx32",
+        "/opt", "/etc", "/sys", "/run", "/tmp/.X11-unix", NULL
+    };
+    static const char *const home_paths[] = {
+        "/.config/fontconfig", "/.config/gtk-3.0", "/.config/gtk-4.0",
+        "/.config/dconf", "/.config/QtProject", "/.config/mimeapps.list",
+        "/.local/share/fonts", "/.local/share/icons", "/.local/share/mime",
+        "/.local/share/applications", "/.local/share/glib-2.0",
+        "/.icons", "/.fonts", "/.themes", "/.Xauthority", NULL
+    };
+    char path[NT_PATH_MAX];
+    const char *userhome;
+    const char *xauth;
+    int i;
+
+    for (i = 0; system_paths[i]; i++) {
+        nt_allow(ruleset, system_paths[i], NT_READ_RIGHTS);
+    }
+
+    userhome = getenv("HOME");
+    if (userhome && *userhome) {
+        for (i = 0; home_paths[i]; i++) {
+            snprintf(path, sizeof(path), "%s%s", userhome, home_paths[i]);
+            nt_allow(ruleset, path, NT_READ_RIGHTS);
+        }
+    }
+
+    /* Without the X cookie an X11 client cannot connect at all. */
+    xauth = getenv("XAUTHORITY");
+    if (xauth && *xauth) {
+        nt_allow(ruleset, xauth, LANDLOCK_ACCESS_FS_READ_FILE);
+    }
+}
+#endif
+
 int nt_confine(nt_phase phase, const char *home, const char *appdir,
                char *desc, size_t desclen)
 {
     struct landlock_ruleset_attr attr;
-    unsigned long long rights = NT_WRITE_RIGHTS;
+    unsigned long long rights = NT_WRITE_RIGHTS | NT_READ_RIGHTS;
     char path[NT_PATH_MAX];
     const char *runtime;
     int abi, ruleset;
@@ -122,17 +180,45 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
     if (phase == NT_PHASE_FETCH) {
         snprintf(path, sizeof(path), "%s/blobs", home);
         nt_allow(ruleset, path, rights);
+#ifdef NEUTRINO_CONFINE_TIGHT
+        nt_allow_system_reads(ruleset);
+        nt_allow(ruleset, "/proc", NT_READ_RIGHTS);
+        nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
+#endif
         snprintf(desc, desclen, "landlock abi %d, writes confined to %s", abi, path);
     } else {
         nt_allow(ruleset, appdir, rights);
-        nt_allow(ruleset, "/dev", LANDLOCK_ACCESS_FS_WRITE_FILE);
+        nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
         nt_allow(ruleset, "/dev/shm", rights);
-        nt_allow(ruleset, "/proc", LANDLOCK_ACCESS_FS_WRITE_FILE);
+        nt_allow(ruleset, "/proc", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
         runtime = getenv("XDG_RUNTIME_DIR");
         if (runtime && *runtime) {
-            nt_allow(ruleset, runtime, LANDLOCK_ACCESS_FS_WRITE_FILE);
+            nt_allow(ruleset, runtime, NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
         }
+#ifdef NEUTRINO_CONFINE_TIGHT
+        /*
+         * The script lives one level above the writable dir so an app cannot
+         * rewrite its own launcher. Once reads are handled that same split
+         * hides the script from sh, so the parent needs read and execute --
+         * and only those, or the split stops meaning anything.
+         */
+        {
+            char parent[NT_PATH_MAX];
+            char *cut;
+
+            snprintf(parent, sizeof(parent), "%s", appdir);
+            cut = strrchr(parent, '/');
+            if (cut && cut != parent) {
+                *cut = '\0';
+                nt_allow(ruleset, parent, NT_READ_RIGHTS);
+            }
+        }
+        nt_allow_system_reads(ruleset);
+        snprintf(desc, desclen,
+                 "landlock abi %d, reads and writes confined to %s", abi, appdir);
+#else
         snprintf(desc, desclen, "landlock abi %d, writes confined to %s", abi, appdir);
+#endif
     }
 
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 || nt_ll_restrict(ruleset) != 0) {

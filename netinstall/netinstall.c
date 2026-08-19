@@ -383,6 +383,22 @@ static void nt_usage(FILE *out, const char *self)
         NT_VERSION, self);
 }
 
+#ifdef _WIN32
+/*
+ * $NEUTRINO_HOME often arrives from a shell as C:/Users/..., and appending with
+ * backslashes leaves a mixed path. Win32 accepts it, but cmd.exe redirection
+ * and %~dp0 are less forgiving, so normalise once here.
+ */
+static void nt_win_slashes(char *p)
+{
+    for (; *p; p++) {
+        if (*p == '/') {
+            *p = '\\';
+        }
+    }
+}
+#endif
+
 /* Truncation would silently point at the wrong path, so make it an error. */
 static int nt_pathf(char *buf, size_t len, const char *fmt, ...)
 {
@@ -591,6 +607,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "netinstall: cache path too long\n");
         return 2;
     }
+#ifdef _WIN32
+    nt_win_slashes(home);
+    nt_win_slashes(blobs);
+    nt_win_slashes(approot);
+    nt_win_slashes(script);
+    nt_win_slashes(appdir);
+    nt_win_slashes(tmpdir);
+#endif
 
     if (mode == NT_INFO) {
         printf("name       %s\n", spec.name);
@@ -696,6 +720,14 @@ int main(int argc, char **argv)
      * its callers disagree about, and buys no confinement.
      */
     setenv_dir("TMPDIR", appdir, "tmp");
+#endif
+#if defined(_WIN32) && defined(NEUTRINO_CONFINE_TIGHT)
+    /*
+     * %TEMP% does not redirect on its own at low integrity, so jsc.exe would
+     * fail writing intermediates into the medium-labelled default.
+     */
+    setenv_dir("TEMP", appdir, "tmp");
+    setenv_dir("TMP", appdir, "tmp");
 #endif
 
     if (nt_confine(NT_PHASE_RUN, home, appdir, desc, sizeof(desc)) != 0) {

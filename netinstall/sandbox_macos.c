@@ -55,6 +55,24 @@ static const char nt_profile[] =
     "  (subpath (param \"LIBSTATE\"))\n"
     "  (subpath \"/private/var/folders\")\n"
     "  (regex #\"^/dev/(null|zero|random|urandom|tty|dtracehelper)$\"))\n"
+#ifdef NEUTRINO_CONFINE_TIGHT
+    /*
+     * The tight tier denies $HOME wholesale rather than naming secrets one at a
+     * time, then hands back the few subtrees Cocoa and WebKit read on the way
+     * up. Metadata stays readable so traversal and stat still work; only file
+     * contents are withheld.
+     */
+    "(deny file-read* (subpath (param \"HOME\")))\n"
+    "(allow file-read-metadata (subpath (param \"HOME\")))\n"
+    "(allow file-read*\n"
+    "  (subpath (param \"APPDIR\"))\n"
+    "  (subpath (param \"SCRIPTDIR\"))\n"
+    "  (subpath (param \"LIBCACHE\"))\n"
+    "  (subpath (param \"LIBPREFS\"))\n"
+    "  (subpath (param \"LIBWEBKIT\"))\n"
+    "  (subpath (param \"LIBSTATE\"))\n"
+    "  (subpath (param \"LIBFONTS\")))\n"
+#endif
     "(deny file-read*\n"
     "  (subpath (param \"SSH\"))\n"
     "  (subpath (param \"GNUPG\"))\n"
@@ -92,7 +110,9 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
                char *desc, size_t desclen)
 {
     char dirbuf[NT_PATH_MAX], tmpbuf[NT_PATH_MAX], blobs[NT_PATH_MAX];
-    char under[11][NT_PATH_MAX];
+    char scriptdir[NT_PATH_MAX];
+    char *cut;
+    char under[12][NT_PATH_MAX];
     const char *params[40];
     const char *userhome;
     const char *dir;
@@ -100,11 +120,11 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
     int n = 0;
     int i;
 
-    static const char *const subdirs[11] = {
+    static const char *const subdirs[12] = {
         "/Library/Caches", "/Library/Preferences", "/Library/WebKit",
         "/Library/Saved Application State", "/.ssh", "/.gnupg", "/.aws",
         "/Library/Keychains", "/Library/Messages", "/Library/Mail",
-        "/Library/Safari"
+        "/Library/Safari", "/Library/Fonts"
     };
 
     if (phase == NT_PHASE_FETCH) {
@@ -131,7 +151,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
     dir = nt_resolve(appdir, dirbuf, sizeof(dirbuf));
     snprintf(tmpbuf, sizeof(tmpbuf), "%s/tmp", dir);
 
-    for (i = 0; i < 11; i++) {
+    for (i = 0; i < 12; i++) {
         snprintf(under[i], sizeof(under[i]), "%s%s", userhome, subdirs[i]);
     }
 
@@ -148,6 +168,20 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
     params[n++] = "MESSAGES";   params[n++] = under[8];
     params[n++] = "MAIL";       params[n++] = under[9];
     params[n++] = "SAFARI";     params[n++] = under[10];
+    params[n++] = "LIBFONTS";   params[n++] = under[11];
+    params[n++] = "HOME";       params[n++] = userhome;
+
+    /*
+     * The script sits one level above the app dir, and the default cache lives
+     * under $HOME -- which the tight tier denies. Without this the launcher
+     * would be unreadable to sh, exactly as it was on linux.
+     */
+    snprintf(scriptdir, sizeof(scriptdir), "%s", dir);
+    cut = strrchr(scriptdir, '/');
+    if (cut && cut != scriptdir) {
+        *cut = '\0';
+    }
+    params[n++] = "SCRIPTDIR";  params[n++] = scriptdir;
     params[n] = NULL;
 
     /*
@@ -162,7 +196,11 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
         return -1;
     }
 
+#ifdef NEUTRINO_CONFINE_TIGHT
+    snprintf(desc, desclen, "seatbelt, reads and writes confined to %s", dir);
+#else
     snprintf(desc, desclen, "seatbelt, writes confined to %s", dir);
+#endif
     return 0;
 }
 

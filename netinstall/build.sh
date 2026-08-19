@@ -32,7 +32,10 @@ if [ "${1:-}" = "host" ] || ! command -v zig >/dev/null 2>&1; then
         MINGW*|MSYS*|CYGWIN*) HOST_EXE=".exe" ;;
         *)                    HOST_EXE="" ;;
     esac
-    $HOST_CC "${CFLAGS[@]}" ${NETINSTALL_CFLAGS:-} -o "$OUT/netinstall$HOST_EXE" "${SRC[@]}"
+    HOST_LIBS=""
+    case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) HOST_LIBS="-ladvapi32" ;; esac
+    $HOST_CC "${CFLAGS[@]}" ${NETINSTALL_CFLAGS:-} -o "$OUT/netinstall$HOST_EXE" \
+        "${SRC[@]}" $HOST_LIBS
     echo "  $OUT/netinstall$HOST_EXE"
     exit 0
 fi
@@ -43,8 +46,10 @@ for entry in "${TARGETS[@]}"; do
     triple="${rest%%:*}"
     ext="${rest#*:}"
     echo "building $name"
+    LIBS=""
+    case "$triple" in *windows*) LIBS="-ladvapi32" ;; esac
     zig cc -target "$triple" "${CFLAGS[@]}" ${NETINSTALL_CFLAGS:-} \
-        -o "$OUT/neutrino-netinstall-$name$ext" "${SRC[@]}"
+        -o "$OUT/neutrino-netinstall-$name$ext" "${SRC[@]}" $LIBS
 done
 
 ls -1 "$OUT"
