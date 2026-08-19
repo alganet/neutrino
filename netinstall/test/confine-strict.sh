@@ -22,7 +22,7 @@ mkdir -p "$SERVE" "$WORK/bin" "$OUTSIDE"
 export NEUTRINO_HOME="$WORK/home"
 echo "top secret" > "$OUTSIDE/secret"
 
-nt_serve "$SERVE"
+nt_serve "$SERVE" || exit 2
 trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK" "$OUTSIDE"' EXIT
 
 FAILURES=0

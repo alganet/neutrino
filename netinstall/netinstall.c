@@ -53,11 +53,35 @@ const char *nt_basename(const char *path)
     return last;
 }
 
-int nt_self_path(char *buf, size_t len)
+int nt_self_path(char *buf, size_t len, const char *argv0)
 {
 #if defined(_WIN32)
-    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)len);
-    return (n > 0 && n < len) ? 0 : -1;
+    char raw[NT_PATH_MAX];
+    HANDLE h;
+    DWORD n;
+
+    (void)argv0;
+    n = GetModuleFileNameA(NULL, raw, (DWORD)sizeof(raw));
+    if (n == 0 || n >= sizeof(raw)) {
+        return -1;
+    }
+    /* That is the path the image was loaded by, symlink and all. Resolve it. */
+    h = CreateFileA(raw, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        char final[NT_PATH_MAX];
+        DWORD m = GetFinalPathNameByHandleA(h, final, (DWORD)sizeof(final),
+                                            FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        CloseHandle(h);
+        if (m > 0 && m < sizeof(final)) {
+            const char *p = final;
+            if (strncmp(p, "\\\\?\\", 4) == 0) {
+                p += 4;
+            }
+            return (size_t)snprintf(buf, len, "%s", p) < len ? 0 : -1;
+        }
+    }
+    return (size_t)snprintf(buf, len, "%s", raw) < len ? 0 : -1;
 #elif defined(__APPLE__)
     /* _NSGetExecutablePath hands back the path as invoked, symlinks and all. */
     char raw[NT_PATH_MAX];
@@ -71,22 +95,35 @@ int nt_self_path(char *buf, size_t len)
     }
     return (size_t)snprintf(buf, len, "%s", raw) < len ? 0 : -1;
 #elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
-    int mib[4];
-    size_t n = len;
-
-    mib[0] = CTL_KERN;
-    mib[1] = KERN_PROC;
 #ifdef KERN_PROC_PATHNAME
-    mib[2] = KERN_PROC_PATHNAME;
-    mib[3] = -1;
-    if (sysctl(mib, 4, buf, &n, NULL, 0) == 0) {
-        return 0;
+    {
+        int mib[4];
+        size_t n = len;
+
+        mib[0] = CTL_KERN;
+        mib[1] = KERN_PROC;
+        mib[2] = KERN_PROC_PATHNAME;
+        mib[3] = -1;
+        if (sysctl(mib, 4, buf, &n, NULL, 0) == 0) {
+            return 0;
+        }
     }
 #endif
+    /*
+     * OpenBSD has neither KERN_PROC_PATHNAME nor /proc, so there is no way to
+     * ask the kernel what is running. argv[0] is the only thing available, and
+     * it is caller-controlled -- the guarantee that the name cannot be spoofed
+     * simply does not hold there. Documented rather than silently pretended.
+     */
+    if (argv0 && *argv0 && realpath(argv0, buf)) {
+        return 0;
+    }
     return -1;
 #else
-    ssize_t n = readlink("/proc/self/exe", buf, len - 1);
+    ssize_t n;
 
+    (void)argv0;
+    n = readlink("/proc/self/exe", buf, len - 1);
     if (n <= 0) {
         return -1;
     }
@@ -191,7 +228,8 @@ int nt_parse_name(const char *base, nt_spec *out)
     if (out->token[0] != '0') {
         return -1;
     }
-    if (strlen(out->token) - 1 < NT_TOKEN_MIN) {
+    if (strlen(out->token) - 1 < NT_TOKEN_MIN ||
+        strlen(out->token) - 1 > 64) {
         return -1;
     }
     for (p = out->token + 1; *p; p++) {
@@ -306,6 +344,10 @@ int nt_sha256_file(const char *path, char *hex65)
         }
         nt_sha256_update(&ctx, chunk, n);
     }
+    if (ferror(f)) {
+        fclose(f);
+        return -1;
+    }
     fclose(f);
     nt_sha256_final(&ctx, digest);
 
@@ -334,6 +376,10 @@ int nt_is_text(const char *path)
                 return 0;
             }
         }
+    }
+    if (ferror(f)) {
+        fclose(f);
+        return 0;
     }
     fclose(f);
     return 1;
@@ -443,12 +489,30 @@ static void setenv_dir(const char *key, const char *appdir, const char *sub)
     nt_setenv(key, path);
 }
 
+#ifdef _WIN32
+/*
+ * _spawnv quotes for the CRT, then cmd.exe parses the result again with its own
+ * metacharacters. An argument carrying any of these would be reinterpreted as
+ * shell syntax rather than delivered verbatim, so refuse instead of guessing at
+ * an escaping scheme that cmd does not consistently honour.
+ */
+static int nt_cmd_safe(const char *arg)
+{
+    return arg[strcspn(arg, "\"&|<>^%!()")] == '\0';
+}
+#endif
+
 static int nt_exec(const char *script, int argc, char **argv, int rest)
 {
-    char *args[64];
+    char **args;
     int n = 0;
     int i;
 
+    args = malloc(sizeof(*args) * (size_t)(argc - rest + 4));
+    if (!args) {
+        fprintf(stderr, "netinstall: out of memory\n");
+        return 126;
+    }
 #ifdef _WIN32
     args[n++] = (char *)"cmd.exe";
     args[n++] = (char *)"/c";
@@ -456,19 +520,50 @@ static int nt_exec(const char *script, int argc, char **argv, int rest)
     args[n++] = (char *)"sh";
 #endif
     args[n++] = (char *)script;
-    for (i = rest; i < argc && n < (int)(sizeof(args) / sizeof(args[0])) - 1; i++) {
+    for (i = rest; i < argc; i++) {
+#ifdef _WIN32
+        if (!nt_cmd_safe(argv[i])) {
+            fprintf(stderr, "netinstall: refusing to forward argument with cmd "
+                            "metacharacters: %s\n", argv[i]);
+            free(args);
+            return 126;
+        }
+#endif
         args[n++] = argv[i];
     }
     args[n] = NULL;
 
 #ifdef _WIN32
-    return (int)_spawnv(_P_WAIT, "C:\\Windows\\System32\\cmd.exe",
-                        (const char *const *)args);
+    {
+        int rc = (int)_spawnv(_P_WAIT, "C:\\Windows\\System32\\cmd.exe",
+                              (const char *const *)args);
+        free(args);
+        return rc;
+    }
 #else
     execv("/bin/sh", args);
+    free(args);
     fprintf(stderr, "netinstall: cannot exec /bin/sh\n");
     return 126;
 #endif
+}
+
+/*
+ * The forced-off hook exists only in test builds, so a release binary has no
+ * way to be talked out of confining anything.
+ */
+static int nt_apply_confine(nt_phase phase, const char *home, const char *appdir,
+                            int enforce, char *desc, size_t desclen)
+{
+#ifdef NEUTRINO_TESTING
+    const char *off = getenv("NEUTRINO_TEST_NO_CONFINE");
+
+    if (off && *off == '1') {
+        snprintf(desc, desclen, "none (disabled for testing)");
+        return -1;
+    }
+#endif
+    return nt_confine(phase, home, appdir, enforce, desc, desclen);
 }
 
 typedef enum {
@@ -518,11 +613,16 @@ static int nt_link_or_copy(const char *from, const char *to)
         if (fwrite(chunk, 1, n, b) != n) {
             fclose(a);
             fclose(b);
+            remove(to);
             return -1;
         }
     }
+    if (ferror(a) || fclose(b) != 0) {
+        fclose(a);
+        remove(to);
+        return -1;
+    }
     fclose(a);
-    fclose(b);
     return 0;
 }
 
@@ -560,7 +660,7 @@ int main(int argc, char **argv)
     int cached = 0;
     int i;
 
-    if (nt_self_path(self, sizeof(self)) != 0) {
+    if (nt_self_path(self, sizeof(self), argc > 0 ? argv[0] : NULL) != 0) {
         fprintf(stderr, "netinstall: cannot determine own path\n");
         return 2;
     }
@@ -630,8 +730,11 @@ int main(int argc, char **argv)
         } else {
             printf("cached     no\n");
         }
-        nt_confine(NT_PHASE_RUN, home, appdir, desc, sizeof(desc));
+        nt_apply_confine(NT_PHASE_RUN, home, appdir, 0, desc, sizeof(desc));
         printf("confine    %s\n", desc);
+        if (nt_fetch_command(spec.url, script, shown, sizeof(shown)) == 0) {
+            printf("downloader %s\n", shown);
+        }
         return 0;
     }
 
@@ -688,12 +791,16 @@ int main(int argc, char **argv)
         if (nt_pathf(blob, sizeof(blob), "%s%c%s", blobs, NT_SEP, hex) != 0) {
             return 2;
         }
-        nt_unlock(blob);
-        remove(blob);
-        if (rename(tmpfile, blob) != 0) {
+        if (nt_exists(blob)) {
+            /* Same digest, so the existing blob is this content. Keep it. */
             remove(tmpfile);
-            fprintf(stderr, "netinstall: cannot commit blob\n");
-            return 1;
+        } else if (rename(tmpfile, blob) != 0) {
+            if (!nt_exists(blob)) {
+                remove(tmpfile);
+                fprintf(stderr, "netinstall: cannot commit blob\n");
+                return 1;
+            }
+            remove(tmpfile);
         }
         nt_readonly(blob);
         if (nt_link_or_copy(blob, script) != 0) {
@@ -730,7 +837,7 @@ int main(int argc, char **argv)
     setenv_dir("TMP", appdir, "tmp");
 #endif
 
-    if (nt_confine(NT_PHASE_RUN, home, appdir, desc, sizeof(desc)) != 0) {
+    if (nt_apply_confine(NT_PHASE_RUN, home, appdir, 1, desc, sizeof(desc)) != 0) {
 #ifdef NEUTRINO_STRICT_SANDBOX
         fprintf(stderr, "netinstall: refusing to run unconfined: %s\n", desc);
         return 3;

@@ -108,7 +108,7 @@ static const char *nt_resolve(const char *path, char *buf, size_t len)
     return buf;
 }
 
-int nt_confine(nt_phase phase, const char *home, const char *appdir,
+int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
     char dirbuf[NT_PATH_MAX], tmpbuf[NT_PATH_MAX], blobs[NT_PATH_MAX];
@@ -128,6 +128,17 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
         "/Library/Keychains", "/Library/Messages", "/Library/Mail",
         "/Library/Safari", "/Library/Fonts"
     };
+
+    if (!enforce) {
+#ifdef NEUTRINO_CONFINE_TIGHT
+        snprintf(desc, desclen, "seatbelt, reads and writes confined to %s",
+                 phase == NT_PHASE_FETCH ? home : appdir);
+#else
+        snprintf(desc, desclen, "seatbelt, writes confined to %s",
+                 phase == NT_PHASE_FETCH ? home : appdir);
+#endif
+        return 0;
+    }
 
     if (phase == NT_PHASE_FETCH) {
         snprintf(blobs, sizeof(blobs), "%s/blobs", home);

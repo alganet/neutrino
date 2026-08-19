@@ -11,4 +11,7 @@
 int nt_fetch(const char *url, const char *dest, const char *home,
              char *shown, size_t shownlen);
 
+/* Builds the command that a fetch would run, without running it. */
+int nt_fetch_command(const char *url, const char *dest, char *shown, size_t shownlen);
+
 #endif

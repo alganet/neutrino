@@ -10,12 +10,13 @@
 
 #include "sandbox.h"
 
-int nt_confine(nt_phase phase, const char *home, const char *appdir,
+int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
     (void)phase;
     (void)home;
     (void)appdir;
+    (void)enforce;
     snprintf(desc, desclen, "none (unsupported platform)");
     return -1;
 }

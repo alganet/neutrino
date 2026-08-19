@@ -39,9 +39,11 @@ nt_serve() {
     NT_SERVER_PID=$!
     export NEUTRINO_TEST_ORIGIN="http://127.0.0.1:$port"
     for i in $(seq 1 100); do
-        curl -fsS "$NEUTRINO_TEST_ORIGIN/" >/dev/null 2>&1 && break
+        curl -fsS "$NEUTRINO_TEST_ORIGIN/" >/dev/null 2>&1 && return 0
         sleep 0.1
     done
+    echo "nt_serve: server on port $port never came up" >&2
+    return 1
 }
 
 # Installs the binary under a spec name and echoes the path to invoke.
@@ -83,9 +85,11 @@ nt_timeout() {
 # A webview leaves children behind, so kill the whole tree rather than the
 # process we happen to hold a pid for.
 nt_kill_tree() {
-    local pid="$1"
+    local pid="$1" child
     [ -n "$pid" ] || return 0
-    pkill -P "$pid" 2>/dev/null
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+        nt_kill_tree "$child"
+    done
     kill "$pid" 2>/dev/null
     return 0
 }
