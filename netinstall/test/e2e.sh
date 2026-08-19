@@ -37,8 +37,8 @@ echo "=== Resolve ==="
 "$APP" --info
 nt_note "confine: $("$APP" --info 2>/dev/null | awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')"
 
-SCRIPT="$NEUTRINO_HOME/apps/$SPEC/neutrinotest.cmd"
-APPDIR="$NEUTRINO_HOME/apps/$SPEC/neutrinotest"
+SCRIPT="$NEUTRINO_HOME/apps/$(nt_appkey "$SPEC")/neutrinotest.cmd"
+APPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$SPEC")/neutrinotest"
 
 echo "=== Fetch and verify ==="
 if "$APP" --fetch >/dev/null 2>&1; then
@@ -135,6 +135,41 @@ else
         FAILURES=$((FAILURES + 1))
     fi
 fi
+
+echo "=== A new pin reuses the app dir and replaces the launcher ==="
+cp "$SERVE/neutrinotest.cmd" "$WORK/v1.cmd"
+mkdir -p "$APPDIR"
+echo keep > "$APPDIR/carried-over"
+printf 'echo v2\n' > "$SERVE/neutrinotest.cmd"
+SPEC2="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
+APP2="$(nt_as "$BIN" "$SPEC2" "$WORK/bin")"
+if [ "$SPEC" = "$SPEC2" ]; then
+    nt_fail "second pin expected=different actual=same"
+    FAILURES=$((FAILURES + 1))
+elif "$APP2" --fetch >/dev/null 2>&1; then
+    if [ -f "$APPDIR/carried-over" ]; then
+        echo "  PASS: app dir state survived the version change"
+    else
+        nt_fail "app dir state expected=preserved actual=lost"
+        FAILURES=$((FAILURES + 1))
+    fi
+    if cmp -s "$SERVE/neutrinotest.cmd" "$SCRIPT"; then
+        echo "  PASS: launcher replaced by the new pin"
+    else
+        nt_fail "launcher expected=new-version actual=stale"
+        FAILURES=$((FAILURES + 1))
+    fi
+    if "$APP2" --verify >/dev/null 2>&1 && ! "$APP" --verify >/dev/null 2>&1; then
+        echo "  PASS: last pin wins; the old pin no longer verifies"
+    else
+        nt_fail "pin precedence expected=last-wins actual=both-or-neither"
+        FAILURES=$((FAILURES + 1))
+    fi
+else
+    nt_fail "second pin expected=fetched actual=failed"
+    FAILURES=$((FAILURES + 1))
+fi
+cp "$WORK/v1.cmd" "$SERVE/neutrinotest.cmd"
 
 echo "=== neutrino's own app dir landed inside the writable dir ==="
 if [ -d "$APPDIR" ]; then

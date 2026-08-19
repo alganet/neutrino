@@ -21,6 +21,7 @@
 
 typedef struct {
     char spec[NT_SPEC_MAX];
+    char app[NT_SPEC_MAX];
     char name[NT_NAME_MAX];
     char host[NT_HOST_MAX];
     char token[NT_TOKEN_MAX];
