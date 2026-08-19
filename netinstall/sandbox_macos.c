@@ -73,6 +73,7 @@ static const char nt_profile[] =
     "  (subpath (param \"LIBSTATE\"))\n"
     "  (subpath (param \"LIBFONTS\")))\n"
 #endif
+    "(deny process-exec* (subpath (param \"APPDIR\")))\n"
     "(deny file-read*\n"
     "  (subpath (param \"SSH\"))\n"
     "  (subpath (param \"GNUPG\"))\n"
@@ -89,7 +90,8 @@ static const char nt_fetch_profile[] =
     "(allow file-write*\n"
     "  (subpath (param \"APPDIR\"))\n"
     "  (subpath \"/private/var/folders\")\n"
-    "  (regex #\"^/dev/(null|zero|random|urandom|tty)$\"))\n";
+    "  (regex #\"^/dev/(null|zero|random|urandom|tty)$\"))\n"
+    "(deny process-exec* (subpath (param \"APPDIR\")))\n";
 
 /* Seatbelt compares resolved paths, and /var and /tmp are both symlinks. */
 static const char *nt_resolve(const char *path, char *buf, size_t len)

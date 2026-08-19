@@ -38,6 +38,11 @@ if echo owned > "$outside" 2>/dev/null; then echo "ESCAPED_HOME"; else echo "BLO
 if echo owned > "$(dirname "$0")/hostile.cmd" 2>/dev/null; then echo "ESCAPED_LAUNCHER"; else echo "BLOCKED_LAUNCHER"; fi
 if echo owned > "$XDG_DATA_HOME/ok" 2>/dev/null; then echo "OWN_DIR_WRITABLE"; else echo "OWN_DIR_BLOCKED"; fi
 if cat /etc/hosts >/dev/null 2>&1; then echo "READS_WORK"; else echo "READS_BLOCKED"; fi
+cp /bin/true "$XDG_DATA_HOME/probe" 2>/dev/null && chmod +x "$XDG_DATA_HOME/probe" 2>/dev/null
+if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC_BLOCKED"; fi
+if command -v python3 >/dev/null 2>&1; then
+    if python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0))" 2>/dev/null; then echo "BIND_OK"; else echo "BIND_BLOCKED"; fi
+else echo "BIND_SKIP"; fi
 SCRIPT
 
 SPEC="hostile-com-example-0$(nt_pin "$SERVE/hostile.cmd")"
@@ -68,6 +73,21 @@ fi
 
 check "its own dir stays writable" OWN_DIR_WRITABLE
 check "reads still work"           READS_WORK
+
+if [ "$(uname -s)" = "Darwin" ]; then
+    # Write xor execute: the one directory an app can write to is the one it
+    # must not be able to run anything from. On linux this needs the exec
+    # allowlist, so it lives in the tight tier and confine-strict.sh covers it.
+    check "cannot execute what it wrote" EXEC_BLOCKED
+else
+    nt_note "w^x is tight-tier only on linux; got $(grep -o 'EXEC_[A-Z_]*' <<<"$OUT")"
+fi
+
+if [ "$(uname -s)" = "Linux" ]; then
+    check "cannot bind a TCP port" BIND_BLOCKED
+else
+    nt_note "tcp bind confinement is landlock-only; got $(grep -o 'BIND_[A-Z]*' <<<"$OUT")"
+fi
 
 echo "=== The launcher still verifies after the attempt ==="
 if "$APP" --verify >/dev/null 2>&1; then
