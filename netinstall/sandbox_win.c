@@ -75,7 +75,7 @@ static int nt_drop_to_low(void)
 }
 #endif
 
-int nt_confine(nt_phase phase, const char *home, const char *appdir,
+int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
@@ -87,6 +87,17 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
     if (phase == NT_PHASE_FETCH) {
         snprintf(desc, desclen, "none (fetch runs unconfined on windows)");
         return -1;
+    }
+
+    if (!enforce) {
+#ifdef NEUTRINO_CONFINE_TIGHT
+        snprintf(desc, desclen, "job object + low integrity, writes confined to %s "
+                                "(reads are not confined)", appdir);
+#else
+        snprintf(desc, desclen, "job object (process limits only; "
+                                "no filesystem confinement on windows)");
+#endif
+        return 0;
     }
 
     job = CreateJobObjectA(NULL, NULL);

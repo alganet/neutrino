@@ -28,7 +28,7 @@ typedef struct {
 } nt_spec;
 
 int nt_parse_name(const char *base, nt_spec *out);
-int nt_self_path(char *buf, size_t len);
+int nt_self_path(char *buf, size_t len, const char *argv0);
 const char *nt_basename(const char *path);
 
 int nt_home(char *buf, size_t len);

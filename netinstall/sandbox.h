@@ -18,7 +18,11 @@ typedef enum {
  * summary into desc. Returns 0 when something was applied, -1 when nothing
  * was available; the caller decides whether that is fatal.
  */
-int nt_confine(nt_phase phase, const char *home, const char *appdir,
+/*
+ * With enforce zero this only describes what would be applied, changing
+ * nothing, so --info can report accurately without side effects.
+ */
+int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen);
 
 #endif

@@ -45,6 +45,10 @@ Copy or hardlink the binary to rename it. **Symlinks do not work**: the real exe
 used, never `argv[0]`, because deriving a fetch URL from a caller-controlled string would make
 this a confused deputy.
 
+**Except on OpenBSD**, which has neither `/proc` nor `KERN_PROC_PATHNAME`, so there is no way to ask
+the kernel what is running. There netinstall resolves `argv[0]` instead, and the guarantee that the
+name cannot be spoofed by the caller does not hold.
+
 ## Options
 
 ```
@@ -56,8 +60,9 @@ this a confused deputy.
 --          end netinstall options; the rest goes to the script
 ```
 
-`--info` is the audit path — it prints the resolved URL, the full SHA-256, every cache path, and
-the confinement that would actually be applied.
+`--info` is the audit path — it prints the resolved URL, the full SHA-256, every cache path, the
+exact downloader command that would run, and the confinement that would be applied. It describes
+without enforcing, so it changes nothing and reports what a real launch would do.
 
 ## Layout
 
@@ -98,6 +103,11 @@ the user can see and change it. This is the same posture as `curl | sh`.
 the fetch. Its own configuration is *not* scrubbed: that config is the trust anchor you chose,
 and removing your control over it would defeat the point. `--info` prints the effective command.
 
+The `wget` fallback is weaker and only used when no `curl` exists. `--https-only` governs recursive
+link following rather than redirects for a single file, and wget has no equivalent of
+`--max-filesize`, so the fallback **refuses redirects entirely** and its response size is bounded
+only after transfer rather than during it. Install `curl` if that matters to you.
+
 **The pin is a content pin.** It catches corruption, mirror drift, and a host silently changing
 the file after you pinned it. Sixteen hex characters is 64 bits, which puts a second preimage —
 a host grinding a *different* file that matches a pin you already chose — out of reach at 2^64.
@@ -133,7 +143,7 @@ and the network, so "deny everything" is not on the table.
 | Platform | What is applied |
 |---|---|
 | **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied. |
-| **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. |
+| **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. See the caveat below. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, plus read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles. |
 | **Windows** | Job object — process limits only. **No filesystem confinement** by default; see the tight tier. |
 | **FreeBSD** | None. |
@@ -168,14 +178,26 @@ ABI 9, so an app can still reach whatever sockets exist:
 - **X11** lets any client keylog and screenshot every other client. On an X11 session, the
   filesystem restriction is the only thing that holds.
 
-### Why Linux restricts writes but not reads by default
+### What Landlock costs, in both tiers
 
-A read allowlist forces WebKitGTK's `bubblewrap` and Chromium's zygote to fight our ruleset, and
-Landlock unconditionally denies `mount` and `pivot_root` to any domain that handles a filesystem
-right — by design, even inside a fresh namespace. `PR_SET_NO_NEW_PRIVS`, which Landlock requires,
-also neuters Chromium's SUID sandbox helper. Buying our allowlist by disabling the renderer's own
-sandbox trades protection from the app author for protection from web content, and that is not
-obviously a win. The XDG redirection above gets most of the benefit for none of that cost.
+This applies to the **default** tier as much as the tight one, and an earlier version of this file
+wrongly implied otherwise.
+
+Landlock unconditionally denies `mount`, `umount`, `pivot_root` and `move_mount` to any domain that
+handles even one filesystem right — by design, even inside a fresh namespace. `PR_SET_NO_NEW_PRIVS`,
+which Landlock requires, also neuters Chromium's SUID sandbox helper. So the moment netinstall
+confines anything on Linux, WebKitGTK's `bubblewrap` cannot initialise and Chromium's namespace
+sandbox may not either. Both tiers pay that; what the tight tier adds on top is only the read and
+execute allowlist.
+
+That is a real trade, not a free one: **you may be giving up the renderer's own protection against
+hostile web content in exchange for protection against the app's author.** Which of those you care
+more about depends on what you are running. CI does not settle it either — the Qt lane sets
+`QTWEBENGINE_DISABLE_SANDBOX=1`, and WebKitGTK's sandbox is opt-in and never enabled by neutrino, so
+neither engine's sandbox was active there to be starved.
+
+If that trade is wrong for your case, run without netinstall: neutrino is a plain script and does
+not need it.
 
 ### The tight tier (experimental)
 
@@ -257,10 +279,11 @@ test/run.sh
 ```
 
 Builds a release binary, a `-DNEUTRINO_TESTING` binary and a `-DNEUTRINO_CONFINE_TIGHT` one, then
-runs five suites: `names.sh` (the grammar, accepted and rejected), `verify.sh` (pin mismatch,
+runs six suites: `names.sh` (the grammar, accepted and rejected), `verify.sh` (pin mismatch,
 non-text payloads, oversized responses, offline cache, tampered cache), `confine.sh` (a hostile
 script that tries to escape), `confine-strict.sh` (the tight tier, and whether a webview still
-starts under it), and `e2e.sh` (a real neutrino polyglot fetched, verified and launched).
+starts under it), `strict.sh` (that `-DNEUTRINO_STRICT_SANDBOX` really refuses to run unconfined),
+and `e2e.sh` (a real neutrino polyglot fetched, verified and launched).
 
 The `NEUTRINO_TEST_ORIGIN` override the suite needs to serve fixtures from loopback is compiled
 in only under `-DNEUTRINO_TESTING`; release binaries ignore it entirely.

@@ -163,7 +163,7 @@ static void nt_allow_system_reads(int ruleset)
 }
 #endif
 
-int nt_confine(nt_phase phase, const char *home, const char *appdir,
+int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
     struct landlock_ruleset_attr attr;
@@ -244,6 +244,11 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
 #else
         snprintf(desc, desclen, "landlock abi %d, writes confined to %s", abi, appdir);
 #endif
+    }
+
+    if (!enforce) {
+        close(ruleset);
+        return 0;
     }
 
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 || nt_ll_restrict(ruleset) != 0) {

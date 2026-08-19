@@ -25,7 +25,7 @@ FAKEHOME="$HOME/.netinstall-confine-$$"
 mkdir -p "$SERVE" "$WORK/bin" "$FAKEHOME"
 export NEUTRINO_HOME="$WORK/home"
 
-nt_serve "$SERVE"
+nt_serve "$SERVE" || exit 2
 trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK" "$FAKEHOME"' EXIT
 
 FAILURES=0
@@ -83,8 +83,11 @@ else
     nt_note "w^x is tight-tier only on linux; got $(grep -o 'EXEC_[A-Z_]*' <<<"$OUT")"
 fi
 
-if [ "$(uname -s)" = "Linux" ]; then
+NT_ABI="$(grep -o 'abi [0-9]*' <<<"$CONFINE" | awk '{print $2}')"
+if [ "$(uname -s)" = "Linux" ] && [ -n "$NT_ABI" ] && [ "$NT_ABI" -ge 4 ]; then
     check "cannot bind a TCP port" BIND_BLOCKED
+elif [ "$(uname -s)" = "Linux" ]; then
+    nt_note "tcp bind mediation needs landlock abi 4; this kernel reports ${NT_ABI:-none}"
 else
     nt_note "tcp bind confinement is landlock-only; got $(grep -o 'BIND_[A-Z]*' <<<"$OUT")"
 fi

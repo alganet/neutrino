@@ -96,15 +96,13 @@ static void nt_join(char *out, size_t len, char *const argv[])
     }
 }
 
-int nt_fetch(const char *url, const char *dest, const char *home,
-             char *shown, size_t shownlen)
+static const char *nt_build(const char *url, const char *dest, char *maxsize,
+                            size_t maxlen, char **argv)
 {
-    char maxsize[32];
-    char *argv[24];
     const char *bin;
     int n = 0;
 
-    snprintf(maxsize, sizeof(maxsize), "%d", NT_MAX_PAYLOAD);
+    snprintf(maxsize, maxlen, "%d", NT_MAX_PAYLOAD);
 
     bin = nt_first_existing(nt_curl_paths);
     if (bin) {
@@ -127,18 +125,21 @@ int nt_fetch(const char *url, const char *dest, const char *home,
     } else {
 #ifdef _WIN32
         fprintf(stderr, "netinstall: no curl.exe found in System32\n");
-        return -1;
+        return NULL;
 #else
         bin = nt_first_existing(nt_wget_paths);
         if (!bin) {
             fprintf(stderr, "netinstall: no curl or wget found\n");
-            return -1;
+            return NULL;
         }
         argv[n++] = (char *)bin;
-#ifndef NEUTRINO_TESTING
-        argv[n++] = (char *)"--https-only";
-#endif
-        argv[n++] = (char *)"--max-redirect=5";
+        /*
+         * --https-only governs recursive link following, not redirects for a
+         * single file, and wget has no equivalent of --max-filesize. Refusing
+         * redirects outright is the only way to keep the scheme constrained
+         * here; the size is bounded after transfer instead of during it.
+         */
+        argv[n++] = (char *)"--max-redirect=0";
         argv[n++] = (char *)"--timeout=120";
         argv[n++] = (char *)"-q";
         argv[n++] = (char *)"-O";
@@ -148,6 +149,33 @@ int nt_fetch(const char *url, const char *dest, const char *home,
 #endif
     }
 
+    return bin;
+}
+
+int nt_fetch_command(const char *url, const char *dest, char *shown, size_t shownlen)
+{
+    char maxsize[32];
+    char *argv[24];
+
+    if (!nt_build(url, dest, maxsize, sizeof(maxsize), argv)) {
+        snprintf(shown, shownlen, "(no downloader found)");
+        return -1;
+    }
+    nt_join(shown, shownlen, argv);
+    return 0;
+}
+
+int nt_fetch(const char *url, const char *dest, const char *home,
+             char *shown, size_t shownlen)
+{
+    char maxsize[32];
+    char *argv[24];
+    const char *bin;
+
+    bin = nt_build(url, dest, maxsize, sizeof(maxsize), argv);
+    if (!bin) {
+        return -1;
+    }
     if (shown) {
         nt_join(shown, shownlen, argv);
     }
@@ -165,7 +193,7 @@ int nt_fetch(const char *url, const char *dest, const char *home,
         }
         if (pid == 0) {
             char desc[256];
-            nt_confine(NT_PHASE_FETCH, home, NULL, desc, sizeof(desc));
+            nt_confine(NT_PHASE_FETCH, home, NULL, 1, desc, sizeof(desc));
             execv(bin, argv);
             _exit(127);
         }

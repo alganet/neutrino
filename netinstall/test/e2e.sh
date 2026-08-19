@@ -22,7 +22,7 @@ SHOTS="${2:-}"
 mkdir -p "$SERVE" "$WORK/bin" "$SHOTS"
 export NEUTRINO_HOME="$WORK/home"
 
-nt_serve "$SERVE"
+nt_serve "$SERVE" || exit 2
 trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK"' EXIT
 
 FAILURES=0

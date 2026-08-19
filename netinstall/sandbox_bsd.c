@@ -19,10 +19,16 @@
  * order matters: unveil, lock, then pledge with execpromises, then exec. Both
  * survive into the child that way.
  */
-int nt_confine(nt_phase phase, const char *home, const char *appdir,
+int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
     char path[NT_PATH_MAX];
+
+    if (!enforce) {
+        snprintf(desc, desclen, "unveil + pledge, writes confined to %s",
+                 phase == NT_PHASE_FETCH ? home : appdir);
+        return 0;
+    }
 
     if (phase == NT_PHASE_FETCH) {
         snprintf(path, sizeof(path), "%s/blobs", home);
@@ -70,12 +76,13 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
  * Capsicum only confines programs that cooperate, and jail/chroot/ugidfw all
  * need root, so there is nothing to apply to a GUI child here.
  */
-int nt_confine(nt_phase phase, const char *home, const char *appdir,
+int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
     (void)phase;
     (void)home;
     (void)appdir;
+    (void)enforce;
     snprintf(desc, desclen, "none (no unprivileged confinement on this system)");
     return -1;
 }
