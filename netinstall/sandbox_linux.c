@@ -54,10 +54,25 @@
 #ifdef NEUTRINO_CONFINE_TIGHT
 #define NT_READ_RIGHTS ( \
     LANDLOCK_ACCESS_FS_READ_FILE | \
-    LANDLOCK_ACCESS_FS_READ_DIR | \
-    LANDLOCK_ACCESS_FS_EXECUTE)
+    LANDLOCK_ACCESS_FS_READ_DIR)
 #else
 #define NT_READ_RIGHTS 0ULL
+#endif
+
+/*
+ * Write xor execute, tight tier only.
+ *
+ * Landlock takes the union of every rule matching along a path, not the closest
+ * one, so there is no way to grant execute broadly and subtract it for one
+ * directory -- it has to be an allowlist. That is only affordable in the tight
+ * tier, which already allowlists the same system paths for reads. The writable
+ * directories are simply absent from it, so an app can drop a binary in its own
+ * directory and never run it.
+ */
+#ifdef NEUTRINO_CONFINE_TIGHT
+#define NT_EXEC_RIGHT LANDLOCK_ACCESS_FS_EXECUTE
+#else
+#define NT_EXEC_RIGHT 0ULL
 #endif
 
 #define NT_WRITE_RIGHTS ( \
@@ -129,7 +144,7 @@ static void nt_allow_system_reads(int ruleset)
     int i;
 
     for (i = 0; system_paths[i]; i++) {
-        nt_allow(ruleset, system_paths[i], NT_READ_RIGHTS);
+        nt_allow(ruleset, system_paths[i], NT_READ_RIGHTS | NT_EXEC_RIGHT);
     }
 
     userhome = getenv("HOME");
@@ -170,7 +185,17 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir,
     }
 
     memset(&attr, 0, sizeof(attr));
-    attr.handled_access_fs = rights;
+    attr.handled_access_fs = rights | NT_EXEC_RIGHT;
+#ifdef LANDLOCK_ACCESS_NET_BIND_TCP
+    /*
+     * Nothing here should be listening. Connect is left unhandled, so the app's
+     * own outbound traffic is untouched; trailing zero fields are accepted by
+     * older kernels, so this only takes effect from ABI 4.
+     */
+    if (abi >= 4) {
+        attr.handled_access_net = LANDLOCK_ACCESS_NET_BIND_TCP;
+    }
+#endif
     ruleset = nt_ll_create(&attr, sizeof(attr), 0);
     if (ruleset < 0) {
         snprintf(desc, desclen, "none (landlock ruleset rejected)");

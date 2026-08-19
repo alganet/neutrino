@@ -46,6 +46,8 @@ if echo x > "$XDG_DATA_HOME/ok" 2>/dev/null; then echo "OWN_DIR_OK"; else echo "
 if cat "$NT_OUTSIDE/secret" >/dev/null 2>&1; then echo "READ_SECRET"; else echo "SECRET_BLOCKED"; fi
 if cat /etc/hosts >/dev/null 2>&1; then echo "ETC_OK"; else echo "ETC_BLOCKED"; fi
 if ls /usr/share >/dev/null 2>&1; then echo "USR_OK"; else echo "USR_BLOCKED"; fi
+cp /bin/true "$XDG_DATA_HOME/probe" 2>/dev/null && chmod +x "$XDG_DATA_HOME/probe" 2>/dev/null
+if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC_BLOCKED"; fi
 SCRIPT
 fi
 
@@ -84,6 +86,7 @@ else
     check "a secret outside is unreadable" SECRET_BLOCKED
     check "system config stays readable"   ETC_OK
     check "system data stays readable"     USR_OK
+    check "cannot execute what it wrote"   EXEC_BLOCKED
 fi
 
 # The open question this suite exists to answer: the tier has to keep a real

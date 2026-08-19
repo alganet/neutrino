@@ -132,7 +132,7 @@ and the network, so "deny everything" is not on the table.
 
 | Platform | What is applied |
 |---|---|
-| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted. |
+| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied. |
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, plus read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles. |
 | **Windows** | Job object — process limits only. **No filesystem confinement** by default; see the tight tier. |
@@ -141,6 +141,22 @@ and the network, so "deny everything" is not on the table.
 If nothing is available the binary **runs anyway and warns on stderr**, naming what was and
 wasn't applied; confinement here is defence in depth, not the trust anchor. Building with
 `-DNEUTRINO_STRICT_SANDBOX` produces a binary that refuses to run unconfined instead.
+
+### What is still open
+
+Worth being concrete about the ceiling, because further tightening has sharply diminishing returns
+while these stand:
+
+- **Session D-Bus and X11 remain reachable**, and either is a full escape. Landlock does not mediate
+  `connect()` to a pathname unix socket before ABI 9, so no filesystem rule can close them; the
+  sockets are reachable whether or not the directory is granted. Closing this needs a newer Landlock,
+  a Wayland-only session with no bus, or a different mechanism entirely.
+- **No seccomp filter.** `ptrace`, `process_vm_readv`, `userfaultfd` and `keyctl` are all still
+  reachable. A small filter would be worth having and is the most valuable remaining Linux item.
+- **Windows cannot confine reads.** AppContainer is the only mechanism that would, and low integrity
+  already stops WebView2 rendering, so there is no reason to expect AppContainer to fare better.
+- **FreeBSD gets nothing**, and that is unlikely to change while Capsicum needs the target's
+  cooperation.
 
 ### Where confinement is theatre
 
@@ -168,10 +184,19 @@ different on each platform, because the mechanisms differ in what they can expre
 
 | Platform | What the tight tier adds |
 |---|---|
-| **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default. |
+| **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default, and execute becomes an allowlist that omits every writable directory. |
 | **macOS** | Seatbelt denies reads of all of `$HOME` rather than a named list of secrets. |
 | **Windows** | The process drops to low integrity, so writes outside the app dir fail. |
 | **OpenBSD** | Nothing — `unveil` is already an allowlist, so the default tier is the tight one. |
+
+On Linux and macOS the tier is also **write xor execute**: the one directory an app can write to is
+the one it cannot run anything from, so dropping a binary and executing it is not a path. macOS gets
+this in both tiers via `(deny process-exec* (subpath APPDIR))`; Linux needs an execute allowlist to
+express it, so it arrives with the tight tier.
+
+Worth knowing before editing the ruleset: **Landlock takes the union of every rule matching along a
+path, not the closest one.** There is no way to grant a right broadly and subtract it for one
+directory — anything you want withheld somewhere has to be allowlisted everywhere else instead.
 
 On Linux and macOS the allowlist is the system tree plus the handful of `$HOME` subpaths a GTK,
 Qt or Cocoa app reads on the way up: fonts, icons, themes, and the toolkit's own settings.
