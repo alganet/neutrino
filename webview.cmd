@@ -767,12 +767,27 @@ exit $?;:<<'//</script></head><body></body>' #-->
             return String(value).replace(/'/g, "''");
         },
 
+        /*
+         * The package is ~45 MB unpacked and almost all of it is native build
+         * headers and import libs for C++ hosts. Only the managed assemblies
+         * and the loaders are ever used, so extract those and skip the rest.
+         * The pattern avoids backslashes so it survives being embedded here.
+         */
+        webView2KeepPattern: "^(lib/net4[0-9]+/[^/]+[.]dll|runtimes/win-(x86|x64|arm64)/native/WebView2Loader[.]dll)$",
+
         extractArchiveWithPowerShell: function (SystemRef, archivePath, destinationPath) {
-            var psCommand = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Expand-Archive -LiteralPath '" +
-                this.escapeForSingleQuotedPowerShell(String(archivePath)) +
-                "' -DestinationPath '" +
-                this.escapeForSingleQuotedPowerShell(String(destinationPath)) +
-                "' -Force";
+            var psCommand = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; " +
+                "Add-Type -AssemblyName System.IO.Compression.FileSystem; " +
+                "$src='" + this.escapeForSingleQuotedPowerShell(String(archivePath)) + "'; " +
+                "$dst='" + this.escapeForSingleQuotedPowerShell(String(destinationPath)) + "'; " +
+                "$keep='" + this.webView2KeepPattern + "'; " +
+                "$zip=[System.IO.Compression.ZipFile]::OpenRead($src); " +
+                "try { foreach ($e in $zip.Entries) { if ($e.FullName -match $keep) { " +
+                "$out=Join-Path $dst ($e.FullName.Replace([char]47,[char]92)); " +
+                "$dir=Split-Path -Parent $out; " +
+                "if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }; " +
+                "[System.IO.Compression.ZipFileExtensions]::ExtractToFile($e,$out,$true) } } } " +
+                "finally { $zip.Dispose() }";
 
             var encodedCommand = SystemRef.Convert.ToBase64String(SystemRef.Text.Encoding.Unicode.GetBytes(psCommand));
 
@@ -786,7 +801,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
             process.WaitForExit();
 
             if (process.ExitCode !== 0) {
-                throw new Error("Expand-Archive failed with exit code " + process.ExitCode + ".");
+                throw new Error("WebView2 package extraction failed with exit code " + process.ExitCode + ".");
             }
         },
 
