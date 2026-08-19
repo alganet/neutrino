@@ -104,3 +104,9 @@ nt_linux_runtime() {
     [ -x /usr/lib/qt6/bin/qml ] && return 0
     return 1
 }
+
+# The app directory is keyed on the spec without its pin, so versions of the
+# same app share it.
+nt_appkey() {
+    echo "${1%-*}"
+}

@@ -25,7 +25,15 @@ IF NOT EXIST "%JSC%" ( EXIT /B 1 )
 IF NOT EXIST "%APP_FOLDER%" MKDIR "%APP_FOLDER%"
 IF ERRORLEVEL 1 EXIT /B 1
 
-IF EXIST "%APP_FOLDER%\%SCRIPT_NAME%.exe" (
+REM The app folder can outlive any single version of this script, so a compiled
+REM exe is only reused when the source it was built from is unchanged.
+SET "APP_EXE=%APP_FOLDER%\%SCRIPT_NAME%.exe"
+SET "APP_STAMP=%APP_FOLDER%\%SCRIPT_NAME%.stamp"
+FOR %%A IN ("%~f0") DO SET "SRC_ID=%%~zA %%~tA"
+SET "OLD_ID="
+IF EXIST "%APP_STAMP%" SET /P OLD_ID=<"%APP_STAMP%"
+
+IF EXIST "%APP_EXE%" IF "!OLD_ID!"=="!SRC_ID!" (
     GOTO :START_APP
 )
 
@@ -78,6 +86,8 @@ CLS
     ECHO   ^</application^>
     ECHO ^</assembly^>
 )
+
+> "%APP_STAMP%" ECHO !SRC_ID!
 
 :START_APP
 SET "NEUTRINO_SCRIPT_PATH=%~f0"

@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/types.h>
 
 #ifdef _WIN32
@@ -169,6 +170,13 @@ int nt_parse_name(const char *base, nt_spec *out)
 
     memset(out, 0, sizeof(*out));
     memcpy(out->spec, work, len + 1);
+    memcpy(out->app, work, len + 1);
+    {
+        char *lastdash = strrchr(out->app, '-');
+        if (lastdash) {
+            *lastdash = '\0';
+        }
+    }
 
     seg[nseg++] = work;
     for (p = work; *p; p++) {
@@ -626,6 +634,27 @@ static int nt_link_or_copy(const char *from, const char *to)
     return 0;
 }
 
+/*
+ * A relinked blob carries the mtime of whatever launch first downloaded it, so
+ * switching back to an older pin would look stale to anything comparing the
+ * script against what it built. Stamp placement time instead.
+ */
+static void nt_touch(const char *path)
+{
+#ifdef _WIN32
+    HANDLE h = CreateFileA(path, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        FILETIME now;
+        GetSystemTimeAsFileTime(&now);
+        SetFileTime(h, NULL, NULL, &now);
+        CloseHandle(h);
+    }
+#else
+    utimes(path, NULL);
+#endif
+}
+
 static void nt_readonly(const char *path)
 {
 #ifdef _WIN32
@@ -700,7 +729,7 @@ int main(int argc, char **argv)
         return 2;
     }
     if (nt_pathf(blobs, sizeof(blobs), "%s%cblobs", home, NT_SEP) != 0 ||
-        nt_pathf(approot, sizeof(approot), "%s%capps%c%s", home, NT_SEP, NT_SEP, spec.spec) != 0 ||
+        nt_pathf(approot, sizeof(approot), "%s%capps%c%s", home, NT_SEP, NT_SEP, spec.app) != 0 ||
         nt_pathf(script, sizeof(script), "%s%c%s.cmd", approot, NT_SEP, spec.name) != 0 ||
         nt_pathf(appdir, sizeof(appdir), "%s%c%s", approot, NT_SEP, spec.name) != 0 ||
         nt_pathf(tmpdir, sizeof(tmpdir), "%s%ctmp", appdir, NT_SEP) != 0) {
@@ -720,6 +749,7 @@ int main(int argc, char **argv)
         printf("name       %s\n", spec.name);
         printf("host       %s\n", spec.host);
         printf("token      %s\n", spec.token);
+        printf("app        %s\n", spec.app);
         printf("url        %s\n", spec.url);
         printf("script     %s\n", script);
         printf("appdir     %s\n", appdir);
@@ -807,6 +837,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "netinstall: cannot place %s\n", script);
             return 1;
         }
+        nt_touch(script);
         nt_readonly(script);
     }
 

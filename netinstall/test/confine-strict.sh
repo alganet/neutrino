@@ -95,7 +95,7 @@ echo "=== Can a real webview still start under it? ==="
 bash "$ROOT/build.sh" "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
 GSPEC="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
 GAPP="$(nt_as "$BIN" "$GSPEC" "$WORK/bin")"
-GAPPDIR="$NEUTRINO_HOME/apps/$GSPEC/neutrinotest"
+GAPPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$GSPEC")/neutrinotest"
 RC=0
 
 if [ "$NT_WINDOWS" = "1" ]; then

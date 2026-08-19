@@ -70,11 +70,29 @@ without enforcing, so it changes nothing and reports what a real launch would do
 $NEUTRINO_HOME/                    # XDG_CACHE_HOME/neutrino
                                    # ~/Library/Caches/neutrino
                                    # %LOCALAPPDATA%\neutrino
-├── blobs/<full-sha256>            # content-addressed, read-only
-└── apps/<spec>/                   # read + execute only
-    ├── <name>.cmd                 # read-only, hardlink to the blob
+├── blobs/<full-sha256>            # content-addressed, read-only, every version
+└── apps/<name>-<host reversed>/   # keyed WITHOUT the pin
+    ├── <name>.cmd                 # read-only, hardlink to the current pin
     └── <name>/                    # the only writable directory
 ```
+
+**The app directory is keyed on the app, not the pin.** A new pin of the same name and host replaces
+the launcher in place and inherits the directory, so whatever the app keeps there survives a version
+change. That is the difference between an update and a reinstall, and it matters concretely: on
+Windows neutrino downloads the WebView2 package into that directory — 8.8 MiB fetched, 45.4 MiB on
+disk — and a per-pin directory paid that again for every version.
+
+Consequences worth knowing:
+
+- **Last pin wins.** Two pins of the same app do not coexist; launching one replaces the launcher for
+  the other. There is no way to run two versions side by side, by design.
+- **Versions of an app share state.** A later version can alter what an earlier one reads back. They
+  come from the same name and host, so it is the same publisher either way — but if you pin a version
+  specifically because you audited it, note that a subsequent pin can leave things behind for it.
+- **Nothing is re-downloaded when switching back.** `blobs/` is content-addressed and keeps every
+  version ever fetched, so re-pinning an older one is a relink. It also means `blobs/` grows until you
+  delete it.
+- **Uninstall is `rm -rf apps/<name>-<host reversed>/`**, which takes the app and its state together.
 
 The script sits one level *above* the only writable directory, so an app cannot rewrite the
 launcher it was verified from. neutrino puts its own generated files in `<name>/` because it

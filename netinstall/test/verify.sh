@@ -38,7 +38,7 @@ run() {
 }
 
 cached_path() {
-    echo "$NEUTRINO_HOME/apps/$1/${1%%-*}.cmd"
+    echo "$NEUTRINO_HOME/apps/$(nt_appkey "$1")/${1%%-*}.cmd"
 }
 
 assert_accept() {
