@@ -24,6 +24,7 @@
 #include <process.h>
 #define NT_SEP '\\'
 #else
+#include <sys/resource.h>
 #include <unistd.h>
 #define NT_SEP '/'
 #endif
@@ -558,6 +559,33 @@ static int nt_exec(const char *script, int argc, char **argv, int rest)
 }
 
 /*
+ * A crash is a write the confinement never sees. core_pattern usually pipes the
+ * dump to systemd-coredump or apport, which runs outside the sandbox and stores
+ * it outside the app dir, so an app that crashes on purpose gets bytes written
+ * somewhere no rule here reaches -- repeatedly, if it likes. Refusing to produce
+ * a core at all is the whole fix, and it costs one call.
+ *
+ * Reported by --info rather than folded into the confinement description,
+ * because it applies whether or not any confinement does.
+ */
+static const char *nt_limits(int enforce)
+{
+#ifdef _WIN32
+    (void)enforce;
+    return NULL;
+#else
+    struct rlimit rl;
+
+    rl.rlim_cur = 0;
+    rl.rlim_max = 0;
+    if (enforce && setrlimit(RLIMIT_CORE, &rl) != 0) {
+        return "core dumps not disabled (setrlimit refused)";
+    }
+    return "core dumps disabled";
+#endif
+}
+
+/*
  * The forced-off hook exists only in test builds, so a release binary has no
  * way to be talked out of confining anything.
  */
@@ -766,8 +794,12 @@ int main(int argc, char **argv)
         {
             int total = 0;
             int dropped = nt_env_scrub(0, &total);
+            const char *limits = nt_limits(0);
             printf("env        allowlist, %d of %d variables dropped\n",
                    dropped, total);
+            if (limits) {
+                printf("limits     %s\n", limits);
+            }
         }
         if (nt_fetch_command(spec.url, script, shown, sizeof(shown)) == 0) {
             printf("downloader %s\n", shown);
@@ -860,6 +892,7 @@ int main(int argc, char **argv)
      * that get no confinement at all.
      */
     nt_env_scrub(1, NULL);
+    nt_limits(1);
 
     setenv_dir("XDG_CACHE_HOME", appdir, "cache");
     setenv_dir("XDG_CONFIG_HOME", appdir, "config");

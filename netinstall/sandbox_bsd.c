@@ -9,6 +9,11 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifdef __FreeBSD__
+#include <sys/procctl.h>
+#include <sys/types.h>
+#endif
+
 #include "netinstall.h"
 #include "sandbox.h"
 
@@ -74,16 +79,37 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 
 /*
  * Capsicum only confines programs that cooperate, and jail/chroot/ugidfw all
- * need root, so there is nothing to apply to a GUI child here.
+ * need root, so there is still nothing here that confines a GUI child.
+ *
+ * What FreeBSD does have unprivileged is PROC_NO_NEW_PRIVS_CTL, which at least
+ * stops the app picking up privileges from a setuid binary. That is a floor,
+ * not confinement, so this still returns -1 and a strict build still refuses to
+ * run -- but the description says what was actually applied rather than "none".
  */
 int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
+    const char *floor = "";
+
     (void)phase;
     (void)home;
     (void)appdir;
+
+#if defined(__FreeBSD__) && defined(PROC_NO_NEW_PRIVS_CTL)
+    {
+        int arg = PROC_NO_NEW_PRIVS_ENABLE;
+
+        if (!enforce ||
+            procctl(P_PID, (id_t)getpid(), PROC_NO_NEW_PRIVS_CTL, &arg) == 0) {
+            floor = "; no-new-privs set";
+        }
+    }
+#else
     (void)enforce;
-    snprintf(desc, desclen, "none (no unprivileged confinement on this system)");
+#endif
+
+    snprintf(desc, desclen,
+             "none (no unprivileged confinement on this system%s)", floor);
     return -1;
 }
 

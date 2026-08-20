@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <process.h>
 #else
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -193,6 +194,11 @@ int nt_fetch(const char *url, const char *dest, const char *home,
         }
         if (pid == 0) {
             char desc[256];
+            struct rlimit rl;
+
+            rl.rlim_cur = 0;
+            rl.rlim_max = 0;
+            setrlimit(RLIMIT_CORE, &rl);
             nt_confine(NT_PHASE_FETCH, home, NULL, 1, desc, sizeof(desc));
             execv(bin, argv);
             _exit(127);
