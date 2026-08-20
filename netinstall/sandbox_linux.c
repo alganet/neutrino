@@ -9,7 +9,9 @@
 #define _GNU_SOURCE
 #endif
 
+#include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +19,10 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <linux/audit.h>
+#include <linux/filter.h>
 #include <linux/landlock.h>
+#include <linux/seccomp.h>
 
 #include "netinstall.h"
 #include "sandbox.h"
@@ -163,6 +168,217 @@ static void nt_allow_system_reads(int ruleset)
 }
 #endif
 
+
+/*
+ * Landlock mediates paths and nothing else, so the syscalls that reach across
+ * process boundaries or into the kernel's own machinery are all still open to a
+ * confined app. A small denylist closes the worst of them.
+ *
+ * A denylist, not an allowlist, and deliberately: an allowlist that a webview
+ * survives is an enormous piece of archaeology that rebreaks whenever an engine
+ * changes libc, and Chromium and WebKit already ship exactly that filter for
+ * their own renderers. Filters stack, so theirs still installs on top of this
+ * one -- verified, not assumed.
+ *
+ * Everything returns EPERM rather than killing the process. A SIGSYS turns an
+ * unexpected-but-harmless syscall into a crash, and a crash in a webview is
+ * indistinguishable from a bug in netinstall.
+ *
+ * The mount family is pointedly absent. Landlock already denies it whenever it
+ * handles a filesystem right, and on a kernel too old for Landlock, denying it
+ * here would newly break WebKitGTK's bubblewrap for no gain.
+ */
+static const int nt_denied_syscalls[] = {
+#ifdef __NR_ptrace
+    __NR_ptrace,                /* read and write any other same-uid process */
+#endif
+#ifdef __NR_process_vm_readv
+    __NR_process_vm_readv,
+#endif
+#ifdef __NR_process_vm_writev
+    __NR_process_vm_writev,
+#endif
+#ifdef __NR_userfaultfd
+    __NR_userfaultfd,           /* a long-running kernel exploit primitive */
+#endif
+#ifdef __NR_perf_event_open
+    __NR_perf_event_open,
+#endif
+#ifdef __NR_bpf
+    __NR_bpf,
+#endif
+#ifdef __NR_kcmp
+    __NR_kcmp,
+#endif
+#ifdef __NR_keyctl
+    __NR_keyctl,                /* the kernel keyring holds real credentials */
+#endif
+#ifdef __NR_add_key
+    __NR_add_key,
+#endif
+#ifdef __NR_request_key
+    __NR_request_key,
+#endif
+#ifdef __NR_io_uring_setup
+    __NR_io_uring_setup,        /* large attack surface, and no toolkit needs it */
+#endif
+#ifdef __NR_io_uring_enter
+    __NR_io_uring_enter,
+#endif
+#ifdef __NR_io_uring_register
+    __NR_io_uring_register,
+#endif
+#ifdef __NR_setns
+    __NR_setns,
+#endif
+#ifdef __NR_open_by_handle_at
+    __NR_open_by_handle_at,     /* reaches a file without walking a path to it */
+#endif
+#ifdef __NR_name_to_handle_at
+    __NR_name_to_handle_at,
+#endif
+#ifdef __NR_syslog
+    __NR_syslog,
+#endif
+#ifdef __NR_init_module
+    __NR_init_module,
+#endif
+#ifdef __NR_finit_module
+    __NR_finit_module,
+#endif
+#ifdef __NR_delete_module
+    __NR_delete_module,
+#endif
+#ifdef __NR_kexec_load
+    __NR_kexec_load,
+#endif
+#ifdef __NR_kexec_file_load
+    __NR_kexec_file_load,
+#endif
+#ifdef __NR_swapon
+    __NR_swapon,
+#endif
+#ifdef __NR_swapoff
+    __NR_swapoff,
+#endif
+#ifdef __NR_modify_ldt
+    __NR_modify_ldt,
+#endif
+#ifdef __NR_iopl
+    __NR_iopl,
+#endif
+#ifdef __NR_ioperm
+    __NR_ioperm,
+#endif
+    -1
+};
+
+#if defined(__x86_64__)
+#define NT_AUDIT_ARCH AUDIT_ARCH_X86_64
+#elif defined(__i386__)
+#define NT_AUDIT_ARCH AUDIT_ARCH_I386
+#elif defined(__aarch64__)
+#define NT_AUDIT_ARCH AUDIT_ARCH_AARCH64
+#elif defined(__arm__)
+#define NT_AUDIT_ARCH AUDIT_ARCH_ARM
+#elif defined(__riscv) && __riscv_xlen == 64
+#define NT_AUDIT_ARCH AUDIT_ARCH_RISCV64
+#elif defined(__powerpc64__)
+#define NT_AUDIT_ARCH AUDIT_ARCH_PPC64LE
+#endif
+
+#if defined(__x86_64__)
+#define NT_X32_GUARD 1
+#else
+#define NT_X32_GUARD 0
+#endif
+
+#define NT_SECCOMP_MAX (8 + (sizeof(nt_denied_syscalls) / sizeof(int)))
+
+/* Asks whether a filter could be installed, without installing one, so --info
+ * describes a real launch rather than guessing at it. */
+static int nt_seccomp_available(void)
+{
+#ifndef NT_AUDIT_ARCH
+    return 0;
+#else
+#ifdef SECCOMP_GET_ACTION_AVAIL
+    {
+        unsigned int action = SECCOMP_RET_ERRNO;
+
+        if (syscall(__NR_seccomp, SECCOMP_GET_ACTION_AVAIL, 0U, &action) == 0) {
+            return 1;
+        }
+    }
+#endif
+    return prctl(PR_GET_SECCOMP, 0, 0, 0, 0) >= 0;
+#endif
+}
+
+/*
+ * Returns 0 when a filter is in force. The caller has already asked for
+ * PR_SET_NO_NEW_PRIVS, which seccomp requires for an unprivileged process.
+ */
+static int nt_seccomp(void)
+{
+#ifndef NT_AUDIT_ARCH
+    return -1;
+#else
+    struct sock_filter prog[NT_SECCOMP_MAX];
+    struct sock_fprog fprog;
+    unsigned short n = 0;
+    int i, count = 0;
+
+    while (nt_denied_syscalls[count] != -1) {
+        count++;
+    }
+
+    /*
+     * A process can reach the same kernel code through a different syscall
+     * table, so the architecture is checked first and anything foreign is
+     * refused outright. On x86-64 that includes x32, which shares the audit
+     * arch and only differs by a bit in the syscall number.
+     */
+    prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+                                             offsetof(struct seccomp_data, arch));
+    prog[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                           NT_AUDIT_ARCH, 0, 0);
+    prog[n].jf = (unsigned char)(count + 2 + NT_X32_GUARD);
+    n++;
+    prog[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+                                             offsetof(struct seccomp_data, nr));
+#if defined(__x86_64__)
+    prog[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K,
+                                           0x40000000, 0, 0);
+    prog[n].jt = (unsigned char)(count + 1);
+    n++;
+#endif
+
+    for (i = 0; i < count; i++) {
+        prog[n] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                                               (unsigned int)nt_denied_syscalls[i],
+                                               0, 0);
+        prog[n].jt = (unsigned char)(count - i);
+        n++;
+    }
+    prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
+    prog[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K,
+                                             SECCOMP_RET_ERRNO |
+                                             (EPERM & SECCOMP_RET_DATA));
+
+    fprog.len = n;
+    fprog.filter = prog;
+
+#ifdef __NR_seccomp
+    if (syscall(__NR_seccomp, SECCOMP_SET_MODE_FILTER, 0U, &fprog) == 0) {
+        return 0;
+    }
+#endif
+    /* Pre-3.17 kernels have no seccomp syscall, only the prctl. */
+    return prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &fprog, 0, 0) == 0 ? 0 : -1;
+#endif
+}
+
 int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
@@ -170,11 +386,28 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     unsigned long long rights = NT_WRITE_RIGHTS | NT_READ_RIGHTS;
     char path[NT_PATH_MAX];
     const char *runtime;
+    const char *secc;
     int abi, ruleset;
+
+    /*
+     * Before Landlock, and independently of it: the filter is worth having even
+     * on a kernel with no Landlock at all, and no_new_privs is a precondition
+     * for both.
+     */
+    if (enforce) {
+        prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+        secc = nt_seccomp() == 0 ? " + seccomp" : "";
+    } else {
+        secc = nt_seccomp_available() ? " + seccomp" : "";
+    }
 
     abi = nt_ll_create(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION);
     if (abi < 1) {
-        snprintf(desc, desclen, "none (landlock unavailable)");
+        /*
+         * Still -1: a syscall filter is not filesystem confinement, and a
+         * strict build must refuse rather than settle for it.
+         */
+        snprintf(desc, desclen, "none (landlock unavailable)%s", secc);
         return -1;
     }
     if (abi >= 2) {
@@ -198,7 +431,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 #endif
     ruleset = nt_ll_create(&attr, sizeof(attr), 0);
     if (ruleset < 0) {
-        snprintf(desc, desclen, "none (landlock ruleset rejected)");
+        snprintf(desc, desclen, "none (landlock ruleset rejected)%s", secc);
         return -1;
     }
 
@@ -210,7 +443,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         nt_allow(ruleset, "/proc", NT_READ_RIGHTS);
         nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
 #endif
-        snprintf(desc, desclen, "landlock abi %d, writes confined to %s", abi, path);
+        snprintf(desc, desclen, "landlock abi %d%s, writes confined to %s",
+                 abi, secc, path);
     } else {
         nt_allow(ruleset, appdir, rights);
         nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
@@ -240,9 +474,11 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         }
         nt_allow_system_reads(ruleset);
         snprintf(desc, desclen,
-                 "landlock abi %d, reads and writes confined to %s", abi, appdir);
+                 "landlock abi %d%s, reads and writes confined to %s",
+                 abi, secc, appdir);
 #else
-        snprintf(desc, desclen, "landlock abi %d, writes confined to %s", abi, appdir);
+        snprintf(desc, desclen, "landlock abi %d%s, writes confined to %s",
+                 abi, secc, appdir);
 #endif
     }
 
@@ -253,7 +489,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 || nt_ll_restrict(ruleset) != 0) {
         close(ruleset);
-        snprintf(desc, desclen, "none (landlock enforcement failed)");
+        snprintf(desc, desclen, "none (landlock enforcement failed)%s", secc);
         return -1;
     }
     close(ruleset);
