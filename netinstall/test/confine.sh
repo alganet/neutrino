@@ -43,6 +43,23 @@ if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC
 if command -v python3 >/dev/null 2>&1; then
     if python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0))" 2>/dev/null; then echo "BIND_OK"; else echo "BIND_BLOCKED"; fi
 else echo "BIND_SKIP"; fi
+if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import ctypes, os
+class Iov(ctypes.Structure):
+    _fields_ = [(\"base\", ctypes.c_void_p), (\"len\", ctypes.c_size_t)]
+libc = ctypes.CDLL(None, use_errno=True)
+libc.process_vm_readv.restype = ctypes.c_ssize_t
+libc.process_vm_readv.argtypes = [ctypes.c_int, ctypes.POINTER(Iov), ctypes.c_ulong,
+                                  ctypes.POINTER(Iov), ctypes.c_ulong, ctypes.c_ulong]
+dst = ctypes.create_string_buffer(8)
+src = ctypes.create_string_buffer(b\"12345678\", 8)
+a = Iov(ctypes.cast(dst, ctypes.c_void_p).value, 8)
+b = Iov(ctypes.cast(src, ctypes.c_void_p).value, 8)
+n = libc.process_vm_readv(os.getpid(), ctypes.byref(a), 1, ctypes.byref(b), 1, 0)
+print(\"PEEK_OK\" if n == 8 else \"PEEK_BLOCKED\")
+" 2>/dev/null || echo "PEEK_BLOCKED"
+else echo "PEEK_SKIP"; fi
 if [ -n "${NETINSTALL_FAKE_TOKEN:-}" ]; then echo "SECRET_INHERITED"; else echo "SECRET_SCRUBBED"; fi
 if [ -n "${SSH_AUTH_SOCK:-}" ]; then echo "AGENT_INHERITED"; else echo "AGENT_SCRUBBED"; fi
 if [ -n "${PATH:-}" ] && [ -n "${HOME:-}" ]; then echo "BASICS_KEPT"; else echo "BASICS_LOST"; fi
@@ -94,6 +111,16 @@ if [ "$(uname -s)" = "Darwin" ]; then
 else
     nt_note "w^x is tight-tier only on linux; got $(grep -o 'EXEC_[A-Z_]*' <<<"$OUT")"
 fi
+
+echo "=== Syscalls that reach across process boundaries ==="
+case "$CONFINE" in
+    *seccomp*)
+        # process_vm_readv on your own memory always succeeds unfiltered, so a
+        # refusal here is the filter and nothing else.
+        check "cannot read another process's memory" PEEK_BLOCKED ;;
+    *)
+        nt_note "no seccomp filter here; got $(grep -o 'PEEK_[A-Z]*' <<<"$OUT")" ;;
+esac
 
 NT_ABI="$(grep -o 'abi [0-9]*' <<<"$CONFINE" | awk '{print $2}')"
 if [ "$(uname -s)" = "Linux" ] && [ -n "$NT_ABI" ] && [ "$NT_ABI" -ge 4 ]; then

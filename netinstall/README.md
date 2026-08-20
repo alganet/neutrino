@@ -184,7 +184,7 @@ and the network, so "deny everything" is not on the table.
 
 | Platform | What is applied |
 |---|---|
-| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied. |
+| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied. A seccomp filter on top. |
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. See the caveat below. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, plus read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles. |
 | **Windows** | Job object — process limits only. **No filesystem confinement** by default; see the tight tier. |
@@ -203,12 +203,39 @@ while these stand:
   `connect()` to a pathname unix socket before ABI 9, so no filesystem rule can close them; the
   sockets are reachable whether or not the directory is granted. Closing this needs a newer Landlock,
   a Wayland-only session with no bus, or a different mechanism entirely.
-- **No seccomp filter.** `ptrace`, `process_vm_readv`, `userfaultfd` and `keyctl` are all still
-  reachable. A small filter would be worth having and is the most valuable remaining Linux item.
 - **Windows cannot confine reads.** AppContainer is the only mechanism that would, and low integrity
   already stops WebView2 rendering, so there is no reason to expect AppContainer to fare better.
 - **FreeBSD gets nothing**, and that is unlikely to change while Capsicum needs the target's
   cooperation.
+
+### The seccomp filter
+
+Landlock mediates paths and nothing else, so everything that reaches across a process boundary or
+into the kernel's own machinery stayed open. A denylist filter closes the worst of it: `ptrace`,
+`process_vm_readv`/`writev`, `userfaultfd`, `perf_event_open`, `bpf`, `kcmp`, the keyring calls,
+`io_uring`, `setns`, the file-handle calls, and the module and kexec family.
+
+A **denylist**, and deliberately. An allowlist a webview survives is a large piece of archaeology
+that rebreaks whenever an engine changes libc — and Chromium and WebKit already ship exactly that
+filter for their own renderers. Filters stack, so theirs still installs on top of this one; that is
+verified rather than assumed.
+
+Everything returns `EPERM` rather than raising `SIGSYS`. A kill action turns an
+unexpected-but-harmless syscall into a crash, and a crash inside a webview is indistinguishable
+from a bug in netinstall.
+
+Three details worth knowing if you edit the list:
+
+- **Foreign architectures are refused outright.** A process can reach the same kernel code through a
+  different syscall table, so the filter checks the audit arch first, and on x86-64 also rejects x32
+  — which shares the audit arch and differs only by a bit in the syscall number. The practical cost
+  is that a 32-bit process cannot run under the filter.
+- **The mount family is pointedly absent.** Landlock already denies it whenever it handles a
+  filesystem right, and on a kernel too old for Landlock, denying it here would newly break
+  WebKitGTK's `bubblewrap` for nothing.
+- **It applies even when Landlock does not**, since it is worth having on an old kernel too. It is
+  still not filesystem confinement, so a `-DNEUTRINO_STRICT_SANDBOX` build refuses to run on
+  seccomp alone rather than settling for it.
 
 ### Where confinement is theatre
 
