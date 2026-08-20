@@ -68,7 +68,14 @@ echo "=== Fixtures ==="
 printf 'echo hello from a neutrino app\n' > "$WORK/good.cmd"
 printf 'echo nul\0here\n' > "$WORK/nul.cmd"
 printf '\177ELF\002\001\001\000\000\000\000\000' > "$WORK/elf.bin"
-"$(nt_python)" -c "open(r'$WORK/huge.cmd','w').write('a' * 17000000)"
+# Not python: on windows nt_python is the native interpreter, which cannot open
+# an MSYS /tmp path, so this fixture was never created there and the oversized
+# payload assertion below passed against a file that did not exist.
+dd if=/dev/zero bs=1000000 count=17 2>/dev/null | tr '\0' 'a' > "$WORK/huge.cmd"
+if [ ! -s "$WORK/huge.cmd" ]; then
+    nt_fail "oversized fixture was not created; that assertion would be vacuous"
+    FAILURES=$((FAILURES + 1))
+fi
 echo "  ok"
 
 echo "=== Happy path ==="
