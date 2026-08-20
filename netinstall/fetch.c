@@ -183,7 +183,7 @@ int nt_fetch(const char *url, const char *dest, const char *home,
 
 #ifdef _WIN32
     (void)home;
-    return _spawnv(_P_WAIT, bin, (const char *const *)argv) == 0 ? 0 : -1;
+    return nt_win_spawn(bin, argv) == 0 ? 0 : -1;
 #else
     {
         pid_t pid = fork();

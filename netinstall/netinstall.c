@@ -492,7 +492,15 @@ static long nt_pid(void)
 static void nt_setenv(const char *key, const char *val)
 {
 #ifdef _WIN32
+    /*
+     * Both copies, and it matters now. _putenv_s updates the CRT's environment,
+     * which is what _spawnv used to hand to the child; CreateProcess with a NULL
+     * environment hands over the Win32 block instead. Setting only the CRT copy
+     * would leave the app with whatever XDG_* it inherited, or none -- which is
+     * the redirection that keeps its data inside the app dir.
+     */
     _putenv_s(key, val);
+    SetEnvironmentVariableA(key, val);
 #else
     setenv(key, val, 1);
 #endif
@@ -514,14 +522,136 @@ static void setenv_dir(const char *key, const char *appdir, const char *sub)
 
 #ifdef _WIN32
 /*
- * _spawnv quotes for the CRT, then cmd.exe parses the result again with its own
- * metacharacters. An argument carrying any of these would be reinterpreted as
- * shell syntax rather than delivered verbatim, so refuse instead of guessing at
- * an escaping scheme that cmd does not consistently honour.
+ * The command line is quoted once on the way out, then cmd.exe parses the result
+ * again with its own metacharacters. An argument carrying any of these would be
+ * reinterpreted as shell syntax rather than delivered verbatim, so refuse
+ * instead of guessing at an escaping scheme that cmd does not consistently
+ * honour.
  */
 static int nt_cmd_safe(const char *arg)
 {
     return arg[strcspn(arg, "\"&|<>^%!()")] == '\0';
+}
+
+/*
+ * Appends one argument to a command line the way the CRT would have, because
+ * that is what _spawnv used to do for us and cmd.exe parses what it is handed.
+ * An argument with a space has to be quoted, and a run of backslashes right
+ * before the closing quote has to be doubled or it escapes that quote --
+ * "C:\dir\" would otherwise swallow it and the rest of the line with it.
+ *
+ * Embedded double quotes are not handled because they cannot occur: forwarded
+ * arguments are refused by nt_cmd_safe above, and a windows path cannot contain
+ * one.
+ */
+static int nt_cmdline_append(char *out, size_t len, const char *arg)
+{
+    size_t used = strlen(out);
+    size_t i, bs;
+    int quote = arg[0] == '\0' || arg[strcspn(arg, " \t")] != '\0';
+
+    /* Refuse rather than skip: dropping a separator or an opening quote for
+     * want of room produces a command line that is wrong rather than short. */
+    if (used) {
+        if (used + 2 >= len) {
+            return -1;
+        }
+        out[used++] = ' ';
+    }
+    if (quote) {
+        if (used + 2 >= len) {
+            return -1;
+        }
+        out[used++] = '"';
+    }
+    for (i = 0; arg[i]; i++) {
+        if (used + 3 >= len) {
+            return -1;
+        }
+        out[used++] = arg[i];
+    }
+    if (quote) {
+        for (bs = 0; bs < i && arg[i - 1 - bs] == '\\'; bs++) {
+            /* count the trailing backslash run */
+        }
+        while (bs--) {
+            if (used + 3 >= len) {
+                return -1;
+            }
+            out[used++] = '\\';
+        }
+        if (used + 2 >= len) {
+            return -1;
+        }
+        out[used++] = '"';
+    }
+    out[used] = '\0';
+    return used + 1 < len ? 0 : -1;
+}
+
+static int nt_build_cmdline(char *const *args, char *out, size_t len)
+{
+    int i;
+
+    out[0] = '\0';
+    for (i = 0; args[i]; i++) {
+        if (nt_cmdline_append(out, len, args[i]) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Runs a program to completion and returns its exit code, replacing _spawnv.
+ *
+ * The reason is not style. _spawnv gives no way to say which handles a child
+ * may inherit and no way to attach process attributes, so both of the things
+ * windows still has no answer for -- handle hygiene and any kind of token
+ * confinement -- are unreachable behind it. CreateProcess is the only door.
+ *
+ * Standard handles are named explicitly rather than left to chance, because a
+ * caller that redirected stdout to a file expects the app to write there.
+ */
+int nt_win_spawn(const char *exe, char *const *args)
+{
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    DWORD code = 126;
+    char *cmdline;
+
+    /* The documented ceiling for a command line is 32767 characters. */
+    cmdline = (char *)malloc(32768);
+    if (!cmdline) {
+        fprintf(stderr, "netinstall: out of memory\n");
+        return 126;
+    }
+    if (nt_build_cmdline(args, cmdline, 32768) != 0) {
+        fprintf(stderr, "netinstall: command line too long\n");
+        free(cmdline);
+        return 126;
+    }
+
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+
+    if (!CreateProcessA(exe, cmdline, NULL, NULL, TRUE, 0, NULL, NULL,
+                        &si, &pi)) {
+        fprintf(stderr, "netinstall: cannot start %s (error %lu)\n", exe,
+                (unsigned long)GetLastError());
+        free(cmdline);
+        return 126;
+    }
+    free(cmdline);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return (int)code;
 }
 #endif
 
@@ -605,8 +735,7 @@ static int nt_exec(const char *script, int argc, char **argv, int rest)
 
 #ifdef _WIN32
     {
-        int rc = (int)_spawnv(_P_WAIT, "C:\\Windows\\System32\\cmd.exe",
-                              (const char *const *)args);
+        int rc = nt_win_spawn("C:\\Windows\\System32\\cmd.exe", args);
         free(args);
         return rc;
     }

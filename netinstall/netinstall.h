@@ -41,6 +41,10 @@ int nt_is_text(const char *path);
 #ifndef _WIN32
 /* Leaves only 0, 1 and 2 open, so nothing the caller had open reaches the app. */
 void nt_close_inherited(void);
+#else
+/* Runs a program to completion and returns its exit code. Replaces _spawnv,
+ * which cannot express which handles a child inherits. */
+int nt_win_spawn(const char *exe, char *const *args);
 #endif
 
 #endif

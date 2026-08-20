@@ -167,8 +167,8 @@ static void nt_env_drop(const char *name, size_t namelen)
     memcpy(buf, name, namelen);
     buf[namelen] = '\0';
 #ifdef _WIN32
-    /* Both copies: _spawnv passes the CRT block, and the Win32 block is what
-     * anything spawned with a NULL environment would inherit. */
+    /* Both copies: the CRT keeps its own, and the Win32 block is what a child
+     * created with a NULL environment actually inherits. */
     _putenv_s(buf, "");
     SetEnvironmentVariableA(buf, NULL);
 #else
