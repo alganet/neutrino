@@ -443,6 +443,45 @@ Low integrity was the obvious next step and does not work: it blocks writes but 
 hosts. AppContainer is the only mechanism that would confine reads, but nesting it inside
 Chromium's own lowbox tokens is unsupported. Both are follow-ups, not v1 promises.
 
+**Job UI restrictions do not work with WebView2 at all**, and that is measured rather than argued.
+`JOBOBJECT_BASIC_UI_RESTRICTIONS` is the obvious remaining lever, and the only mechanism here that
+survives the hop to the real app — the polyglot compiles itself and `START`s the result, so job
+membership is inherited where a per-process mitigation policy would land on `cmd.exe` and stop
+there. It was worth being sure about, so it was bisected instead of guessed at.
+
+`test/job-ui.sh` applies each of the eight flags on its own to a real webview, one launch each, with
+an unrestricted control run on the same clock before and after the table. Both controls passed. All
+eight flags failed:
+
+| flag | webview |
+|---|---|
+| `handles` | dead |
+| `readclipboard` | dead |
+| `writeclipboard` | dead |
+| `systemparameters` | dead |
+| `displaysettings` | dead |
+| `globalatoms` | dead |
+| `desktop` | dead |
+| `exitwindows` | dead |
+
+`exitwindows` only blocks `ExitWindowsEx` and `displaysettings` only blocks `ChangeDisplaySettings`,
+so neither can plausibly be responsible on its own. Eight identical results bracketed by two passing
+controls do not say "these eight flags are each fatal" — they say **any** non-empty UI restriction
+mask is, and there is therefore no subset worth shipping. Since every singleton mask is a minimal
+non-empty mask, that is as far as bisection can go; there is no smaller experiment left to run.
+
+What it does *not* establish is why. The probe reports `WINDOW_NO_CONTENT`, which sounds like a
+window whose renderer died — but the launcher's own `cmd.exe` console carries the script path in its
+title, so that outcome cannot be told apart from the app never starting. Only `CONTENT_OK` is
+unambiguous, because nothing but the app sets a `STEP` title. The mechanism is unexplained and the
+plausible story — that Chromium's nested sandbox needs USER and desktop objects belonging to
+processes outside our job — is a guess, written down as one.
+
+So `NT_JOB_UI_DEFAULT` is empty, `--info` says `job object` with nothing after it, and the suite is
+opt-in behind `NEUTRINO_JOB_UI_BISECT=1` rather than costing ten minutes of Windows CI on every push
+to re-answer a settled question. The machinery stays so a future WebView2 can be re-tested in one
+command instead of rebuilt from scratch.
+
 The job object also carries no `KILL_ON_JOB_CLOSE`. The windows polyglot compiles itself, `START`s
 the result and returns, so this launcher exits while the app is still starting; killing the job on
 close would take the app down with it.
@@ -477,6 +516,10 @@ environment, an inherited descriptor, an abstract socket, another process's memo
 (that the offline tier really refuses outbound TCP while the fetch still worked), `strict.sh` (that
 `-DNEUTRINO_STRICT_SANDBOX` really refuses to run unconfined), and `e2e.sh` (a real neutrino
 polyglot fetched, verified and launched).
+
+`job-ui.sh` is an eighth suite that does not run by default: it is the Windows job UI bisect
+described above, it needs `NEUTRINO_JOB_UI_BISECT=1`, and it takes about ten minutes because every
+flag costs a real webview launch.
 
 The `NEUTRINO_TEST_ORIGIN` override the suite needs to serve fixtures from loopback is compiled
 in only under `-DNEUTRINO_TESTING`; release binaries ignore it entirely.
