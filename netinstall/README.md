@@ -256,9 +256,14 @@ saw it. Denying the service is what actually closes it, so `com.apple.SecuritySe
 `com.apple.securityd.xpc` are now unreachable and the file rule is the belt to that pair of braces.
 
 Certificate trust lives in a *different* daemon, `com.apple.trustd`, which is deliberately left
-reachable — deny that one and TLS inside the webview stops working. The suite reports what the
-keychain and an HTTPS fetch actually do under the profile rather than asserting a guess about
-Apple's daemons.
+reachable — deny that one and TLS inside the webview stops working.
+
+Both halves are measured rather than argued. The suite plants a real password in the login keychain
+from outside the sandbox and tries to read it back from inside, because searching for an item that
+does not exist fails identically whether `securityd` was reachable or not; under the profile the
+read is refused. It also fetches an HTTPS URL, which returns 200. So the denial is a boundary and
+not a second piece of theatre, and the carve-out for `trustd` is doing exactly the work it was left
+in to do.
 
 Also denied:
 

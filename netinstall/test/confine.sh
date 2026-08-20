@@ -44,7 +44,15 @@ time.sleep(600)
     sleep 1
 fi
 
-trap 'kill $NT_SERVER_PID $NT_ABSTRACT_PID 2>/dev/null; rm -rf "$WORK" "$NEUTRINO_TEST_FAKEHOME"' EXIT
+nt_cleanup() {
+    kill $NT_SERVER_PID $NT_ABSTRACT_PID 2>/dev/null
+    if [ -n "${NEUTRINO_TEST_KEYCHAIN:-}" ]; then
+        security delete-generic-password -a "$NEUTRINO_TEST_KEYCHAIN" \
+            -s "$NEUTRINO_TEST_KEYCHAIN" >/dev/null 2>&1
+    fi
+    rm -rf "$WORK" "$NEUTRINO_TEST_FAKEHOME"
+}
+trap nt_cleanup EXIT
 
 FAILURES=0
 
@@ -97,7 +105,11 @@ print(\"PEEK_OK\" if n == 8 else \"PEEK_BLOCKED\")
 " 2>/dev/null || echo "PEEK_BLOCKED"
 else echo "PEEK_SKIP"; fi
 if command -v security >/dev/null 2>&1; then
-    echo "KEYCHAIN: $(security find-generic-password -a neutrino-probe-absent 2>&1 | tail -1)"
+    if [ -n "${NEUTRINO_TEST_KEYCHAIN:-}" ]; then
+        if security find-generic-password -a "$NEUTRINO_TEST_KEYCHAIN" \
+                 -s "$NEUTRINO_TEST_KEYCHAIN" -w 2>/dev/null | grep -q probe-secret
+        then echo "KEYCHAIN_READ"; else echo "KEYCHAIN_BLOCKED"; fi
+    else echo "KEYCHAIN_SKIP"; fi
     echo "TLS: $(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" https://example.com 2>&1 | tail -1)"
 fi
 if [ -n "${NETINSTALL_FAKE_TOKEN:-}" ]; then echo "SECRET_INHERITED"; else echo "SECRET_SCRUBBED"; fi
@@ -111,6 +123,19 @@ export NEUTRINO_TEST_FAKEHOME
 # Two things a filesystem sandbox cannot reach: a token that exists only as a
 # variable, and a live agent socket. Both have to be gone by the time sh starts.
 export NETINSTALL_FAKE_TOKEN="a-secret-that-only-lives-in-the-environment"
+
+# A real secret in the real keychain. Searching for an item that does not exist
+# proves nothing -- it fails the same way whether securityd was reachable or
+# not -- so the probe has to try to read a password that is genuinely there.
+if [ "$(uname -s)" = "Darwin" ]; then
+    NEUTRINO_TEST_KEYCHAIN="neutrino-probe-$$"
+    if security add-generic-password -a "$NEUTRINO_TEST_KEYCHAIN" \
+             -s "$NEUTRINO_TEST_KEYCHAIN" -w probe-secret -A 2>/dev/null; then
+        export NEUTRINO_TEST_KEYCHAIN
+    else
+        unset NEUTRINO_TEST_KEYCHAIN
+    fi
+fi
 export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-/nonexistent/agent.sock}"
 
 # fd 3 carries a readable file in, so the payload can tell "closed" from "empty".
@@ -160,7 +185,15 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # Recorded, not asserted. Denying securityd is what actually closes the
     # keychain, and trustd is left reachable so TLS keeps working -- both are
     # claims about Apple daemons, so the suite reports what really happened.
-    nt_note "keychain under the profile: $(grep '^KEYCHAIN:' <<<"$OUT" | cut -c11-)"
+    case "$OUT" in
+        *KEYCHAIN_SKIP*)
+            nt_note "keychain probe skipped: no fixture could be planted" ;;
+        *)
+            # Measured in CI, not assumed: denying com.apple.SecurityServer does
+            # stop a real password being read back, so this is a boundary and
+            # gets asserted like one.
+            check "a real keychain password cannot be read" KEYCHAIN_BLOCKED ;;
+    esac
     nt_note "https under the profile: $(grep '^TLS:' <<<"$OUT" | cut -c6-)"
 fi
 
