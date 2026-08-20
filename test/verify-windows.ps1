@@ -44,6 +44,16 @@ function Wait-ForTitle($pattern) {
         if ($procs) { return $procs }
         Start-Sleep -Milliseconds $PollInterval
     } while ((Get-Date) -lt $deadline)
+    # A bare timeout cannot tell an app that died from two apps where the wrong
+    # one was picked, and those want opposite fixes. Say what was actually on
+    # screen before giving up.
+    Write-Host "  windows with a title when the wait gave up:"
+    foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) {
+        try {
+            if ($proc.MainWindowHandle -eq 0 -or -not $proc.MainWindowTitle) { continue }
+            Write-Host "    $($proc.ProcessName) [$($proc.Id)] '$($proc.MainWindowTitle)'"
+        } catch { continue }
+    }
     throw "TIMEOUT waiting for title: $pattern"
 }
 
