@@ -217,6 +217,54 @@ If nothing is available the binary **runs anyway and warns on stderr**, naming w
 wasn't applied; confinement here is defence in depth, not the trust anchor. Building with
 `-DNEUTRINO_STRICT_SANDBOX` produces a binary that refuses to run unconfined instead.
 
+### What was measured
+
+Every mechanism below was applied on its own to a real webview, on both Linux
+engines, on macOS and on Windows, with an unrestricted control run before and
+after each table. The harness that did it is not in the tree: it was a
+throwaway that swapped the confinement for one named technique under
+`-DNEUTRINO_TESTING`, and it was deleted once it had answered. What it answered
+is here, because that is the part worth keeping. The controls are not decoration: `landlock-scope-unix` on Linux
+and denying WindowServer on macOS both break the app, which is what says the
+method can see a break at all. An earlier macOS control denied `trustd` and
+survived — the test app loads a local page and never opens a TLS connection, so
+it measured nothing.
+
+**Everything currently shipped survives on its own**, on both WebKitGTK and
+QtWebEngine: all the Landlock rights, both scopes, the whole seccomp filter and
+each of its eleven syscall groups separately, `no_new_privs`, and the two opt-in
+tiers. Nothing in the default set is carrying hidden cost.
+
+What the probing did *not* find is much worth adding. That is the honest result:
+
+- **`IOCTL_DEV` is compatible and pointless.** It survives, including a variant
+  granting it only to the GPU and sound devices and withholding the terminal.
+  But Landlock exempts a list of safe ioctls anyway, and the one worth
+  withholding — `TIOCSTI` — is refused by the kernel itself: `dev.tty.legacy_tiocsti`
+  defaults to `0` and the call returns `EIO` unconfined.
+- **`mount` and `unshare` in seccomp survive, unmeasurably.** The Qt lane runs
+  with `QTWEBENGINE_DISABLE_SANDBOX=1`, so Chromium's own sandbox — which is
+  built on exactly those calls — was not running. Landlock already denies mount
+  whenever it handles a filesystem right, so the first adds nothing regardless.
+- **`RLIMIT_NPROC` survives CI and would break a desktop.** The limit is
+  per-UID, not per-process; a fixed ceiling fails on a machine that is already
+  above it.
+- **`PR_SET_DUMPABLE` survives and is aimed the wrong way.** It stops others
+  inspecting the app, and here the app is the adversary. `RLIMIT_CORE` already
+  covers the dump.
+- **On macOS every denial tried survives except writing sysctls**, which breaks
+  startup and is therefore out. The rest — pasteboard, IOKit, opendirectory,
+  LaunchServices, exec under `$HOME` — are *startup*-compatible and nothing
+  more. `NSWorkspace.openURL` needs LaunchServices and the clipboard is a thing
+  users press keys for; a table built from a local page cannot speak to either,
+  so none of them is shipped on this evidence.
+- **Namespaces could not be tested.** `unshare` succeeds and writing `uid_map`
+  then returns `EPERM`, which is a distribution allowing the namespace and
+  refusing to let anything be done with it — the Ubuntu 24.04 AppArmor default.
+  That matters more than a missing row: a mount namespace is the obvious way to
+  hide the sockets in the section below, and it is unavailable out of the box
+  on the distribution most of these machines run.
+
 ### What is still open
 
 Worth being concrete about the ceiling, because further tightening has sharply diminishing returns
