@@ -26,7 +26,25 @@ mkdir -p "$SERVE" "$WORK/bin" "$NEUTRINO_TEST_FAKEHOME"
 export NEUTRINO_HOME="$WORK/home"
 
 nt_serve "$SERVE" || exit 2
-trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK" "$NEUTRINO_TEST_FAKEHOME"' EXIT
+
+# A listener outside the sandbox, so the abstract-socket probe has something
+# real to reach for. A nonexistent name is no good: the kernel resolves the name
+# before the scope check, so it answers ECONNREFUSED either way.
+NT_ABSTRACT_PID=""
+if [ "$(uname -s)" = "Linux" ] && command -v python3 >/dev/null 2>&1; then
+    export NEUTRINO_TEST_ABSTRACT="neutrino-confine-probe-$$"
+    python3 -c "
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind('\0' + sys.argv[1])
+s.listen(8)
+time.sleep(600)
+" "$NEUTRINO_TEST_ABSTRACT" &
+    NT_ABSTRACT_PID=$!
+    sleep 1
+fi
+
+trap 'kill $NT_SERVER_PID $NT_ABSTRACT_PID 2>/dev/null; rm -rf "$WORK" "$NEUTRINO_TEST_FAKEHOME"' EXIT
 
 FAILURES=0
 
@@ -43,6 +61,19 @@ if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC
 if command -v python3 >/dev/null 2>&1; then
     if python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0))" 2>/dev/null; then echo "BIND_OK"; else echo "BIND_BLOCKED"; fi
 else echo "BIND_SKIP"; fi
+if [ -n "${NEUTRINO_TEST_ABSTRACT:-}" ]; then
+    python3 -c "
+import os, socket
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    s.connect('\0' + os.environ['NEUTRINO_TEST_ABSTRACT'])
+    print('ABSTRACT_OK')
+except PermissionError:
+    print('ABSTRACT_BLOCKED')
+except OSError:
+    print('ABSTRACT_ABSENT')
+" 2>/dev/null || echo "ABSTRACT_ABSENT"
+else echo "ABSTRACT_SKIP"; fi
 if command -v python3 >/dev/null 2>&1; then
     python3 -c "
 import ctypes, os
@@ -122,6 +153,36 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # claims about Apple daemons, so the suite reports what really happened.
     nt_note "keychain under the profile: $(grep '^KEYCHAIN:' <<<"$OUT" | cut -c11-)"
     nt_note "https under the profile: $(grep '^TLS:' <<<"$OUT" | cut -c6-)"
+fi
+
+echo "=== Sockets the app has no path-based rule against ==="
+# Abstract-socket scoping is deliberately skipped when a display is set, because
+# an X11 client does not survive it. Asserting it therefore needs a run without
+# one -- and the run above, with whatever display CI has, is what proves the
+# skip really happens rather than being a claim in a comment.
+if [ "$(uname -s)" = "Linux" ]; then
+    NOX_OUT="$(env -u DISPLAY "$APP" 2>/dev/null 3<"$SERVE/hostile.cmd")"
+    NOX_CONFINE="$(env -u DISPLAY "$APP" --info 2>/dev/null |
+        awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')"
+    nt_note "without a display: $NOX_CONFINE"
+    case "$NOX_CONFINE" in
+        *"sockets+signals scoped"*)
+            if grep -qx ABSTRACT_BLOCKED <<<"$NOX_OUT"; then
+                echo "  PASS: cannot reach an abstract unix socket outside the sandbox"
+            else
+                nt_fail "abstract socket expected=ABSTRACT_BLOCKED actual=$(grep -o 'ABSTRACT_[A-Z]*' <<<"$NOX_OUT")"
+                FAILURES=$((FAILURES + 1))
+            fi ;;
+        *)  nt_note "socket scoping needs landlock abi 6; got $NOX_CONFINE" ;;
+    esac
+    case "$CONFINE" in
+        *"sockets+signals scoped"*)
+            nt_note "no display was set here, so socket scoping applied to the main run too" ;;
+        *"signals scoped"*)
+            echo "  PASS: with a display set, socket scoping is skipped so X11 survives" ;;
+    esac
+else
+    nt_note "landlock scoping is linux-only; got $(grep -o 'ABSTRACT_[A-Z]*' <<<"$OUT")"
 fi
 
 echo "=== Syscalls that reach across process boundaries ==="
