@@ -25,7 +25,12 @@ function startTests() {
             if (current < steps.length) win.setTimeout(runNext, 1000);
         }
     }
-    win.setTimeout(runNext, 1000);
+    // The whole sequence takes about eight seconds, and a verifier that is not
+    // watching by then misses steps it can never see again. verify-windows.ps1
+    // compiles inline C# with Add-Type before its first poll, which on a cold
+    // runner can cost longer than that -- so the app waits for its audience
+    // rather than racing it.
+    win.setTimeout(runNext, 8000);
 }
 
 function waitForReady() {

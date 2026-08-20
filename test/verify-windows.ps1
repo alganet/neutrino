@@ -57,6 +57,17 @@ function Wait-ForTitle($pattern) {
     throw "TIMEOUT waiting for title: $pattern"
 }
 
+function Wait-ForApp() {
+    $deadline = (Get-Date).AddSeconds($Timeout)
+    do {
+        $p = Get-Process -Name neutrinotest -ErrorAction SilentlyContinue |
+             Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+        if ($p) { return $p }
+        Start-Sleep -Milliseconds $PollInterval
+    } while ((Get-Date) -lt $deadline)
+    throw "TIMEOUT waiting for the app to show a window"
+}
+
 function Assert-Title($proc, $expected) {
     $proc.Refresh()
     $actual = $proc.MainWindowTitle
@@ -101,7 +112,10 @@ function Assert-Position($hwnd, $expectedX, $expectedY, $tolerance) {
 # --- Test steps ---
 
 Write-Host "=== Waiting for window ==="
-$proc = Wait-ForTitle "neutrino"
+# By process, not by title: whether a window appeared has nothing to do with
+# which scripted step the app happens to be on, and matching the initial title
+# made this fail whenever the app got ahead of the verifier.
+$proc = Wait-ForApp
 Take-Screenshot "00-initial"
 
 Write-Host "=== Step 0: Ready ==="
