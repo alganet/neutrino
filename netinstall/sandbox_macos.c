@@ -73,7 +73,26 @@ static const char nt_profile[] =
     "  (subpath (param \"LIBSTATE\"))\n"
     "  (subpath (param \"LIBFONTS\")))\n"
 #endif
-    "(deny process-exec* (subpath (param \"APPDIR\")))\n"
+    /*
+     * Write xor execute, and it has to name every writable path or it means
+     * nothing. Denying exec on the app dir alone left the carve-outs above --
+     * the Library subtrees CFPreferences and WebKit insist on, and the Darwin
+     * per-user temp dir -- both writable and executable, which is the whole
+     * hole in one place. TMPDIR is not redirected on macOS, so it is a real
+     * directory outside the app dir and needs saying explicitly.
+     *
+     * Deliberately not all of $HOME: an app running node from ~/.nvm or a tool
+     * from a user prefix is not the attack, and nothing there is writable by a
+     * confined app anyway.
+     */
+    "(deny process-exec*\n"
+    "  (subpath (param \"APPDIR\"))\n"
+    "  (subpath (param \"TMPDIR\"))\n"
+    "  (subpath (param \"LIBCACHE\"))\n"
+    "  (subpath (param \"LIBPREFS\"))\n"
+    "  (subpath (param \"LIBWEBKIT\"))\n"
+    "  (subpath (param \"LIBSTATE\"))\n"
+    "  (subpath \"/private/var/folders\"))\n"
     /*
      * The file denials below are necessary and not sufficient. A keychain is not
      * read by opening a file -- the request goes to securityd over Mach, so
@@ -119,7 +138,9 @@ static const char nt_fetch_profile[] =
     "  (subpath (param \"APPDIR\"))\n"
     "  (subpath \"/private/var/folders\")\n"
     "  (regex #\"^/dev/(null|zero|random|urandom|tty)$\"))\n"
-    "(deny process-exec* (subpath (param \"APPDIR\")))\n";
+    "(deny process-exec*\n"
+    "  (subpath (param \"APPDIR\"))\n"
+    "  (subpath \"/private/var/folders\"))\n";
 
 /* Seatbelt compares resolved paths, and /var and /tmp are both symlinks. */
 static const char *nt_resolve(const char *path, char *buf, size_t len)

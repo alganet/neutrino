@@ -236,6 +236,18 @@ while these stand:
   core dumps and `PROC_NO_NEW_PRIVS_CTL`, none of which is a boundary; a strict build still refuses
   to run there.
 
+### Write xor execute on macOS
+
+This held for the app dir and nowhere else, which meant it did not hold. The profile has to grant
+writes to a handful of paths outside the app dir or nothing starts — the Library subtrees
+CFPreferences and WebKit insist on, and the Darwin per-user temp directory, which is not redirected
+here for reasons given above. Every one of those was writable *and* executable, so dropping a
+binary and running it was a two-line script.
+
+`process-exec*` is now denied on all of them. Which is the point of naming it precisely: it is
+**not** a blanket deny on `$HOME`. An app running `node` from `~/.nvm` or a tool from a user prefix
+is not the attack, and nothing under there is writable by a confined app in the first place.
+
 ### What macOS denies that is not a file
 
 The seatbelt profile named `~/Library/Keychains` in its read denials, which was theatre: a keychain
@@ -358,10 +370,9 @@ different on each platform, because the mechanisms differ in what they can expre
 | **Windows** | The process drops to low integrity, so writes outside the app dir fail. |
 | **OpenBSD** | Nothing — `unveil` is already an allowlist, so the default tier is the tight one. |
 
-On Linux and macOS the tier is also **write xor execute**: the one directory an app can write to is
-the one it cannot run anything from, so dropping a binary and executing it is not a path. macOS gets
-this in both tiers via `(deny process-exec* (subpath APPDIR))`; Linux needs an execute allowlist to
-express it, so it arrives with the tight tier.
+On Linux and macOS the tier is also **write xor execute**: a directory an app can write to is one it
+cannot run anything from, so dropping a binary and executing it is not a path. macOS gets this in
+both tiers; Linux needs an execute allowlist to express it, so it arrives with the tight tier.
 
 Worth knowing before editing the ruleset: **Landlock takes the union of every rule matching along a
 path, not the closest one.** There is no way to grant a right broadly and subtract it for one
