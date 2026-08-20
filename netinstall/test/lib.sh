@@ -64,6 +64,17 @@ nt_fail() {
     fi
 }
 
+# Annotations are capped per step, and a result split across several notices is
+# exactly the shape that gets truncated -- twice now. The step summary has no
+# such cap and renders on the run page itself, so anything that has to survive
+# the trip goes here rather than into an annotation.
+nt_summary() {
+    echo "  $*"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+        echo "$*" >> "$GITHUB_STEP_SUMMARY"
+    fi
+}
+
 nt_note() {
     echo "  $*"
     if [ -n "${GITHUB_ACTIONS:-}" ]; then

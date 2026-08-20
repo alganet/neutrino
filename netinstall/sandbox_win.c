@@ -7,6 +7,8 @@
 
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifdef NEUTRINO_CONFINE_TIGHT
 #include <aclapi.h>
@@ -86,10 +88,112 @@ static int nt_drop_to_low(void)
 }
 #endif
 
+/*
+ * Job UI restrictions, by name rather than by bit, because the whole point of
+ * this table is that the suite drives it and CI output has to be readable.
+ *
+ * The job object is the only thing on windows that reaches the app at all: the
+ * polyglot compiles itself, STARTs the result and returns, so job membership is
+ * inherited across that hop where a per-process mitigation policy would land on
+ * cmd.exe and stop there. That is why it is worth this much trouble.
+ */
+static const struct {
+    const char *name;
+    DWORD bit;
+} nt_job_ui_flags[] = {
+    { "handles",          JOB_OBJECT_UILIMIT_HANDLES },
+    { "readclipboard",    JOB_OBJECT_UILIMIT_READCLIPBOARD },
+    { "writeclipboard",   JOB_OBJECT_UILIMIT_WRITECLIPBOARD },
+    { "systemparameters", JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS },
+    { "displaysettings",  JOB_OBJECT_UILIMIT_DISPLAYSETTINGS },
+    { "globalatoms",      JOB_OBJECT_UILIMIT_GLOBALATOMS },
+    { "desktop",          JOB_OBJECT_UILIMIT_DESKTOP },
+    { "exitwindows",      JOB_OBJECT_UILIMIT_EXITWINDOWS },
+    { NULL, 0 }
+};
+
+/*
+ * Empty until the bisect says which of these a webview survives. Two rounds of
+ * CI have shown the answer is not "all of them" and not obvious, so nothing
+ * ships here on a guess; test/job-ui.sh is what fills this in.
+ */
+#define NT_JOB_UI_DEFAULT ""
+
+static DWORD nt_job_ui_parse(const char *list, char *shown, size_t shownlen)
+{
+    DWORD mask = 0;
+    size_t used = 0;
+    const char *p = list;
+
+    if (shown && shownlen) {
+        shown[0] = '\0';
+    }
+    while (*p) {
+        const char *end = strchr(p, ',');
+        size_t n = end ? (size_t)(end - p) : strlen(p);
+        int i;
+
+        for (i = 0; nt_job_ui_flags[i].name; i++) {
+            if (strlen(nt_job_ui_flags[i].name) != n ||
+                strncmp(p, nt_job_ui_flags[i].name, n) != 0) {
+                continue;
+            }
+            mask |= nt_job_ui_flags[i].bit;
+            if (shown && used + n + 2 < shownlen) {
+                if (used) {
+                    shown[used++] = ',';
+                }
+                memcpy(shown + used, p, n);
+                used += n;
+                shown[used] = '\0';
+            }
+            break;
+        }
+        if (!end) {
+            break;
+        }
+        p = end + 1;
+    }
+    return mask;
+}
+
+/*
+ * A release binary has no way to be talked into a different set: the override
+ * is compiled in only under -DNEUTRINO_TESTING, exactly like the test origin.
+ */
+static DWORD nt_job_ui_mask(char *shown, size_t shownlen)
+{
+    const char *list = NT_JOB_UI_DEFAULT;
+#ifdef NEUTRINO_TESTING
+    const char *over = getenv("NEUTRINO_TEST_JOB_UI");
+
+    if (over && *over) {
+        list = strcmp(over, "none") == 0 ? "" : over;
+    }
+#endif
+    return nt_job_ui_parse(list, shown, shownlen);
+}
+
+static int nt_job_ui(HANDLE job, DWORD mask)
+{
+    JOBOBJECT_BASIC_UI_RESTRICTIONS ui;
+
+    if (mask == 0) {
+        return 1;
+    }
+    ZeroMemory(&ui, sizeof(ui));
+    ui.UIRestrictionsClass = mask;
+    return SetInformationJobObject(job, JobObjectBasicUIRestrictions,
+                                   &ui, sizeof(ui)) ? 1 : 0;
+}
+
 int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
+    char uishown[256];
+    char uinote[288];
+    DWORD uimask;
     HANDLE job;
 
     (void)home;
@@ -100,14 +204,22 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         return -1;
     }
 
+    uimask = nt_job_ui_mask(uishown, sizeof(uishown));
+    if (uimask) {
+        snprintf(uinote, sizeof(uinote), " + ui restrictions (%s)", uishown);
+    } else {
+        uinote[0] = '\0';
+    }
+
     if (!enforce) {
 #ifdef NEUTRINO_CONFINE_TIGHT
-        snprintf(desc, desclen, "job object + low integrity, writes confined to %s "
-                                "(reads are not confined)" NT_OFFLINE_NOTE, appdir);
+        snprintf(desc, desclen, "job object%s + low integrity, writes confined to "
+                                "%s (reads are not confined)" NT_OFFLINE_NOTE,
+                 uinote, appdir);
 #else
-        snprintf(desc, desclen, "job object (process limits only; "
+        snprintf(desc, desclen, "job object%s (process limits only; "
                                 "no filesystem confinement on windows)"
-                                NT_OFFLINE_NOTE);
+                                NT_OFFLINE_NOTE, uinote);
 #endif
         return 0;
     }
@@ -131,6 +243,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 
     if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
                                  &limits, sizeof(limits)) ||
+        !nt_job_ui(job, uimask) ||
         !AssignProcessToJobObject(job, GetCurrentProcess())) {
         CloseHandle(job);
         snprintf(desc, desclen, "none (job object rejected)");
@@ -151,13 +264,14 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         snprintf(desc, desclen, "job object only (could not drop to low integrity)");
         return -1;
     }
-    snprintf(desc, desclen, "job object + low integrity, writes confined to %s "
-                            "(reads are not confined)" NT_OFFLINE_NOTE, appdir);
+    snprintf(desc, desclen, "job object%s + low integrity, writes confined to %s "
+                            "(reads are not confined)" NT_OFFLINE_NOTE,
+             uinote, appdir);
     return 0;
 #else
-    snprintf(desc, desclen, "job object (process limits only; "
+    snprintf(desc, desclen, "job object%s (process limits only; "
                             "no filesystem confinement on windows)"
-                            NT_OFFLINE_NOTE);
+                            NT_OFFLINE_NOTE, uinote);
     return 0;
 #endif
 }
