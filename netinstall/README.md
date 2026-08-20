@@ -184,7 +184,7 @@ and the network, so "deny everything" is not on the table.
 
 | Platform | What is applied |
 |---|---|
-| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied. A seccomp filter on top. |
+| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied; signals scoped to the sandbox, and abstract unix sockets too where there is no X11 display. A seccomp filter on top. |
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. See the caveat below. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
 | **Windows** | Job object — process limits only. **No filesystem confinement** by default; see the tight tier. |
@@ -199,10 +199,13 @@ wasn't applied; confinement here is defence in depth, not the trust anchor. Buil
 Worth being concrete about the ceiling, because further tightening has sharply diminishing returns
 while these stand:
 
-- **Session D-Bus and X11 remain reachable**, and either is a full escape. Landlock does not mediate
-  `connect()` to a pathname unix socket before ABI 9, so no filesystem rule can close them; the
-  sockets are reachable whether or not the directory is granted. Closing this needs a newer Landlock,
-  a Wayland-only session with no bus, or a different mechanism entirely.
+- **Session D-Bus and X11 remain reachable**, and either is a full escape. Connecting to a pathname
+  unix socket is not mediated by any filesystem rule — measured on ABI 8, with a ruleset granting
+  nothing but `/usr`, the session bus, the ssh-agent socket and `/tmp/.X11-unix/X0` all still
+  connect. Scoping closes the *abstract* namespace, but only where it can be applied at all, which
+  is not an X11 session; see below. Closing this properly needs a Landlock that mediates pathname
+  sockets, a Wayland-only session with no bus, or a different mechanism entirely — a mount namespace
+  that hides the sockets is the obvious candidate.
 - **Windows cannot confine reads.** AppContainer is the only mechanism that would, and low integrity
   already stops WebView2 rendering, so there is no reason to expect AppContainer to fare better.
 - **FreeBSD gets nothing**, and that is unlikely to change while Capsicum needs the target's
@@ -261,14 +264,40 @@ Three details worth knowing if you edit the list:
   still not filesystem confinement, so a `-DNEUTRINO_STRICT_SANDBOX` build refuses to run on
   seccomp alone rather than settling for it.
 
-### Where confinement is theatre
+### Scoping, and where confinement is still theatre
 
-Be clear-eyed about this. Landlock does not mediate `connect()` to a pathname unix socket before
-ABI 9, so an app can still reach whatever sockets exist:
+Scoping is the only part of Landlock that is not about paths, and it needs ABI 6. It comes in two
+halves that turned out to be nothing alike.
+
+`LANDLOCK_SCOPE_SIGNAL` stops the app signalling anything outside its own domain. It is free and
+always applied.
+
+`LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET` closes a namespace that has no paths and therefore could never
+have had a rule written about it. It is applied **only when `DISPLAY` is unset**, and the reason is
+worth stating exactly, because the obvious assumption — the one an earlier version of this file
+made — is wrong.
+
+An X11 client asks for the abstract socket `@/tmp/.X11-unix/X0` first and is documented to fall back
+to the pathname socket. It does not fall back here: libxcb only retries on `ENOENT` and
+`ECONNREFUSED`, and scoping answers `EPERM`, which is not on that list. Under `strace` in a scoped
+domain there is exactly one `connect()`, to the abstract address, refused — and `/tmp/.X11-unix/X0`
+is never tried, even though it is reachable and would have worked. So on an X11 session this does
+not tighten the sandbox, **it removes the display**, which is the whole point of the program.
+
+Where there is no X11 display it costs nothing and closes a real class, so that is where it is used.
+`--info` reports `signals scoped` or `sockets+signals scoped` so you can see which you got, and the
+suite asserts both: it runs the hostile payload once with the display CI provides and once with
+`DISPLAY` unset.
+
+Be clear-eyed about what all of this leaves. **Connecting to a pathname unix socket is not mediated
+by any filesystem rule.** Measured rather than inferred: on ABI 8, with a ruleset that grants nothing
+but `/usr`, connects to `/run/user/1000/bus`, the ssh-agent socket and `/tmp/.X11-unix/X0` all still
+succeed. So:
 
 - **Session D-Bus** lets an app call `StartTransientUnit` and launch a process outside the
-  sandbox entirely. If it can reach the session bus, it is not confined.
-- **X11** lets any client keylog and screenshot every other client. On an X11 session, the
+  sandbox entirely. If it can reach the session bus, it is not confined. On a systemd session the
+  bus is a pathname socket, so scoping does not touch it either way.
+- **X11** lets any client keylog and screenshot every other client, and on an X11 session the
   filesystem restriction is the only thing that holds.
 
 ### What Landlock costs, in both tiers

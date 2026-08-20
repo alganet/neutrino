@@ -40,6 +40,25 @@
 #define LANDLOCK_ACCESS_FS_TRUNCATE (1ULL << 14)
 #endif
 
+#ifndef LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET
+#define LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET (1ULL << 0)
+#endif
+#ifndef LANDLOCK_SCOPE_SIGNAL
+#define LANDLOCK_SCOPE_SIGNAL (1ULL << 1)
+#endif
+
+/*
+ * Spelled out rather than taken from the uapi header, because a build machine
+ * older than ABI 6 has a two-field struct and there would be nowhere to put the
+ * scope. The kernel zero-extends a short struct and rejects a long one whose
+ * extra bytes are not zero, so passing the full size is safe either way.
+ */
+struct nt_ruleset_attr {
+    unsigned long long handled_access_fs;
+    unsigned long long handled_access_net;
+    unsigned long long scoped;
+};
+
 /*
  * Only write-shaped rights are handled, so reads stay unrestricted. That is
  * deliberate: a read allowlist forces WebKitGTK's bubblewrap and Chromium's
@@ -92,8 +111,7 @@
     LANDLOCK_ACCESS_FS_MAKE_BLOCK | \
     LANDLOCK_ACCESS_FS_MAKE_SYM)
 
-static int nt_ll_create(const struct landlock_ruleset_attr *attr, size_t size,
-                        unsigned int flags)
+static int nt_ll_create(const void *attr, size_t size, unsigned int flags)
 {
     return (int)syscall(__NR_landlock_create_ruleset, attr, size, flags);
 }
@@ -382,10 +400,11 @@ static int nt_seccomp(void)
 int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
-    struct landlock_ruleset_attr attr;
+    struct nt_ruleset_attr attr;
     unsigned long long rights = NT_WRITE_RIGHTS | NT_READ_RIGHTS;
     char path[NT_PATH_MAX];
     const char *runtime;
+    const char *scoped = "";
     const char *secc;
     int abi, ruleset;
 
@@ -419,6 +438,34 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 
     memset(&attr, 0, sizeof(attr));
     attr.handled_access_fs = rights | NT_EXEC_RIGHT;
+    /*
+     * Scoping is the only part of Landlock that is not about paths. Signals are
+     * free and unconditional: nothing here has any business reaching a process
+     * outside its own domain.
+     *
+     * Abstract unix sockets are not free, and the reason is worth stating
+     * exactly, because the obvious assumption is wrong. An X11 client asks for
+     * the abstract socket first and is documented to fall back to
+     * /tmp/.X11-unix/X0 -- but libxcb only retries on ENOENT and ECONNREFUSED,
+     * and scoping answers EPERM, which is not on that list. Measured with strace
+     * under a scoped domain: exactly one connect(), to @/tmp/.X11-unix/X0, EPERM,
+     * and the pathname socket is never tried even though it is reachable. So on
+     * an X11 session this does not tighten the sandbox, it removes the display.
+     *
+     * It is therefore applied only when there is no X11 display to break, which
+     * is where it costs nothing and still closes a namespace no path rule can
+     * reach. --info says which of the two was applied.
+     */
+    if (abi >= 6) {
+        const char *display = getenv("DISPLAY");
+
+        attr.scoped = LANDLOCK_SCOPE_SIGNAL;
+        scoped = " (signals scoped)";
+        if (!display || !*display) {
+            attr.scoped |= LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET;
+            scoped = " (sockets+signals scoped)";
+        }
+    }
 #ifdef LANDLOCK_ACCESS_NET_BIND_TCP
     /*
      * Nothing here should be listening. Connect is left unhandled, so the app's
@@ -443,8 +490,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         nt_allow(ruleset, "/proc", NT_READ_RIGHTS);
         nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
 #endif
-        snprintf(desc, desclen, "landlock abi %d%s, writes confined to %s",
-                 abi, secc, path);
+        snprintf(desc, desclen, "landlock abi %d%s%s, writes confined to %s",
+                 abi, scoped, secc, path);
     } else {
         nt_allow(ruleset, appdir, rights);
         nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
@@ -474,11 +521,11 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         }
         nt_allow_system_reads(ruleset);
         snprintf(desc, desclen,
-                 "landlock abi %d%s, reads and writes confined to %s",
-                 abi, secc, appdir);
+                 "landlock abi %d%s%s, reads and writes confined to %s",
+                 abi, scoped, secc, appdir);
 #else
-        snprintf(desc, desclen, "landlock abi %d%s, writes confined to %s",
-                 abi, secc, appdir);
+        snprintf(desc, desclen, "landlock abi %d%s%s, writes confined to %s",
+                 abi, scoped, secc, appdir);
 #endif
     }
 
