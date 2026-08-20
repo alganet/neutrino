@@ -21,19 +21,19 @@ fi
 
 WORK="$(mktemp -d)"
 SERVE="$WORK/serve"
-FAKEHOME="$HOME/.netinstall-confine-$$"
-mkdir -p "$SERVE" "$WORK/bin" "$FAKEHOME"
+NEUTRINO_TEST_FAKEHOME="$HOME/.netinstall-confine-$$"
+mkdir -p "$SERVE" "$WORK/bin" "$NEUTRINO_TEST_FAKEHOME"
 export NEUTRINO_HOME="$WORK/home"
 
 nt_serve "$SERVE" || exit 2
-trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK" "$FAKEHOME"' EXIT
+trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK" "$NEUTRINO_TEST_FAKEHOME"' EXIT
 
 FAILURES=0
 
 # Writes outside the app dir, tries to overwrite its own launcher, then reports
 # what the XDG redirection gave it.
 cat > "$SERVE/hostile.cmd" <<'SCRIPT'
-outside="$FAKEHOME/pwned"
+outside="$NEUTRINO_TEST_FAKEHOME/pwned"
 if echo owned > "$outside" 2>/dev/null; then echo "ESCAPED_HOME"; else echo "BLOCKED_HOME"; fi
 if echo owned > "$(dirname "$0")/hostile.cmd" 2>/dev/null; then echo "ESCAPED_LAUNCHER"; else echo "BLOCKED_LAUNCHER"; fi
 if echo owned > "$XDG_DATA_HOME/ok" 2>/dev/null; then echo "OWN_DIR_WRITABLE"; else echo "OWN_DIR_BLOCKED"; fi
@@ -43,11 +43,18 @@ if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC
 if command -v python3 >/dev/null 2>&1; then
     if python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0))" 2>/dev/null; then echo "BIND_OK"; else echo "BIND_BLOCKED"; fi
 else echo "BIND_SKIP"; fi
+if [ -n "${NETINSTALL_FAKE_TOKEN:-}" ]; then echo "SECRET_INHERITED"; else echo "SECRET_SCRUBBED"; fi
+if [ -n "${SSH_AUTH_SOCK:-}" ]; then echo "AGENT_INHERITED"; else echo "AGENT_SCRUBBED"; fi
+if [ -n "${PATH:-}" ] && [ -n "${HOME:-}" ]; then echo "BASICS_KEPT"; else echo "BASICS_LOST"; fi
 SCRIPT
 
 SPEC="hostile-com-example-0$(nt_pin "$SERVE/hostile.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
-export FAKEHOME
+export NEUTRINO_TEST_FAKEHOME
+# Two things a filesystem sandbox cannot reach: a token that exists only as a
+# variable, and a live agent socket. Both have to be gone by the time sh starts.
+export NETINSTALL_FAKE_TOKEN="a-secret-that-only-lives-in-the-environment"
+export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-/nonexistent/agent.sock}"
 
 OUT="$("$APP" 2>"$WORK/err")"
 CONFINE="$("$APP" --info 2>/dev/null | awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')"
@@ -73,6 +80,11 @@ fi
 
 check "its own dir stays writable" OWN_DIR_WRITABLE
 check "reads still work"           READS_WORK
+
+echo "=== The environment is an allowlist ==="
+check "a token that lives only in the env is dropped" SECRET_SCRUBBED
+check "the ssh agent socket is dropped"               AGENT_SCRUBBED
+check "what a toolkit needs survives"                 BASICS_KEPT
 
 if [ "$(uname -s)" = "Darwin" ]; then
     # Write xor execute: the one directory an app can write to is the one it

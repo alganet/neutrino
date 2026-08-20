@@ -8,7 +8,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/dist"
-SRC=(netinstall.c fetch.c sha256.c sandbox_linux.c sandbox_bsd.c sandbox_macos.c sandbox_win.c sandbox_none.c)
+SRC=(netinstall.c env.c fetch.c sha256.c sandbox_linux.c sandbox_bsd.c sandbox_macos.c sandbox_win.c sandbox_none.c)
 CFLAGS=(-std=c99 -Wall -Wextra -Os -fno-strict-aliasing -D_POSIX_C_SOURCE=200809L)
 
 TARGETS=(
