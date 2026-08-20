@@ -225,7 +225,7 @@ and the network, so "deny everything" is not on the table.
 
 | Platform | What is applied |
 |---|---|
-| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied; signals scoped to the sandbox, and abstract unix sockets too where there is no X11 display. A seccomp filter on top. |
+| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied; signals scoped to the sandbox, and abstract unix sockets too where there is no X11 display. A seccomp filter on top. The session bus stays reachable unless the session tier is built in. |
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. See the caveat below. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
 | **Windows** | Job object — process limits only — plus every token privilege but `SeChangeNotify` removed. **No filesystem confinement** by default; see the tight tier. |
@@ -276,25 +276,43 @@ What the probing did *not* find is much worth adding. That is the honest result:
   more. `NSWorkspace.openURL` needs LaunchServices and the clipboard is a thing
   users press keys for; a table built from a local page cannot speak to either,
   so none of them is shipped on this evidence.
-- **Namespaces could not be tested.** `unshare` succeeds and writing `uid_map`
-  then returns `EPERM`, which is a distribution allowing the namespace and
-  refusing to let anything be done with it — the Ubuntu 24.04 AppArmor default.
-  That matters more than a missing row: a mount namespace is the obvious way to
-  hide the sockets in the section below, and it is unavailable out of the box
-  on the distribution most of these machines run.
+- **Namespaces work where the distribution allows them, and the verdict here was
+  the conclusion rather than the symptom.** An earlier version of this file
+  recorded `unshare` succeeding and the `uid_map` write then returning `EPERM`,
+  and concluded that namespaces could not be tested. The symptom is exactly
+  right and still reproduces: on Ubuntu 24.04 AppArmor hands an unprofiled
+  binary the namespace and refuses to let it map anything, which is worse than a
+  flat refusal — a process that gets that far is left as the overflow uid, with
+  its view of the filesystem unchanged and every file it owns suddenly
+  unreadable. It is why the tier asks the question in a throwaway child before
+  entering anything, and why `--info` now names the step: `uid map refused:
+  Operation not permitted` is what GitHub's runners say.
+
+  What changed is the conclusion. On a distribution without that restriction the
+  same code enters the namespace, writes the map and does the work — measured on
+  Mint 22.3 with kernel 7.0, and in CI with the sysctl lifted for the length of
+  the suite. That reopened the section below, and
+  [the session tier](#the-session-tier-experimental) is what came of it.
+
+  One trap worth leaving behind for whoever measures this next: **the same errno
+  has a second cause, and that one is ours.** A probe that reads its own uid
+  *after* entering the namespace is asking for 65534 to be mapped, which is
+  refused identically by a kernel that would have accepted the real one. Read the
+  ids first, and make the probe say which step failed — "unshare refused" and
+  "namespace granted, uid map refused" are not the same machine.
 
 ### What is still open
 
 Worth being concrete about the ceiling, because further tightening has sharply diminishing returns
 while these stand:
 
-- **Session D-Bus and X11 remain reachable**, and either is a full escape. Connecting to a pathname
-  unix socket is not mediated by any filesystem rule — measured on ABI 8, with a ruleset granting
-  nothing but `/usr`, the session bus, the ssh-agent socket and `/tmp/.X11-unix/X0` all still
-  connect. Scoping closes the *abstract* namespace, but only where it can be applied at all, which
-  is not an X11 session; see below. Closing this properly needs a Landlock that mediates pathname
-  sockets, a Wayland-only session with no bus, or a different mechanism entirely — a mount namespace
-  that hides the sockets is the obvious candidate.
+- **Session D-Bus and X11 are reachable in the default tier**, and either is a full escape.
+  Connecting to a pathname unix socket is not mediated by any filesystem rule — measured on ABI 8,
+  with a ruleset granting nothing but `/usr`, the session bus, the ssh-agent socket and
+  `/tmp/.X11-unix/X0` all still connect. Landlock cannot express this and no amount of tightening it
+  will. [The session tier](#the-session-tier-experimental) closes both with namespaces and the X11
+  SECURITY extension, and it is off by default and unavailable outright on Ubuntu 24.04 and its
+  derivatives, so on a stock desktop this is still the ceiling.
 - **Windows cannot confine reads.** AppContainer is the only mechanism that would, and low integrity
   already stops WebView2 rendering, so there is no reason to expect AppContainer to fare better.
 - **FreeBSD gets no confinement**, and that is unlikely to change while Capsicum needs the target's
@@ -408,6 +426,20 @@ succeed. So:
 - **X11** lets any client keylog and screenshot every other client, and on an X11 session the
   filesystem restriction is the only thing that holds.
 
+Both of those are what [the session tier](#the-session-tier-experimental) exists for. Two things it
+turned up are worth having here, next to the mechanism they are about:
+
+- **A network namespace closes the abstract namespace on an X11 session, and scoping cannot.** The
+  two refusals are not the same refusal. Scoping answers `EPERM`, which libxcb does not retry, so
+  the client never tries the pathname socket and the display is gone. A network namespace answers
+  `ECONNREFUSED`, which libxcb *does* retry, so it falls back to `/tmp/.X11-unix/X0` and the window
+  comes up. Measured on both engines with a display set: the offline tier closes every abstract
+  socket and the webview lives.
+- **Hiding `/tmp/.X11-unix` does not remove the display.** The abstract name belongs to the network
+  namespace, not the mount namespace, so a client covered out of the directory simply connects to
+  `@/tmp/.X11-unix/X0` instead. It takes both to leave an app with no display at all, which is now
+  the probe's must-die control.
+
 ### What Landlock costs, in both tiers
 
 This applies to the **default** tier as much as the tight one, and an earlier version of this file
@@ -436,7 +468,7 @@ different on each platform, because the mechanisms differ in what they can expre
 
 | Platform | What the tight tier adds |
 |---|---|
-| **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default, and execute becomes an allowlist that omits every writable directory. |
+| **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default, and execute becomes an allowlist that omits every writable directory. `~/.Xauthority` stays readable unless the session tier replaced the cookie with an untrusted one, in which case allowlisting it would hand back exactly what that took away. |
 | **macOS** | Seatbelt denies reads of all of `$HOME` rather than a named list of secrets. |
 | **Windows** | The process drops to low integrity, so writes outside the app dir fail. |
 | **OpenBSD** | Nothing — `unveil` is already an allowlist, so the default tier is the tight one. |
@@ -485,7 +517,7 @@ files and reach the internet is a very different proposition from one that can o
 
 | Platform | What it does |
 |---|---|
-| **Linux** | Landlock handles `CONNECT_TCP` and grants it to nothing. Needs ABI 4. |
+| **Linux** | Landlock handles `CONNECT_TCP` and grants it to nothing (needs ABI 4), plus a network namespace where the distribution allows one. |
 | **macOS** | `(deny network-outbound (remote ip))` and the inbound equivalent. |
 | **OpenBSD** | The same `pledge` list without `inet` and `dns`. |
 | **Windows** | **Nothing.** WFP needs administrator and a job object cannot express it. |
@@ -495,8 +527,14 @@ tier applies to the run phase only.
 
 Be precise about what "offline" means here, because it is narrower than the word suggests:
 
-- **Linux covers TCP and nothing else.** Landlock's network rules are TCP-only, so UDP — QUIC, DNS,
-  anything else — is untouched. That is a real hole, not a rounding error.
+- **Linux covers TCP with Landlock, and everything with a network namespace.** Landlock's network
+  rules are TCP-only, so on their own UDP — QUIC, DNS, anything else — is untouched, which is a real
+  hole and not a rounding error. Where an unprivileged user namespace can be had, the tier takes a
+  network namespace as well and there is no protocol left to leak through; `--info` says `offline`
+  when it got one and `offline (tcp only)` when it did not, and `test/offline.sh` asserts the UDP
+  half rather than assuming it. The namespace also brings loopback up, or local IPC would go down
+  with the internet, and closes the abstract socket namespace as a side effect — see above for why
+  that does not cost the display.
 - **macOS denies IP, not sockets.** Unix domain sockets and Mach stay open, deliberately:
   WindowServer, the pasteboard and WebKit's helpers all talk over those, and denying them takes the
   window down along with the network.
@@ -506,6 +544,85 @@ Be precise about what "offline" means here, because it is narrower than the word
 `test/offline.sh` points the app at the suite's own fixture server, which is definitely listening,
 so a refusal is the tier rather than a dead port — and the same binary fetched through that server
 moments earlier, which is the other half of what it asserts.
+
+### The session tier (experimental)
+
+Building with `-DNEUTRINO_CONFINE_NOSESSION` closes the two holes the section above calls out: the
+session bus and what X11 hands every client. It is a third axis, and it composes with the other two.
+
+| Platform | What it does |
+|----------|--------------|
+| **Linux** | A user, mount and pid namespace. A fresh tmpfs over the runtime directory keeping only the compositor and audio sockets; the system bus covered; the X11 directory hidden where there is no display to keep; an untrusted X cookie where there is. |
+| **everywhere else** | Nothing. `--info` says so. |
+
+**The runtime directory is sealed to an allowlist, not a list of sockets to cover.** A denylist here
+would have the same problem it has in the environment: it must enumerate every socket a desktop has
+ever put in `$XDG_RUNTIME_DIR` and silently passes the next one. So a tmpfs goes over the directory
+and only `wayland-*`, `pulse/native` and the pipewire sockets are bound back into it. The bus, the
+keyring, the portal, the document store and anything the next release adds are gone without being
+named. What is left is writable, so an app that wants a runtime file of its own gets one that leaves
+with it.
+
+The keepers are pinned by an `O_PATH` descriptor *before* the tmpfs goes on, because after it there
+is no path left to bind from — `/proc/self/fd/<n>` still resolves to the original, which is the
+whole
+trick. The system bus lives at `/run/dbus/system_bus_socket`, outside that directory, so it is
+covered by hand: `/dev/null` bind-mounted over a socket, which answers `ECONNREFUSED` rather than
+`EPERM`, because that is the errno a client already knows how to read as "nothing is listening
+there".
+
+**The pid namespace is not decoration.** A mount namespace on its own is not a boundary:
+`/proc/<pid>/root` of any process left outside it is a path straight back to every socket that was
+just covered, and `connect()` walks it like any other path. The only thing in front of that is
+Yama's `ptrace_scope`, which is `1` on Debian and Ubuntu and `0` on plenty of other distributions —
+a boundary that holds or does not depending on a sysctl is not one. With a pid namespace and its own
+`/proc` there is no outside process left to walk through. It costs the launcher its exit: the
+process that asks for a pid namespace does not enter it, so netinstall forks, becomes pid 1, and
+waits — reaping until the namespace is empty rather than exiting on the first child, or a polyglot
+that backgrounds its own runtime would take everything down with it.
+
+**What keeps the covers on** is Landlock, which denies `mount`, `umount`, `pivot_root` and
+`move_mount` to any domain that handles even one filesystem right, by design and even inside a fresh
+namespace. An app that nests another user namespace to get capabilities back still cannot unmount
+anything, and the mounts it inherits are locked to each other by the kernel anyway. The order
+matters: namespaces first, Landlock second, because Landlock would deny our own mounts otherwise.
+
+**The display cannot be hidden, so it is untrusted instead.** The X11 SECURITY extension splits
+clients in two, and an untrusted one is refused what makes X11 an escape. `xauth generate ...
+untrusted` produces a cookie in the app directory, `XAUTHORITY` points at it, and the app connects
+as a client the server itself distrusts. Measured on both engines, with controls: a screen capture
+of the root window is **refused** where a trusted client gets a PNG, and a client that grabs the
+keyboard and waits sees **none** of the injected keys that a trusted client in the same position
+sees. The cost is the extension list, which drops from twenty-three to two — no XTEST, no RECORD,
+and no XKB, MIT-SHM or GLX either. WebKitGTK and QtWebEngine both still came up.
+
+Be precise about what that is worth. **It is a boundary only while the trusted cookie is out of
+reach.** In the default tier reads are unconfined, so an app can read `~/.Xauthority` and connect
+trusted anyway; there it raises the bar and no more. With `-DNEUTRINO_CONFINE_TIGHT` the trusted
+cookie is not on the read allowlist — this tier is why that entry is now conditional — and the seal
+covers the runtime directory where a display manager keeps the other copy. And it only means
+anything on a server that requires authorisation at all: measured against an `Xvfb` started with
+`-auth`, a client holding no cookie is refused, which is the assumption the rest rests on.
+
+**Where it is unavailable it says so and runs anyway.** Ubuntu 24.04 and its derivatives give an
+unprofiled binary the namespace and then refuse the `uid_map` write, so `--info` reports `session
+open (uid map refused: Operation not permitted)` and Landlock, seccomp and the rest still apply.
+The tier asks in a throwaway child first and declines to start what it cannot finish, because a
+process that enters a user namespace and fails to map itself is left as the overflow uid — every
+file it owns unreadable, and a webview that cannot start. It is not made a fatal condition even in a
+strict build:
+that would make the tier unusable on the most common desktop base rather than making it stronger.
+`test/confine-session.sh` skips itself with a note on such a machine, and lifts the sysctl for the
+length of its own run on CI, which is one of them.
+
+What the tier does **not** close:
+
+- **Anything the app is meant to keep.** The compositor socket is the app's window and the audio
+  sockets are its sound; a hostile app can still talk to all three, and on an X11 session it can
+  still talk to the display as an untrusted client.
+- **The system bus on a machine that puts it elsewhere.** The cover names two paths.
+- **Anything at all on Ubuntu 24.04 and its derivatives**, until someone lifts the sysctl or gives
+  the binary a profile.
 
 ### Why Windows gets so little
 
@@ -586,10 +703,11 @@ close would take the app down with it.
 ./build.sh host     # just this machine, needs cc
 ```
 
-Three build-time flags change behaviour rather than platform: `-DNEUTRINO_STRICT_SANDBOX` refuses to
+Four build-time flags change behaviour rather than platform: `-DNEUTRINO_STRICT_SANDBOX` refuses to
 run when no confinement is available instead of warning, `-DNEUTRINO_CONFINE_TIGHT` enables the
-experimental read-and-execute tier, and `-DNEUTRINO_CONFINE_OFFLINE` denies the app the network.
-The last two are separate axes and compose. Pass them through `NETINSTALL_CFLAGS`.
+experimental read-and-execute tier, `-DNEUTRINO_CONFINE_OFFLINE` denies the app the network, and
+`-DNEUTRINO_CONFINE_NOSESSION` closes the session bus and untrusts the display. The last three are
+separate axes and compose. Pass them through `NETINSTALL_CFLAGS`.
 
 Targets: `linux-{x86_64,aarch64}` (musl, static), `macos-{x86_64,arm64}`,
 `windows-{x86_64,aarch64}`. OpenBSD and FreeBSD build natively with `./build.sh host`.
@@ -600,15 +718,29 @@ Targets: `linux-{x86_64,aarch64}` (musl, static), `macos-{x86_64,arm64}`,
 test/run.sh
 ```
 
-Builds a release binary, a `-DNEUTRINO_TESTING` binary, a `-DNEUTRINO_CONFINE_TIGHT` one and a
-`-DNEUTRINO_CONFINE_OFFLINE` one, then runs seven suites: `names.sh` (the grammar, accepted and
-rejected), `verify.sh` (pin mismatch, non-text payloads, oversized responses, offline cache,
-tampered cache), `confine.sh` (a hostile script that tries to escape — the filesystem, the
-environment, an inherited descriptor, an abstract socket, another process's memory),
-`confine-strict.sh` (the tight tier, and whether a webview still starts under it), `offline.sh`
-(that the offline tier really refuses outbound TCP while the fetch still worked), `strict.sh` (that
-`-DNEUTRINO_STRICT_SANDBOX` really refuses to run unconfined), and `e2e.sh` (a real neutrino
-polyglot fetched, verified and launched).
+Builds a release binary, a `-DNEUTRINO_TESTING` binary, one each for the tight, offline and session
+tiers, and one with the session and tight tiers together, then runs eight suites: `names.sh` (the
+grammar, accepted and rejected), `verify.sh` (pin mismatch, non-text payloads, oversized responses,
+offline cache, tampered cache), `confine.sh`
+(a hostile script that tries to escape — the filesystem, the environment, an inherited descriptor,
+an abstract socket, another process's memory), `confine-strict.sh` (the tight tier, and whether a
+webview still starts under it), `confine-session.sh` (the session tier: both buses closed against a
+control that reaches them, the runtime dir sealed, no outside process visible, the screen
+unphotographable from inside, and a real webview under all of it), `offline.sh` (that the offline
+tier really refuses outbound TCP and, where it took a network namespace, UDP too, while the fetch
+still worked), `strict.sh` (that `-DNEUTRINO_STRICT_SANDBOX` really refuses to run unconfined), and
+`e2e.sh` (a real neutrino polyglot fetched, verified and launched).
+
+`session.sh` is a ninth that does not run by default. It is a probe rather than a gate: it applies
+each candidate mechanism on its own — covering the buses, sealing the runtime dir, hiding the
+display, a pid namespace, a network namespace, an untrusted cookie — to a real webview, with an
+unconfined control on the same clock either side and one lane that has to die. It answered, and
+[the session tier](#the-session-tier-experimental) is what came of it, so it now needs
+`NEUTRINO_SESSION_PROBE=1` and costs eight webview launches when you ask for it. The machinery stays
+so a future engine or kernel can be re-measured in one command. Both it and
+`confine-session.sh` lift `kernel.apparmor_restrict_unprivileged_userns` for the length of their own
+run when CI refuses the namespace, say so in their results, and put it back; nothing shipped does
+that.
 
 `job-ui.sh` is an eighth suite that does not run by default: it is the Windows job UI bisect
 described above, it needs `NEUTRINO_JOB_UI_BISECT=1`, and it takes about ten minutes because every
