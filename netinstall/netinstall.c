@@ -37,6 +37,7 @@
 #endif
 
 #include "netinstall.h"
+#include "env.h"
 #include "fetch.h"
 #include "sandbox.h"
 #include "sha256.h"
@@ -762,6 +763,12 @@ int main(int argc, char **argv)
         }
         nt_apply_confine(NT_PHASE_RUN, home, appdir, 0, desc, sizeof(desc));
         printf("confine    %s\n", desc);
+        {
+            int total = 0;
+            int dropped = nt_env_scrub(0, &total);
+            printf("env        allowlist, %d of %d variables dropped\n",
+                   dropped, total);
+        }
         if (nt_fetch_command(spec.url, script, shown, sizeof(shown)) == 0) {
             printf("downloader %s\n", shown);
         }
@@ -845,6 +852,14 @@ int main(int argc, char **argv)
         printf("%s\n", script);
         return 0;
     }
+
+    /*
+     * Before anything else the app could read: the environment is where a live
+     * ssh-agent socket and most CI tokens actually live, and no filesystem
+     * sandbox touches them. This runs on every platform, including the ones
+     * that get no confinement at all.
+     */
+    nt_env_scrub(1, NULL);
 
     setenv_dir("XDG_CACHE_HOME", appdir, "cache");
     setenv_dir("XDG_CONFIG_HOME", appdir, "config");

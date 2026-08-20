@@ -61,7 +61,8 @@ name cannot be spoofed by the caller does not hold.
 ```
 
 `--info` is the audit path — it prints the resolved URL, the full SHA-256, every cache path, the
-exact downloader command that would run, and the confinement that would be applied. It describes
+exact downloader command that would run, the confinement that would be applied, and how much of the
+environment would be dropped. It describes
 without enforcing, so it changes nothing and reports what a real launch would do.
 
 ## Layout
@@ -109,6 +110,29 @@ overriding it breaks `$XAUTHORITY` discovery.
 `TMPDIR` is not redirected on macOS: `NSTemporaryDirectory()` is what Cocoa actually reads, it
 expects the Darwin per-user temp directory, and the seatbelt profile already allows writes there.
 Overriding it only makes Foundation and its callers disagree about where files went.
+
+## The environment
+
+The rest of the environment is reduced to an allowlist before the script starts, on **every**
+platform — including the ones that get no confinement at all. A filesystem sandbox does not touch
+environment variables, and some of the most valuable things on a developer machine live nowhere
+else: `SSH_AUTH_SOCK` is a live agent that will sign anything handed to it, and CI tokens and cloud
+keys are routinely just a variable in a shell.
+
+It is an allowlist rather than a denylist on purpose. A denylist has to enumerate every
+secret-shaped name anyone has ever invented and silently passes the next one; an allowlist passes
+only what a toolkit is known to need. What comes through is the locale and session variables, the
+display (`DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`), the `XDG_*`, `GTK_*`, `GDK_*`, `QT_*` and
+Mesa namespaces, the handful of names cmd.exe and the CRT need on Windows, and anything starting
+with `NEUTRINO_`. `LD_*` and `DYLD_*` are absent by construction. `--info` reports how many
+variables that drops.
+
+Worth being precise about what this buys. A secret that exists **only** as a variable is now
+completely out of reach. A socket whose path is guessable — the session bus at
+`$XDG_RUNTIME_DIR/bus`, X11 at `/tmp/.X11-unix/X0` — is not: dropping the variable raises the bar,
+it does not close the door, and on Linux `/proc/<pid>/environ` of your other same-uid processes
+stays readable anyway. Closing those needs the mechanisms below, and on Linux not even those are
+enough today.
 
 ## Trust model
 

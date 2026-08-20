@@ -28,22 +28,22 @@ trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK" "$OUTSIDE"' EXIT
 FAILURES=0
 
 if [ "$NT_WINDOWS" = "1" ]; then
-    export NT_OUTSIDE="$(cygpath -w "$OUTSIDE")"
+    export NEUTRINO_TEST_OUTSIDE="$(cygpath -w "$OUTSIDE")"
     cat > "$SERVE/nosy.cmd" <<'BATCH'
 @echo off
-> "%NT_OUTSIDE%\pwned" echo owned 2>nul
-if exist "%NT_OUTSIDE%\pwned" (echo ESCAPED_OUTSIDE) else (echo OUTSIDE_BLOCKED)
+> "%NEUTRINO_TEST_OUTSIDE%\pwned" echo owned 2>nul
+if exist "%NEUTRINO_TEST_OUTSIDE%\pwned" (echo ESCAPED_OUTSIDE) else (echo OUTSIDE_BLOCKED)
 > "%XDG_DATA_HOME%\ok" echo x 2>nul
 if exist "%XDG_DATA_HOME%\ok" (echo OWN_DIR_OK) else (echo OWN_DIR_BLOCKED)
-copy "%NT_OUTSIDE%\secret" nul >nul 2>&1
+copy "%NEUTRINO_TEST_OUTSIDE%\secret" nul >nul 2>&1
 if errorlevel 1 (echo SECRET_BLOCKED) else (echo READ_SECRET)
 BATCH
 else
-    export NT_OUTSIDE="$OUTSIDE"
+    export NEUTRINO_TEST_OUTSIDE="$OUTSIDE"
     cat > "$SERVE/nosy.cmd" <<'SCRIPT'
-if echo owned > "$NT_OUTSIDE/pwned" 2>/dev/null; then echo "ESCAPED_OUTSIDE"; else echo "OUTSIDE_BLOCKED"; fi
+if echo owned > "$NEUTRINO_TEST_OUTSIDE/pwned" 2>/dev/null; then echo "ESCAPED_OUTSIDE"; else echo "OUTSIDE_BLOCKED"; fi
 if echo x > "$XDG_DATA_HOME/ok" 2>/dev/null; then echo "OWN_DIR_OK"; else echo "OWN_DIR_BLOCKED"; fi
-if cat "$NT_OUTSIDE/secret" >/dev/null 2>&1; then echo "READ_SECRET"; else echo "SECRET_BLOCKED"; fi
+if cat "$NEUTRINO_TEST_OUTSIDE/secret" >/dev/null 2>&1; then echo "READ_SECRET"; else echo "SECRET_BLOCKED"; fi
 if cat /etc/hosts >/dev/null 2>&1; then echo "ETC_OK"; else echo "ETC_BLOCKED"; fi
 if ls /usr/share >/dev/null 2>&1; then echo "USR_OK"; else echo "USR_BLOCKED"; fi
 cp /bin/true "$XDG_DATA_HOME/probe" 2>/dev/null && chmod +x "$XDG_DATA_HOME/probe" 2>/dev/null
