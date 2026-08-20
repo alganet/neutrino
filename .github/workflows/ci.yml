@@ -12,10 +12,10 @@ jobs:
       - run: |
           sudo apt update
           sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity \
-            xdotool x11-utils \
+            xdotool x11-utils xauth dbus \
             gir1.2-webkit2-4.1 \
             || sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity \
-            xdotool x11-utils \
+            xdotool x11-utils xauth dbus \
             gir1.2-webkit2-4.0
       - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: |
@@ -33,7 +33,7 @@ jobs:
           kill "$APP_PID" 2>/dev/null || true
           exit $TEST_EXIT
       - name: netinstall suite
-        timeout-minutes: 20
+        timeout-minutes: 35
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -54,7 +54,7 @@ jobs:
       - run: |
           sudo apt update
           sudo apt install -y xvfb imagemagick x11-xserver-utils x11-utils mesa-utils libgl1-mesa-dri libegl-mesa0 openbox \
-            xdotool \
+            xdotool xauth dbus \
             qt6-declarative-dev-tools qml6-module-qtwebengine qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
           if ! command -v qml6 >/dev/null 2>&1 && ! command -v qml >/dev/null 2>&1 && ! command -v qmlscene6 >/dev/null 2>&1 && ! command -v qmlscene-qt6 >/dev/null 2>&1; then
             sudo apt install -y qml6 || sudo apt install -y qml-qt6 || sudo apt install -y qmlscene-qt6 || true
@@ -81,7 +81,7 @@ jobs:
           kill "$APP_PID" 2>/dev/null || true
           exit $TEST_EXIT
       - name: netinstall suite
-        timeout-minutes: 20
+        timeout-minutes: 35
         run: |
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb

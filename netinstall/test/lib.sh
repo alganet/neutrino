@@ -75,6 +75,20 @@ nt_summary() {
     fi
 }
 
+# A measurement that has to survive the trip out of CI. The notice bucket is
+# capped at ten per step and the suite fills it long before the interesting
+# lines arrive, so results go out as warnings, which nothing else here uses.
+# Findings, not problems -- but a finding nobody can read is not a finding.
+nt_result() {
+    echo "  $*"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+        echo "$*" >> "$GITHUB_STEP_SUMMARY"
+    fi
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+        echo "::warning title=netinstall::$(basename "${0:-suite}"): $*"
+    fi
+}
+
 nt_note() {
     echo "  $*"
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
@@ -126,6 +140,39 @@ nt_linux_runtime() {
     command -v qml >/dev/null 2>&1 && return 0
     [ -x /usr/lib/qt6/bin/qml ] && return 0
     return 1
+}
+
+# Ubuntu 24.04 and its derivatives hand an unprivileged user namespace to a
+# binary without an AppArmor profile and then refuse to let anything be done
+# with it: unshare succeeds and writing uid_map returns EPERM. CI runs on
+# exactly that. A suite that needs a working namespace lifts the restriction for
+# its own run, says in its results that it did, and puts it back. Nothing
+# shipped may do this: it is root's decision. A test may, or the session tier
+# goes unexercised on the only machine that runs the suite.
+#
+# The caller passes its own test rather than this asking util-linux's unshare,
+# which on Ubuntu carries a profile of its own and can therefore do what the
+# binary under test cannot. Asking the wrong process this question is how a
+# suite once reported the tier open while the run under it was closing the bus.
+NT_USERNS_LIFTED=0
+
+nt_userns() {
+    "$@" && return 0
+    [ -n "${GITHUB_ACTIONS:-}" ] || return 1
+    sudo -n true 2>/dev/null || return 1
+    sudo -n sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null 2>&1 || return 1
+    if "$@"; then
+        NT_USERNS_LIFTED=1
+        return 0
+    fi
+    nt_userns_restore
+    return 1
+}
+
+nt_userns_restore() {
+    [ "$NT_USERNS_LIFTED" = "1" ] || return 0
+    sudo -n sysctl -w kernel.apparmor_restrict_unprivileged_userns=1 >/dev/null 2>&1
+    NT_USERNS_LIFTED=0
 }
 
 # The app directory is keyed on the spec without its pin, so versions of the

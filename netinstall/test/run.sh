@@ -36,6 +36,10 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 # job-ui is an investigation, not a gate, and it costs ten minutes of windows CI
 # per run. It answered its question -- see the README -- so it is opt-in now.
 SUITES="names verify confine confine-strict offline strict e2e"
+# session.sh is a probe rather than a gate: it applies each candidate mechanism
+# on its own to a real webview. Like job-ui it is opt-in, because it costs eight
+# webview launches and answers a question rather than guarding one.
+[ "${NEUTRINO_SESSION_PROBE:-}" = "1" ] && SUITES="$SUITES session"
 [ "${NEUTRINO_JOB_UI_BISECT:-}" = "1" ] && SUITES="$SUITES job-ui"
 
 for t in $SUITES; do
@@ -50,6 +54,9 @@ for t in $SUITES; do
         job-ui) nt_timeout 1200 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-testing$NT_EXE" ;;
         strict) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-failclosed$NT_EXE" ;;
         e2e)   nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-testing$NT_EXE" "${NEUTRINO_SCREENSHOTS:-}" ;;
+        # Six real webview launches, two of them waiting out a timeout on
+        # purpose, so this one needs the same longer leash as job-ui.
+        session) nt_timeout 1200 bash "$HERE/$t.sh" "${NEUTRINO_SCREENSHOTS:-}" ;;
         *)     nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-testing$NT_EXE" ;;
     esac
     RC=$?
