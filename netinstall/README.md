@@ -144,8 +144,26 @@ Only 0, 1 and 2 survive into the script, and into the fetch child.
 A script that expected an fd on 3 stops getting one. That is intended, and it is the reason this is
 written down rather than left as a detail.
 
-**Not on Windows.** `_spawnv` passes inheritable handles by definition, and closing that would mean
-rebuilding the launch around `CreateProcess` with an explicit handle list.
+**Windows too, but only where it can be done safely.** The launch goes through `CreateProcess` with
+an explicit handle list, which is the only way to say "these and nothing else" — `bInheritHandles`
+on its own is all-or-nothing.
+
+Console handles are what complicate it. They cannot appear in a handle list, because `CreateProcess`
+refuses the call outright if one does, and a handle named in `STARTF_USESTDHANDLES` must be in the
+list or the child receives an invalid one. Both rules cannot hold at once for a console, so there
+are three cases:
+
+| standard handles | what happens |
+|---|---|
+| all files or pipes | restricted to exactly those |
+| none a file or pipe | nothing inherited; a console child attaches to the parent's console and gets working handles anyway |
+| a mixture | left alone |
+
+The mixture is a real invocation — `app.exe > out.txt` leaves stderr on the console — and there is
+no way to restrict it without either breaking the redirection or handing the child a broken handle.
+Stray inheritable handles come from scripted and redirected launches, which is the first case, so
+the case that can be covered is also the one that matters. If the list cannot be built at all, the
+app is given no inherited handles rather than all of them, and it says so on stderr.
 
 ## Core dumps
 

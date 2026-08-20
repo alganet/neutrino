@@ -611,12 +611,20 @@ static int nt_build_cmdline(char *const *args, char *out, size_t len)
  * confinement -- are unreachable behind it. CreateProcess is the only door.
  *
  * Standard handles are named explicitly rather than left to chance, because a
- * caller that redirected stdout to a file expects the app to write there.
+ * caller that redirected stdout to a file expects the app to write there, and
+ * they are the only handles the app is given.
  */
 int nt_win_spawn(const char *exe, char *const *args)
 {
+    LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;
     PROCESS_INFORMATION pi;
-    STARTUPINFOA si;
+    STARTUPINFOEXA six;
+    STARTUPINFOA *si;
+    HANDLE keep[3];
+    SIZE_T attrsize = 0;
+    BOOL inherit = FALSE;
+    DWORD nkeep = 0;
+    DWORD flags = 0;
     DWORD code = 126;
     char *cmdline;
 
@@ -632,19 +640,141 @@ int nt_win_spawn(const char *exe, char *const *args)
         return 126;
     }
 
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    ZeroMemory(&six, sizeof(six));
+    si = &six.StartupInfo;
 
-    if (!CreateProcessA(exe, cmdline, NULL, NULL, TRUE, 0, NULL, NULL,
-                        &si, &pi)) {
+    /*
+     * The windows half of closing inherited descriptors. An explicit handle
+     * list is the only way to say "these and nothing else" -- bInheritHandles
+     * on its own is all-or-nothing, and everything the caller left open would
+     * go to the app, none of it reachable by path and so untouched by any
+     * filesystem rule.
+     *
+     * Console handles are the complication, and they decide the shape of this.
+     * They cannot appear in a handle list -- CreateProcess refuses the call --
+     * and a handle named in STARTF_USESTDHANDLES must be in the list or the
+     * child receives an invalid one. Those two rules cannot both be satisfied
+     * for a console, so there are three cases rather than one:
+     *
+     *   every standard handle is a file or a pipe -- restrict to exactly those
+     *   none of them is a file or a pipe      -- inherit nothing; a console
+     *                                            child attaches to the parent's
+     *                                            console and gets working
+     *                                            handles without inheriting any
+     *   a mixture of the two                  -- leave it alone
+     *
+     * The mixture is a real invocation ("app.exe > out.txt" leaves stderr on
+     * the console) and there is no way to restrict it without either breaking
+     * the redirection or handing the child a broken handle, so it keeps the
+     * behaviour _spawnv had. Stray inheritable handles come from scripted and
+     * redirected launches, which is the first case, so the case that can be
+     * covered is also the one that matters.
+     */
+    {
+        HANDLE cand[3];
+        DWORD nconsole = 0;
+        DWORD i, j;
+
+        cand[0] = GetStdHandle(STD_INPUT_HANDLE);
+        cand[1] = GetStdHandle(STD_OUTPUT_HANDLE);
+        cand[2] = GetStdHandle(STD_ERROR_HANDLE);
+
+        for (i = 0; i < 3; i++) {
+            DWORD mode;
+
+            if (cand[i] == NULL || cand[i] == INVALID_HANDLE_VALUE) {
+                continue;
+            }
+            if (GetFileType(cand[i]) == FILE_TYPE_CHAR &&
+                GetConsoleMode(cand[i], &mode)) {
+                nconsole++;
+                continue;
+            }
+            for (j = 0; j < nkeep; j++) {
+                if (keep[j] == cand[i]) {
+                    break;
+                }
+            }
+            if (j < nkeep) {
+                continue;
+            }
+            keep[nkeep++] = cand[i];
+        }
+
+        if (nkeep && nconsole) {
+            /* The mixture: restrict nothing rather than break either half. */
+            nkeep = 0;
+            inherit = TRUE;
+        } else if (nkeep) {
+            si->dwFlags = STARTF_USESTDHANDLES;
+            /*
+             * NULL, never INVALID_HANDLE_VALUE, for one the caller closed:
+             * naming an invalid handle here can fail the call outright, and a
+             * handle absent from the list has to be absent from these too.
+             */
+            si->hStdInput = cand[0] == INVALID_HANDLE_VALUE ? NULL : cand[0];
+            si->hStdOutput = cand[1] == INVALID_HANDLE_VALUE ? NULL : cand[1];
+            si->hStdError = cand[2] == INVALID_HANDLE_VALUE ? NULL : cand[2];
+            for (i = 0; i < nkeep; i++) {
+                /* A handle in the list has to be inheritable to be in it. */
+                SetHandleInformation(keep[i], HANDLE_FLAG_INHERIT,
+                                     HANDLE_FLAG_INHERIT);
+            }
+            inherit = TRUE;
+        }
+    }
+
+    if (nkeep) {
+        if (!InitializeProcThreadAttributeList(NULL, 1, 0, &attrsize) &&
+            GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+            attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(attrsize);
+        }
+        if (attrs && !InitializeProcThreadAttributeList(attrs, 1, 0, &attrsize)) {
+            free(attrs);
+            attrs = NULL;
+        } else if (attrs &&
+                   !UpdateProcThreadAttribute(attrs, 0,
+                                              PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                              keep, nkeep * sizeof(HANDLE),
+                                              NULL, NULL)) {
+            DeleteProcThreadAttributeList(attrs);
+            free(attrs);
+            attrs = NULL;
+        }
+        if (attrs) {
+            six.lpAttributeList = attrs;
+            flags = EXTENDED_STARTUPINFO_PRESENT;
+        } else {
+            /*
+             * Fail closed. Inheriting everything is precisely what this is here
+             * to stop, so the app gets nothing instead -- and it is said out
+             * loud, because a redirected stdout goes quiet when it happens.
+             */
+            fprintf(stderr, "netinstall: cannot restrict inherited handles; "
+                            "passing none\n");
+            si->dwFlags = 0;
+            nkeep = 0;
+            inherit = FALSE;
+        }
+    }
+
+    /* cb describes which of the two structures this actually is. */
+    si->cb = flags ? sizeof(six) : sizeof(*si);
+
+    if (!CreateProcessA(exe, cmdline, NULL, NULL, inherit, flags,
+                        NULL, NULL, si, &pi)) {
         fprintf(stderr, "netinstall: cannot start %s (error %lu)\n", exe,
                 (unsigned long)GetLastError());
+        if (attrs) {
+            DeleteProcThreadAttributeList(attrs);
+            free(attrs);
+        }
         free(cmdline);
         return 126;
+    }
+    if (attrs) {
+        DeleteProcThreadAttributeList(attrs);
+        free(attrs);
     }
     free(cmdline);
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -665,9 +795,9 @@ int nt_win_spawn(const char *exe, char *const *args)
  * Only 0, 1 and 2 survive. A script that expected an fd on 3 stops getting one;
  * that is the intended behaviour, and it is why this is worth documenting.
  *
- * Nothing equivalent happens on Windows: _spawnv passes inheritable handles by
- * definition, and closing that would mean rebuilding the launch around
- * CreateProcess with an explicit handle list.
+ * Windows gets the same guarantee by a different route: nt_win_spawn hands
+ * CreateProcess an explicit list holding only the standard handles, so nothing
+ * else the caller left open is inherited.
  */
 #ifndef _WIN32
 void nt_close_inherited(void)
