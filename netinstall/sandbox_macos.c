@@ -28,6 +28,14 @@ extern int sandbox_init_with_parameters(const char *profile, uint64_t flags,
                                         char **errorbuf);
 extern void sandbox_free_error(char *errorbuf);
 
+/* The fetch profile never carries it: the download is the one thing that has
+ * to reach the network. */
+#ifdef NEUTRINO_CONFINE_OFFLINE
+#define NT_OFFLINE_NOTE " (offline)"
+#else
+#define NT_OFFLINE_NOTE ""
+#endif
+
 /*
  * A deny-list, not an allow-list. A (deny default) profile that still permits
  * Cocoa, WKWebView and Metal is undocumented SBPL archaeology that rebreaks on
@@ -110,6 +118,15 @@ static const char nt_profile[] =
      * a complete escape from any of this. The polyglot's own JXA path uses the
      * ObjC bridge rather than sending events, so it does not need this.
      */
+#ifdef NEUTRINO_CONFINE_OFFLINE
+    /*
+     * Only IP is denied, so unix sockets and Mach are untouched -- WindowServer,
+     * the pasteboard and WebKit's own helpers all talk over those, and denying
+     * them takes the window down with the network.
+     */
+    "(deny network-outbound (remote ip))\n"
+    "(deny network-inbound (local ip))\n"
+#endif
     "(deny mach-lookup\n"
     "  (global-name \"com.apple.SecurityServer\")\n"
     "  (global-name \"com.apple.securityd.xpc\")\n"
@@ -180,10 +197,12 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 
     if (!enforce) {
 #ifdef NEUTRINO_CONFINE_TIGHT
-        snprintf(desc, desclen, "seatbelt, reads and writes confined to %s",
+        snprintf(desc, desclen, "seatbelt%s, reads and writes confined to %s",
+                 phase == NT_PHASE_FETCH ? "" : NT_OFFLINE_NOTE,
                  phase == NT_PHASE_FETCH ? home : appdir);
 #else
-        snprintf(desc, desclen, "seatbelt, writes confined to %s",
+        snprintf(desc, desclen, "seatbelt%s, writes confined to %s",
+                 phase == NT_PHASE_FETCH ? "" : NT_OFFLINE_NOTE,
                  phase == NT_PHASE_FETCH ? home : appdir);
 #endif
         return 0;
@@ -259,9 +278,11 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     }
 
 #ifdef NEUTRINO_CONFINE_TIGHT
-    snprintf(desc, desclen, "seatbelt, reads and writes confined to %s", dir);
+    snprintf(desc, desclen, "seatbelt%s, reads and writes confined to %s",
+             NT_OFFLINE_NOTE, dir);
 #else
-    snprintf(desc, desclen, "seatbelt, writes confined to %s", dir);
+    snprintf(desc, desclen, "seatbelt%s, writes confined to %s",
+             NT_OFFLINE_NOTE, dir);
 #endif
     return 0;
 }

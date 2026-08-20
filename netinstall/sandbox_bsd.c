@@ -17,6 +17,13 @@
 #include "netinstall.h"
 #include "sandbox.h"
 
+/* Never on the fetch: the download is the one thing that has to reach out. */
+#ifdef NEUTRINO_CONFINE_OFFLINE
+#define NT_OFFLINE_NOTE " (offline)"
+#else
+#define NT_OFFLINE_NOTE ""
+#endif
+
 #ifdef __OpenBSD__
 
 /*
@@ -30,7 +37,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     char path[NT_PATH_MAX];
 
     if (!enforce) {
-        snprintf(desc, desclen, "unveil + pledge, writes confined to %s",
+        snprintf(desc, desclen, "unveil + pledge%s, writes confined to %s",
+                 phase == NT_PHASE_FETCH ? "" : NT_OFFLINE_NOTE,
                  phase == NT_PHASE_FETCH ? home : appdir);
         return 0;
     }
@@ -66,12 +74,21 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         snprintf(desc, desclen, "none (unveil failed)");
         return -1;
     }
-    if (pledge(NULL, "stdio rpath wpath cpath fattr flock inet dns unix "
-                     "proc exec prot_exec drm recvfd sendfd tty ps vminfo") != 0) {
+    /*
+     * The offline tier is just the same promise list without inet and dns.
+     * pledge is an allowlist, so taking a promise away is the whole change.
+     */
+    if (pledge(NULL, "stdio rpath wpath cpath fattr flock "
+#ifndef NEUTRINO_CONFINE_OFFLINE
+                     "inet dns "
+#endif
+                     "unix proc exec prot_exec drm recvfd sendfd tty "
+                     "ps vminfo") != 0) {
         snprintf(desc, desclen, "none (pledge failed)");
         return -1;
     }
-    snprintf(desc, desclen, "unveil + pledge, writes confined to %s", appdir);
+    snprintf(desc, desclen, "unveil + pledge%s, writes confined to %s",
+             NT_OFFLINE_NOTE, appdir);
     return 0;
 }
 
@@ -109,7 +126,13 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 #endif
 
     snprintf(desc, desclen,
-             "none (no unprivileged confinement on this system%s)", floor);
+             "none (no unprivileged confinement on this system%s)%s", floor,
+#ifdef NEUTRINO_CONFINE_OFFLINE
+             " (offline tier unavailable here)"
+#else
+             ""
+#endif
+             );
     return -1;
 }
 

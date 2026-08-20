@@ -405,6 +405,37 @@ It is off by default because the benefit was not proven when it was written. `te
 is what settles it: it asserts the tier actually holds, then launches a real webview under it and
 fails if it cannot start.
 
+### The offline tier (experimental)
+
+Building with `-DNEUTRINO_CONFINE_OFFLINE` denies the app outbound network access. It is a separate
+axis from the tight tier and the two compose. A lot of what people build with neutrino is a local
+UI over local data, and for those the network is pure attack surface — an app that can read your
+files and reach the internet is a very different proposition from one that can only do the first.
+
+| Platform | What it does |
+|---|---|
+| **Linux** | Landlock handles `CONNECT_TCP` and grants it to nothing. Needs ABI 4. |
+| **macOS** | `(deny network-outbound (remote ip))` and the inbound equivalent. |
+| **OpenBSD** | The same `pledge` list without `inet` and `dns`. |
+| **Windows** | **Nothing.** WFP needs administrator and a job object cannot express it. |
+
+**The fetch is never offline** — the download is the one thing that has to reach the network, so the
+tier applies to the run phase only.
+
+Be precise about what "offline" means here, because it is narrower than the word suggests:
+
+- **Linux covers TCP and nothing else.** Landlock's network rules are TCP-only, so UDP — QUIC, DNS,
+  anything else — is untouched. That is a real hole, not a rounding error.
+- **macOS denies IP, not sockets.** Unix domain sockets and Mach stay open, deliberately:
+  WindowServer, the pasteboard and WebKit's helpers all talk over those, and denying them takes the
+  window down along with the network.
+- **Windows gets nothing at all**, and `--info` says so rather than letting the build look like it
+  did something.
+
+`test/offline.sh` points the app at the suite's own fixture server, which is definitely listening,
+so a refusal is the tier rather than a dead port — and the same binary fetched through that server
+moments earlier, which is the other half of what it asserts.
+
 ### Why Windows gets so little
 
 Low integrity was the obvious next step and does not work: it blocks writes but not reads,
@@ -423,9 +454,10 @@ close would take the app down with it.
 ./build.sh host     # just this machine, needs cc
 ```
 
-Two build-time flags change behaviour rather than platform: `-DNEUTRINO_STRICT_SANDBOX` refuses to
-run when no confinement is available instead of warning, and `-DNEUTRINO_CONFINE_TIGHT` enables the
-experimental tier described above. Pass them through `NETINSTALL_CFLAGS`.
+Three build-time flags change behaviour rather than platform: `-DNEUTRINO_STRICT_SANDBOX` refuses to
+run when no confinement is available instead of warning, `-DNEUTRINO_CONFINE_TIGHT` enables the
+experimental read-and-execute tier, and `-DNEUTRINO_CONFINE_OFFLINE` denies the app the network.
+The last two are separate axes and compose. Pass them through `NETINSTALL_CFLAGS`.
 
 Targets: `linux-{x86_64,aarch64}` (musl, static), `macos-{x86_64,arm64}`,
 `windows-{x86_64,aarch64}`. OpenBSD and FreeBSD build natively with `./build.sh host`.
@@ -436,12 +468,15 @@ Targets: `linux-{x86_64,aarch64}` (musl, static), `macos-{x86_64,arm64}`,
 test/run.sh
 ```
 
-Builds a release binary, a `-DNEUTRINO_TESTING` binary and a `-DNEUTRINO_CONFINE_TIGHT` one, then
-runs six suites: `names.sh` (the grammar, accepted and rejected), `verify.sh` (pin mismatch,
-non-text payloads, oversized responses, offline cache, tampered cache), `confine.sh` (a hostile
-script that tries to escape), `confine-strict.sh` (the tight tier, and whether a webview still
-starts under it), `strict.sh` (that `-DNEUTRINO_STRICT_SANDBOX` really refuses to run unconfined),
-and `e2e.sh` (a real neutrino polyglot fetched, verified and launched).
+Builds a release binary, a `-DNEUTRINO_TESTING` binary, a `-DNEUTRINO_CONFINE_TIGHT` one and a
+`-DNEUTRINO_CONFINE_OFFLINE` one, then runs seven suites: `names.sh` (the grammar, accepted and
+rejected), `verify.sh` (pin mismatch, non-text payloads, oversized responses, offline cache,
+tampered cache), `confine.sh` (a hostile script that tries to escape — the filesystem, the
+environment, an inherited descriptor, an abstract socket, another process's memory),
+`confine-strict.sh` (the tight tier, and whether a webview still starts under it), `offline.sh`
+(that the offline tier really refuses outbound TCP while the fetch still worked), `strict.sh` (that
+`-DNEUTRINO_STRICT_SANDBOX` really refuses to run unconfined), and `e2e.sh` (a real neutrino
+polyglot fetched, verified and launched).
 
 The `NEUTRINO_TEST_ORIGIN` override the suite needs to serve fixtures from loopback is compiled
 in only under `-DNEUTRINO_TESTING`; release binaries ignore it entirely.
