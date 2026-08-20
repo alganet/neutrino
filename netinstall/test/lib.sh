@@ -93,6 +93,18 @@ nt_timeout() {
     fi
 }
 
+# On windows the pid a suite holds is not the app's: the launcher STARTs the
+# real program and exits, so nt_kill_tree cannot reach it and a suite that
+# thinks it cleaned up leaves a webview running. The image name is the only
+# reliable handle. Called between suites so one cannot leak processes into the
+# next -- which is otherwise invisible until the suite order changes.
+nt_kill_app() {
+    [ "${NT_WINDOWS:-0}" = "1" ] || return 0
+    taskkill //F //T //IM neutrinotest.exe >/dev/null 2>&1
+    taskkill //F //T //IM msedgewebview2.exe >/dev/null 2>&1
+    return 0
+}
+
 # A webview leaves children behind, so kill the whole tree rather than the
 # process we happen to hold a pid for.
 nt_kill_tree() {

@@ -59,8 +59,7 @@ nt_pwsh() {
 # actually leave rather than sleeping a guess.
 nt_win_kill() {
     local i
-    taskkill //F //T //IM neutrinotest.exe >/dev/null 2>&1
-    taskkill //F //T //IM msedgewebview2.exe >/dev/null 2>&1
+    nt_kill_app
     for i in $(seq 1 8); do
         if ! tasklist 2>/dev/null | grep -qiE 'neutrinotest\.exe|msedgewebview2\.exe'; then
             sleep 1

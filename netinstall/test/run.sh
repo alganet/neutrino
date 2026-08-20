@@ -53,6 +53,8 @@ for t in $SUITES; do
         *)     nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-testing$NT_EXE" ;;
     esac
     RC=$?
+    # Whatever that suite left running is not the next suite's problem.
+    nt_kill_app
     [ "$RC" -eq 124 ] && { echo "  $t.sh: timed out"; RC=1; }
     [ "$RC" -eq 0 ] || { echo "  $t.sh: $RC failure(s)"; [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=netinstall::$t.sh reported $RC failure(s)"; }
     # A finish marker per suite, so a hang localises to one suite instead of
