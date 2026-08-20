@@ -40,6 +40,17 @@
 #define LANDLOCK_ACCESS_FS_TRUNCATE (1ULL << 14)
 #endif
 
+/*
+ * Fallbacks so an old uapi header cannot silently compile the network rules
+ * out. Whether they take effect is decided at runtime by the reported ABI.
+ */
+#ifndef LANDLOCK_ACCESS_NET_BIND_TCP
+#define LANDLOCK_ACCESS_NET_BIND_TCP (1ULL << 0)
+#endif
+#ifndef LANDLOCK_ACCESS_NET_CONNECT_TCP
+#define LANDLOCK_ACCESS_NET_CONNECT_TCP (1ULL << 1)
+#endif
+
 #ifndef LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET
 #define LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET (1ULL << 0)
 #endif
@@ -403,8 +414,10 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     struct nt_ruleset_attr attr;
     unsigned long long rights = NT_WRITE_RIGHTS | NT_READ_RIGHTS;
     char path[NT_PATH_MAX];
+    char notes[64] = "";
     const char *runtime;
     const char *scoped = "";
+    const char *offline = "";
     const char *secc;
     int abi, ruleset;
 
@@ -460,22 +473,37 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         const char *display = getenv("DISPLAY");
 
         attr.scoped = LANDLOCK_SCOPE_SIGNAL;
-        scoped = " (signals scoped)";
+        scoped = "signals scoped";
         if (!display || !*display) {
             attr.scoped |= LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET;
-            scoped = " (sockets+signals scoped)";
+            scoped = "sockets+signals scoped";
         }
     }
-#ifdef LANDLOCK_ACCESS_NET_BIND_TCP
     /*
-     * Nothing here should be listening. Connect is left unhandled, so the app's
-     * own outbound traffic is untouched; trailing zero fields are accepted by
-     * older kernels, so this only takes effect from ABI 4.
+     * Nothing here should be listening. Connect stays unhandled by default, so
+     * the app's own outbound traffic is untouched; trailing zero fields are
+     * accepted by older kernels, so this only takes effect from ABI 4.
      */
     if (abi >= 4) {
         attr.handled_access_net = LANDLOCK_ACCESS_NET_BIND_TCP;
-    }
+#ifdef NEUTRINO_CONFINE_OFFLINE
+        /*
+         * The offline tier handles connect as well and then grants it to
+         * nothing, so no outbound TCP leaves the app at all. Only for the run
+         * phase -- the fetch is the one thing that must reach the network.
+         */
+        if (phase == NT_PHASE_RUN) {
+            attr.handled_access_net |= LANDLOCK_ACCESS_NET_CONNECT_TCP;
+            offline = "offline";
+        }
 #endif
+    }
+    if (*scoped && *offline) {
+        snprintf(notes, sizeof(notes), " (%s, %s)", scoped, offline);
+    } else if (*scoped || *offline) {
+        snprintf(notes, sizeof(notes), " (%s)", *scoped ? scoped : offline);
+    }
+
     ruleset = nt_ll_create(&attr, sizeof(attr), 0);
     if (ruleset < 0) {
         snprintf(desc, desclen, "none (landlock ruleset rejected)%s", secc);
@@ -491,7 +519,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
 #endif
         snprintf(desc, desclen, "landlock abi %d%s%s, writes confined to %s",
-                 abi, scoped, secc, path);
+                 abi, notes, secc, path);
     } else {
         nt_allow(ruleset, appdir, rights);
         nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
@@ -522,10 +550,10 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         nt_allow_system_reads(ruleset);
         snprintf(desc, desclen,
                  "landlock abi %d%s%s, reads and writes confined to %s",
-                 abi, scoped, secc, appdir);
+                 abi, notes, secc, appdir);
 #else
         snprintf(desc, desclen, "landlock abi %d%s%s, writes confined to %s",
-                 abi, scoped, secc, appdir);
+                 abi, notes, secc, appdir);
 #endif
     }
 

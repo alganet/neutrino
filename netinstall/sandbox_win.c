@@ -17,6 +17,17 @@
 #include "sandbox.h"
 
 /*
+ * There is no unprivileged way to deny an app the network on windows: WFP needs
+ * administrator, and a job object does not express it. Naming that is better
+ * than letting an -DNEUTRINO_CONFINE_OFFLINE build look like it did something.
+ */
+#ifdef NEUTRINO_CONFINE_OFFLINE
+#define NT_OFFLINE_NOTE " (offline tier unavailable here)"
+#else
+#define NT_OFFLINE_NOTE ""
+#endif
+
+/*
  * A job object is a resource boundary, not a filesystem one, and this file does
  * not pretend otherwise. Low integrity was the obvious next step
  * and does not work: it stops writes but not reads, %TEMP% does not redirect so
@@ -92,10 +103,11 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     if (!enforce) {
 #ifdef NEUTRINO_CONFINE_TIGHT
         snprintf(desc, desclen, "job object + low integrity, writes confined to %s "
-                                "(reads are not confined)", appdir);
+                                "(reads are not confined)" NT_OFFLINE_NOTE, appdir);
 #else
         snprintf(desc, desclen, "job object (process limits only; "
-                                "no filesystem confinement on windows)");
+                                "no filesystem confinement on windows)"
+                                NT_OFFLINE_NOTE);
 #endif
         return 0;
     }
@@ -140,11 +152,12 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         return -1;
     }
     snprintf(desc, desclen, "job object + low integrity, writes confined to %s "
-                            "(reads are not confined)", appdir);
+                            "(reads are not confined)" NT_OFFLINE_NOTE, appdir);
     return 0;
 #else
     snprintf(desc, desclen, "job object (process limits only; "
-                            "no filesystem confinement on windows)");
+                            "no filesystem confinement on windows)"
+                            NT_OFFLINE_NOTE);
     return 0;
 #endif
 }
