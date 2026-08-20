@@ -187,6 +187,52 @@ static int nt_job_ui(HANDLE job, DWORD mask)
                                    &ui, sizeof(ui)) ? 1 : 0;
 }
 
+/*
+ * Every privilege but SeChangeNotifyPrivilege, which path traversal needs.
+ * Removed rather than disabled, so nothing downstream can turn them back on,
+ * and the token is inherited by everything the launcher starts.
+ *
+ * A standard user token carries few privileges to begin with, so this is a
+ * small win rather than a large one. What makes it worth having is that it
+ * survives the hop to the real app, which a per-process mitigation policy set
+ * here would not: the polyglot compiles itself, STARTs the result and returns.
+ */
+static int nt_strip_privileges(void)
+{
+    TOKEN_PRIVILEGES *tp = NULL;
+    HANDLE token = NULL;
+    DWORD len = 0;
+    LUID keep;
+    DWORD i;
+    int ok = 0;
+
+    if (!LookupPrivilegeValueA(NULL, "SeChangeNotifyPrivilege", &keep)) {
+        return 0;
+    }
+    if (!OpenProcessToken(GetCurrentProcess(),
+                          TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
+        return 0;
+    }
+    GetTokenInformation(token, TokenPrivileges, NULL, 0, &len);
+    if (len) {
+        tp = (TOKEN_PRIVILEGES *)malloc(len);
+    }
+    if (tp && GetTokenInformation(token, TokenPrivileges, tp, len, &len)) {
+        for (i = 0; i < tp->PrivilegeCount; i++) {
+            if (tp->Privileges[i].Luid.LowPart == keep.LowPart &&
+                tp->Privileges[i].Luid.HighPart == keep.HighPart) {
+                tp->Privileges[i].Attributes = 0;
+            } else {
+                tp->Privileges[i].Attributes = SE_PRIVILEGE_REMOVED;
+            }
+        }
+        ok = AdjustTokenPrivileges(token, FALSE, tp, len, NULL, NULL) ? 1 : 0;
+    }
+    free(tp);
+    CloseHandle(token);
+    return ok;
+}
+
 int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
@@ -194,6 +240,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     char uishown[256];
     char uinote[288];
     DWORD uimask;
+    const char *privs;
     HANDLE job;
 
     (void)home;
@@ -213,13 +260,14 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 
     if (!enforce) {
 #ifdef NEUTRINO_CONFINE_TIGHT
-        snprintf(desc, desclen, "job object%s + low integrity, writes confined to "
-                                "%s (reads are not confined)" NT_OFFLINE_NOTE,
+        snprintf(desc, desclen, "job object%s + privileges stripped + low "
+                                "integrity, writes confined to %s (reads are "
+                                "not confined)" NT_OFFLINE_NOTE,
                  uinote, appdir);
 #else
-        snprintf(desc, desclen, "job object%s (process limits only; "
-                                "no filesystem confinement on windows)"
-                                NT_OFFLINE_NOTE, uinote);
+        snprintf(desc, desclen, "job object%s + privileges stripped (process "
+                                "limits only; no filesystem confinement on "
+                                "windows)" NT_OFFLINE_NOTE, uinote);
 #endif
         return 0;
     }
@@ -250,6 +298,10 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         return -1;
     }
 
+    /* Best effort: a token that refuses to shed its privileges is not a reason
+     * to give up the job object, but --info must not then claim it. */
+    privs = nt_strip_privileges() ? " + privileges stripped" : "";
+
 #ifdef NEUTRINO_CONFINE_TIGHT
     /*
      * Low integrity blocks writes, not reads: this stops an app trashing the
@@ -264,14 +316,14 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         snprintf(desc, desclen, "job object only (could not drop to low integrity)");
         return -1;
     }
-    snprintf(desc, desclen, "job object%s + low integrity, writes confined to %s "
-                            "(reads are not confined)" NT_OFFLINE_NOTE,
-             uinote, appdir);
+    snprintf(desc, desclen, "job object%s%s + low integrity, writes confined to "
+                            "%s (reads are not confined)" NT_OFFLINE_NOTE,
+             uinote, privs, appdir);
     return 0;
 #else
-    snprintf(desc, desclen, "job object%s (process limits only; "
+    snprintf(desc, desclen, "job object%s%s (process limits only; "
                             "no filesystem confinement on windows)"
-                            NT_OFFLINE_NOTE, uinote);
+                            NT_OFFLINE_NOTE, uinote, privs);
     return 0;
 #endif
 }

@@ -210,7 +210,7 @@ and the network, so "deny everything" is not on the table.
 | **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied; signals scoped to the sandbox, and abstract unix sockets too where there is no X11 display. A seccomp filter on top. |
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. See the caveat below. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
-| **Windows** | Job object — process limits only. **No filesystem confinement** by default; see the tight tier. |
+| **Windows** | Job object — process limits only — plus every token privilege but `SeChangeNotify` removed. **No filesystem confinement** by default; see the tight tier. |
 | **FreeBSD** | No confinement. `PROC_NO_NEW_PRIVS_CTL` only, which is a floor rather than a boundary. |
 
 If nothing is available the binary **runs anyway and warns on stderr**, naming what was and
@@ -447,6 +447,13 @@ Low integrity was the obvious next step and does not work: it blocks writes but 
 `%TEMP%` does not redirect so `jsc.exe` fails, and WebView2 is documented to break in low-IL
 hosts. AppContainer is the only mechanism that would confine reads, but nesting it inside
 Chromium's own lowbox tokens is unsupported. Both are follow-ups, not v1 promises.
+
+**Token privileges are stripped.** Every privilege but `SeChangeNotifyPrivilege`, which path
+traversal needs, is *removed* rather than merely disabled, so nothing downstream can turn it back
+on, and the token is inherited by everything the launcher starts. A standard user token carries few
+privileges to begin with, so this is a small win — but it is free, it survives the hop to the real
+app that per-process mitigation policies do not, and it was probed on its own against a real
+webview before being shipped.
 
 **Job UI restrictions do not work with WebView2 at all**, and that is measured rather than argued.
 `JOBOBJECT_BASIC_UI_RESTRICTIONS` is the obvious remaining lever, and the only mechanism here that
