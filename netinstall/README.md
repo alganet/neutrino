@@ -134,6 +134,16 @@ it does not close the door, and on Linux `/proc/<pid>/environ` of your other sam
 stays readable anyway. Closing those needs the mechanisms below, and on Linux not even those are
 enough today.
 
+## Core dumps
+
+A crash is a write the confinement never sees. `core_pattern` normally pipes the dump to
+systemd-coredump or apport — a process outside the sandbox, storing it outside the app dir — so an
+app that crashes on purpose gets bytes written somewhere no rule here reaches, as many times as it
+likes. `RLIMIT_CORE` is set to zero so no core is produced at all.
+
+It applies on every POSIX platform, confined or not, and `--info` reports it on its own line rather
+than folding it into the confinement description, because it is not confinement.
+
 ## Trust model
 
 **HTTPS is the trust anchor, not the pin.** There is no bundled TLS stack and no bundled CA set —
@@ -188,7 +198,7 @@ and the network, so "deny everything" is not on the table.
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. See the caveat below. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
 | **Windows** | Job object — process limits only. **No filesystem confinement** by default; see the tight tier. |
-| **FreeBSD** | None. |
+| **FreeBSD** | No confinement. `PROC_NO_NEW_PRIVS_CTL` only, which is a floor rather than a boundary. |
 
 If nothing is available the binary **runs anyway and warns on stderr**, naming what was and
 wasn't applied; confinement here is defence in depth, not the trust anchor. Building with
@@ -208,8 +218,10 @@ while these stand:
   that hides the sockets is the obvious candidate.
 - **Windows cannot confine reads.** AppContainer is the only mechanism that would, and low integrity
   already stops WebView2 rendering, so there is no reason to expect AppContainer to fare better.
-- **FreeBSD gets nothing**, and that is unlikely to change while Capsicum needs the target's
-  cooperation.
+- **FreeBSD gets no confinement**, and that is unlikely to change while Capsicum needs the target's
+  cooperation, and jail, chroot and ugidfw all need root. It does get the environment allowlist, no
+  core dumps and `PROC_NO_NEW_PRIVS_CTL`, none of which is a boundary; a strict build still refuses
+  to run there.
 
 ### What macOS denies that is not a file
 
