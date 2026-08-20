@@ -61,6 +61,10 @@ if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC
 if command -v python3 >/dev/null 2>&1; then
     if python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0))" 2>/dev/null; then echo "BIND_OK"; else echo "BIND_BLOCKED"; fi
 else echo "BIND_SKIP"; fi
+probe_tmp="${TMPDIR:-/tmp}/neutrino-exec-probe"
+cp /bin/echo "$probe_tmp" 2>/dev/null && chmod +x "$probe_tmp" 2>/dev/null
+if "$probe_tmp" >/dev/null 2>&1; then echo "EXEC_TMP"; else echo "EXEC_TMP_BLOCKED"; fi
+rm -f "$probe_tmp" 2>/dev/null
 if read -r _ <&3 2>/dev/null; then echo "FD_INHERITED"; else echo "FD_CLOSED"; fi
 if [ -n "${NEUTRINO_TEST_ABSTRACT:-}" ]; then
     python3 -c "
@@ -144,9 +148,12 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # Write xor execute: the one directory an app can write to is the one it
     # must not be able to run anything from. On linux this needs the exec
     # allowlist, so it lives in the tight tier and confine-strict.sh covers it.
-    check "cannot execute what it wrote" EXEC_BLOCKED
+    check "cannot execute what it wrote"                 EXEC_BLOCKED
+    # TMPDIR is not redirected on macOS, so it is a real writable directory
+    # outside the app dir -- w^x is a lie if it stays executable.
+    check "cannot execute what it wrote to the temp dir" EXEC_TMP_BLOCKED
 else
-    nt_note "w^x is tight-tier only on linux; got $(grep -o 'EXEC_[A-Z_]*' <<<"$OUT")"
+    nt_note "w^x is tight-tier only on linux; got $(grep -o 'EXEC_[A-Z_]*' <<<"$OUT" | tr '\n' ' ')"
 fi
 
 if [ "$(uname -s)" = "Darwin" ]; then
