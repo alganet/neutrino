@@ -102,6 +102,7 @@ int nt_self_path(char *buf, size_t len, const char *argv0)
     char raw[NT_PATH_MAX];
     uint32_t n = (uint32_t)sizeof(raw);
 
+    (void)argv0;
     if (_NSGetExecutablePath(raw, &n) != 0) {
         return -1;
     }
