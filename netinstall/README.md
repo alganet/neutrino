@@ -186,7 +186,7 @@ and the network, so "deny everything" is not on the table.
 |---|---|
 | **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied. A seccomp filter on top. |
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. See the caveat below. |
-| **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, plus read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles. |
+| **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
 | **Windows** | Job object — process limits only. **No filesystem confinement** by default; see the tight tier. |
 | **FreeBSD** | None. |
 
@@ -207,6 +207,30 @@ while these stand:
   already stops WebView2 rendering, so there is no reason to expect AppContainer to fare better.
 - **FreeBSD gets nothing**, and that is unlikely to change while Capsicum needs the target's
   cooperation.
+
+### What macOS denies that is not a file
+
+The seatbelt profile named `~/Library/Keychains` in its read denials, which was theatre: a keychain
+is not read by opening a file. The request goes to `securityd` over Mach, and the file denial never
+saw it. Denying the service is what actually closes it, so `com.apple.SecurityServer` and
+`com.apple.securityd.xpc` are now unreachable and the file rule is the belt to that pair of braces.
+
+Certificate trust lives in a *different* daemon, `com.apple.trustd`, which is deliberately left
+reachable — deny that one and TLS inside the webview stops working. The suite reports what the
+keychain and an HTTPS fetch actually do under the profile rather than asserting a guess about
+Apple's daemons.
+
+Also denied:
+
+- **`com.apple.tccd`**, the gatekeeper for camera, microphone, screen recording and the Documents
+  and Desktop folders. Unreachable, those fail closed instead of showing a consent prompt
+  attributed to a launcher the user did not think was asking.
+- **`appleevent-send`**, which is the large one. `osascript` driving Finder or Terminal is a
+  complete escape from everything above. The polyglot's own JXA path uses the ObjC bridge rather
+  than sending events, so it does not need this.
+- **`mach-priv-task-port`**, the macOS spelling of `ptrace` — a task port is read and write access
+  to another process's memory — and **`signal` to processes outside the sandbox**, which is what
+  `LANDLOCK_SCOPE_SIGNAL` buys on the other side.
 
 ### The seccomp filter
 
