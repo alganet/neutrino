@@ -61,6 +61,7 @@ if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC
 if command -v python3 >/dev/null 2>&1; then
     if python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0))" 2>/dev/null; then echo "BIND_OK"; else echo "BIND_BLOCKED"; fi
 else echo "BIND_SKIP"; fi
+if read -r _ <&3 2>/dev/null; then echo "FD_INHERITED"; else echo "FD_CLOSED"; fi
 if [ -n "${NEUTRINO_TEST_ABSTRACT:-}" ]; then
     python3 -c "
 import os, socket
@@ -108,7 +109,8 @@ export NEUTRINO_TEST_FAKEHOME
 export NETINSTALL_FAKE_TOKEN="a-secret-that-only-lives-in-the-environment"
 export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-/nonexistent/agent.sock}"
 
-OUT="$("$APP" 2>"$WORK/err")"
+# fd 3 carries a readable file in, so the payload can tell "closed" from "empty".
+OUT="$("$APP" 2>"$WORK/err" 3<"$SERVE/hostile.cmd")"
 CONFINE="$("$APP" --info 2>/dev/null | awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')"
 nt_note "confinement: $CONFINE"
 
@@ -154,6 +156,9 @@ if [ "$(uname -s)" = "Darwin" ]; then
     nt_note "keychain under the profile: $(grep '^KEYCHAIN:' <<<"$OUT" | cut -c11-)"
     nt_note "https under the profile: $(grep '^TLS:' <<<"$OUT" | cut -c6-)"
 fi
+
+echo "=== Descriptors the caller left open ==="
+check "an inherited descriptor does not reach the app" FD_CLOSED
 
 echo "=== Sockets the app has no path-based rule against ==="
 # Abstract-socket scoping is deliberately skipped when a display is set, because
