@@ -28,6 +28,16 @@ NETINSTALL_CFLAGS="-DNEUTRINO_TESTING -DNEUTRINO_CONFINE_OFFLINE" \
     bash "$HERE/../build.sh" host >/dev/null || exit 2
 mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-offline$NT_EXE"
 
+echo "### Building session binary"
+NETINSTALL_CFLAGS="-DNEUTRINO_TESTING -DNEUTRINO_CONFINE_NOSESSION" \
+    bash "$HERE/../build.sh" host >/dev/null || exit 2
+mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-session$NT_EXE"
+
+echo "### Building session+tight binary"
+NETINSTALL_CFLAGS="-DNEUTRINO_TESTING -DNEUTRINO_CONFINE_NOSESSION -DNEUTRINO_CONFINE_TIGHT" \
+    bash "$HERE/../build.sh" host >/dev/null || exit 2
+mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-session-tight$NT_EXE"
+
 echo "### Building strict-confinement binary"
 NETINSTALL_CFLAGS="-DNEUTRINO_TESTING -DNEUTRINO_CONFINE_TIGHT" \
     bash "$HERE/../build.sh" host >/dev/null || exit 2
@@ -35,10 +45,12 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 
 # job-ui is an investigation, not a gate, and it costs ten minutes of windows CI
 # per run. It answered its question -- see the README -- so it is opt-in now.
-SUITES="names verify confine confine-strict offline strict e2e"
+SUITES="names verify confine confine-strict confine-session offline strict e2e"
 # session.sh is a probe rather than a gate: it applies each candidate mechanism
-# on its own to a real webview. Like job-ui it is opt-in, because it costs eight
-# webview launches and answers a question rather than guarding one.
+# on its own to a real webview. It answered -- the session tier is what came of
+# it, and confine-session.sh gates that -- so like job-ui it is opt-in now
+# rather than costing eight webview launches on every push. The machinery stays
+# for the next engine or kernel.
 [ "${NEUTRINO_SESSION_PROBE:-}" = "1" ] && SUITES="$SUITES session"
 [ "${NEUTRINO_JOB_UI_BISECT:-}" = "1" ] && SUITES="$SUITES job-ui"
 
@@ -48,6 +60,14 @@ for t in $SUITES; do
     case "$t" in
         names) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-release$NT_EXE" ;;
         confine-strict) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-strict$NT_EXE" ;;
+        # Three binaries: the tier, one without it as the control that says the
+        # bus was there to be closed, and one with the tight tier on top, which
+        # is where the untrusted X cookie stops being a bar and starts being a
+        # boundary.
+        confine-session) nt_timeout 600 bash "$HERE/$t.sh" \
+            "$HERE/../dist/netinstall-session$NT_EXE" \
+            "$HERE/../dist/netinstall-testing$NT_EXE" \
+            "$HERE/../dist/netinstall-session-tight$NT_EXE" ;;
         offline) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-offline$NT_EXE" ;;
         # Nine real webview launches, most of them waiting out a timeout on
         # purpose, so this one needs a longer leash than the rest.

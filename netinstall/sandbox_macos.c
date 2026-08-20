@@ -37,6 +37,17 @@ extern void sandbox_free_error(char *errorbuf);
 #endif
 
 /*
+ * The session tier is namespaces and the X11 SECURITY extension, and there is
+ * nothing here shaped like either. Saying so beats letting a
+ * -DNEUTRINO_CONFINE_NOSESSION build look like it did something.
+ */
+#ifdef NEUTRINO_CONFINE_NOSESSION
+#define NT_SESSION_NOTE " (session tier unavailable here)"
+#else
+#define NT_SESSION_NOTE ""
+#endif
+
+/*
  * A deny-list, not an allow-list. A (deny default) profile that still permits
  * Cocoa, WKWebView and Metal is undocumented SBPL archaeology that rebreaks on
  * every OS minor; this gets the write confinement for a fraction of the risk.
@@ -197,11 +208,11 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 
     if (!enforce) {
 #ifdef NEUTRINO_CONFINE_TIGHT
-        snprintf(desc, desclen, "seatbelt%s, reads and writes confined to %s",
+        snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", reads and writes confined to %s",
                  phase == NT_PHASE_FETCH ? "" : NT_OFFLINE_NOTE,
                  phase == NT_PHASE_FETCH ? home : appdir);
 #else
-        snprintf(desc, desclen, "seatbelt%s, writes confined to %s",
+        snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", writes confined to %s",
                  phase == NT_PHASE_FETCH ? "" : NT_OFFLINE_NOTE,
                  phase == NT_PHASE_FETCH ? home : appdir);
 #endif
@@ -278,10 +289,10 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     }
 
 #ifdef NEUTRINO_CONFINE_TIGHT
-    snprintf(desc, desclen, "seatbelt%s, reads and writes confined to %s",
+    snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", reads and writes confined to %s",
              NT_OFFLINE_NOTE, dir);
 #else
-    snprintf(desc, desclen, "seatbelt%s, writes confined to %s",
+    snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", writes confined to %s",
              NT_OFFLINE_NOTE, dir);
 #endif
     return 0;

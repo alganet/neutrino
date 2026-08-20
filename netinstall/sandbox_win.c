@@ -30,6 +30,17 @@
 #endif
 
 /*
+ * The session tier is namespaces and the X11 SECURITY extension, and there is
+ * nothing here shaped like either. Saying so beats letting a
+ * -DNEUTRINO_CONFINE_NOSESSION build look like it did something.
+ */
+#ifdef NEUTRINO_CONFINE_NOSESSION
+#define NT_SESSION_NOTE " (session tier unavailable here)"
+#else
+#define NT_SESSION_NOTE ""
+#endif
+
+/*
  * A job object is a resource boundary, not a filesystem one, and this file does
  * not pretend otherwise. Low integrity was the obvious next step and does not
  * work: it stops writes but not reads, %TEMP% does not redirect so jsc.exe
@@ -267,12 +278,12 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 #ifdef NEUTRINO_CONFINE_TIGHT
         snprintf(desc, desclen, "job object%s + privileges stripped + low "
                                 "integrity, writes confined to %s (reads are "
-                                "not confined)" NT_OFFLINE_NOTE,
+                                "not confined)" NT_OFFLINE_NOTE NT_SESSION_NOTE,
                  uinote, appdir);
 #else
         snprintf(desc, desclen, "job object%s + privileges stripped (process "
                                 "limits only; no filesystem confinement on "
-                                "windows)" NT_OFFLINE_NOTE, uinote);
+                                "windows)" NT_OFFLINE_NOTE NT_SESSION_NOTE, uinote);
 #endif
         return 0;
     }
@@ -322,13 +333,13 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         return -1;
     }
     snprintf(desc, desclen, "job object%s%s + low integrity, writes confined to "
-                            "%s (reads are not confined)" NT_OFFLINE_NOTE,
+                            "%s (reads are not confined)" NT_OFFLINE_NOTE NT_SESSION_NOTE,
              uinote, privs, appdir);
     return 0;
 #else
     snprintf(desc, desclen, "job object%s%s (process limits only; "
                             "no filesystem confinement on windows)"
-                            NT_OFFLINE_NOTE, uinote, privs);
+                            NT_OFFLINE_NOTE NT_SESSION_NOTE, uinote, privs);
     return 0;
 #endif
 }

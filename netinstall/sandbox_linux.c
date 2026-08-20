@@ -11,12 +11,19 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <sched.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/mount.h>
 #include <sys/prctl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
+#include <net/if.h>
 #include <unistd.h>
 
 #include <linux/audit.h>
@@ -154,6 +161,17 @@ static void nt_allow(int ruleset, const char *path, unsigned long long rights)
     close(fd);
 }
 
+/*
+ * Set when the session tier managed to put an untrusted cookie in the app's
+ * hands. The tight tier reads it: leaving the trusted cookie on the read
+ * allowlist would hand back exactly what the untrusted one took away.
+ */
+#ifdef NEUTRINO_CONFINE_NOSESSION
+static int nt_x11_replaced;
+#else
+#define nt_x11_replaced 0
+#endif
+
 #ifdef NEUTRINO_CONFINE_TIGHT
 /*
  * Everything a GTK or Qt webview reads on the way up. Anything absent here is
@@ -184,6 +202,9 @@ static void nt_allow_system_reads(int ruleset)
     userhome = getenv("HOME");
     if (userhome && *userhome) {
         for (i = 0; home_paths[i]; i++) {
+            if (nt_x11_replaced && strcmp(home_paths[i], "/.Xauthority") == 0) {
+                continue;
+            }
             snprintf(path, sizeof(path), "%s%s", userhome, home_paths[i]);
             nt_allow(ruleset, path, NT_READ_RIGHTS);
         }
@@ -197,6 +218,568 @@ static void nt_allow_system_reads(int ruleset)
 }
 #endif
 
+
+/*
+ * The session tier, and the namespaces it is built on.
+ *
+ * connect(2) to a pathname unix socket is not a filesystem operation. No
+ * Landlock rule sees it, measured rather than inferred: under a ruleset that
+ * grants nothing but /usr, connects to the session bus, the ssh-agent socket
+ * and /tmp/.X11-unix/X0 all still succeed. So the session bus stays reachable
+ * to a confined app, and an app that reaches the session bus can ask systemd
+ * for StartTransientUnit and start a process outside everything here.
+ *
+ * The only lever left is to make the path stop leading to a socket, which means
+ * a mount namespace, which means a user namespace. Ubuntu 24.04 and its
+ * derivatives refuse those to any binary without an AppArmor profile -- unshare
+ * itself returns EPERM there -- so this tier is available on some machines and
+ * not others, and --info says which.
+ */
+#if defined(NEUTRINO_CONFINE_NOSESSION) || defined(NEUTRINO_CONFINE_OFFLINE)
+#define NT_USE_NAMESPACES 1
+#endif
+
+#ifdef NT_USE_NAMESPACES
+
+/*
+ * Read before any namespace exists, and that is not a detail: inside a user
+ * namespace with no map written yet, getuid() answers the overflow uid, and a
+ * map naming 65534 is refused with the same EPERM a distribution ban gives.
+ */
+static uid_t nt_uid;
+static gid_t nt_gid;
+
+static int nt_write_file(const char *path, const char *value)
+{
+    ssize_t n;
+    int fd = open(path, O_WRONLY | O_CLOEXEC);
+
+    if (fd < 0) {
+        return -1;
+    }
+    n = write(fd, value, strlen(value));
+    close(fd);
+    return n < 0 ? -1 : 0;
+}
+
+/* The one map an unprivileged process may write: a single line naming its own
+ * id, and only once setgroups is denied. */
+static int nt_map_self(void)
+{
+    char line[64];
+
+    nt_write_file("/proc/self/setgroups", "deny");
+    snprintf(line, sizeof(line), "%u %u 1\n", (unsigned)nt_uid, (unsigned)nt_uid);
+    if (nt_write_file("/proc/self/uid_map", line) != 0) {
+        return -1;
+    }
+    snprintf(line, sizeof(line), "%u %u 1\n", (unsigned)nt_gid, (unsigned)nt_gid);
+    nt_write_file("/proc/self/gid_map", line);
+    return 0;
+}
+
+/* Joining rather than snprintf at every call site: a path that silently loses
+ * its tail is a path that means something else. */
+static int nt_join(char *out, size_t len, const char *dir, const char *name)
+{
+    int n = snprintf(out, len, "%s/%s", dir, name);
+
+    return (n < 0 || (size_t)n >= len) ? -1 : 0;
+}
+
+static const char *nt_runtime_dir(void)
+{
+    static char buf[NT_PATH_MAX];
+    const char *rt = getenv("XDG_RUNTIME_DIR");
+
+    if (rt && *rt) {
+        return rt;
+    }
+    snprintf(buf, sizeof(buf), "/run/user/%u", (unsigned)nt_uid);
+    return buf;
+}
+
+/*
+ * /dev/null over the socket, rather than an empty file: a bind mount refuses a
+ * directory over a non-directory, and connecting to a path that resolves to
+ * something which is not a socket answers ECONNREFUSED -- the errno a client
+ * already reads as "nothing is listening", where EPERM is the one libxcb
+ * declines to retry on.
+ */
+static void nt_cover(const char *path)
+{
+    struct stat st;
+
+    if (stat(path, &st) != 0) {
+        return;
+    }
+    mount("/dev/null", path, NULL, MS_BIND, NULL);
+}
+
+/*
+ * An allowlist rather than a list of socket names to cover, for the same reason
+ * the environment is one: a denylist has to enumerate every socket a desktop
+ * has ever put in the runtime directory and silently passes the next one. A
+ * fresh tmpfs goes over the directory and only the sockets an app is meant to
+ * keep are bound back into it -- the compositor and audio. The bus, the
+ * keyring, the portal and whatever the next release adds are gone without being
+ * named.
+ *
+ * The keepers are pinned by an O_PATH descriptor first, because once the tmpfs
+ * is on there is no path left to bind from; /proc/self/fd/<n> still resolves to
+ * the original. What is left is writable, so an app that wants a runtime file
+ * of its own gets one that leaves with it.
+ */
+static const char *const nt_runtime_keep[] = {
+    "wayland-0", "wayland-1", "pulse/native", "pipewire-0", "pipewire-0-manager",
+    NULL
+};
+
+static int nt_seal_runtime(void)
+{
+    const char *rt = nt_runtime_dir();
+    const char *wayland = getenv("WAYLAND_DISPLAY");
+    struct stat rtst;
+    const char *names[16];
+    int fds[16];
+    char path[NT_PATH_MAX];
+    char target[NT_PATH_MAX];
+    char source[64];
+    struct stat st;
+    int n = 0;
+    int i;
+
+    /* A machine with no runtime directory has nothing here to seal, which is
+     * not the same as failing to seal it. */
+    if (stat(rt, &rtst) != 0 || !S_ISDIR(rtst.st_mode)) {
+        return 0;
+    }
+    if (wayland && *wayland && *wayland != '/') {
+        names[n++] = wayland;
+    }
+    for (i = 0; nt_runtime_keep[i] && n < 15; i++) {
+        names[n++] = nt_runtime_keep[i];
+    }
+    for (i = 0; i < n; i++) {
+        fds[i] = nt_join(path, sizeof(path), rt, names[i]) == 0
+                     ? open(path, O_PATH | O_CLOEXEC) : -1;
+    }
+
+    if (mount("none", rt, "tmpfs", MS_NOSUID | MS_NODEV, "mode=0700") != 0) {
+        for (i = 0; i < n; i++) {
+            if (fds[i] >= 0) {
+                close(fds[i]);
+            }
+        }
+        return -1;
+    }
+
+    for (i = 0; i < n; i++) {
+        char *cut;
+
+        if (fds[i] < 0) {
+            continue;
+        }
+        snprintf(source, sizeof(source), "/proc/self/fd/%d", fds[i]);
+        if (nt_join(target, sizeof(target), rt, names[i]) != 0) {
+            close(fds[i]);
+            continue;
+        }
+        snprintf(path, sizeof(path), "%s", target);
+        cut = strrchr(path, '/');
+        if (cut && cut != path) {
+            *cut = '\0';
+            mkdir(path, 0700);
+        }
+        if (fstat(fds[i], &st) == 0 && S_ISDIR(st.st_mode)) {
+            mkdir(target, 0700);
+        } else {
+            int fd = open(target, O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
+
+            if (fd >= 0) {
+                close(fd);
+            }
+        }
+        mount(source, target, NULL, MS_BIND, NULL);
+        close(fds[i]);
+    }
+    return 0;
+}
+
+/* Without loopback up a network namespace takes local IPC down with the
+ * internet, and the tier stops being about the network. */
+static void nt_loopback_up(void)
+{
+    struct ifreq ifr;
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+
+    if (fd < 0) {
+        return;
+    }
+    memset(&ifr, 0, sizeof(ifr));
+    snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "lo");
+    if (ioctl(fd, SIOCGIFFLAGS, &ifr) == 0) {
+        ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
+        ioctl(fd, SIOCSIFFLAGS, &ifr);
+    }
+    close(fd);
+}
+
+/*
+ * A mount namespace on its own is not a boundary: /proc/<pid>/root of any
+ * process left outside it is a path straight back to the sockets that were
+ * covered, and only Yama's ptrace_scope stands in front of that -- which is 1 on
+ * Debian and Ubuntu and 0 on plenty of other distributions. A pid namespace
+ * with its own /proc leaves no outside process to walk through.
+ *
+ * It is also why this function may not return in the caller: the process that
+ * asks for a pid namespace does not enter it, only its children do. So
+ * netinstall forks, the child becomes pid 1 of the new namespace and goes on to
+ * exec the app, and netinstall itself stays behind as its parent, waiting and
+ * exiting with whatever the app returned. That is the one place on this
+ * platform where the launcher does not become the app.
+ *
+ * Being pid 1 has a consequence worth knowing: when the app exits, the kernel
+ * takes the rest of the namespace with it. The polyglot execs its runtime
+ * rather than backgrounding it, so there is nothing to strand -- but an app
+ * that forks and exits early would find its children gone, where without this
+ * they would have been reparented and left running.
+ */
+static int nt_enter_pidns(void)
+{
+    pid_t child = fork();
+    pid_t gone;
+    int status = 0;
+    int code = 0;
+
+    if (child < 0) {
+        return -1;
+    }
+    if (child == 0) {
+        mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL);
+        return 0;
+    }
+    for (;;) {
+        gone = waitpid(-1, &status, 0);
+        if (gone < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;                      /* ECHILD: nothing left to wait for */
+        }
+        if (gone == child) {
+            code = WIFSIGNALED(status) ? 128 + WTERMSIG(status)
+                                       : WEXITSTATUS(status);
+        }
+    }
+    _exit(code);
+}
+
+/*
+ * Asks the same question the enforcing path is about to ask, in a child, so
+ * nothing here confines the process that is asking -- and so the enforcing path
+ * can decline to start something it cannot finish.
+ *
+ * That last part is not tidiness. A process that enters a user namespace and
+ * then fails to write its own uid map is left as the overflow uid: its view of
+ * the filesystem is unchanged and every file it owns has become unreadable,
+ * which is a worse place to be than not having tried. Ask first, in a child
+ * that can be thrown away.
+ *
+ * The failing step and its errno come back over a pipe, because "the namespace
+ * was refused" and "the map was refused" are different sentences and --info is
+ * the line someone reads when they want to know which.
+ */
+static int nt_namespace_available(int flags, char *why, size_t whylen)
+{
+    int fds[2];
+    int report[2] = { 0, 0 };
+    pid_t pid;
+    int status = 0;
+
+    if (why && whylen) {
+        *why = '\0';
+    }
+    if (pipe(fds) != 0) {
+        return 0;
+    }
+    pid = fork();
+    if (pid < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return 0;
+    }
+    if (pid == 0) {
+        close(fds[0]);
+        report[0] = 0;
+        if (unshare(flags) != 0) {
+            report[0] = 1;
+            report[1] = errno;
+        } else if (nt_map_self() != 0) {
+            report[0] = 2;
+            report[1] = errno;
+        }
+        if (write(fds[1], report, sizeof(report)) != sizeof(report)) {
+            _exit(1);
+        }
+        _exit(report[0] == 0 ? 0 : 1);
+    }
+    close(fds[1]);
+    if (read(fds[0], report, sizeof(report)) != (ssize_t)sizeof(report)) {
+        report[0] = 3;
+        report[1] = 0;
+    }
+    close(fds[0]);
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+        continue;
+    }
+    if (report[0] == 0) {
+        return 1;
+    }
+    if (why && whylen) {
+        snprintf(why, whylen, "%s refused: %s",
+                 report[0] == 1 ? "namespace" :
+                 report[0] == 2 ? "uid map" : "namespace probe",
+                 report[1] ? strerror(report[1]) : "no answer");
+    }
+    return 0;
+}
+
+static int nt_session_flags(int hide, int net)
+{
+    int flags = CLONE_NEWUSER;
+
+    if (hide) {
+        flags |= CLONE_NEWNS | CLONE_NEWPID;
+    }
+    if (net) {
+        flags |= CLONE_NEWNET;
+    }
+    return flags;
+}
+
+/*
+ * Returns 0 when the session was closed as asked, -1 when the namespace was
+ * refused outright, and -2 when it was granted and something after it failed --
+ * which is a different sentence in --info, because the app is then in a
+ * half-built namespace rather than the one it started in. May not return at
+ * all: see nt_enter_pidns.
+ */
+static int nt_close_session(int hide, int net)
+{
+    if (unshare(nt_session_flags(hide, net)) != 0 || nt_map_self() != 0) {
+        return -1;
+    }
+    if (net) {
+        nt_loopback_up();
+    }
+    if (!hide) {
+        return 0;
+    }
+    /* Or every cover below propagates back out into the session that started
+     * us, and hides the bus from the whole desktop. */
+    if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
+        return -2;
+    }
+    if (nt_seal_runtime() != 0) {
+        return -2;
+    }
+    /* The system bus is not in the runtime dir, and the seal does not reach
+     * it. polkit and systemd are on the other end of it. */
+    nt_cover("/run/dbus/system_bus_socket");
+    nt_cover("/var/run/dbus/system_bus_socket");
+    /*
+     * The display can only be hidden when the app does not need it. On an X11
+     * session it does, and what is left there is the untrusted-cookie question,
+     * which is not this tier. The abstract name X clients ask for first belongs
+     * to the network namespace, not this one, so scoping or --offline is what
+     * closes that half.
+     */
+    if (!getenv("DISPLAY")) {
+        mount("none", "/tmp/.X11-unix", "tmpfs",
+              MS_RDONLY | MS_NOSUID | MS_NODEV, "mode=0755");
+    }
+    return nt_enter_pidns() == 0 ? 0 : -2;
+}
+
+#ifdef NEUTRINO_CONFINE_NOSESSION
+/*
+ * The display cannot be hidden, because the app needs it. What can be done is
+ * to hand it a cookie the server itself distrusts.
+ *
+ * The X11 SECURITY extension splits clients in two. A trusted one may read
+ * every other client's windows and input; an untrusted one is refused both.
+ * Measured on both engines rather than argued: under an untrusted cookie a
+ * screen capture of the root window is refused where a trusted client gets a
+ * PNG, and a client that grabs the keyboard and waits sees none of the keys
+ * that a trusted client in the same position sees. The cost is the extension
+ * list, which drops from twenty-three to two -- no XTEST, no RECORD, and no
+ * XKB, MIT-SHM or GLX either. WebKitGTK and QtWebEngine both still came up.
+ *
+ * This is a boundary only while the trusted cookie stays out of reach. In the
+ * default tier reads are unconfined, so an app can read ~/.Xauthority and
+ * connect trusted anyway -- there it raises the bar and no more. With
+ * -DNEUTRINO_CONFINE_TIGHT the trusted cookie is not on the read allowlist and
+ * the session tier seals the runtime directory where a display manager keeps
+ * the other copy, and then it holds.
+ */
+static int nt_x11_untrusted(const char *appdir)
+{
+    static const char *const xauth[] = {
+        "/usr/bin/xauth", "/bin/xauth", "/usr/local/bin/xauth",
+        "/usr/X11R6/bin/xauth", NULL
+    };
+    char out[NT_PATH_MAX];
+    const char *display = getenv("DISPLAY");
+    pid_t pid;
+    int status = 0;
+    int i;
+    int fd;
+
+    if (!display || !*display) {
+        return -1;
+    }
+    if (nt_join(out, sizeof(out), appdir, ".Xauthority-untrusted") != 0) {
+        return -1;
+    }
+    /* xauth appends to what is there, so a stale file from a previous launch
+     * would leave the old entry in front of the new one. */
+    unlink(out);
+    fd = open(out, O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        return -1;
+    }
+    close(fd);
+
+    for (i = 0; xauth[i]; i++) {
+        if (access(xauth[i], X_OK) != 0) {
+            continue;
+        }
+        pid = fork();
+        if (pid < 0) {
+            return -1;
+        }
+        if (pid == 0) {
+            int null = open("/dev/null", O_RDWR | O_CLOEXEC);
+
+            if (null >= 0) {
+                dup2(null, STDOUT_FILENO);
+                dup2(null, STDERR_FILENO);
+            }
+            execl(xauth[i], "xauth", "-f", out, "generate", display,
+                  "MIT-MAGIC-COOKIE-1", "untrusted", "timeout", "0",
+                  (char *)NULL);
+            _exit(127);
+        }
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+            continue;
+        }
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            struct stat st;
+
+            /* xauth exits zero having written nothing when the server has no
+             * SECURITY extension, and an empty file is not a cookie. */
+            if (stat(out, &st) == 0 && st.st_size > 0) {
+                setenv("XAUTHORITY", out, 1);
+                nt_x11_replaced = 1;
+                return 0;
+            }
+        }
+        break;
+    }
+    unlink(out);
+    return -1;
+}
+#endif
+
+/*
+ * What --info prints and what a launch does, from one place. Returns the phrase
+ * for the confinement description, and -- in the enforcing case, when a pid
+ * namespace was asked for -- does not return in the parent at all.
+ */
+static char nt_session_desc[96];
+
+static const char *nt_session_unavailable(int hide, const char *why)
+{
+    if (!hide) {
+        return "";
+    }
+    snprintf(nt_session_desc, sizeof(nt_session_desc), "session open (%s)",
+             why && *why ? why : "namespace refused");
+    return nt_session_desc;
+}
+
+static const char *nt_apply_session(int enforce, int *net_closed, int *x11,
+                                   const char *appdir)
+{
+    char why[64];
+    int hide = 0;
+    int net = 0;
+
+#ifdef NEUTRINO_CONFINE_NOSESSION
+    hide = 1;
+    /*
+     * Before the namespaces, because generating the cookie means connecting to
+     * the display as a trusted client and reading the trusted cookie to do it,
+     * and both of those are things the tier is about to take away.
+     */
+    if (enforce && nt_x11_untrusted(appdir) == 0) {
+        *x11 = 1;
+    }
+#else
+    (void)appdir;
+    (void)x11;
+#endif
+#ifdef NEUTRINO_CONFINE_OFFLINE
+    net = 1;
+#endif
+    nt_uid = getuid();
+    nt_gid = getgid();
+
+    if (!enforce) {
+#ifdef NEUTRINO_CONFINE_NOSESSION
+        {
+            static const char *const xauth[] = {
+                "/usr/bin/xauth", "/bin/xauth", "/usr/local/bin/xauth",
+                "/usr/X11R6/bin/xauth", NULL
+            };
+            const char *display = getenv("DISPLAY");
+            int i;
+
+            for (i = 0; display && *display && xauth[i]; i++) {
+                if (access(xauth[i], X_OK) == 0) {
+                    *x11 = 1;
+                    break;
+                }
+            }
+        }
+#endif
+        if (!nt_namespace_available(nt_session_flags(hide, net), why, sizeof(why))) {
+            return nt_session_unavailable(hide, why);
+        }
+        *net_closed = net;
+        return hide ? "session closed" : "";
+    }
+    /*
+     * The same question, in a throwaway child, before doing it for real. See
+     * nt_namespace_available: half-entering a user namespace is worse than not
+     * entering one.
+     */
+    if (!nt_namespace_available(nt_session_flags(hide, net), why, sizeof(why))) {
+        return nt_session_unavailable(hide, why);
+    }
+    switch (nt_close_session(hide, net)) {
+    case 0:
+        *net_closed = net;
+        return hide ? "session closed" : "";
+    case -2:
+        return hide ? "session half closed (namespace granted, sealing failed)" : "";
+    default:
+        return hide ? "session open (namespace refused after it was granted)" : "";
+    }
+}
+
+#endif /* NT_USE_NAMESPACES */
 
 /*
  * Landlock mediates paths and nothing else, so the syscalls that reach across
@@ -414,11 +997,14 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     struct nt_ruleset_attr attr;
     unsigned long long rights = NT_WRITE_RIGHTS | NT_READ_RIGHTS;
     char path[NT_PATH_MAX];
-    char notes[64] = "";
+    char notes[160] = "";
     const char *runtime;
     const char *scoped = "";
     const char *offline = "";
+    const char *session = "";
     const char *secc;
+    int net_closed = 0;
+    int x11_untrusted = 0;
     int abi, ruleset;
 
     /*
@@ -433,6 +1019,24 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         secc = nt_seccomp_available() ? " + seccomp" : "";
     }
 
+#ifdef NT_USE_NAMESPACES
+    /*
+     * Before Landlock, and it has to be: Landlock denies mount to any domain
+     * that handles a filesystem right, by design and even inside a fresh
+     * namespace. Which is also what keeps the covers on -- an app that nests
+     * another user namespace to get capabilities back still cannot unmount
+     * them, and the mounts it inherits are locked to each other anyway.
+     *
+     * Only the run phase. The fetch has to reach the network, and curl has no
+     * business with the session either way.
+     */
+    if (phase == NT_PHASE_RUN) {
+        session = nt_apply_session(enforce, &net_closed, &x11_untrusted, appdir);
+    }
+#endif
+
+    (void)net_closed;       /* only read by the offline tier */
+    (void)x11_untrusted;    /* only set by the session tier */
     abi = nt_ll_create(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION);
     if (abi < 1) {
         /*
@@ -494,14 +1098,44 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
          */
         if (phase == NT_PHASE_RUN) {
             attr.handled_access_net |= LANDLOCK_ACCESS_NET_CONNECT_TCP;
-            offline = "offline";
+            /*
+             * Landlock's network rules are TCP-only, so UDP -- QUIC, DNS,
+             * anything else -- is untouched by them. A network namespace has no
+             * hole of that shape, and takes the abstract socket namespace with
+             * it, so where one is available the tier means what the word says
+             * and where it is not, --info says which one you got.
+             */
+            offline = net_closed ? "offline" : "offline (tcp only)";
         }
 #endif
     }
-    if (*scoped && *offline) {
-        snprintf(notes, sizeof(notes), " (%s, %s)", scoped, offline);
-    } else if (*scoped || *offline) {
-        snprintf(notes, sizeof(notes), " (%s)", *scoped ? scoped : offline);
+    {
+        const char *parts[4];
+        size_t used = 0;
+        int i, n = 0;
+
+        if (*scoped) {
+            parts[n++] = scoped;
+        }
+        if (*offline) {
+            parts[n++] = offline;
+        }
+        if (*session) {
+            parts[n++] = session;
+        }
+        if (x11_untrusted) {
+            parts[n++] = "x11 untrusted";
+        }
+        for (i = 0; i < n; i++) {
+            used += (size_t)snprintf(notes + used, sizeof(notes) - used, "%s%s",
+                                     i == 0 ? " (" : ", ", parts[i]);
+            if (used >= sizeof(notes) - 2) {
+                break;
+            }
+        }
+        if (n) {
+            snprintf(notes + used, sizeof(notes) - used, ")");
+        }
     }
 
     ruleset = nt_ll_create(&attr, sizeof(attr), 0);

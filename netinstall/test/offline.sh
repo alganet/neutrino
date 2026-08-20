@@ -29,7 +29,7 @@ mkdir -p "$SERVE" "$WORK/bin"
 export NEUTRINO_HOME="$WORK/home"
 
 nt_serve "$SERVE" || exit 2
-trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK"' EXIT
+trap 'kill $NT_SERVER_PID 2>/dev/null; nt_userns_restore; rm -rf "$WORK"' EXIT
 
 FAILURES=0
 
@@ -51,14 +51,24 @@ except PermissionError:
     print('NET_BLOCKED')
 except OSError:
     print('NET_ERR')
+u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    u.sendto(b'probe', ('1.1.1.1', 53))
+    print('UDP_OK')
+except OSError:
+    print('UDP_BLOCKED')
 " 2>/dev/null || echo "NET_ERR"
 SCRIPT
 
 SPEC="offline-com-example-0$(nt_pin "$SERVE/offline.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 
+nt_confine_line() {
+    "$APP" --info 2>/dev/null | awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }'
+}
+
 OUT="$(nt_timeout 60 "$APP" 2>"$WORK/err")"
-CONFINE="$("$APP" --info 2>/dev/null | awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')"
+CONFINE="$(nt_confine_line)"
 nt_note "confinement: $CONFINE"
 
 check() {
@@ -93,6 +103,47 @@ fi
 echo "=== The app did not ==="
 check "the payload ran"                    APP_RAN
 check "outbound TCP is refused"            NET_BLOCKED
+
+# Landlock's network rules are TCP-only, so on a machine that will not hand out
+# a network namespace the tier is exactly that and says so. Where one was
+# available, UDP is gone too and that gets asserted rather than assumed.
+UDP_CONTROL=NO
+python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.sendto(b'probe', ('1.1.1.1', 53))
+" 2>/dev/null && UDP_CONTROL=YES
+
+# The namespace half of this tier is the half CI could not see: the runners
+# refuse the uid map, so the binary correctly reports tcp-only and the UDP
+# assertion never runs. Ask for the restriction to be lifted the same way the
+# session suites do, so the path that ships is exercised somewhere rather than
+# only on a desktop that grants namespaces.
+nt_offline_has_netns() {
+    case "$(nt_confine_line)" in
+        *"tcp only"*) return 1 ;;
+        *offline*)    return 0 ;;
+    esac
+    return 1
+}
+if [ "$(uname -s)" = "Linux" ] && nt_userns nt_offline_has_netns; then
+    if [ "$NT_USERNS_LIFTED" = "1" ]; then
+        nt_result "offline tier: rerun with a network namespace, measured with kernel.apparmor_restrict_unprivileged_userns lifted for the suite"
+        OUT="$(nt_timeout 60 "$APP" 2>>"$WORK/err")"
+        CONFINE="$(nt_confine_line)"
+    fi
+fi
+nt_result "offline tier as measured: $CONFINE"
+case "$CONFINE" in
+    *"tcp only"*)
+        nt_result "no network namespace here, so the tier is tcp-only; udp: $(grep -o 'UDP_[A-Z]*' <<<"$OUT")" ;;
+    *)  if [ "$UDP_CONTROL" = "YES" ]; then
+            check "outbound UDP is refused, which landlock cannot do" UDP_BLOCKED
+            nt_result "udp under the network namespace: $(grep -o 'UDP_[A-Z]*' <<<"$OUT")"
+        else
+            nt_result "this machine has no route out unconfined, so the udp half is unmeasured"
+        fi ;;
+esac
 
 echo "=== Results: $FAILURES failure(s) ==="
 exit $FAILURES

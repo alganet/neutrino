@@ -24,6 +24,17 @@
 #define NT_OFFLINE_NOTE ""
 #endif
 
+/*
+ * The session tier is namespaces and the X11 SECURITY extension, and there is
+ * nothing here shaped like either. Saying so beats letting a
+ * -DNEUTRINO_CONFINE_NOSESSION build look like it did something.
+ */
+#ifdef NEUTRINO_CONFINE_NOSESSION
+#define NT_SESSION_NOTE " (session tier unavailable here)"
+#else
+#define NT_SESSION_NOTE ""
+#endif
+
 #ifdef __OpenBSD__
 
 /*
@@ -37,7 +48,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     char path[NT_PATH_MAX];
 
     if (!enforce) {
-        snprintf(desc, desclen, "unveil + pledge%s, writes confined to %s",
+        snprintf(desc, desclen, "unveil + pledge%s" NT_SESSION_NOTE ", writes confined to %s",
                  phase == NT_PHASE_FETCH ? "" : NT_OFFLINE_NOTE,
                  phase == NT_PHASE_FETCH ? home : appdir);
         return 0;
@@ -87,7 +98,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         snprintf(desc, desclen, "none (pledge failed)");
         return -1;
     }
-    snprintf(desc, desclen, "unveil + pledge%s, writes confined to %s",
+    snprintf(desc, desclen, "unveil + pledge%s" NT_SESSION_NOTE ", writes confined to %s",
              NT_OFFLINE_NOTE, appdir);
     return 0;
 }
@@ -126,7 +137,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 #endif
 
     snprintf(desc, desclen,
-             "none (no unprivileged confinement on this system%s)%s", floor,
+             "none (no unprivileged confinement on this system%s)%s"
+             NT_SESSION_NOTE, floor,
 #ifdef NEUTRINO_CONFINE_OFFLINE
              " (offline tier unavailable here)"
 #else

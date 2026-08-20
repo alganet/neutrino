@@ -4,13 +4,12 @@
 # SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
 # SPDX-License-Identifier: ISC
 #
-# This is a probe, not a gate. netinstall ships nothing that closes the two
-# holes the README calls out -- the session bus and the X11 display -- because
-# connecting to a pathname unix socket is not a filesystem operation Landlock
-# can see. The candidates are namespaces and the X11 SECURITY extension, and
-# both cost something. This measures what each one buys and what it breaks,
-# against a real webview, with an unconfined control on the same clock either
-# side of the table.
+# This is a probe, not a gate. It applies each candidate for closing the two
+# holes the README calls out -- the session bus and the X11 display -- on its
+# own, against a real webview, with an unconfined control on the same clock
+# either side of the table and one lane that has to die. The session tier is
+# what came of it and confine-session.sh gates that; this stays so a future
+# engine or kernel can be re-measured in one command.
 
 set -uo pipefail
 
