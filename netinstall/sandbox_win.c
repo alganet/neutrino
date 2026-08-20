@@ -31,11 +31,16 @@
 
 /*
  * A job object is a resource boundary, not a filesystem one, and this file does
- * not pretend otherwise. Low integrity was the obvious next step
- * and does not work: it stops writes but not reads, %TEMP% does not redirect so
- * jsc.exe fails, and WebView2 is documented to break in low-IL hosts.
- * AppContainer is the only mechanism that would confine reads, but nesting it
- * inside Chromium's own lowbox tokens is unsupported.
+ * not pretend otherwise. Low integrity was the obvious next step and does not
+ * work: it stops writes but not reads, %TEMP% does not redirect so jsc.exe
+ * fails, and WebView2 puts up a window that never draws in a low-IL host.
+ *
+ * AppContainer is the only mechanism that would confine reads, and it does not
+ * work either -- measured, not inferred: launched inside a real one, with its
+ * capabilities granted and the app dir handed to its SID, no window appears at
+ * all. Every unprivileged mechanism windows offers has now been tried against a
+ * real webview, so reads staying unconfined here is a ceiling rather than an
+ * omission.
  */
 #ifdef NEUTRINO_CONFINE_TIGHT
 /*
@@ -306,7 +311,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     /*
      * Low integrity blocks writes, not reads: this stops an app trashing the
      * profile, but it can still read ~/.ssh and browser stores. Only an
-     * AppContainer would close that, and it is documented to break WebView2.
+     * AppContainer would close that, and a webview does not come up inside one.
      */
     if (!nt_label_low(appdir)) {
         snprintf(desc, desclen, "job object only (could not label %s low)", appdir);

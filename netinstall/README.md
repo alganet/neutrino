@@ -510,9 +510,24 @@ moments earlier, which is the other half of what it asserts.
 ### Why Windows gets so little
 
 Low integrity was the obvious next step and does not work: it blocks writes but not reads,
-`%TEMP%` does not redirect so `jsc.exe` fails, and WebView2 is documented to break in low-IL
-hosts. AppContainer is the only mechanism that would confine reads, but nesting it inside
-Chromium's own lowbox tokens is unsupported. Both are follow-ups, not v1 promises.
+`%TEMP%` does not redirect so `jsc.exe` fails, and WebView2 does not render in a low-IL host — the
+suite still launches one there every run and still reports a window that never draws.
+
+**AppContainer does not work either, and that is now measured rather than assumed.** It is the only
+mechanism that would confine *reads*, so it was worth being sure about. The app was launched inside
+a real AppContainer — profile created, the three capabilities WebView2 needs in a packaged app
+granted, and the directory holding the script handed to the container's SID with an inheritable ACE,
+since an AppContainer starts with access to almost nothing and would otherwise fail on the grant
+rather than on the mechanism. With an unrestricted control passing on the same clock before and
+after, the container produced no window at all.
+
+Where exactly it died was not isolated — the honest claim is that a webview does not come up inside
+one, not that any particular call is at fault. The likely reason is the documented one, that
+WebView2 builds lowbox tokens for its own renderers and AppContainers do not nest.
+
+So reads stay unconfined on Windows. Every unprivileged mechanism the platform offers has now been
+tried against a real webview: job object limits and privilege stripping work and are shipped, job UI
+restrictions break it, low integrity breaks it, and AppContainer breaks it.
 
 **Token privileges are stripped.** Every privilege but `SeChangeNotifyPrivilege`, which path
 traversal needs, is *removed* rather than merely disabled, so nothing downstream can turn it back
