@@ -74,6 +74,34 @@ static const char nt_profile[] =
     "  (subpath (param \"LIBFONTS\")))\n"
 #endif
     "(deny process-exec* (subpath (param \"APPDIR\")))\n"
+    /*
+     * The file denials below are necessary and not sufficient. A keychain is not
+     * read by opening a file -- the request goes to securityd over Mach, so
+     * denying ~/Library/Keychains alone was theatre. Denying the service is what
+     * actually closes it. Certificate trust lives in a different daemon
+     * (com.apple.trustd) and is deliberately left reachable, or TLS inside the
+     * webview would stop working.
+     *
+     * tccd is the gatekeeper for camera, microphone, screen recording and the
+     * Documents and Desktop folders. With it unreachable those fail closed
+     * instead of showing the user a consent prompt attributed to a launcher
+     * they did not think was asking.
+     *
+     * appleevent-send is the large one: osascript driving Finder or Terminal is
+     * a complete escape from any of this. The polyglot's own JXA path uses the
+     * ObjC bridge rather than sending events, so it does not need this.
+     */
+    "(deny mach-lookup\n"
+    "  (global-name \"com.apple.SecurityServer\")\n"
+    "  (global-name \"com.apple.securityd.xpc\")\n"
+    "  (global-name \"com.apple.tccd\")\n"
+    "  (global-name \"com.apple.tccd.system\"))\n"
+    "(deny appleevent-send)\n"
+    /* The macOS spelling of ptrace: a task port is read and write access to
+     * another process's memory. Signals are scoped to our own sandbox, which is
+     * what LANDLOCK_SCOPE_SIGNAL buys on the other side. */
+    "(deny mach-priv-task-port)\n"
+    "(deny signal (target others))\n"
     "(deny file-read*\n"
     "  (subpath (param \"SSH\"))\n"
     "  (subpath (param \"GNUPG\"))\n"

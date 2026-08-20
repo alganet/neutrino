@@ -60,6 +60,10 @@ n = libc.process_vm_readv(os.getpid(), ctypes.byref(a), 1, ctypes.byref(b), 1, 0
 print(\"PEEK_OK\" if n == 8 else \"PEEK_BLOCKED\")
 " 2>/dev/null || echo "PEEK_BLOCKED"
 else echo "PEEK_SKIP"; fi
+if command -v security >/dev/null 2>&1; then
+    echo "KEYCHAIN: $(security find-generic-password -a neutrino-probe-absent 2>&1 | tail -1)"
+    echo "TLS: $(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" https://example.com 2>&1 | tail -1)"
+fi
 if [ -n "${NETINSTALL_FAKE_TOKEN:-}" ]; then echo "SECRET_INHERITED"; else echo "SECRET_SCRUBBED"; fi
 if [ -n "${SSH_AUTH_SOCK:-}" ]; then echo "AGENT_INHERITED"; else echo "AGENT_SCRUBBED"; fi
 if [ -n "${PATH:-}" ] && [ -n "${HOME:-}" ]; then echo "BASICS_KEPT"; else echo "BASICS_LOST"; fi
@@ -110,6 +114,14 @@ if [ "$(uname -s)" = "Darwin" ]; then
     check "cannot execute what it wrote" EXEC_BLOCKED
 else
     nt_note "w^x is tight-tier only on linux; got $(grep -o 'EXEC_[A-Z_]*' <<<"$OUT")"
+fi
+
+if [ "$(uname -s)" = "Darwin" ]; then
+    # Recorded, not asserted. Denying securityd is what actually closes the
+    # keychain, and trustd is left reachable so TLS keeps working -- both are
+    # claims about Apple daemons, so the suite reports what really happened.
+    nt_note "keychain under the profile: $(grep '^KEYCHAIN:' <<<"$OUT" | cut -c11-)"
+    nt_note "https under the profile: $(grep '^TLS:' <<<"$OUT" | cut -c6-)"
 fi
 
 echo "=== Syscalls that reach across process boundaries ==="
