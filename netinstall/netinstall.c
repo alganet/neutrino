@@ -8,6 +8,12 @@
 #define _DARWIN_C_SOURCE
 #endif
 
+/* Same reason on the other side: syscall() is hidden by _POSIX_C_SOURCE, and
+ * close_range has no libc wrapper old enough to rely on. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -27,6 +33,12 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #define NT_SEP '/'
+#endif
+
+/* Only linux reaches for a raw syscall here, and zig's macOS SDK headers do not
+ * carry sys/syscall.h at all. */
+#ifdef __linux__
+#include <sys/syscall.h>
 #endif
 
 #ifdef __APPLE__
@@ -512,6 +524,53 @@ static int nt_cmd_safe(const char *arg)
 }
 #endif
 
+/*
+ * Whatever the invoking shell had open is otherwise still open in the app: a
+ * log file, a lock, a pipe to something else, an fd a caller meant for a
+ * different program entirely. None of it is reachable by path, so no
+ * filesystem rule closes it -- an already-open descriptor does not get looked
+ * up again.
+ *
+ * Only 0, 1 and 2 survive. A script that expected an fd on 3 stops getting one;
+ * that is the intended behaviour, and it is why this is worth documenting.
+ *
+ * Nothing equivalent happens on Windows: _spawnv passes inheritable handles by
+ * definition, and closing that would mean rebuilding the launch around
+ * CreateProcess with an explicit handle list.
+ */
+#ifndef _WIN32
+void nt_close_inherited(void)
+{
+#if defined(__linux__) && defined(__NR_close_range)
+    if (syscall(__NR_close_range, 3U, ~0U, 0U) == 0) {
+        return;
+    }
+#endif
+#if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    closefrom(3);
+#else
+    {
+        struct rlimit rl;
+        long max = 4096;
+        long fd;
+
+        /*
+         * The descriptor limit is the real bound. The floor keeps this honest
+         * when the limit is tiny, and the ceiling only stops an unbounded
+         * RLIM_INFINITY turning one launch into a million syscalls.
+         */
+        if (getrlimit(RLIMIT_NOFILE, &rl) == 0 &&
+            rl.rlim_cur != RLIM_INFINITY && (long)rl.rlim_cur > max) {
+            max = (long)rl.rlim_cur > 65536 ? 65536 : (long)rl.rlim_cur;
+        }
+        for (fd = 3; fd < max; fd++) {
+            close((int)fd);
+        }
+    }
+#endif
+}
+#endif
+
 static int nt_exec(const char *script, int argc, char **argv, int rest)
 {
     char **args;
@@ -551,6 +610,7 @@ static int nt_exec(const char *script, int argc, char **argv, int rest)
         return rc;
     }
 #else
+    nt_close_inherited();
     execv("/bin/sh", args);
     free(args);
     fprintf(stderr, "netinstall: cannot exec /bin/sh\n");

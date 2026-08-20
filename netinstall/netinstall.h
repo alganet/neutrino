@@ -38,4 +38,9 @@ int nt_mkdir_p(const char *path);
 int nt_sha256_file(const char *path, char *hex65);
 int nt_is_text(const char *path);
 
+#ifndef _WIN32
+/* Leaves only 0, 1 and 2 open, so nothing the caller had open reaches the app. */
+void nt_close_inherited(void);
+#endif
+
 #endif

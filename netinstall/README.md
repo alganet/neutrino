@@ -134,6 +134,19 @@ it does not close the door, and on Linux `/proc/<pid>/environ` of your other sam
 stays readable anyway. Closing those needs the mechanisms below, and on Linux not even those are
 enough today.
 
+## Inherited descriptors
+
+Whatever the invoking shell had open is otherwise still open in the app: a log file, a lock, a pipe
+to something else, an fd a caller meant for a different program entirely. None of it is reachable
+by path, so no filesystem rule closes it — an already-open descriptor is never looked up again.
+Only 0, 1 and 2 survive into the script, and into the fetch child.
+
+A script that expected an fd on 3 stops getting one. That is intended, and it is the reason this is
+written down rather than left as a detail.
+
+**Not on Windows.** `_spawnv` passes inheritable handles by definition, and closing that would mean
+rebuilding the launch around `CreateProcess` with an explicit handle list.
+
 ## Core dumps
 
 A crash is a write the confinement never sees. `core_pattern` normally pipes the dump to
