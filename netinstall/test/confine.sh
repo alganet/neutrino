@@ -42,10 +42,29 @@ time.sleep(600)
 " "$NEUTRINO_TEST_ABSTRACT" &
     NT_ABSTRACT_PID=$!
     sleep 1
+    # The same helper doubles as the peer for the /proc/<pid>/mem probe. What
+    # that probe needs is exactly what this already is: a live, same-uid,
+    # unconfined process with mapped writable memory that is not a descendant
+    # of the app. A descendant would be reachable under yama's default scope
+    # and would answer the wrong question.
+    export NEUTRINO_TEST_PEER="$NT_ABSTRACT_PID"
 fi
+
+# Recorded in the results below, because the probe means nothing without it.
+NT_PTRACE_STATE="n/a"
+[ "$(uname -s)" = "Linux" ] && NT_PTRACE_STATE="$(nt_ptrace_scope)"
 
 nt_cleanup() {
     kill $NT_SERVER_PID $NT_ABSTRACT_PID 2>/dev/null
+    nt_ptrace_scope_restore
+    if [ "$(uname -s)" = "Darwin" ]; then
+        # The LaunchServices probe launches real applications, and what it
+        # opens outlives the suite that opened it. Terminal only on a runner:
+        # on a developer's mac the window this would close is very likely the
+        # one the suite is being watched from.
+        [ -n "${GITHUB_ACTIONS:-}" ] && pkill -x Terminal >/dev/null 2>&1
+        pkill -f 'Evil.app/Contents/MacOS/Evil' >/dev/null 2>&1
+    fi
     if [ -n "${NEUTRINO_TEST_KEYCHAIN:-}" ]; then
         security delete-generic-password -a "$NEUTRINO_TEST_KEYCHAIN" \
             -s "$NEUTRINO_TEST_KEYCHAIN" >/dev/null 2>&1
@@ -104,6 +123,208 @@ n = libc.process_vm_readv(os.getpid(), ctypes.byref(a), 1, ctypes.byref(b), 1, 0
 print(\"PEEK_OK\" if n == 8 else \"PEEK_BLOCKED\")
 " 2>/dev/null || echo "PEEK_BLOCKED"
 else echo "PEEK_SKIP"; fi
+if [ -n "${NEUTRINO_TEST_PEER:-}" ] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$NEUTRINO_TEST_PEER" 2>/dev/null <<'PY' || echo "PEERMEM_ERROR"
+import os, sys, time
+
+# Finding 3 says the landlock ruleset's WRITE_FILE grant on /proc re-opens
+# ptrace through /proc/<pid>/mem, because that file's access check happens in
+# proc_mem_open rather than through the ptrace syscall seccomp denies.
+#
+# There are two mediators in that path and they have to be told apart, or the
+# fix gets written against the wrong one. The filesystem rights are one. The
+# other is the LSM ptrace hook, which landlock also implements: a sandboxed
+# process may not reach a task outside its own domain, whatever the filesystem
+# says. Both refuse with EACCES and both refuse at open.
+#
+# So the probe asks the same question twice, against two targets that differ in
+# exactly one thing. The peer is outside the domain. The child is inside it.
+# The /proc rule is identical for both. If the child answers and the peer does
+# not, what is holding is the domain check and not the grant this branch was
+# about to narrow.
+def mapping(pid):
+    try:
+        with open('/proc/%s/maps' % pid) as f:
+            for line in f:
+                cols = line.split()
+                if len(cols) >= 2 and cols[1][:2] == 'rw':
+                    return int(cols[0].split('-')[0], 16), None
+    except OSError as e:
+        return None, 'errno=%d' % e.errno
+    return None, 'no writable mapping'
+
+def poke(pid, label):
+    # Report the maps read separately: it needs only PTRACE_MODE_READ, so it is
+    # the weaker of the two questions and says which check gave way first.
+    addr, why = mapping(pid)
+    print('%sMAPS_%s' % (label, 'OK' if addr is not None else 'BLOCKED'))
+    if why:
+        print('%s maps %s' % (label.lower(), why))
+    try:
+        fd = os.open('/proc/%s/mem' % pid, os.O_RDWR)
+    except OSError as e:
+        print('%sMEM_BLOCKED' % label)
+        print('%s mem open errno=%d' % (label.lower(), e.errno))
+        return
+    if addr is None:
+        print('%sMEM_OPENED' % label)
+        os.close(fd)
+        return
+    try:
+        # Read a byte and put the same byte back. The question is whether the
+        # write is permitted, not what it can do, and neither of these targets
+        # is something to corrupt for the sake of a token.
+        os.lseek(fd, addr, os.SEEK_SET)
+        byte = os.read(fd, 1)
+        os.lseek(fd, addr, os.SEEK_SET)
+        os.write(fd, byte)
+        print('%sMEM_ESCAPED' % label)
+    except OSError as e:
+        print('%sMEM_BLOCKED' % label)
+        print('%s mem write errno=%d' % (label.lower(), e.errno))
+    finally:
+        os.close(fd)
+
+# The other half of the same question, and the one that decides whether the
+# grant is worth narrowing at all. /proc/<pid>/mem is not the only writable
+# file under another process's directory, and the rest do not all go through
+# ptrace_may_access -- oom_score_adj in particular is a plain 0644 file owned
+# by the task's uid. So rather than guess which one matters, open every regular
+# file under the peer's entry for writing and say which ones the domain lets
+# through. Opened and closed, not written: the list is the answer.
+def survey(pid, label):
+    import stat as st
+    base = '/proc/%s' % pid
+    opened = []
+    try:
+        names = sorted(os.listdir(base))
+    except OSError as e:
+        print('%sWRITABLE_UNLISTABLE' % label)
+        print('%s listdir errno=%d' % (label.lower(), e.errno))
+        return
+    for name in names:
+        path = base + '/' + name
+        try:
+            if not st.S_ISREG(os.lstat(path).st_mode):
+                continue
+            fd = os.open(path, os.O_WRONLY)
+        except OSError:
+            continue
+        os.close(fd)
+        opened.append(name)
+    print('%sWRITABLE_%s' % (label, 'SOME' if opened else 'NONE'))
+    print('%s writable %s' % (label.lower(), ','.join(opened) or '-'))
+    # And one real write, on the file chromium uses and the kernel checks least.
+    # Raised then put back: this peer has to stay alive for the rest of the run.
+    path = base + '/oom_score_adj'
+    try:
+        with open(path) as f:
+            was = f.read().strip()
+        fd = os.open(path, os.O_WRONLY)
+        try:
+            os.write(fd, b'100\n')
+            print('%sOOM_ESCAPED' % label)
+            os.write(fd, (was + '\n').encode())
+        finally:
+            os.close(fd)
+    except OSError as e:
+        print('%sOOM_BLOCKED' % label)
+        print('%s oom errno=%d' % (label.lower(), e.errno))
+
+poke(sys.argv[1], 'PEER')
+survey(sys.argv[1], 'PEER')
+
+pid = os.fork()
+if pid == 0:
+    time.sleep(8)
+    os._exit(0)
+poke(str(pid), 'CHILD')
+os.kill(pid, 9)
+os.waitpid(pid, 0)
+PY
+else echo "PEERMEM_SKIP"; fi
+if [ -e /proc/self/oom_score_adj ] && command -v python3 >/dev/null 2>&1; then
+    python3 - 2>/dev/null <<'PY' || echo "PROCSELF_ERROR"
+import os, sys, time
+
+# The regression control for narrowing the /proc write grant, in the exact
+# shape chromium's zygote uses it: plain O_WRONLY and a write, no truncate.
+# A shell redirection is the wrong instrument here -- ">" is O_TRUNC, which
+# needs LANDLOCK_ACCESS_FS_TRUNCATE, a right this ruleset does not grant on
+# /proc today. It refuses for a reason that has nothing to do with the rule
+# under test, so both forms are reported and only the plain one is the control.
+def poke(path, flags):
+    try:
+        fd = os.open(path, flags)
+    except OSError as e:
+        return 'BLOCKED', 'open errno=%d' % e.errno
+    try:
+        os.write(fd, b'0\n')
+        return 'OK', ''
+    except OSError as e:
+        return 'BLOCKED', 'write errno=%d' % e.errno
+    finally:
+        os.close(fd)
+
+verdict, why = poke('/proc/self/oom_score_adj', os.O_WRONLY)
+print('PROCSELF_' + verdict)
+if why:
+    print('procself %s' % why)
+verdict, why = poke('/proc/self/oom_score_adj', os.O_WRONLY | os.O_TRUNC)
+print('PROCSELFTRUNC_' + verdict)
+
+# And the one the zygote actually depends on: a *descendant's* entry, not its
+# own. A /proc/self rule would not cover this, which is the whole CI risk of
+# narrowing the grant, so the before-state has to be on the record.
+pid = os.fork()
+if pid == 0:
+    time.sleep(5)
+    os._exit(0)
+verdict, why = poke('/proc/%d/oom_score_adj' % pid, os.O_WRONLY)
+print('PROCCHILD_' + verdict)
+if why:
+    print('procchild %s' % why)
+os.kill(pid, 9)
+os.waitpid(pid, 0)
+PY
+else echo "PROCSELF_SKIP"; fi
+if [ "$(uname -s)" = "Darwin" ] && [ -n "${NEUTRINO_TEST_LSD_TAG:-}" ]; then
+    drop_cmd="$NEUTRINO_TEST_FAKEHOME/lsd-command-$NEUTRINO_TEST_LSD_TAG"
+    drop_app="$NEUTRINO_TEST_FAKEHOME/lsd-app-$NEUTRINO_TEST_LSD_TAG"
+    printf '#!/bin/sh\n/usr/bin/touch "%s"\n' "$drop_cmd" > "$XDG_DATA_HOME/evil.command" 2>/dev/null
+    chmod +x "$XDG_DATA_HOME/evil.command" 2>/dev/null
+    # Which door /usr/bin/open ends up using depends on this. With Terminal
+    # already running, LaunchServices delivers the document to it as an apple
+    # event -- which this profile denies outright, and which is a different
+    # question from whether launchservicesd will spawn something for us.
+    if pgrep -x Terminal >/dev/null 2>&1; then echo "LSD_TERM_UP=yes"; else echo "LSD_TERM_UP=no"; fi
+    /usr/bin/open "$XDG_DATA_HOME/evil.command" >/dev/null 2>&1
+    echo "LSD_COMMAND_RC=$?"
+    mkdir -p "$XDG_DATA_HOME/Evil.app/Contents/MacOS" 2>/dev/null
+    printf '#!/bin/sh\n/usr/bin/touch "%s"\n' "$drop_app" > "$XDG_DATA_HOME/Evil.app/Contents/MacOS/Evil" 2>/dev/null
+    chmod +x "$XDG_DATA_HOME/Evil.app/Contents/MacOS/Evil" 2>/dev/null
+    cat > "$XDG_DATA_HOME/Evil.app/Contents/Info.plist" 2>/dev/null <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Evil</string>
+<key>CFBundleIdentifier</key><string>com.example.neutrino.evil</string>
+<key>CFBundleName</key><string>Evil</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>
+PLIST
+    /usr/bin/open "$XDG_DATA_HOME/Evil.app" >/dev/null 2>&1
+    echo "LSD_APP_RC=$?"
+    lsd_i=0
+    while [ "$lsd_i" -lt 25 ]; do
+        [ -e "$drop_cmd" ] && [ -e "$drop_app" ] && break
+        sleep 1
+        lsd_i=$((lsd_i + 1))
+    done
+    if [ -e "$drop_cmd" ]; then echo "LSD_COMMAND_ESCAPED"; else echo "LSD_COMMAND_BLOCKED"; fi
+    if [ -e "$drop_app" ]; then echo "LSD_APP_ESCAPED"; else echo "LSD_APP_BLOCKED"; fi
+else echo "LSD_SKIP"; fi
 if command -v security >/dev/null 2>&1; then
     if [ -n "${NEUTRINO_TEST_KEYCHAIN:-}" ]; then
         if security find-generic-password -a "$NEUTRINO_TEST_KEYCHAIN" \
@@ -138,10 +359,102 @@ if [ "$(uname -s)" = "Darwin" ]; then
 fi
 export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-/nonexistent/agent.sock}"
 
+# LaunchServices, measured from outside the sandbox before it is measured from
+# inside. /usr/bin/open does not spawn anything itself -- it asks
+# launchservicesd, which is in nobody's profile -- so the interesting question
+# is whether the profile stops the request. That question only has an answer if
+# the same two artifacts launch at all on this runner, and a headless one may
+# have no session for them to launch into.
+#
+# The control runs first on purpose. It warms LaunchServices and leaves Terminal
+# up, so a cold start cannot make the confined attempt time out and read as
+# blocked -- which would be the wrong answer in the reassuring direction.
+NT_LSD_CONTROL="skipped (not darwin)"
+NT_LSD_WARM="not measured"
+if [ "$(uname -s)" = "Darwin" ]; then
+    CTL="$WORK/lsd"
+    mkdir -p "$CTL/Evil.app/Contents/MacOS"
+    cat > "$CTL/Evil.app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Evil</string>
+<key>CFBundleIdentifier</key><string>com.example.neutrino.evilcontrol</string>
+<key>CFBundleName</key><string>Evil</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>
+PLIST
+
+    # Terminal running or not is what decides which door /usr/bin/open takes,
+    # so both attempts have to meet the same state or they are not answering
+    # the same question. Only on a runner: on a developer's mac the window
+    # this closes is very likely the one the suite is being watched from, and
+    # there the probe measures whatever state the desk is in and says so.
+    nt_lsd_cold() {
+        [ -n "${GITHUB_ACTIONS:-}" ] || return 0
+        pkill -x Terminal >/dev/null 2>&1
+        sleep 3
+        return 0
+    }
+
+    nt_lsd_wait() {
+        local i
+        for i in $(seq 1 25); do
+            [ -e "$1" ] && [ -e "$2" ] && return 0
+            sleep 1
+        done
+        return 1
+    }
+
+    # The control. /usr/bin/open does not spawn anything itself -- it asks
+    # launchservicesd, which is in nobody's profile -- so the question is
+    # whether the profile stops the request. That question only has an answer
+    # if these same two artifacts launch at all here, and a runner may have no
+    # session for them to launch into.
+    CTL_CMD="$NEUTRINO_TEST_FAKEHOME/lsd-control-command-$$"
+    CTL_APP="$NEUTRINO_TEST_FAKEHOME/lsd-control-app-$$"
+    printf '#!/bin/sh\n/usr/bin/touch "%s"\n' "$CTL_CMD" > "$CTL/evil.command"
+    printf '#!/bin/sh\n/usr/bin/touch "%s"\n' "$CTL_APP" > "$CTL/Evil.app/Contents/MacOS/Evil"
+    chmod +x "$CTL/evil.command" "$CTL/Evil.app/Contents/MacOS/Evil"
+    nt_lsd_cold
+    /usr/bin/open "$CTL/evil.command" >/dev/null 2>&1
+    NT_LSD_CTL_CMD_RC=$?
+    /usr/bin/open "$CTL/Evil.app" >/dev/null 2>&1
+    NT_LSD_CTL_APP_RC=$?
+    nt_lsd_wait "$CTL_CMD" "$CTL_APP"
+    NT_LSD_CONTROL="command=$([ -e "$CTL_CMD" ] && echo LAUNCHED || echo NOTHING)(rc=$NT_LSD_CTL_CMD_RC)"
+    NT_LSD_CONTROL="$NT_LSD_CONTROL app=$([ -e "$CTL_APP" ] && echo LAUNCHED || echo NOTHING)(rc=$NT_LSD_CTL_APP_RC)"
+
+    # The control just started Terminal. Put it back down, or the confined
+    # attempt below asks the apple-event question instead of the spawn one.
+    nt_lsd_cold
+    export NEUTRINO_TEST_LSD_TAG="cold-$$"
+fi
+
 # fd 3 carries a readable file in, so the payload can tell "closed" from "empty".
 OUT="$("$APP" 2>"$WORK/err" 3<"$SERVE/hostile.cmd")"
 CONFINE="$("$APP" --info 2>/dev/null | awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')"
 nt_note "confinement: $CONFINE"
+
+# And the same question with Terminal already up, which is the ordinary state
+# of a mac and the one where LaunchServices hands the document over as an apple
+# event rather than spawning. Two doors, two answers, and a denial has to close
+# both or it has closed neither.
+if [ "$(uname -s)" = "Darwin" ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
+    WARM_CMD="$NEUTRINO_TEST_FAKEHOME/lsd-warmup-$$"
+    printf '#!/bin/sh\n/usr/bin/touch "%s"\n' "$WARM_CMD" > "$CTL/warm.command"
+    chmod +x "$CTL/warm.command"
+    /usr/bin/open "$CTL/warm.command" >/dev/null 2>&1
+    for _ in $(seq 1 25); do
+        [ -e "$WARM_CMD" ] && break
+        sleep 1
+    done
+    export NEUTRINO_TEST_LSD_TAG="warm-$$"
+    WARM_OUT="$("$APP" 2>/dev/null 3<"$SERVE/hostile.cmd")"
+    NT_LSD_WARM="$(grep -oE 'LSD_[A-Z]+_(ESCAPED|BLOCKED)|LSD_TERM_UP=[a-z]+' <<<"$WARM_OUT" | tr '\n' ' ')"
+    NT_LSD_WARM="$NT_LSD_WARM(terminal reached by the warmup: $([ -e "$WARM_CMD" ] && echo yes || echo no))"
+fi
 
 check() {
     local label="$1" want="$2"
@@ -240,6 +553,34 @@ case "$CONFINE" in
         nt_note "no seccomp filter here; got $(grep -o 'PEEK_[A-Z]*' <<<"$OUT")" ;;
 esac
 
+# Measured, and settled, so it is asserted rather than recorded. Finding 3
+# said the WRITE_FILE grant on /proc re-opens ptrace through /proc/<pid>/mem,
+# whose check happens in proc_mem_open and so is not covered by the seccomp
+# denial of __NR_ptrace. The seccomp half of that is right and the conclusion
+# is not: landlock implements the LSM ptrace hook too, and a domain may not
+# reach a task outside itself whatever the filesystem says.
+#
+# The two lines below are the argument. Same /proc rule, same call, two targets
+# that differ only in whether they are inside this domain. If the peer ever
+# starts answering, the hook stopped covering it and the finding is live again;
+# if the child ever stops, the reasoning above no longer holds and the verdict
+# needs re-deriving rather than trusting.
+#
+# What this does not say is that the grant is harmless. mem is the one file the
+# hook takes off the table, and the survey in the results below is there
+# because the rest of the peer's entry is still writable.
+case "$CONFINE" in
+    *landlock*)
+        if grep -qx PEERMEM_SKIP <<<"$OUT"; then
+            nt_note "no peer to probe /proc against here"
+        else
+            check "cannot write a peer's memory through /proc"  PEERMEM_BLOCKED
+            check "cannot read a peer's maps either"            PEERMAPS_BLOCKED
+            check "the same /proc rule still reaches its own"   CHILDMEM_ESCAPED
+        fi ;;
+    *)  nt_note "the /proc verdict needs a landlock domain; got $CONFINE" ;;
+esac
+
 NT_ABI="$(grep -o 'abi [0-9]*' <<<"$CONFINE" | awk '{print $2}')"
 if [ "$(uname -s)" = "Linux" ] && [ -n "$NT_ABI" ] && [ "$NT_ABI" -ge 4 ]; then
     check "cannot bind a TCP port" BIND_BLOCKED
@@ -248,6 +589,68 @@ elif [ "$(uname -s)" = "Linux" ]; then
 else
     nt_note "tcp bind confinement is landlock-only; got $(grep -o 'BIND_[A-Z]*' <<<"$OUT")"
 fi
+
+# The control for the /proc probes, through the same binary with confinement
+# forced off. Without it a refusal cannot be attributed: the runner's own yama
+# setting, the environment scrub and the ruleset all fail the same way and at
+# the same call. This is the run that says which of them it was.
+NT_PROC_CONTROL="not measured"
+if [ "$(uname -s)" = "Linux" ] && [ -n "${NEUTRINO_TEST_PEER:-}" ]; then
+    NOCONF_OUT="$(NEUTRINO_TEST_NO_CONFINE=1 "$APP" 2>/dev/null 3<"$SERVE/hostile.cmd")"
+    NT_PROC_CONTROL="$(grep -oE '(PEER|CHILD)(MEM|MAPS|WRITABLE|OOM)_[A-Z]+' <<<"$NOCONF_OUT" | tr '\n' ' ')"
+    NT_PROC_CONTROL="$NT_PROC_CONTROL[$(grep -E '^(peer|child) ' <<<"$NOCONF_OUT" | tr '\n' ';')]"
+fi
+
+# The measurements below are recorded rather than checked, but whether the
+# probe can still see anything is checked here. A probe that has quietly
+# stopped working reports the same reassuring nothing as a boundary that holds,
+# and these three lines are what tell those apart.
+echo "=== The probes can still detect what they are looking for ==="
+case "$(uname -s)-$NT_PTRACE_STATE" in
+    Linux-0*)
+        if grep -q PEERMEM_ESCAPED <<<"$NT_PROC_CONTROL"; then
+            echo "  PASS: unconfined, the probe does reach a peer's memory"
+        else
+            nt_fail "proc control expected=PEERMEM_ESCAPED actual=$NT_PROC_CONTROL"
+            FAILURES=$((FAILURES + 1))
+        fi ;;
+    Linux-*)
+        # yama refuses the attach before any of our confinement is consulted,
+        # so nothing here is decisive and saying so is the honest answer.
+        nt_note "proc control not decisive: ptrace_scope=$NT_PTRACE_STATE" ;;
+esac
+
+if [ "$(uname -s)" = "Darwin" ]; then
+    case "$NT_LSD_CONTROL" in
+        *command=LAUNCHED*app=LAUNCHED*)
+            echo "  PASS: unconfined, both launchservices doors do open" ;;
+        *)  nt_fail "launchservices control expected=both LAUNCHED actual=$NT_LSD_CONTROL"
+            FAILURES=$((FAILURES + 1)) ;;
+    esac
+fi
+
+echo "=== Measured for the next three PRs, not asserted ==="
+# Recorded rather than checked, deliberately. Each of these is a hole this
+# branch has not closed yet, and a suite that asserted the fix here would fail
+# the commit that measures it. The PR named on each line is the one that turns
+# it into a check; if any of them already reads the other way, the finding
+# behind it is wrong and the fix should not be written.
+#
+# nt_result and not nt_note: notices are capped at ten per step and the suite
+# fills that bucket long before this line, and the step summary does not come
+# back out through the API at all.
+nt_tokens() { grep -oE "$1" <<<"$OUT" | tr '\n' ' '; }
+
+case "$(uname -s)" in
+    Linux)
+        nt_result "PR2 before-state: ptrace_scope=$NT_PTRACE_STATE peer=${NEUTRINO_TEST_PEER:-none} confined: $(nt_tokens '(PEER|CHILD)(MEM|MAPS|WRITABLE|OOM)_[A-Z]+')[$(grep -E '^(peer|child) ' <<<"$OUT" | tr '\n' ';')] unconfined-control: $NT_PROC_CONTROL"
+        nt_result "PR2 write-grant before-state: $(nt_tokens '(PROCSELF|PROCSELFTRUNC|PROCCHILD)_[A-Z]+')[$(grep -E '^proc(self|child) ' <<<"$OUT" | tr '\n' ';')] confine=$CONFINE"
+        ;;
+    Darwin)
+        nt_result "PR3 before-state cold: $(nt_tokens 'LSD_[A-Z]+_(ESCAPED|BLOCKED)')$(nt_tokens 'LSD_[A-Z]+_RC=[0-9]+')$(nt_tokens 'LSD_TERM_UP=[a-z]+')unconfined-control: $NT_LSD_CONTROL"
+        nt_result "PR3 before-state warm: $NT_LSD_WARM"
+        ;;
+esac
 
 echo "=== The launcher still verifies after the attempt ==="
 if "$APP" --verify >/dev/null 2>&1; then
