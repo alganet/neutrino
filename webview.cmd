@@ -96,6 +96,14 @@ IF ERRORLEVEL 1 EXIT /B 1
 EXIT /B 0
 EXIT
 script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+# The tier list lives in exactly one place, the JavaScript region below, where
+# build.sh stamps it. Reading it back out of the file rather than taking it from
+# the environment means the shell and the JavaScript cannot disagree, and means
+# no caller can weaken a build by exporting something.
+neutrino_tiers="$(sed -n 's/^ *tiers: "\([a-z,]*\)",.*$/\1/p' "$script_path" | head -1)"
+[ -z "$neutrino_tiers" ] && neutrino_tiers="default"
+has_tier() { case ",$neutrino_tiers," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 find_qt_runtime() {
     for cmd in qml6 qml; do
         if command -v "$cmd" >/dev/null 2>&1; then
@@ -200,7 +208,14 @@ Window {
 EOF
 
     [ ! -s "$app_qml" ] && return 1
-    [ "$QTWEBENGINE_DISABLE_SANDBOX" = "1" ] && QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS} --no-sandbox"
+
+    # Chromium's own sandbox is the only thing standing between hostile page
+    # content and this machine, so a release build has no way to turn it off.
+    # CI needs it off because its containers cannot create user namespaces, and
+    # CI builds with --tier=testing to say so out loud.
+    if has_tier testing && [ "$QTWEBENGINE_DISABLE_SANDBOX" = "1" ]; then
+        QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS} --no-sandbox"
+    fi
 
     QML_XHR_ALLOW_FILE_READ=1 \
     QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" \
@@ -241,6 +256,19 @@ exit $?;:<<'//</script></head><body></body>' #-->
     @*/
 
     var NeutrinoWebview = {
+        // The tier list is stamped here by build.sh and read back out of this
+        // file by the shell section, so all three languages in this polyglot
+        // see one value and there is nothing in the environment that can be set
+        // to talk any of them out of it. A release build has no way to be
+        // talked into "testing".
+        //#TIER_START
+        tiers: "default",
+        //#TIER_END
+
+        hasTier: function (name) {
+            return ("," + String(this.tiers || "default") + ",").indexOf("," + name + ",") >= 0;
+        },
+
         config: {
             title: "neutrino",
             url: "https://alganet.github.io/",
@@ -438,6 +466,12 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     return this.screenHeight() - macY - winHeight;
                 },
                 writeStatus: function (title, win) {
+                    // Scaffolding for verify-macos.sh, which has no other way to
+                    // read a window's geometry back. It is not part of running an
+                    // app, so a release build does not write it anywhere.
+                    if (!self.hasTier("testing")) {
+                        return;
+                    }
                     try {
                         var f = win.frame;
                         var topLeftY = Math.round(this.toTopLeftY(f.origin.y, f.size.height));

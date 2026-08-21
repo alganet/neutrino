@@ -25,7 +25,15 @@ IF NOT EXIST "%JSC%" ( EXIT /B 1 )
 IF NOT EXIST "%APP_FOLDER%" MKDIR "%APP_FOLDER%"
 IF ERRORLEVEL 1 EXIT /B 1
 
-IF EXIST "%APP_FOLDER%\%SCRIPT_NAME%.exe" (
+REM The app folder can outlive any single version of this script, so a compiled
+REM exe is only reused when the source it was built from is unchanged.
+SET "APP_EXE=%APP_FOLDER%\%SCRIPT_NAME%.exe"
+SET "APP_STAMP=%APP_FOLDER%\%SCRIPT_NAME%.stamp"
+FOR %%A IN ("%~f0") DO SET "SRC_ID=%%~zA %%~tA"
+SET "OLD_ID="
+IF EXIST "%APP_STAMP%" SET /P OLD_ID=<"%APP_STAMP%"
+
+IF EXIST "%APP_EXE%" IF "!OLD_ID!"=="!SRC_ID!" (
     GOTO :START_APP
 )
 
@@ -79,6 +87,8 @@ CLS
     ECHO ^</assembly^>
 )
 
+> "%APP_STAMP%" ECHO !SRC_ID!
+
 :START_APP
 SET "NEUTRINO_SCRIPT_PATH=%~f0"
 START "" /D "%APP_FOLDER%" "%APP_FOLDER%\%SCRIPT_NAME%.exe"
@@ -86,6 +96,14 @@ IF ERRORLEVEL 1 EXIT /B 1
 EXIT /B 0
 EXIT
 script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+# The tier list lives in exactly one place, the JavaScript region below, where
+# build.sh stamps it. Reading it back out of the file rather than taking it from
+# the environment means the shell and the JavaScript cannot disagree, and means
+# no caller can weaken a build by exporting something.
+neutrino_tiers="$(sed -n 's/^ *tiers: "\([a-z,]*\)",.*$/\1/p' "$script_path" | head -1)"
+[ -z "$neutrino_tiers" ] && neutrino_tiers="default"
+has_tier() { case ",$neutrino_tiers," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 find_qt_runtime() {
     for cmd in qml6 qml; do
         if command -v "$cmd" >/dev/null 2>&1; then
@@ -190,7 +208,14 @@ Window {
 EOF
 
     [ ! -s "$app_qml" ] && return 1
-    [ "$QTWEBENGINE_DISABLE_SANDBOX" = "1" ] && QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS} --no-sandbox"
+
+    # Chromium's own sandbox is the only thing standing between hostile page
+    # content and this machine, so a release build has no way to turn it off.
+    # CI needs it off because its containers cannot create user namespaces, and
+    # CI builds with --tier=testing to say so out loud.
+    if has_tier testing && [ "$QTWEBENGINE_DISABLE_SANDBOX" = "1" ]; then
+        QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS} --no-sandbox"
+    fi
 
     QML_XHR_ALLOW_FILE_READ=1 \
     QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" \
@@ -200,7 +225,16 @@ EOF
 }
 
 if command -v gjs >/dev/null 2>&1
-then NEUTRINO_SCRIPT_PATH="$script_path" gjs "$script_path"
+then
+    # gjs is a system binary; a bundled caller (snap, flatpak, AppImage, ...)
+    # may export GLib/GTK loader overrides pointing at its own libraries,
+    # which then get loaded against the system glibc and crash. Clear them so
+    # gjs resolves modules from the system defaults.
+    unset GTK_PATH GTK_EXE_PREFIX GTK_IM_MODULE_FILE \
+          GDK_PIXBUF_MODULE_FILE GDK_PIXBUF_MODULEDIR \
+          GIO_MODULE_DIR GSETTINGS_SCHEMA_DIR LOCPATH \
+          LD_PRELOAD LD_LIBRARY_PATH
+    NEUTRINO_SCRIPT_PATH="$script_path" gjs "$script_path"
 elif qt_runner="$(find_qt_runtime)"
 then run_qt "$qt_runner"
 elif command -v osascript >/dev/null 2>&1
@@ -222,6 +256,19 @@ exit $?;:<<'//</script></head><body></body>' #-->
     @*/
 
     var NeutrinoWebview = {
+        // The tier list is stamped here by build.sh and read back out of this
+        // file by the shell section, so all three languages in this polyglot
+        // see one value and there is nothing in the environment that can be set
+        // to talk any of them out of it. A release build has no way to be
+        // talked into "testing".
+        //#TIER_START
+        tiers: "default",
+        //#TIER_END
+
+        hasTier: function (name) {
+            return ("," + String(this.tiers || "default") + ",").indexOf("," + name + ",") >= 0;
+        },
+
         config: {
             title: "neutrino",
             url: "https://alganet.github.io/",
@@ -347,7 +394,12 @@ function startTests() {
             if (current < steps.length) win.setTimeout(runNext, 1000);
         }
     }
-    win.setTimeout(runNext, 1000);
+    // The whole sequence takes about eight seconds, and a verifier that is not
+    // watching by then misses steps it can never see again. verify-windows.ps1
+    // compiles inline C# with Add-Type before its first poll, which on a cold
+    // runner can cost longer than that -- so the app waits for its audience
+    // rather than racing it.
+    win.setTimeout(runNext, 8000);
 }
 
 function waitForReady() {
@@ -361,7 +413,10 @@ waitForReady();
         resolveLinuxWebKitVersion: function () {
             var importsRef = eval("imports");
             var GIRepository = importsRef["gi"]["GIRepository"];
-            var repository = GIRepository["Repository"]["get_default"]();
+            var Repository = GIRepository["Repository"];
+            var repository = Repository["dup_default"]
+                ? Repository["dup_default"]()
+                : Repository["get_default"]();
             var versions = repository.enumerate_versions("WebKit2");
 
             if (versions.indexOf("4.1") !== -1) {
@@ -448,6 +503,12 @@ waitForReady();
                     return this.screenHeight() - macY - winHeight;
                 },
                 writeStatus: function (title, win) {
+                    // Scaffolding for verify-macos.sh, which has no other way to
+                    // read a window's geometry back. It is not part of running an
+                    // app, so a release build does not write it anywhere.
+                    if (!self.hasTier("testing")) {
+                        return;
+                    }
                     try {
                         var f = win.frame;
                         var topLeftY = Math.round(this.toTopLeftY(f.origin.y, f.size.height));
@@ -777,12 +838,27 @@ waitForReady();
             return String(value).replace(/'/g, "''");
         },
 
+        /*
+         * The package is ~45 MB unpacked and almost all of it is native build
+         * headers and import libs for C++ hosts. Only the managed assemblies
+         * and the loaders are ever used, so extract those and skip the rest.
+         * The pattern avoids backslashes so it survives being embedded here.
+         */
+        webView2KeepPattern: "^(lib/net4[0-9]+/[^/]+[.]dll|runtimes/win-(x86|x64|arm64)/native/WebView2Loader[.]dll)$",
+
         extractArchiveWithPowerShell: function (SystemRef, archivePath, destinationPath) {
-            var psCommand = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Expand-Archive -LiteralPath '" +
-                this.escapeForSingleQuotedPowerShell(String(archivePath)) +
-                "' -DestinationPath '" +
-                this.escapeForSingleQuotedPowerShell(String(destinationPath)) +
-                "' -Force";
+            var psCommand = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; " +
+                "Add-Type -AssemblyName System.IO.Compression.FileSystem; " +
+                "$src='" + this.escapeForSingleQuotedPowerShell(String(archivePath)) + "'; " +
+                "$dst='" + this.escapeForSingleQuotedPowerShell(String(destinationPath)) + "'; " +
+                "$keep='" + this.webView2KeepPattern + "'; " +
+                "$zip=[System.IO.Compression.ZipFile]::OpenRead($src); " +
+                "try { foreach ($e in $zip.Entries) { if ($e.FullName -match $keep) { " +
+                "$out=Join-Path $dst ($e.FullName.Replace([char]47,[char]92)); " +
+                "$dir=Split-Path -Parent $out; " +
+                "if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }; " +
+                "[System.IO.Compression.ZipFileExtensions]::ExtractToFile($e,$out,$true) } } } " +
+                "finally { $zip.Dispose() }";
 
             var encodedCommand = SystemRef.Convert.ToBase64String(SystemRef.Text.Encoding.Unicode.GetBytes(psCommand));
 
@@ -796,7 +872,7 @@ waitForReady();
             process.WaitForExit();
 
             if (process.ExitCode !== 0) {
-                throw new Error("Expand-Archive failed with exit code " + process.ExitCode + ".");
+                throw new Error("WebView2 package extraction failed with exit code " + process.ExitCode + ".");
             }
         },
 

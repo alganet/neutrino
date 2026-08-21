@@ -28,7 +28,7 @@ trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK"' EXIT
 FAILURES=0
 
 echo "=== Build the app under test ==="
-bash "$ROOT/build.sh" "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
+bash "$ROOT/build.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
 SPEC="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 echo "  built and pinned as $SPEC"
