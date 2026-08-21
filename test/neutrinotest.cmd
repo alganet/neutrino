@@ -150,18 +150,26 @@ NeutrinoWebview.initQml = function (root, callbacks) {
     _qt = callbacks
 }
 
-NeutrinoWebview.routeQmlMessage = function (jsonString) {
-    var msg = null
-    try { msg = eval("(" + jsonString + ")") } catch (_) { return }
-    if (!msg || !msg.action || !_qmlRoot) return
-    if (msg.action === "setTitle" && msg.title) _qmlRoot.title = msg.title
-    else if (msg.action === "resize" && msg.width && msg.height) { _qmlRoot.width = msg.width; _qmlRoot.height = msg.height }
-    else if (msg.action === "move" && msg.x !== undefined && msg.y !== undefined) { _qmlRoot.x = msg.x; _qmlRoot.y = msg.y }
-    else if (msg.action === "openExternal" && msg.url && _qt) _qt.openUrl(msg.url)
+NeutrinoWebview.routeQmlMessage = function (raw) {
+    var msg = NeutrinoWebview.parseMessage(raw)
+    if (!msg) {
+        console.warn("neutrino: refused a malformed record")
+        return
+    }
+    if (!_qmlRoot) return
+    if (msg.action === "setTitle") _qmlRoot.title = msg.title
+    else if (msg.action === "resize") { _qmlRoot.width = msg.width; _qmlRoot.height = msg.height }
+    else if (msg.action === "move") { _qmlRoot.x = msg.x; _qmlRoot.y = msg.y }
+    else if (msg.action === "close") _qmlRoot.close()
+    else if (msg.action === "openExternal" && _qt) _qt.openUrl(msg.url)
 }
 
+// Encoded for the same reason the Windows title is: a record separator is a
+// control character, and a console message is a diagnostic channel that nothing
+// promises will carry one through Chromium and out the other side unchanged.
 NeutrinoWebview.qmlPreloadScript = NeutrinoWebview.buildPreloadScript(
-    'function(m){console.log("__NEUTRINO__"+m);}'
+    'function(m){console.log("__NEUTRINO__"+encodeURIComponent(m));}',
+    "console"
 )
 JSEOF
 
@@ -186,15 +194,59 @@ Window {
         id: view
         anchors.fill: parent
         property bool preloadInjected: false
+        property bool documentLoaded: false
+        property bool contentLoaded: false
         onLoadingChanged: function(info) {
-            if (!preloadInjected && info.status === WebEngineView.LoadSucceededStatus) {
-                preloadInjected = true
-                view.runJavaScript(Neutrino.NeutrinoWebview.qmlPreloadScript)
+            if (info.status === WebEngineView.LoadSucceededStatus) {
+                if (!preloadInjected) {
+                    preloadInjected = true
+                    view.runJavaScript(Neutrino.NeutrinoWebview.qmlPreloadScript)
+                }
+                view.documentLoaded = true
             }
         }
         onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
-            if (message.indexOf("__NEUTRINO__") === 0) {
-                Neutrino.NeutrinoWebview.routeQmlMessage(message.substring(12))
+            if (String(message).indexOf("__NEUTRINO__") !== 0) {
+                // Overriding this signal replaces Qt's own handler, so without
+                // this every error the page reports goes nowhere and a broken
+                // document looks identical to a silent one.
+                console.warn("neutrino page: " + message + " (" + sourceID + ":" + lineNumber + ")")
+                return
+            }
+            Neutrino.NeutrinoWebview.routeQmlMessage(
+                decodeURIComponent(String(message).substring(12))
+            )
+        }
+        // The document is loaded once, from this file, and never navigates
+        // again. Without this a link or a script assignment could replace it
+        // with a remote origin, and that origin would then be holding the
+        // channel to the native window. http and https go to the desktop's
+        // handler instead, which is what a user clicking a link expects;
+        // everything else is refused, including file: and the schemes the
+        // platform keeps inventing.
+        onNavigationRequested: function(request) {
+            var target = String(request.url)
+            if (Neutrino.NeutrinoWebview.isOwnDocument(target)) {
+                return
+            }
+            // QtWebEngine hands this file's document to the view by navigating
+            // to a data: url, so exactly one of those is the app arriving and
+            // every one after it is a page moving itself somewhere this cannot
+            // tell apart by origin. Allowing the first and refusing the rest is
+            // the difference between naming the engine's own mechanism and
+            // leaving the same-null-origin hole open for anyone to walk through.
+            if (target.indexOf("data:") === 0 && !view.contentLoaded) {
+                view.contentLoaded = true
+                return
+            }
+            console.warn("neutrino: refused navigation to " + request.url)
+            if (typeof request.reject === "function") {
+                request.reject()
+            } else {
+                request.action = WebEngineNavigationRequest.IgnoreRequest
+            }
+            if (Neutrino.NeutrinoWebview.isExternalUrl(String(request.url))) {
+                Qt.openUrlExternally(request.url)
             }
         }
         Component.onCompleted: {
@@ -242,16 +294,44 @@ then NEUTRINO_SCRIPT_PATH="$script_path" osascript -l JavaScript "$script_path"
 else echo "No suitable runtime found (expected gjs, Qt QML runtime, or osascript)" >&2
 fi
 exit $?;:<<'//</script></head><body></body>' #-->
-<!doctype html><html><head><meta charset="utf-8"><style> html, body { background: white; color: black; font-size: 2em; }</style></head>
+<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><style> html, body { background: white; color: black; font-size: 2em; }</style></head>
 <script type=text/javascript>//*/
 
     /*@cc_on
         @if (@_jscript_version >= 7)
             import System;
             import System.IO;
+            import System.Collections;
             import System.Drawing;
             import System.Windows.Forms;
             import System.Reflection;
+
+            // Line comments only in here. This whole block is itself a block
+            // comment to every engine but jsc, and JavaScript has no nested
+            // block comments -- an inner close would end the outer one and
+            // spill JScript.NET syntax into three engines that cannot read it.
+            //
+            // The only reason this class exists is that CoreWebView2's
+            // WebMessageReceived wants a delegate, and the delegate's type
+            // comes from an assembly loaded at run time, so it cannot be named
+            // here. Delegate.CreateDelegate binds a method to a delegate type
+            // discovered at run time, and accepts a method whose parameters are
+            // wider than the delegate's -- Object is wider than every event
+            // args type there is -- so a method typed this way binds to
+            // EventHandler of anything.
+            //
+            // It queues the arguments rather than calling back out. A .NET
+            // static is not reachable from page script, so unlike a title the
+            // queue cannot be written by the document, and draining it from the
+            // existing loop avoids asking whether a JScript class method may
+            // call a JScript global -- the one part of this that would fail at
+            // compile time rather than at run time.
+            class NeutrinoWebMessageSink {
+                static var queue : ArrayList = new ArrayList();
+                function Handle(sender : Object, args : Object) : void {
+                    NeutrinoWebMessageSink.queue.Add(args);
+                }
+            }
         @end
     @*/
 
@@ -434,12 +514,14 @@ waitForReady();
             var app;
             var self = this;
             var messageCallback = null;
-            var lastDocTitle = "";
             var webViewRef = null;
             var windowDelegateRef = null;
+            var scriptHandlerRef = null;
+            var pendingPreload = null;
 
             return {
-                webMessageTransport: "function(m){document.title='__NEUTRINO__'+m;}",
+                webMessageTransport: "window.webkit.messageHandlers.neutrino.postMessage",
+                transportName: "wkscriptmessage",
                 init: function () {
                     ObjCRef["import"]("Cocoa");
                     ObjCRef["import"]("WebKit");
@@ -456,6 +538,52 @@ waitForReady();
                             }
                         }
                     });
+
+                    /*
+                     * A real message handler, replacing a timer that read
+                     * document.title twenty times a second. The title was never
+                     * a channel: it is a property of whatever document happens
+                     * to be loaded, so any page in this webview -- including one
+                     * it navigated to -- could set it and drive the native
+                     * window. This has a sender attached to it, which is the
+                     * thing the title could never have.
+                     */
+                    try {
+                    ObjCRef.registerSubclass({
+                        name: "NeutrinoScriptHandler",
+                        superclass: "NSObject",
+                        /*
+                         * No protocols key. Declaring WKScriptMessageHandler
+                         * here fails with "protocol does not exist": a protocol
+                         * only exists as a runtime object if something in the
+                         * process references it, and nothing in an osascript
+                         * process does. Conformance is not what makes this
+                         * work in any case -- the content controller sends the
+                         * selector, and a class that implements it answers.
+                         * NeutrinoWindowDelegate above is an NSWindowDelegate
+                         * on exactly the same terms.
+                         */
+                        methods: {
+                            "userContentController:didReceiveScriptMessage:": {
+                                types: ["void", ["id", "id"]],
+                                implementation: function (_, message) {
+                                    try {
+                                        if (!messageCallback) {
+                                            return;
+                                        }
+                                        self.trace("message handler fired");
+                                        if (!self.isTrustedMacSender(ObjCRef, message, webViewRef)) {
+                                            return;
+                                        }
+                                        messageCallback(ObjCRef.unwrap(message.body));
+                                    } catch (_) {}
+                                }
+                            }
+                        }
+                    });
+                    } catch (e) {
+                        self.note("could not register the message handler: " + e);
+                    }
                 },
                 readFile: function (path) {
                     var data = dollar.NSData.dataWithContentsOfFile(path);
@@ -489,9 +617,50 @@ waitForReady();
                 createWebView: function () {
                     var frame = dollar.NSMakeRect(0, 0, 100, 100);
                     var wkConfig = dollar.WKWebViewConfiguration.alloc.init;
+
+                    /*
+                     * Every call in here goes through the ObjC bridge, and a
+                     * bridge that does not expose one of them throws. Letting
+                     * that propagate means no window at all, which is the least
+                     * informative thing that can happen -- there is nothing on
+                     * screen and nothing said. Degrading instead leaves a
+                     * window with no channel into it, which is inert rather
+                     * than dangerous, and says which call was missing.
+                     */
+                    try {
+                        var ucc = dollar.WKUserContentController.alloc.init;
+
+                        if (messageCallback) {
+                            scriptHandlerRef = dollar.NeutrinoScriptHandler.alloc.init;
+                            ucc.addScriptMessageHandlerName(scriptHandlerRef, "neutrino");
+                        }
+
+                        // Injected by the engine rather than spliced into the
+                        // markup, so the preload does not have to be something
+                        // the document's content policy is asked to permit.
+                        if (pendingPreload) {
+                            ucc.addUserScript(
+                                dollar.WKUserScript.alloc
+                                    .initWithSourceInjectionTimeForMainFrameOnly(
+                                        pendingPreload, 0, true
+                                    )
+                            );
+                        }
+
+                        wkConfig.userContentController = ucc;
+                        self.trace("message channel wired, preload " +
+                            (pendingPreload ? "injected" : "MISSING"));
+                    } catch (e) {
+                        self.note("no message channel: " + e);
+                    }
+
                     var wv = dollar.WKWebView.alloc.initWithFrameConfiguration(frame, wkConfig);
                     webViewRef = wv;
                     return wv;
+                },
+
+                injectPreload: function (_, js) {
+                    pendingPreload = js;
                 },
                 screenHeight: function () {
                     return dollar.NSScreen.mainScreen.frame.size.height;
@@ -539,7 +708,12 @@ waitForReady();
                     win.performClose(null);
                 },
                 openExternal: function (url) {
-                    dollar.NSWorkspace.sharedWorkspace.openURL(dollar.NSURL.URLWithString(url));
+                    if (!self.isExternalUrl(url)) {
+                        return;
+                    }
+                    dollar.NSWorkspace.sharedWorkspace.openURL(
+                        dollar.NSURL.URLWithString(String(url))
+                    );
                 },
                 onWebMessage: function (cb) {
                     messageCallback = cb;
@@ -549,6 +723,7 @@ waitForReady();
                 },
                 loadHTML: function (wv, html, basePath) {
                     var baseUrl = dollar.NSURL.fileURLWithPath(basePath).URLByDeletingLastPathComponent;
+                    self.trace("loading " + html.length + " bytes with base " + basePath);
                     wv.loadHTMLStringBaseURL(html, baseUrl);
                 },
                 showWindow: function (win) {
@@ -556,35 +731,6 @@ waitForReady();
                     try { app.activateIgnoringOtherApps(true); } catch (_) {}
                 },
                 runEventLoop: function () {
-                    try {
-                        if (messageCallback && webViewRef) {
-                            ObjCRef.registerSubclass({
-                                name: "NeutrinoPoller",
-                                superclass: "NSObject",
-                                methods: {
-                                    "pollTitle": {
-                                        types: ["void", ["id", "SEL"]],
-                                        implementation: function () {
-                                            try {
-                                                var rawTitle = webViewRef.title;
-                                                if (rawTitle) {
-                                                    var docTitle = rawTitle.js ? String(rawTitle.js) : String(rawTitle);
-                                                    if (docTitle !== lastDocTitle && docTitle.indexOf("__NEUTRINO__") === 0) {
-                                                        lastDocTitle = docTitle;
-                                                        messageCallback(docTitle.substring(12));
-                                                    }
-                                                }
-                                            } catch (_) {}
-                                        }
-                                    }
-                                }
-                            });
-                            var poller = dollar.NeutrinoPoller.alloc.init;
-                            dollar.NSTimer.scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(
-                                0.05, poller, "pollTitle", null, true
-                            );
-                        }
-                    } catch (_) {}
                     dollar.NSApp.setActivationPolicy(0);
                     app.run();
                 }
@@ -596,9 +742,12 @@ waitForReady();
             var Gtk, WebKit2, GLib, ByteArray;
             var self = this;
             var messageCallback = null;
+            var pendingPreload = null;
+            var documentLoaded = false;
 
             return {
                 webMessageTransport: "window.webkit.messageHandlers.neutrino.postMessage",
+                transportName: "scriptmessage",
                 init: function () {
                     importsRef["gi"]["versions"]["Gtk"] = "3.0";
                     importsRef["gi"]["versions"]["WebKit2"] = self.resolveLinuxWebKitVersion();
@@ -636,7 +785,66 @@ waitForReady();
                             messageCallback(result.get_js_value().to_string());
                         });
                     }
-                    return new WebKit2.WebView({ user_content_manager: ucm });
+
+                    if (pendingPreload) {
+                        // Injected by the engine rather than spliced into the
+                        // markup, so the preload does not have to be something
+                        // the document's own content policy is asked to permit.
+                        try {
+                            ucm.add_script(WebKit2.UserScript["new"](
+                                pendingPreload,
+                                WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                                WebKit2.UserScriptInjectionTime.START,
+                                null,
+                                null
+                            ));
+                        } catch (_) {}
+                    }
+
+                    var wv = new WebKit2.WebView({ user_content_manager: ucm });
+                    wv.connect("load-changed", function (_, loadEvent) {
+                        if (loadEvent === WebKit2.LoadEvent.FINISHED) {
+                            documentLoaded = true;
+                        }
+                    });
+
+                    /*
+                     * The document is loaded once, from this file, and never
+                     * navigates again. Without this a link or a location
+                     * assignment could replace it with a remote origin, and
+                     * that origin would then be holding the channel to the
+                     * native window -- the preload is registered on the user
+                     * content manager, so it would be reinjected into whatever
+                     * document arrived next.
+                     */
+                    var driverRef = this;
+                    wv.connect("decide-policy", function (_, decision, decisionType) {
+                        var types = WebKit2.PolicyDecisionType;
+                        if (decisionType !== types.NAVIGATION_ACTION &&
+                            decisionType !== types.NEW_WINDOW_ACTION) {
+                            return false;
+                        }
+                        var uri = "";
+                        try {
+                            uri = String(decision.get_navigation_action().get_request().get_uri());
+                        } catch (_) {
+                            uri = "";
+                        }
+                        // Until the first document has finished loading, the
+                        // only navigation in flight is the one this file
+                        // started. Keying on that rather than only on the url
+                        // means an engine that spells the initial load
+                        // differently cannot lock the app out of its own
+                        // document.
+                        if (!documentLoaded || self.isOwnDocument(uri)) {
+                            return false;
+                        }
+                        decision.ignore();
+                        self.note("refused navigation to " + uri);
+                        driverRef.openExternal(uri);
+                        return true;
+                    });
+                    return wv;
                 },
                 setTitle: function (win, title) {
                     win.set_title(title);
@@ -648,15 +856,41 @@ waitForReady();
                     win.move(x, y);
                 },
                 openExternal: function (url) {
+                    // Checked here as well as in the splitter: this is the end
+                    // of the line, and it hands a string to the desktop's URI
+                    // handler, which will happily act on file: or on a .desktop
+                    // entry if it is given one.
+                    if (!self.isExternalUrl(url)) {
+                        return;
+                    }
                     try {
                         var Gio = importsRef["gi"]["Gio"];
-                        Gio.AppInfo.launch_default_for_uri(url, null);
+                        Gio.AppInfo.launch_default_for_uri(String(url), null);
                     } catch (_) {
-                        GLib.spawn_command_line_async("xdg-open " + url);
+                        // An argv, never a command line. The old fallback built
+                        // "xdg-open " + url and handed it to a function that
+                        // word-splits, so a url containing a space became two
+                        // arguments and a url containing a quote became
+                        // something else entirely.
+                        try {
+                            GLib.spawn_async(
+                                null,
+                                ["xdg-open", String(url)],
+                                null,
+                                GLib.SpawnFlags.SEARCH_PATH,
+                                null
+                            );
+                        } catch (_) {}
                     }
+                },
+                "close": function (win) {
+                    win.destroy();
                 },
                 onWebMessage: function (cb) {
                     messageCallback = cb;
+                },
+                injectPreload: function (_, js) {
+                    pendingPreload = js;
                 },
                 attachWebView: function (win, wv) {
                     win.add(wv);
@@ -673,14 +907,274 @@ waitForReady();
             };
         },
 
-        buildPreloadScript: function (transport) {
+        /*
+         * Everything arriving on this channel was written by whatever page the
+         * webview is currently showing, which makes it attacker-controlled text
+         * by definition. It used to be handed to eval, which on gjs meant
+         * evaluating that text in a scope holding imports.gi.GLib and Gio.
+         *
+         * The fix is not a JSON parser. The action set is fixed, flat and tiny,
+         * so the host does not parse a message, it splits one: each action has a
+         * known arity, and any free-form field is always last and takes the rest
+         * of the string verbatim. A separator inside a title therefore cannot
+         * invent an extra field, nothing needs escaping, and JScript.NET not
+         * having a JSON global stops being a problem worth solving.
+         */
+        messageSeparator: String.fromCharCode(31),
+
+        hasControlCharacters: function (value) {
+            var text = String(value);
+            for (var i = 0; i < text.length; i++) {
+                var code = text.charCodeAt(i);
+                if (code < 32 || code === 127) {
+                    return true;
+                }
+            }
+            return false;
+        },
+
+        isCoordinate: function (value) {
+            return /^-?[0-9]{1,6}$/.test(String(value));
+        },
+
+        isDimension: function (value) {
+            return /^[0-9]{1,6}$/.test(String(value)) && parseInt(String(value), 10) > 0;
+        },
+
+        /*
+         * An allowlist, so every scheme this does not name is refused without
+         * having to be enumerated -- file:, javascript:, data:, ms-settings:,
+         * search-ms:, and whichever one the platform invents next. This matters
+         * more than it looks: on Windows the other end of openExternal is
+         * Process.Start, and on Linux it is the desktop's URI handler.
+         */
+        isExternalUrl: function (value) {
+            var url = String(value == null ? "" : value);
+            if (!url || url.length > 2048 || this.hasControlCharacters(url)) {
+                return false;
+            }
+            return /^https?:\/\/[^\/?#]/i.test(url) || /^mailto:[^@\s]+@[^@\s]+$/i.test(url);
+        },
+
+        /*
+         * The document is loaded from this file, so it has no origin of its own
+         * and every engine here reports it as about:blank. Anything else is a
+         * navigation away from it.
+         *
+         * data: is deliberately not on this list. A data: document is same-null-
+         * origin, so it would inherit the injected channel to the native window
+         * while carrying content this file never wrote.
+         */
+        /*
+         * A refusal that leaves no trace is indistinguishable from a window that
+         * simply never came up, and those want opposite fixes. eval, because
+         * JScript.NET resolves globals at compile time and has neither of these
+         * -- the same reason the README gives for eval("window").
+         */
+        note: function (message) {
+            try {
+                eval("printerr")("neutrino: " + message);
+                return;
+            } catch (_) {}
+            try {
+                eval("console").warn("neutrino: " + message);
+                return;
+            } catch (_) {}
+            try {
+                eval("console").log("neutrino: " + message);
+            } catch (_) {}
+        },
+
+        /*
+         * A note worth making in a release build is a refusal or a failure.
+         * Anything that is only interesting while working out why a lane is red
+         * belongs here instead, where a release build never says it.
+         */
+        trace: function (message) {
+            if (this.hasTier("testing")) {
+                this.note(message);
+            }
+        },
+
+        isOwnDocument: function (url) {
+            var u = String(url == null ? "" : url);
+            return u === "" || u === "about:blank";
+        },
+
+        /*
+         * A note worth making in a release build is a refusal or a failure.
+         * Anything that is only interesting while working out why a lane is red
+         * belongs here instead, where a release build never says it.
+         */
+        trace: function (message) {
+            if (this.hasTier("testing")) {
+                this.note(message);
+            }
+        },
+
+        isOwnDocument: function (url) {
+            var u = String(url == null ? "" : url);
+            return u === "" || u === "about:blank";
+        },
+
+        /*
+         * What counts as the app's own document is not the same on every
+         * engine, and getting that wrong is silent in the worst way: gjs loads
+         * with a null base url and its document has no origin at all, while
+         * this driver loads with the script's directory as a file: base so that
+         * an app's relative assets resolve. Demanding an empty scheme therefore
+         * refused every message the app itself sent, and left a window that
+         * came up and then did nothing.
+         *
+         * So the rule is about the host, not the scheme: a document that can
+         * speak to the network has one, and neither of these has one. A page
+         * the webview navigated to somewhere remote is refused, which is the
+         * escape worth closing.
+         *
+         * The origin alone is not enough, though, because a data: document has
+         * no origin either -- it is the one navigation an origin check cannot
+         * tell from the app's own document, and the preload here is a user
+         * script the engine reinjects into whatever loads next, so the page
+         * that arrives inherits the whole API. So what the view is currently
+         * showing is checked as well, which is a question a message cannot lie
+         * about.
+         *
+         * The residual left is another file: document, which is local content
+         * rather than a remote origin.
+         */
+        isTrustedOrigin: function (scheme, host) {
+            var s = String(scheme == null ? "" : scheme);
+            var h = String(host == null ? "" : host);
+            return h === "" && (s === "" || s === "file");
+        },
+
+        isTrustedMacSender: function (ObjCRef, message, webView) {
+            // What the view is showing, independent of what the message claims.
+            // Fails open on a bridge that will not answer, for the same reason
+            // the origin check does: refusing every message leaves a window
+            // that does nothing and says nothing about why.
+            try {
+                var current = webView.URL;
+                if (current) {
+                    var currentScheme = String(ObjCRef.unwrap(current.scheme) || "");
+                    if (!this.isTrustedOrigin(currentScheme, "")) {
+                        this.note("refused a message from a document at " +
+                            currentScheme + ":");
+                        return false;
+                    }
+                }
+            } catch (_) {}
+
+            var frame = null;
+            try {
+                frame = message.frameInfo;
+                if (!frame.isMainFrame) {
+                    this.note("refused a message from a subframe");
+                    return false;
+                }
+            } catch (e) {
+                this.note("refused a message with no frame: " + e);
+                return false;
+            }
+
+            /*
+             * The real protection is here: a document the webview navigated to
+             * has a scheme, and the document this file loads does not. Reading
+             * the origin is kept separate from reading the frame because the
+             * two fail differently -- a frame that cannot be read is a message
+             * with no sender and is refused, while an origin that cannot be
+             * read is this bridge not exposing something it was expected to,
+             * which is a reason to say so rather than to refuse every message
+             * the app ever sends and leave a window that does nothing.
+             */
+            try {
+                var origin = frame.securityOrigin;
+                var scheme = String(ObjCRef.unwrap(origin.protocol) || "");
+                var host = String(ObjCRef.unwrap(origin.host) || "");
+                if (this.isTrustedOrigin(scheme, host)) {
+                    return true;
+                }
+                this.note("refused a message from " + scheme + "://" + host);
+                return false;
+            } catch (e) {
+                this.note("could not read the sender's origin: " + e);
+                return true;
+            }
+        },
+
+        parseMessage: function (raw) {
+            var text = String(raw == null ? "" : raw);
+            if (text.length > 4096) {
+                return null;
+            }
+
+            var sep = this.messageSeparator;
+            var cut = text.indexOf(sep);
+            var action = (cut < 0) ? text : text.substring(0, cut);
+            var rest = (cut < 0) ? null : text.substring(cut + 1);
+
+            if (action === "close") {
+                return (rest === null) ? { action: "close" } : null;
+            }
+
+            if (action === "setTitle") {
+                if (rest === null || rest.length > 1024 || this.hasControlCharacters(rest)) {
+                    return null;
+                }
+                return { action: "setTitle", title: rest };
+            }
+
+            if (action === "openExternal") {
+                if (rest === null || !this.isExternalUrl(rest)) {
+                    return null;
+                }
+                return { action: "openExternal", url: rest };
+            }
+
+            if (action === "resize" || action === "move") {
+                if (rest === null) {
+                    return null;
+                }
+                var parts = rest.split(sep);
+                if (parts.length !== 2) {
+                    return null;
+                }
+                if (action === "resize") {
+                    if (!this.isDimension(parts[0]) || !this.isDimension(parts[1])) {
+                        return null;
+                    }
+                    return {
+                        action: "resize",
+                        width: parseInt(parts[0], 10),
+                        height: parseInt(parts[1], 10)
+                    };
+                }
+                if (!this.isCoordinate(parts[0]) || !this.isCoordinate(parts[1])) {
+                    return null;
+                }
+                return { action: "move", x: parseInt(parts[0], 10), y: parseInt(parts[1], 10) };
+            }
+
+            return null;
+        },
+
+        buildPreloadScript: function (transport, name) {
             return '(function(){' +
+                'var S=String.fromCharCode(31);' +
                 'var _send=function(m){try{(' + transport + ')(m);}catch(_){}};' +
+                'var _n=function(v){return String(v===undefined||v===null?"":v);};' +
                 'window.neutrino={' +
+                // Which channel the host is actually listening on. The page can
+                // work this out by feature detection anyway, so naming it costs
+                // nothing and lets a test report it instead of inferring it.
+                'transport:"' + String(name || "unknown") + '",' +
                 'send:function(action,data){' +
-                'var msg={action:action};' +
-                'if(data){for(var k in data){if(data.hasOwnProperty(k))msg[k]=data[k];}}' +
-                '_send(JSON.stringify(msg));' +
+                'var d=data||{};' +
+                'if(action==="setTitle")_send("setTitle"+S+_n(d.title));' +
+                'else if(action==="resize")_send("resize"+S+_n(d.width)+S+_n(d.height));' +
+                'else if(action==="move")_send("move"+S+_n(d.x)+S+_n(d.y));' +
+                'else if(action==="openExternal")_send("openExternal"+S+_n(d.url));' +
+                'else if(action==="close")_send("close");' +
                 '},' +
                 'shell:{' +
                 'openExternal:function(url){window.neutrino.send("openExternal",{url:url});}' +
@@ -695,30 +1189,49 @@ waitForReady();
                 '})();';
         },
 
-        routeMessage: function (actions, jsonString) {
-            var msg = null;
-            try {
-                msg = (typeof jsonString === "string") ? eval("(" + jsonString + ")") : jsonString;
-            } catch (_) {
-                return;
-            }
-            if (msg && msg.action && actions[msg.action]) {
+        routeMessage: function (actions, raw) {
+            var msg = this.parseMessage(raw);
+            if (msg && actions[msg.action]) {
                 actions[msg.action](msg);
             }
+        },
+
+        /*
+         * The app's own JavaScript is an inline script inside this document --
+         * that is what the polyglot is -- so script-src has to permit inline
+         * and there is no version of this that does not. What the default
+         * policy is good for is the rest: no plugins, no base tag rewriting
+         * where every relative url points, no form posting somewhere else, no
+         * framing.
+         *
+         * Denying the page the network is a real change to what an app can do,
+         * so it is the offline tier's business and not the default's. An app
+         * that fetches from its own backend is an ordinary app, not a
+         * misbehaving one.
+         */
+        defaultContentPolicy: "object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
+
+        offlineContentPolicy: "default-src 'none'; script-src 'unsafe-inline'; " +
+            "style-src 'unsafe-inline'; img-src data:; font-src data:; " +
+            "object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
+
+        applyContentPolicy: function (html) {
+            if (!this.hasTier("offline")) {
+                return html;
+            }
+            // Anchored on the attribute, so it cannot match this file's own
+            // mention of the policy string further down the document -- the
+            // whole script region is inside the document it is describing.
+            return String(html).replace(
+                'content="' + this.defaultContentPolicy + '"',
+                'content="' + this.offlineContentPolicy + '"'
+            );
         },
 
         boot: function (driver, config) {
             driver.init();
             var scriptPath = driver.getScriptPath();
-            var html = this.extractHtmlDocument(driver.readFile(scriptPath));
-            var preloadJs = null;
-
-            if (driver.webMessageTransport) {
-                preloadJs = this.buildPreloadScript(driver.webMessageTransport);
-                if (!driver.injectPreload) {
-                    html = html.replace("<head>", "<head><script>" + preloadJs + "<\/script>");
-                }
-            }
+            var html = this.applyContentPolicy(this.extractHtmlDocument(driver.readFile(scriptPath)));
 
             var win = driver.createWindow(config);
 
@@ -737,8 +1250,16 @@ waitForReady();
                 });
             }
 
-            if (driver.injectPreload && preloadJs) {
-                driver.injectPreload(null, preloadJs);
+            /*
+             * Every driver injects through its engine now, so the preload is
+             * never spliced into the markup as text. The old splice looked for
+             * a literal "<head>" and silently injected nothing when it did not
+             * find one, which meant the API could go missing without anything
+             * saying so.
+             */
+            if (driver.webMessageTransport) {
+                driver.injectPreload(null, this.buildPreloadScript(
+                    driver.webMessageTransport, driver.transportName));
             }
 
             var wv = driver.createWebView();
@@ -750,7 +1271,14 @@ waitForReady();
         },
 
         runMacOS: function () {
-            this.boot(this.createMacDriver(), this.config);
+            // Any one of the bridge calls in this driver failing leaves no
+            // window at all, which is the least informative outcome available.
+            try {
+                this.boot(this.createMacDriver(), this.config);
+            } catch (e) {
+                this.note("could not start: " + e);
+                throw e;
+            }
         },
 
         runGjs: function () {
@@ -1036,6 +1564,56 @@ waitForReady();
             return libDir;
         },
 
+        /*
+         * Subscribe to CoreWebView2.WebMessageReceived. Everything here is
+         * reflection because the types arrive with an assembly loaded at run
+         * time, and the delegate is built by CreateDelegate against the event's
+         * own handler type for the same reason.
+         *
+         * Returns true only if the subscription actually took. The caller keeps
+         * reading the document title when it did not, because a Windows build
+         * with no channel at all is worse than one with a channel a page can
+         * write to -- but it is a real downgrade, so it is named in the report
+         * rather than left to be inferred.
+         */
+        wireWebView2Messages: function (SystemRef, coreWv2) {
+            try {
+                var evt = coreWv2.GetType().GetEvent("WebMessageReceived");
+                if (!evt) {
+                    return false;
+                }
+                var sink = new NeutrinoWebMessageSink();
+                var handler = SystemRef.Delegate.CreateDelegate(
+                    evt.EventHandlerType, sink, sink.GetType().GetMethod("Handle")
+                );
+                evt.AddEventHandler(coreWv2, handler);
+                return true;
+            } catch (_) {
+                return false;
+            }
+        },
+
+        // The event args carry both the text and who sent it. Source is the url
+        // of the document that called postMessage, and the document this file
+        // loads through NavigateToString has none worth the name -- so a
+        // message from anywhere else is from a page that was navigated to.
+        readWebView2Message: function (args) {
+            var source = "";
+            try {
+                source = String(args.GetType().GetProperty("Source").GetValue(args, null) || "");
+            } catch (_) {
+                return null;
+            }
+            if (!this.isOwnDocument(source)) {
+                return null;
+            }
+            try {
+                return String(args.GetType().GetMethod("TryGetWebMessageAsString").Invoke(args, null));
+            } catch (_) {
+                return null;
+            }
+        },
+
         createWindowsDriver: function () {
             var SystemRef = eval("System");
             var webViewWinFormsAssembly, webViewType;
@@ -1044,9 +1622,23 @@ waitForReady();
             var messageCallback = null;
             var lastDocTitle = "";
             var pendingPreload = null;
+            var settingsApplied = false;
+            var webMessagesWired = false;
 
             return {
-                webMessageTransport: "function(m){document.title='__NEUTRINO__'+m;}",
+                /*
+                 * A placeholder. Which transport the page is given cannot be
+                 * decided here, because it depends on whether the event
+                 * subscription takes, and CoreWebView2 does not exist until the
+                 * event loop is running. So the preload is rebuilt there and
+                 * this only has to be non-empty for boot to ask for one at all.
+                 *
+                 * Where it does end up being the title, the record is encoded:
+                 * a record separator is a control character and a window title
+                 * is not a faithful carrier for those.
+                 */
+                webMessageTransport: "function(m){document.title='__NEUTRINO__'+encodeURIComponent(m);}",
+                transportName: "title",
                 init: function () {
                     SystemRef.Windows.Forms.Application.EnableVisualStyles();
                     SystemRef.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
@@ -1125,9 +1717,24 @@ waitForReady();
                     win.Location = new SystemRef.Drawing.Point(parseInt(x), parseInt(y));
                 },
                 openExternal: function (url) {
-                    SystemRef.Diagnostics.Process.Start(url);
+                    // Process.Start on a bare string is ShellExecute, which will
+                    // open a document, a .desktop-equivalent, or a registered
+                    // protocol handler just as happily as a web page. The
+                    // allowlist is what keeps it to web pages.
+                    if (!self.isExternalUrl(url)) {
+                        return;
+                    }
+                    var info = new SystemRef.Diagnostics.ProcessStartInfo(String(url));
+                    info.UseShellExecute = true;
+                    SystemRef.Diagnostics.Process.Start(info);
                 },
                 showWindow: function () {},
+                // Quoted for the same reason boot() reaches for it that way:
+                // jsc.exe is stricter than the other three engines about names
+                // that look like they might mean something.
+                "close": function (win) {
+                    win.Close();
+                },
                 onWebMessage: function (cb) {
                     messageCallback = cb;
                 },
@@ -1149,6 +1756,20 @@ waitForReady();
                                     coreWv2 = coreWv2Prop.GetValue(wv, null);
                                 }
                             }
+                            if (coreWv2 && !settingsApplied) {
+                                settingsApplied = true;
+
+                                // Before the preload is built, because what the
+                                // page is told to send on depends on whether
+                                // this took.
+                                webMessagesWired = self.wireWebView2Messages(SystemRef, coreWv2);
+                                pendingPreload = self.buildPreloadScript(
+                                    webMessagesWired
+                                        ? "function(m){window.chrome.webview.postMessage(m);}"
+                                        : "function(m){document.title='__NEUTRINO__'+encodeURIComponent(m);}",
+                                    webMessagesWired ? "webmessage" : "title"
+                                );
+                            }
                             if (coreWv2 && pendingPreload && !preloadInjected) {
                                 preloadInjected = true;
                                 var addScript = coreWv2.GetType().GetMethod("AddScriptToExecuteOnDocumentCreatedAsync");
@@ -1168,7 +1789,21 @@ waitForReady();
                                     navMethod.Invoke(coreWv2, [htmlText]);
                                 }
                             }
-                            if (coreWv2 && messageCallback) {
+                            if (coreWv2 && messageCallback && webMessagesWired) {
+                                // Drained here rather than handled in the event
+                                // itself: the queue is a .NET static, which no
+                                // document can reach, so nothing is lost by
+                                // reading it on the same clock as everything
+                                // else in this loop.
+                                while (NeutrinoWebMessageSink.queue.Count > 0) {
+                                    var queued = NeutrinoWebMessageSink.queue[0];
+                                    NeutrinoWebMessageSink.queue.RemoveAt(0);
+                                    var text = self.readWebView2Message(queued);
+                                    if (text !== null) {
+                                        messageCallback(text);
+                                    }
+                                }
+                            } else if (coreWv2 && messageCallback) {
                                 if (!titleProp) {
                                     titleProp = coreWv2.GetType().GetProperty("DocumentTitle");
                                 }
@@ -1176,7 +1811,9 @@ waitForReady();
                                     var docTitle = String(titleProp.GetValue(coreWv2, null) || "");
                                     if (docTitle !== lastDocTitle && docTitle.indexOf("__NEUTRINO__") === 0) {
                                         lastDocTitle = docTitle;
-                                        messageCallback(docTitle.substring(12));
+                                        try {
+                                            messageCallback(decodeURIComponent(docTitle.substring(12)));
+                                        } catch (_) {}
                                     }
                                 }
                             }
