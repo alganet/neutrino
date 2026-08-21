@@ -12,11 +12,18 @@ jobs:
       - run: |
           sudo apt update
           sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity \
-            xdotool x11-utils xauth dbus \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
             gir1.2-webkit2-4.1 \
             || sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity \
-            xdotool x11-utils xauth dbus \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
             gir1.2-webkit2-4.0
+      # Ubuntu refuses unprivileged user namespaces by default, so WebKitGTK's
+      # sandbox cannot start and neutrino correctly declines to ask for it.
+      # That leaves the sandboxed path unexercised on the only machine that
+      # runs this suite, so lift the knob here -- netinstall's own suite does
+      # the same thing for the same reason. Nothing shipped may do this; it is
+      # root's decision, and a test is the only thing entitled to make it.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
       - run: |

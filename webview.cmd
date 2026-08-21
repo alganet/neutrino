@@ -276,6 +276,29 @@ EOF
     "$qml_runner" "$app_qml"
 }
 
+# WebKitGTK's sandbox is bubblewrap, and bubblewrap needs an unprivileged user
+# namespace. Whether it can have one is not a property of this program: Ubuntu
+# 24.04 and its derivatives set kernel.apparmor_restrict_unprivileged_userns to
+# 1 and refuse, while the same kernel elsewhere allows it. Under netinstall it
+# is refused again for an unrelated reason, since Landlock denies mount to any
+# domain handling a filesystem right.
+#
+# None of that can be recovered from after the fact. Asking WebKitGTK to turn
+# the sandbox off once a web process exists aborts the program outright --
+# "Sandboxing cannot be changed after subprocesses were spawned" -- and asking
+# for a sandbox that cannot start gives a window with nothing in it. So the
+# question is settled here, before anything is launched, by running the actual
+# mechanism rather than by looking for the parts it is made of.
+#
+# The value is always assigned, never defaulted from the environment, so this
+# is a measurement being passed inward and not a switch anyone can set.
+neutrino_webkit_sandbox=0
+if command -v bwrap >/dev/null 2>&1 &&
+   bwrap --unshare-user --ro-bind / / /bin/true >/dev/null 2>&1
+then neutrino_webkit_sandbox=1
+fi
+export NEUTRINO_WEBKIT_SANDBOX="$neutrino_webkit_sandbox"
+
 if command -v gjs >/dev/null 2>&1
 then
     # gjs is a system binary; a bundled caller (snap, flatpak, AppImage, ...)
@@ -618,6 +641,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     }
 
                     var wv = dollar.WKWebView.alloc.initWithFrameConfiguration(frame, wkConfig);
+                    try { wv.allowsLinkPreview = false; } catch (_) {}
                     webViewRef = wv;
                     return wv;
                 },
@@ -719,6 +743,55 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     GLib = importsRef["gi"]["GLib"];
                     ByteArray = importsRef["byteArray"];
                     Gtk.init(null);
+
+                    /*
+                     * WebKitGTK's own bubblewrap sandbox is opt-in, and until
+                     * now neutrino never opted in -- so the process rendering
+                     * whatever the page contains had nothing around it at all.
+                     * This is the protection against hostile page content, and
+                     * it is a different thing from netinstall's protection
+                     * against the app's author.
+                     *
+                     * The two do not compose on Linux. netinstall's Landlock
+                     * denies mount to any domain handling a filesystem right,
+                     * and PR_SET_NO_NEW_PRIVS is required for Landlock, so
+                     * under netinstall bubblewrap cannot initialise here. That
+                     * trade is netinstall's README to explain; what this file
+                     * can do is stop giving up the sandbox for nothing when it
+                     * runs on its own, which is the normal case.
+                     */
+                    /*
+                     * WebKitGTK's sandbox is bubblewrap, and bubblewrap needs
+                     * an unprivileged user namespace. Whether it can have one
+                     * is not a property of this program: Ubuntu 24.04 and its
+                     * derivatives set kernel.apparmor_restrict_unprivileged_-
+                     * userns to 1 and refuse, while the same kernel version
+                     * elsewhere allows it -- netinstall's README records the
+                     * same split for the same reason, and its test suite has to
+                     * lift that knob to exercise the session tier at all.
+                     *
+                     * It also does not degrade when it cannot start. The web
+                     * process simply fails and the window comes up empty, which
+                     * is a worse outcome than not having asked. And it cannot
+                     * be probed honestly beforehand: the helper is resolved by
+                     * an absolute path compiled into WebKitGTK, so looking for
+                     * it on PATH answers a different question than the one
+                     * being asked.
+                     *
+                     * So it is asked for, and taken back if it does not arrive.
+                     * That covers every reason it might not -- a missing
+                     * helper, a refused namespace, a seccomp filter in front of
+                     * clone -- rather than the one reason a probe could name.
+                     */
+                    if (GLib.getenv("NEUTRINO_WEBKIT_SANDBOX") === "1") {
+                        try {
+                            WebKit2.WebContext.get_default().set_sandbox_enabled(true);
+                        } catch (e) {
+                            self.note("webkit sandbox unavailable: " + e);
+                        }
+                    } else {
+                        self.note("webkit sandbox off: this system refused a user namespace");
+                    }
                 },
                 readFile: function (path) {
                     var result = GLib.file_get_contents(path);
@@ -770,6 +843,15 @@ exit $?;:<<'//</script></head><body></body>' #-->
                             documentLoaded = true;
                         }
                     });
+
+                    var settings = wv.get_settings();
+                    try {
+                        settings.set_enable_developer_extras(false);
+                        settings.set_allow_file_access_from_file_urls(false);
+                        settings.set_allow_universal_access_from_file_urls(false);
+                        settings.set_javascript_can_access_clipboard(false);
+                        settings.set_enable_write_console_messages_to_stdout(false);
+                    } catch (_) {}
 
                     /*
                      * The document is loaded once, from this file, and never
@@ -1257,7 +1339,17 @@ exit $?;:<<'//</script></head><body></body>' #-->
         },
 
         findWebView2LibDir: function (SystemRef, appFolder) {
-            var envLibDir = SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_WEBVIEW2_LIB_DIR");
+            /*
+             * This is an environment variable that ends at Assembly.LoadFrom,
+             * so anything able to set it chooses which code this process loads.
+             * netinstall's environment allowlist keeps the whole NEUTRINO_
+             * prefix, so it arrives intact even there. A release build does not
+             * read it; the tests that need to point at a prepared package build
+             * with the testing tier.
+             */
+            var envLibDir = this.hasTier("testing")
+                ? SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_WEBVIEW2_LIB_DIR")
+                : null;
             if (this.hasWebView2Assemblies(SystemRef, envLibDir)) {
                 return envLibDir;
             }
@@ -1422,12 +1514,23 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     SystemRef.IO.Directory.Delete(packageRoot, true);
                 }
 
+                /*
+                 * TLS 1.0 and 1.1 were enabled here alongside 1.2. Turning a
+                 * protocol on does not make a server offer it, but it does mean
+                 * this client would accept one that did, which is the whole
+                 * point of a downgrade. nuget.org has not spoken either of them
+                 * for years. 1.3 is set where the framework knows the value and
+                 * ignored where it does not.
+                 */
                 try {
                     var tls12 = 3072;
-                    var tls11 = 768;
-                    var tls10 = 192;
-                    SystemRef.Net.ServicePointManager.SecurityProtocol = tls12 | tls11 | tls10;
+                    var tls13 = 12288;
+                    SystemRef.Net.ServicePointManager.SecurityProtocol = tls12 | tls13;
                 } catch (_) {
+                    try {
+                        SystemRef.Net.ServicePointManager.SecurityProtocol = 3072;
+                    } catch (_) {
+                    }
                 }
 
                 var request = SystemRef.Net.WebRequest.Create(packageUrl);
@@ -1525,6 +1628,46 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 throw new Error("WebView2 package download completed but required assemblies were not found.");
             }
             return libDir;
+        },
+
+        /*
+         * Reached by reflection because the type comes from an assembly loaded
+         * at run time, and set one at a time so that a runtime too old to know
+         * one property still gets the others. None of these are a sandbox --
+         * WebView2 sandboxes its own renderers and that is the real boundary --
+         * they close the doors this app has no use for.
+         */
+        hardenWebView2: function (coreWv2) {
+            var settings = null;
+            try {
+                settings = coreWv2.GetType().GetProperty("Settings").GetValue(coreWv2, null);
+            } catch (_) {
+                return;
+            }
+            if (!settings) {
+                return;
+            }
+
+            var off = [
+                "AreDevToolsEnabled",
+                "AreDefaultContextMenusEnabled",
+                "AreHostObjectsAllowed",
+                "IsStatusBarEnabled",
+                "IsSwipeNavigationEnabled",
+                "AreBrowserAcceleratorKeysEnabled",
+                "IsGeneralAutofillEnabled",
+                "IsPasswordAutosaveEnabled",
+                "IsPinchZoomEnabled"
+            ];
+
+            for (var i = 0; i < off.length; i++) {
+                try {
+                    var prop = settings.GetType().GetProperty(off[i]);
+                    if (prop && prop.CanWrite) {
+                        prop.SetValue(settings, false, null);
+                    }
+                } catch (_) {}
+            }
         },
 
         /*
@@ -1721,6 +1864,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                             }
                             if (coreWv2 && !settingsApplied) {
                                 settingsApplied = true;
+                                self.hardenWebView2(coreWv2);
 
                                 // Before the preload is built, because what the
                                 // page is told to send on depends on whether
