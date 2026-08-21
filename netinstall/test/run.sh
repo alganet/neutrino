@@ -45,7 +45,7 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 
 # job-ui is an investigation, not a gate, and it costs ten minutes of windows CI
 # per run. It answered its question -- see the README -- so it is opt-in now.
-SUITES="names verify confine confine-strict confine-session privs offline strict e2e"
+SUITES="names verify confine confine-tight confine-strict confine-session privs offline strict e2e"
 # session.sh is a probe rather than a gate: it applies each candidate mechanism
 # on its own to a real webview. It answered -- the session tier is what came of
 # it, and confine-session.sh gates that -- so like job-ui it is opt-in now
@@ -73,6 +73,12 @@ for t in $SUITES; do
         # purpose, so this one needs a longer leash than the rest.
         job-ui) nt_timeout 1200 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-testing$NT_EXE" ;;
         strict) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-failclosed$NT_EXE" ;;
+        # confine.sh again, against the tight binary -- the /proc write grant is
+        # the one rule that differs between the tiers. See the header of
+        # confine-tight.sh for why it is the same instrument and not a second
+        # payload.
+        confine-tight) nt_timeout 600 bash "$HERE/$t.sh" \
+            "$HERE/../dist/netinstall-strict$NT_EXE" ;;
         e2e)   nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-testing$NT_EXE" "${NEUTRINO_SCREENSHOTS:-}" ;;
         # Six real webview launches, two of them waiting out a timeout on
         # purpose, so this one needs the same longer leash as job-ui.
