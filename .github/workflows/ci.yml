@@ -40,6 +40,19 @@ jobs:
           TEST_EXIT=$?
           kill "$APP_PID" 2>/dev/null || true
           exit $TEST_EXIT
+      # The app under test here is hostile page content. Built at the default
+      # tier on purpose: this lane is what says the shipped configuration
+      # refuses these, not a configuration assembled for the test.
+      - run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
+          bash test/neutrinoattack.cmd &
+          TEST_EXIT=0
+          bash test/verify-attack.sh || TEST_EXIT=$?
+          pkill -f neutrinoattack 2>/dev/null || true
+          exit $TEST_EXIT
       - name: netinstall suite
         timeout-minutes: 35
         run: |
@@ -89,6 +102,23 @@ jobs:
           TEST_EXIT=$?
           kill "$APP_PID" 2>/dev/null || true
           exit $TEST_EXIT
+      # The app under test here is hostile page content. Built at the default
+      # tier on purpose: this lane is what says the shipped configuration
+      # refuses these, not a configuration assembled for the test.
+      - run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
+          bash test/neutrinoattack.cmd &
+          TEST_EXIT=0
+          bash test/verify-attack.sh || TEST_EXIT=$?
+          pkill -f neutrinoattack 2>/dev/null || true
+          exit $TEST_EXIT
       - name: netinstall suite
         timeout-minutes: 35
         run: |
@@ -133,6 +163,16 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
+      - shell: bash
+        run: bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
+      - timeout-minutes: 15
+        shell: pwsh
+        run: |
+          .\test\neutrinoattack.cmd
+          & .\test\verify-attack.ps1
+          $testExit = $LASTEXITCODE
+          Get-Process | Where-Object { $_.MainWindowTitle -like "ATTACK *" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $testExit
       - name: netinstall suite
         timeout-minutes: 20
         shell: bash
@@ -167,6 +207,16 @@ jobs:
           kill "$APP_PID" 2>/dev/null || true
           echo "=== app output ==="
           cat ~/neutrino-stdout.log || true
+          exit $TEST_EXIT
+      - run: |
+          bash build.sh --tier=testing test/neutrinoattack.js test/neutrinoattack.cmd
+          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+          bash test/neutrinoattack.cmd > ~/neutrino-attack.log 2>&1 &
+          TEST_EXIT=0
+          bash test/verify-attack.sh || TEST_EXIT=$?
+          pkill -f neutrinoattack 2>/dev/null || true
+          echo "=== app output ==="
+          cat ~/neutrino-attack.log || true
           exit $TEST_EXIT
       - name: netinstall suite
         timeout-minutes: 20
