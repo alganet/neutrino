@@ -225,7 +225,7 @@ and the network, so "deny everything" is not on the table.
 
 | Platform | What is applied |
 |---|---|
-| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied; signals scoped to the sandbox, and abstract unix sockets too where there is no X11 display. A seccomp filter on top. The session bus stays reachable unless the session tier is built in. |
+| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied; signals scoped to the sandbox, and abstract unix sockets too where there is no X11 display. A seccomp filter on top. The session bus stays reachable unless the session tier is built in. The `/proc` write grant is every process's entry, not just the app's — see [what is still open](#what-is-still-open). |
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. See the caveat below. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
 | **Windows** | Job object — process limits only — plus every token privilege but `SeChangeNotify` removed. **No filesystem confinement** by default; see the tight tier. |
@@ -313,6 +313,20 @@ while these stand:
   will. [The session tier](#the-session-tier-experimental) closes both with namespaces and the X11
   SECURITY extension, and it is off by default and unavailable outright on Ubuntu 24.04 and its
   derivatives, so on a stock desktop this is still the ceiling.
+- **The default tier's `/proc` write grant reaches every same-uid process.** Landlock is granted
+  `WRITE_FILE` on all of `/proc`, and that is not only the app's own entry. Measured: thirteen
+  files under a peer's `/proc/<pid>` open for writing — `oom_score_adj`, `sched`, `clear_refs`,
+  `coredump_filter`, `timerslack_ns` and the id maps among them — and a real write to a peer's
+  `oom_score_adj` succeeds. Marking a same-uid process for the OOM killer is not code execution
+  and reads nothing, but it reaches across at a process this same ruleset scopes *signals* away
+  from, so the guarantee two lines up is narrower than it sounds. `/proc/<pid>/mem` is **not** in
+  that set: Landlock implements the LSM ptrace hook as well as the filesystem one, and a domain
+  may not reach a task outside itself whatever the rights say — measured against an in-domain
+  child, which does answer, under an identical rule.
+
+  [The tight tier](#the-tight-tier-experimental) narrows the grant to the app's own entry and
+  [the session tier](#the-session-tier-experimental) leaves no peer in `/proc` to write to at all.
+  The default tier keeps it, and this is why.
 - **Windows cannot confine reads.** AppContainer is the only mechanism that would, and low integrity
   already stops WebView2 rendering, so there is no reason to expect AppContainer to fare better.
 - **FreeBSD gets no confinement**, and that is unlikely to change while Capsicum needs the target's
@@ -461,6 +475,22 @@ neither engine's sandbox was active there to be starved.
 If that trade is wrong for your case, run without netinstall: neutrino is a plain script and does
 not need it.
 
+The tight tier takes one more piece of that same mechanism, and this half **is** measured. Both
+`bubblewrap` and Chromium's `namespace_sandbox.cc` set a child's user namespace up the same way:
+fork, let the child `unshare(CLONE_NEWUSER)`, then have the **parent** write that child's
+`/proc/<pid>/setgroups` and `uid_map`. That is a descendant's entry, so the default tier's grant
+covers it and a rule pinned to `/proc/self` does not. `confine.sh` asserts it both ways —
+`USERNSMAP_OK` in the default tier, `USERNSMAP_BLOCKED` in the tight one — so if the engines ever
+do get their sandboxes started under netinstall, the suite says which tier took it away.
+
+Two things this does *not* cost, both measured rather than argued. A confined app can still read
+under its own `/proc` entry in the tight tier, because Landlock takes the union along a path and
+the read rule sits above the narrowed write rule — `PROCSELFREAD_OK`. And neither engine notices
+the narrowing today: `verify-linux.sh` renders identically under both grants on WebKitGTK and
+QtWebEngine, with identical `oom_score_adj` on every engine process. Chromium already logs
+`Failed to adjust OOM score of renderer` under the **default** grant, for a reason that is not
+ours — the kernel refuses to lower `oom_score_adj` without `CAP_SYS_RESOURCE`.
+
 ### The tight tier (experimental)
 
 Building with `-DNEUTRINO_CONFINE_TIGHT` turns on a second, stronger tier. It means something
@@ -468,7 +498,7 @@ different on each platform, because the mechanisms differ in what they can expre
 
 | Platform | What the tight tier adds |
 |---|---|
-| **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default, and execute becomes an allowlist that omits every writable directory. `~/.Xauthority` stays readable unless the session tier replaced the cookie with an untrusted one, in which case allowlisting it would hand back exactly what that took away. |
+| **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default, and execute becomes an allowlist that omits every writable directory. `~/.Xauthority` stays readable unless the session tier replaced the cookie with an untrusted one, in which case allowlisting it would hand back exactly what that took away. The `/proc` write grant narrows from every process's entry to `/proc/self` — see [what Landlock costs](#what-landlock-costs-in-both-tiers) for what that buys and what it takes. |
 | **macOS** | Seatbelt denies reads of all of `$HOME` rather than a named list of secrets. |
 | **Windows** | The process drops to low integrity, so writes outside the app dir fail. |
 | **OpenBSD** | Nothing — `unveil` is already an allowlist, so the default tier is the tight one. |
@@ -580,6 +610,13 @@ a boundary that holds or does not depending on a sysctl is not one. With a pid n
 process that asks for a pid namespace does not enter it, so netinstall forks, becomes pid 1, and
 waits — reaping until the namespace is empty rather than exiting on the first child, or a polyglot
 that backgrounds its own runtime would take everything down with it.
+
+It also closes the `/proc` write grant that [is still open](#what-is-still-open) in the default
+tier, and closes it better than the tight tier's narrower rule does: there is no peer entry to
+write to rather than a rule refusing to write it, so nothing is given up on the way. The errno
+says which — `ENOENT` here, `EACCES` from a ruleset — and `confine.sh` records both. Where a usable
+user namespace can be had, this is the answer to that finding; the tight tier's rule is for the
+machines where one cannot.
 
 **What keeps the covers on** is Landlock, which denies `mount`, `umount`, `pivot_root` and
 `move_mount` to any domain that handles even one filesystem right, by design and even inside a fresh

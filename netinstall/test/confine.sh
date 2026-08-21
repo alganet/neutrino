@@ -215,16 +215,26 @@ def survey(pid, label):
     print('%sWRITABLE_%s' % (label, 'SOME' if opened else 'NONE'))
     print('%s writable %s' % (label.lower(), ','.join(opened) or '-'))
     # And one real write, on the file chromium uses and the kernel checks least.
-    # Raised then put back: this peer has to stay alive for the rest of the run.
+    # A raise by one, not a constant: the kernel refuses to *lower*
+    # oom_score_adj without CAP_SYS_RESOURCE, so a probe that wrote 100 would
+    # report the ruleset refusing on any machine whose ambient value is higher
+    # -- 500 on a github runner, 200 on this desk. Raising is never refused for
+    # that reason, so what is left to refuse it is the thing under test.
+    # Put back afterwards where the kernel allows it; a peer one point closer to
+    # the OOM killer is the finding, not a side effect worth hiding.
     path = base + '/oom_score_adj'
     try:
         with open(path) as f:
             was = f.read().strip()
+        bump = str(min(int(was or '0') + 1, 1000))
         fd = os.open(path, os.O_WRONLY)
         try:
-            os.write(fd, b'100\n')
+            os.write(fd, (bump + '\n').encode())
             print('%sOOM_ESCAPED' % label)
-            os.write(fd, (was + '\n').encode())
+            try:
+                os.write(fd, (was + '\n').encode())
+            except OSError:
+                pass
         finally:
             os.close(fd)
     except OSError as e:
@@ -253,13 +263,26 @@ import os, sys, time
 # needs LANDLOCK_ACCESS_FS_TRUNCATE, a right this ruleset does not grant on
 # /proc today. It refuses for a reason that has nothing to do with the rule
 # under test, so both forms are reported and only the plain one is the control.
+def current(path):
+    try:
+        with open(path) as f:
+            return f.read().strip() or '0'
+    except OSError:
+        return '0'
+
 def poke(path, flags):
+    # The value written is whatever is already there. Only the permission path
+    # is under test here, and writing a constant would answer a different
+    # question on any machine with a non-zero ambient oom_score_adj: lowering
+    # it needs CAP_SYS_RESOURCE and comes back EACCES, which is the same errno
+    # the ruleset would give and means something else entirely.
+    data = (current(path) + '\n').encode()
     try:
         fd = os.open(path, flags)
     except OSError as e:
         return 'BLOCKED', 'open errno=%d' % e.errno
     try:
-        os.write(fd, b'0\n')
+        os.write(fd, data)
         return 'OK', ''
     except OSError as e:
         return 'BLOCKED', 'write errno=%d' % e.errno
@@ -273,6 +296,20 @@ if why:
 verdict, why = poke('/proc/self/oom_score_adj', os.O_WRONLY | os.O_TRUNC)
 print('PROCSELFTRUNC_' + verdict)
 
+# Narrowing the grant puts a write-only rule underneath a read-only one, and
+# reads under /proc/self survive that only because landlock accumulates rights
+# walking up the hierarchy rather than letting the deepest rule decide alone.
+# That is a claim about kernel behaviour, so it gets asked rather than assumed:
+# every engine here reads its own maps, and a ruleset that took that away would
+# fail the webview for a reason nobody would attribute to this rule.
+try:
+    with open('/proc/self/maps') as f:
+        f.readline()
+    print('PROCSELFREAD_OK')
+except OSError as e:
+    print('PROCSELFREAD_BLOCKED')
+    print('procselfread errno=%d' % e.errno)
+
 # And the one the zygote actually depends on: a *descendant's* entry, not its
 # own. A /proc/self rule would not cover this, which is the whole CI risk of
 # narrowing the grant, so the before-state has to be on the record.
@@ -284,6 +321,98 @@ verdict, why = poke('/proc/%d/oom_score_adj' % pid, os.O_WRONLY)
 print('PROCCHILD_' + verdict)
 if why:
     print('procchild %s' % why)
+os.kill(pid, 9)
+os.waitpid(pid, 0)
+
+# Whether the unshare itself is permitted at all. Not the interesting question
+# on its own -- the map write below is -- but it separates "seccomp refused the
+# syscall" from "the map could not be written", which otherwise arrive as the
+# same silence.
+#
+# The map write from inside the unshared child is reported too, and it is the
+# shape that *cannot* work, deliberately kept because it explains the errno on
+# the shape that can: inside an unmapped user namespace the task's own /proc
+# inode no longer maps to a uid it can pass, so a child writing its own uid_map
+# is refused by the ownership check before any ruleset is consulted. That is
+# also why bubblewrap does not do it this way round.
+sys.stdout.flush()
+pid = os.fork()
+if pid == 0:
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.unshare(0x10000000) != 0:               # CLONE_NEWUSER
+        print('USERNSCHILD_BLOCKED')
+        print('usernschild unshare errno=%d' % ctypes.get_errno())
+        print('UIDMAPCHILD_SKIP')
+        sys.stdout.flush()
+        os._exit(0)
+    print('USERNSCHILD_OK')
+    wrote = True
+    for path, data in (('/proc/self/setgroups', b'deny'),
+                       ('/proc/self/uid_map', ('0 %d 1\n' % os.getuid()).encode())):
+        try:
+            fd = os.open(path, os.O_WRONLY)
+            try:
+                os.write(fd, data)
+            finally:
+                os.close(fd)
+        except OSError as e:
+            print('UIDMAPCHILD_BLOCKED')
+            print('uidmapchild %s errno=%d' % (path.rsplit('/', 1)[1], e.errno))
+            wrote = False
+            break
+    if wrote:
+        print('UIDMAPCHILD_OK')
+    sys.stdout.flush()
+    os._exit(0)
+os.waitpid(pid, 0)
+
+# And the shape that is actually load-bearing, which the first version of this
+# probe got wrong. bubblewrap and chromium's namespace sandbox both fork a
+# child that unshares, and then the *parent* writes the child's
+# /proc/<pid>/setgroups and uid_map. That is a descendant's entry, so the grant
+# that ships covers it and a rule pinned to /proc/self does not.
+#
+# This is the question that decides PR 2: if it succeeds here, narrowing the
+# grant takes away the mechanism the engines' own sandboxes are built on, which
+# is a worse outcome than the finding being fixed. The errno names the mediator
+# -- 13 is a ruleset, 1 is the distro's restriction on unprivileged user
+# namespaces, and those are not the same answer.
+sys.stdout.flush()
+ready_r, ready_w = os.pipe()
+pid = os.fork()
+if pid == 0:
+    import ctypes
+    os.close(ready_r)
+    libc = ctypes.CDLL(None, use_errno=True)
+    rc = libc.unshare(0x10000000)                  # CLONE_NEWUSER
+    os.write(ready_w, b'1' if rc == 0 else b'0')
+    os.close(ready_w)
+    time.sleep(8)
+    os._exit(0)
+os.close(ready_w)
+ready = os.read(ready_r, 1)
+os.close(ready_r)
+if ready != b'1':
+    print('USERNSMAP_SKIP')
+    print('usernsmap the child could not unshare, so there is no map to write')
+else:
+    mapped = True
+    for name, data in (('setgroups', b'deny'),
+                       ('uid_map', ('0 %d 1\n' % os.getuid()).encode())):
+        try:
+            fd = os.open('/proc/%d/%s' % (pid, name), os.O_WRONLY)
+            try:
+                os.write(fd, data)
+            finally:
+                os.close(fd)
+        except OSError as e:
+            print('USERNSMAP_BLOCKED')
+            print('usernsmap %s errno=%d' % (name, e.errno))
+            mapped = False
+            break
+    if mapped:
+        print('USERNSMAP_OK')
 os.kill(pid, 9)
 os.waitpid(pid, 0)
 PY
@@ -569,6 +698,13 @@ esac
 # What this does not say is that the grant is harmless. mem is the one file the
 # hook takes off the table, and the survey in the results below is there
 # because the rest of the peer's entry is still writable.
+# Which tier this binary is, taken from what it reports rather than from how the
+# suite was invoked. The /proc write rule differs between the two and the
+# assertions have to follow the binary, or a tier could be measured against the
+# other one's expectations and pass.
+NT_TIGHT=0
+case "$CONFINE" in *"reads and writes"*) NT_TIGHT=1 ;; esac
+
 case "$CONFINE" in
     *landlock*)
         if grep -qx PEERMEM_SKIP <<<"$OUT"; then
@@ -576,7 +712,52 @@ case "$CONFINE" in
         else
             check "cannot write a peer's memory through /proc"  PEERMEM_BLOCKED
             check "cannot read a peer's maps either"            PEERMAPS_BLOCKED
-            check "the same /proc rule still reaches its own"   CHILDMEM_ESCAPED
+            if [ "$NT_TIGHT" = "1" ]; then
+                check "nothing under a peer's entry is writable"  PEERWRITABLE_NONE
+                check "a peer's oom_score_adj is out of reach"    PEEROOM_BLOCKED
+                # The narrowed rule takes the in-domain child with it. Asserted
+                # so the pair above cannot be read as the ptrace hook doing the
+                # work: here it is the filesystem rule, and both are refusing.
+                check "an in-domain child goes with it"           CHILDMEM_BLOCKED
+            else
+                check "the same /proc rule still reaches its own" CHILDMEM_ESCAPED
+                # Asserted to the measured value, not to the desirable one. This
+                # is the default tier's ceiling and the README says so; if it
+                # ever reads BLOCKED the ceiling moved and the README is wrong,
+                # which is a failure worth having rather than silence.
+                check "a peer's oom_score_adj is writable here"   PEEROOM_ESCAPED
+            fi
+        fi
+        if grep -qx PROCSELF_SKIP <<<"$OUT"; then
+            nt_note "no /proc/self probe here"
+        else
+            # Both tiers. The tight rule grants only WRITE_FILE on /proc/self
+            # and reads survive on the read rule above it, which is landlock
+            # accumulating rights up the hierarchy rather than letting the
+            # deepest rule decide alone. A tier that passed everything else by
+            # having quietly stopped reading its own /proc would look like a
+            # clean result, so this is asked rather than assumed.
+            check "reads under its own /proc entry still work" PROCSELFREAD_OK
+            if [ "$NT_TIGHT" = "1" ]; then
+                check "its own /proc entry is read-only now"      PROCSELF_BLOCKED
+                check "a descendant's /proc entry is out of reach" PROCCHILD_BLOCKED
+            else
+                check "its own /proc entries stay writable"        PROCSELF_OK
+                check "a descendant's /proc entry stays writable"  PROCCHILD_OK
+            fi
+            # The write bubblewrap and chromium's namespace_sandbox.c depend on:
+            # a parent setting up a child's user namespace by writing that
+            # child's setgroups and uid_map. It is what the tight tier pays for
+            # the peer being out of reach, and what the default tier keeps by
+            # not narrowing. Asserted both ways so the trade cannot move in
+            # either direction without the suite saying so.
+            if grep -qx USERNSMAP_SKIP <<<"$OUT"; then
+                nt_note "no user namespace to map here: $(grep '^usernsmap ' <<<"$OUT")"
+            elif [ "$NT_TIGHT" = "1" ]; then
+                check "and the map write an engine sandbox needs" USERNSMAP_BLOCKED
+            else
+                check "the map write an engine sandbox needs works" USERNSMAP_OK
+            fi
         fi ;;
     *)  nt_note "the /proc verdict needs a landlock domain; got $CONFINE" ;;
 esac
@@ -629,22 +810,23 @@ if [ "$(uname -s)" = "Darwin" ]; then
     esac
 fi
 
-echo "=== Measured for the next three PRs, not asserted ==="
-# Recorded rather than checked, deliberately. Each of these is a hole this
-# branch has not closed yet, and a suite that asserted the fix here would fail
-# the commit that measures it. The PR named on each line is the one that turns
-# it into a check; if any of them already reads the other way, the finding
-# behind it is wrong and the fix should not be written.
+echo "=== Recorded beside the assertions ==="
+# The checks above say which way each answer went. These say what the answer
+# was made of -- which files, which errno -- and no assertion carries that. On
+# linux the /proc surface is now asserted in both tiers, so this is a record of
+# the shape rather than a hole waiting for a fix; the darwin lines below are
+# still the latter, and say which PR turns them into checks.
 #
 # nt_result and not nt_note: notices are capped at ten per step and the suite
 # fills that bucket long before this line, and the step summary does not come
 # back out through the API at all.
 nt_tokens() { grep -oE "$1" <<<"$OUT" | tr '\n' ' '; }
+NT_TIER="$([ "${NT_TIGHT:-0}" = "1" ] && echo tight || echo default)"
 
 case "$(uname -s)" in
     Linux)
-        nt_result "PR2 before-state: ptrace_scope=$NT_PTRACE_STATE peer=${NEUTRINO_TEST_PEER:-none} confined: $(nt_tokens '(PEER|CHILD)(MEM|MAPS|WRITABLE|OOM)_[A-Z]+')[$(grep -E '^(peer|child) ' <<<"$OUT" | tr '\n' ';')] unconfined-control: $NT_PROC_CONTROL"
-        nt_result "PR2 write-grant before-state: $(nt_tokens '(PROCSELF|PROCSELFTRUNC|PROCCHILD)_[A-Z]+')[$(grep -E '^proc(self|child) ' <<<"$OUT" | tr '\n' ';')] confine=$CONFINE"
+        nt_result "linux /proc peers [$NT_TIER tier]: ptrace_scope=$NT_PTRACE_STATE peer=${NEUTRINO_TEST_PEER:-none} confined: $(nt_tokens '(PEER|CHILD)(MEM|MAPS|WRITABLE|OOM)_[A-Z]+')[$(grep -E '^(peer|child) ' <<<"$OUT" | tr '\n' ';')] unconfined-control: $NT_PROC_CONTROL"
+        nt_result "linux /proc write grant [$NT_TIER tier]: $(nt_tokens '(PROCSELFREAD|PROCSELFTRUNC|PROCSELF|PROCCHILD|USERNSMAP|USERNSCHILD|UIDMAPCHILD)_[A-Z]+')[$(grep -E '^(proc(selfread|self|child)|usernsmap|usernschild|uidmapchild) ' <<<"$OUT" | tr '\n' ';')] confine=$CONFINE"
         ;;
     Darwin)
         nt_result "PR3 before-state cold: $(nt_tokens 'LSD_[A-Z]+_(ESCAPED|BLOCKED)')$(nt_tokens 'LSD_[A-Z]+_RC=[0-9]+')$(nt_tokens 'LSD_TERM_UP=[a-z]+')unconfined-control: $NT_LSD_CONTROL"

@@ -1158,7 +1158,52 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         nt_allow(ruleset, appdir, rights);
         nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
         nt_allow(ruleset, "/dev/shm", rights);
+        /*
+         * Write on /proc is write on *every* process's entry, not just this
+         * one's. Measured: thirteen files under a same-uid peer open for
+         * writing, and a real write to a peer's oom_score_adj succeeds --
+         * against a process this same ruleset says it has scoped signals away
+         * from. No execution and no read, but it contradicts a guarantee made
+         * two lines up, so the default tier owes an explanation and the README
+         * carries one.
+         *
+         * Narrowing to /proc/self closes it and is not free, which is why it is
+         * a tier decision rather than a fix. nt_allow opens O_PATH, so
+         * /proc/self resolves at rule time and the rule is pinned to the pid
+         * that builds the ruleset: every child loses write to its own entry as
+         * well as to a peer's, and landlock has no rule shape that means "each
+         * process's own entry". What that takes with it, measured:
+         *
+         *   - a descendant's oom_score_adj, which chromium's zygote writes;
+         *   - a child's own /proc entry, whatever it wanted there;
+         *   - and the one that decides this -- a parent writing a child's
+         *     setgroups and uid_map after that child unshares a user
+         *     namespace, which is exactly how bubblewrap and chromium's
+         *     namespace_sandbox.c set up the sandboxes that stack on top of
+         *     this one. USERNSMAP_OK here, USERNSMAP_BLOCKED narrowed.
+         *
+         * So the default tier keeps the grant and says so, and the tight tier
+         * -- which already trades reads and w^x for confinement, and whose
+         * users have accepted that trade -- takes the narrower rule. The
+         * session tier needs neither: a pid namespace leaves no peer in /proc
+         * to write to, which is the better answer where a user namespace can
+         * be had, and confine-session.sh gates it.
+         *
+         * The /proc rule keeps NT_READ_RIGHTS above the narrowed write rule,
+         * because landlock accumulates rights walking up the hierarchy rather
+         * than letting the deepest rule decide alone. PROCSELFREAD_OK asks
+         * that rather than assuming it.
+         *
+         * Added after nt_apply_session, which is where a pid namespace would
+         * have changed both the pid /proc/self resolves to and the /proc it is
+         * resolved in.
+         */
+#ifdef NEUTRINO_CONFINE_TIGHT
+        nt_allow(ruleset, "/proc", NT_READ_RIGHTS);
+        nt_allow(ruleset, "/proc/self", LANDLOCK_ACCESS_FS_WRITE_FILE);
+#else
         nt_allow(ruleset, "/proc", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
+#endif
         runtime = getenv("XDG_RUNTIME_DIR");
         if (runtime && *runtime) {
             nt_allow(ruleset, runtime, NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
