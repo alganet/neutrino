@@ -200,7 +200,12 @@ Window {
             if (info.status === WebEngineView.LoadSucceededStatus) {
                 if (!preloadInjected) {
                     preloadInjected = true
+                    // The API first, then the page's own code. Both are handed
+                    // to the engine rather than carried by the document, which
+                    // is what lets the document forbid script of its own.
                     view.runJavaScript(Neutrino.NeutrinoWebview.qmlPreloadScript)
+                    view.runJavaScript(Neutrino.NeutrinoWebview.extractPageScript(
+                        Neutrino._neutrinoRawSource))
                 }
                 view.documentLoaded = true
             }
@@ -253,7 +258,8 @@ Window {
             Neutrino.NeutrinoWebview.initQml(root, {
                 openUrl: function(url) { Qt.openUrlExternally(url) }
             })
-            view.loadHtml(Neutrino.NeutrinoWebview.extractHtmlDocument(Neutrino._neutrinoRawSource))
+            view.loadHtml(Neutrino.NeutrinoWebview.applyContentPolicy(
+                Neutrino.NeutrinoWebview.extractHtmlDocument(Neutrino._neutrinoRawSource)))
         }
     }
 }
@@ -317,7 +323,7 @@ then NEUTRINO_SCRIPT_PATH="$script_path" osascript -l JavaScript "$script_path"
 else echo "No suitable runtime found (expected gjs, Qt QML runtime, or osascript)" >&2
 fi
 exit $?;:<<'//</script></head><body></body>' #-->
-<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><style> html, body { background: white; color: black; font-size: 2em; }</style></head>
+<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-eval'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><style> html, body { background: white; color: black; font-size: 2em; }</style></head>
 <script type=text/javascript>//*/
 
     /*@cc_on
@@ -387,14 +393,53 @@ exit $?;:<<'//</script></head><body></body>' #-->
             }
         },
 
+        /*
+         * The document, with the script taken out of it.
+         *
+         * This file's JavaScript -- including whatever an author spliced into
+         * runWeb -- used to be an inline script inside the document it loads,
+         * which meant the document's content policy had to permit inline
+         * script, which meant it could never say script-src 'none'. Every
+         * driver already injects the preload through its engine, so the page's
+         * own code goes the same way and the document ends up carrying no
+         * executable content at all.
+         *
+         * What that buys is worth the trouble: an injection bug in someone's
+         * app cannot run script in this document, because nothing in the
+         * document is allowed to.
+         */
         extractHtmlDocument: function (content) {
             var text = String(content || "");
             var lower = text.toLowerCase();
             var doctypeIndex = lower.indexOf("<!doctype html");
             if (doctypeIndex >= 0) {
-                return text.substring(doctypeIndex);
+                text = text.substring(doctypeIndex);
             }
-            return text;
+            var scriptIndex = text.indexOf("<script");
+            if (scriptIndex < 0) {
+                return text;
+            }
+            return text.substring(0, scriptIndex) + "<body></body></html>";
+        },
+
+        // The other half: everything the document used to carry, handed to the
+        // engine to inject instead. Stops before the closing sentinel, which is
+        // markup pretending to be a comment and is not wanted in either half.
+        extractPageScript: function (content) {
+            var text = String(content || "");
+            var start = text.indexOf("<script");
+            if (start < 0) {
+                return "";
+            }
+            start = text.indexOf(">", start);
+            if (start < 0) {
+                return "";
+            }
+            var end = text.lastIndexOf("//</script>");
+            if (end < 0 || end <= start) {
+                return "";
+            }
+            return text.substring(start + 1, end);
         },
 
         getMacScriptPath: function (ObjCRef, dollar) {
@@ -504,6 +549,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
             var windowDelegateRef = null;
             var scriptHandlerRef = null;
             var pendingPreload = null;
+            var pendingPageScript = null;
 
             return {
                 webMessageTransport: "window.webkit.messageHandlers.neutrino.postMessage",
@@ -621,14 +667,23 @@ exit $?;:<<'//</script></head><body></body>' #-->
                             ucc.addScriptMessageHandlerName(scriptHandlerRef, "neutrino");
                         }
 
-                        // Injected by the engine rather than spliced into the
-                        // markup, so the preload does not have to be something
-                        // the document's content policy is asked to permit.
+                        // Both halves arrive through the engine, which is what
+                        // lets the document forbid script of its own: the API at
+                        // document start, the page's code once there is a
+                        // document to run it against.
                         if (pendingPreload) {
                             ucc.addUserScript(
                                 dollar.WKUserScript.alloc
                                     .initWithSourceInjectionTimeForMainFrameOnly(
                                         pendingPreload, 0, true
+                                    )
+                            );
+                        }
+                        if (pendingPageScript) {
+                            ucc.addUserScript(
+                                dollar.WKUserScript.alloc
+                                    .initWithSourceInjectionTimeForMainFrameOnly(
+                                        pendingPageScript, 1, true
                                     )
                             );
                         }
@@ -648,6 +703,9 @@ exit $?;:<<'//</script></head><body></body>' #-->
 
                 injectPreload: function (_, js) {
                     pendingPreload = js;
+                },
+                injectPageScript: function (js) {
+                    pendingPageScript = js;
                 },
                 screenHeight: function () {
                     return dollar.NSScreen.mainScreen.frame.size.height;
@@ -730,6 +788,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
             var self = this;
             var messageCallback = null;
             var pendingPreload = null;
+            var pendingPageScript = null;
             var documentLoaded = false;
 
             return {
@@ -822,20 +881,27 @@ exit $?;:<<'//</script></head><body></body>' #-->
                         });
                     }
 
-                    if (pendingPreload) {
-                        // Injected by the engine rather than spliced into the
-                        // markup, so the preload does not have to be something
-                        // the document's own content policy is asked to permit.
+                    // Both halves go in through the engine now: the API first,
+                    // at document start, then the page's own code once there is
+                    // a document to run it against.
+                    var inject = function (source, when) {
+                        if (!source) {
+                            return;
+                        }
                         try {
                             ucm.add_script(WebKit2.UserScript["new"](
-                                pendingPreload,
+                                source,
                                 WebKit2.UserContentInjectedFrames.TOP_FRAME,
-                                WebKit2.UserScriptInjectionTime.START,
+                                when,
                                 null,
                                 null
                             ));
-                        } catch (_) {}
-                    }
+                        } catch (e) {
+                            self.note("could not inject: " + e);
+                        }
+                    };
+                    inject(pendingPreload, WebKit2.UserScriptInjectionTime.START);
+                    inject(pendingPageScript, WebKit2.UserScriptInjectionTime.END);
 
                     var wv = new WebKit2.WebView({ user_content_manager: ucm });
                     wv.connect("load-changed", function (_, loadEvent) {
@@ -936,6 +1002,9 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 },
                 injectPreload: function (_, js) {
                     pendingPreload = js;
+                },
+                injectPageScript: function (js) {
+                    pendingPageScript = js;
                 },
                 attachWebView: function (win, wv) {
                     win.add(wv);
@@ -1242,21 +1311,29 @@ exit $?;:<<'//</script></head><body></body>' #-->
         },
 
         /*
-         * The app's own JavaScript is an inline script inside this document --
-         * that is what the polyglot is -- so script-src has to permit inline
-         * and there is no version of this that does not. What the default
-         * policy is good for is the rest: no plugins, no base tag rewriting
-         * where every relative url points, no form posting somewhere else, no
-         * framing.
+         * No script may load or run from this document. Nothing in it is a
+         * script any more -- this file's code and the author's both arrive
+         * through the engine's own injection, which measurement says is exempt
+         * from the policy the document carries.
+         *
+         * 'unsafe-eval' is there because eval is not exempt, and this file is
+         * built on it: every runtime detection here goes through eval, which is
+         * the documented way to keep jsc.exe from failing at compile time on
+         * globals that do not exist on Windows. With script-src 'none' the
+         * injected script ran and then could not identify the runtime it was
+         * running in. It reads worse than it is -- eval is reachable only to
+         * script that is already executing, and no script in this document can
+         * begin executing: not an inline one, not a src, not a rewritten base.
          *
          * Denying the page the network is a real change to what an app can do,
          * so it is the offline tier's business and not the default's. An app
          * that fetches from its own backend is an ordinary app, not a
          * misbehaving one.
          */
-        defaultContentPolicy: "object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
+        defaultContentPolicy: "script-src 'unsafe-eval'; object-src 'none'; " +
+            "base-uri 'none'; form-action 'none'; frame-src 'none'",
 
-        offlineContentPolicy: "default-src 'none'; script-src 'unsafe-inline'; " +
+        offlineContentPolicy: "default-src 'none'; script-src 'unsafe-eval'; " +
             "style-src 'unsafe-inline'; img-src data:; font-src data:; " +
             "object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
 
@@ -1276,7 +1353,9 @@ exit $?;:<<'//</script></head><body></body>' #-->
         boot: function (driver, config) {
             driver.init();
             var scriptPath = driver.getScriptPath();
-            var html = this.applyContentPolicy(this.extractHtmlDocument(driver.readFile(scriptPath)));
+            var source = driver.readFile(scriptPath);
+            var html = this.applyContentPolicy(this.extractHtmlDocument(source));
+            var pageScript = this.extractPageScript(source);
 
             var win = driver.createWindow(config);
 
@@ -1305,6 +1384,10 @@ exit $?;:<<'//</script></head><body></body>' #-->
             if (driver.webMessageTransport) {
                 driver.injectPreload(null, this.buildPreloadScript(
                     driver.webMessageTransport, driver.transportName));
+            }
+
+            if (driver.injectPageScript) {
+                driver.injectPageScript(pageScript);
             }
 
             var wv = driver.createWebView();
@@ -1728,6 +1811,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
             var messageCallback = null;
             var lastDocTitle = "";
             var pendingPreload = null;
+            var pendingPageScript = null;
             var settingsApplied = false;
             var webMessagesWired = false;
 
@@ -1847,6 +1931,9 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 injectPreload: function (wv, js) {
                     pendingPreload = js;
                 },
+                injectPageScript: function (js) {
+                    pendingPageScript = js;
+                },
                 runEventLoop: function (win, wv) {
                     win.Show();
                     var coreWv2 = null;
@@ -1881,18 +1968,27 @@ exit $?;:<<'//</script></head><body></body>' #-->
                                 preloadInjected = true;
                                 var addScript = coreWv2.GetType().GetMethod("AddScriptToExecuteOnDocumentCreatedAsync");
                                 if (addScript) {
-                                    var task = addScript.Invoke(coreWv2, [pendingPreload]);
-                                    if (task) {
-                                        while (!task.IsCompleted) {
-                                            SystemRef.Windows.Forms.Application.DoEvents();
-                                            SystemRef.Threading.Thread.Sleep(10);
+                                    // The API first, then the page's own code,
+                                    // both through the engine so the document
+                                    // itself can forbid script.
+                                    var sources = pendingPageScript
+                                        ? [pendingPreload, pendingPageScript]
+                                        : [pendingPreload];
+                                    for (var si = 0; si < sources.length; si++) {
+                                        var task = addScript.Invoke(coreWv2, [sources[si]]);
+                                        if (task) {
+                                            while (!task.IsCompleted) {
+                                                SystemRef.Windows.Forms.Application.DoEvents();
+                                                SystemRef.Threading.Thread.Sleep(10);
+                                            }
                                         }
                                     }
                                 }
                                 var navMethod = coreWv2.GetType().GetMethod("NavigateToString");
                                 var scriptPath = SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH");
                                 if (navMethod && scriptPath && SystemRef.IO.File.Exists(scriptPath)) {
-                                    var htmlText = self.extractHtmlDocument(SystemRef.IO.File.ReadAllText(scriptPath));
+                                    var htmlText = self.applyContentPolicy(self.extractHtmlDocument(
+                                        SystemRef.IO.File.ReadAllText(scriptPath)));
                                     navMethod.Invoke(coreWv2, [htmlText]);
                                 }
                             }

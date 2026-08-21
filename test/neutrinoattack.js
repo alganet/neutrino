@@ -46,6 +46,7 @@ function report(navState) {
         " forge=" + results.forge +
         " raw=" + results.raw +
         " base=" + results.base +
+        " inline=" + results.inline +
         " navdata=" + results.navdata +
         " nav=" + navState +
         // Only the settled report says DONE. The pending one is a snapshot
@@ -120,6 +121,26 @@ function checkWire(next) {
         results.wire = (geometry() === before) ? "DEAD" : "LIVE";
         next();
     }, 1500);
+}
+
+/*
+ * The document carries no script of its own -- this file's code is injected by
+ * the engine -- so the policy can forbid inline script outright. This is the
+ * check that says whether it really does, and unlike the frame check it can be
+ * read from here: the script it adds runs in this same realm, so the flag it
+ * sets is visible. Removing script-src from the policy makes this report RAN.
+ */
+function checkInline(next) {
+    win.__neutrinoInlineRan = false;
+    try {
+        var tag = doc.createElement("script");
+        tag.textContent = "window.__neutrinoInlineRan = true;";
+        doc.body.appendChild(tag);
+    } catch (_) {}
+    win.setTimeout(function () {
+        results.inline = win.__neutrinoInlineRan ? "RAN" : "BLOCKED";
+        next();
+    }, 800);
 }
 
 /*
@@ -234,10 +255,12 @@ function start() {
             checkRaw(function () {
                 checkWire(function () {
                     checkBase();
+                    checkInline(function () {
                     checkFrame(function () {
                         checkNavData(function () {
                             checkNav();
                         });
+                    });
                     });
                 });
             });

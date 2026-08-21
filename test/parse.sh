@@ -174,6 +174,16 @@ function policyOf(doc) {
 }
 eq("the document starts at the doctype", html.toLowerCase().indexOf("<!doctype html"), 0);
 
+// The document is inert and the code is injected, so both halves are worth
+// checking here: a document that still carries a script would be governed by a
+// policy that forbids one, and a page script that does not parse means the app
+// never starts, which otherwise only shows up as a window that renders nothing.
+eq("the document carries no script of its own", html.indexOf("<script") < 0, true);
+var pageScript = N.extractPageScript(fs.readFileSync(process.argv[2], "utf8"));
+eq("a page script was extracted", pageScript.length > 1000, true);
+var pageScriptParses = true;
+try { new vm.Script(pageScript); } catch (e) { pageScriptParses = false; }
+eq("the page script parses as javascript", pageScriptParses, true);
 eq("default tier gets the default policy", policyOf(html), N.defaultContentPolicy);
 N.tiers = "default,offline";
 eq("offline tier gets the offline policy", policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
