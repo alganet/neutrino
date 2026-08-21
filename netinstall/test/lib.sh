@@ -175,6 +175,42 @@ nt_userns_restore() {
     NT_USERNS_LIFTED=0
 }
 
+# Yama's ptrace_scope is 1 on Debian, Ubuntu and therefore on CI, and at that
+# setting the kernel refuses PTRACE_MODE_ATTACH on anything that is not a
+# descendant -- before any of our own confinement is consulted. A probe that
+# asks whether a confined app can reach another process's memory then gets the
+# kernel's answer to a different question, and reads as a pass. The suite lifts
+# the knob for its own run, says so in its results, and puts it back. Same
+# terms as nt_userns above: nothing shipped may do this, it is root's decision,
+# and a test is the only thing entitled to make it.
+#
+# Unlike nt_userns this takes no command to try first. There is nothing here to
+# ask the right process: the value is global, the process that has to be asked
+# is the payload, and by then the sysctl is already whatever it is going to be.
+# So it reads the knob, reports what it found, and lifts only what it must.
+NT_PTRACE_SCOPE_SAVED=""
+
+nt_ptrace_scope() {
+    local knob=/proc/sys/kernel/yama/ptrace_scope cur
+    [ -r "$knob" ] || { echo "absent (no yama)"; return 0; }
+    cur="$(cat "$knob" 2>/dev/null)"
+    [ "$cur" = "0" ] && { echo "0"; return 0; }
+    [ -n "${GITHUB_ACTIONS:-}" ] || { echo "$cur (not lifted: not CI)"; return 0; }
+    sudo -n true 2>/dev/null || { echo "$cur (not lifted: no sudo)"; return 0; }
+    if sudo -n sysctl -w kernel.yama.ptrace_scope=0 >/dev/null 2>&1; then
+        NT_PTRACE_SCOPE_SAVED="$cur"
+        echo "0 (lifted from $cur)"
+    else
+        echo "$cur (lift refused)"
+    fi
+}
+
+nt_ptrace_scope_restore() {
+    [ -n "$NT_PTRACE_SCOPE_SAVED" ] || return 0
+    sudo -n sysctl -w "kernel.yama.ptrace_scope=$NT_PTRACE_SCOPE_SAVED" >/dev/null 2>&1
+    NT_PTRACE_SCOPE_SAVED=""
+}
+
 # The app directory is keyed on the spec without its pin, so versions of the
 # same app share it.
 nt_appkey() {

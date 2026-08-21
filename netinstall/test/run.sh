@@ -45,7 +45,7 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 
 # job-ui is an investigation, not a gate, and it costs ten minutes of windows CI
 # per run. It answered its question -- see the README -- so it is opt-in now.
-SUITES="names verify confine confine-strict confine-session offline strict e2e"
+SUITES="names verify confine confine-strict confine-session privs offline strict e2e"
 # session.sh is a probe rather than a gate: it applies each candidate mechanism
 # on its own to a real webview. It answered -- the session tier is what came of
 # it, and confine-session.sh gates that -- so like job-ui it is opt-in now
