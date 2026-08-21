@@ -97,6 +97,7 @@ Assert-Field "wire (control)" "LIVE" (Get-Field "wire")
 
 Assert-Field "malformed records refused" "REFUSED" (Get-Field "raw")
 Assert-Field "base-uri pinned"           "REFUSED" (Get-Field "base")
+Assert-Field "inline script refused"     "BLOCKED" (Get-Field "inline")
 
 # A forged title is only refusable where the title is not the channel. This
 # build reports which one it wired, so the assertion follows the code rather

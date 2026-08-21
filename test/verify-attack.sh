@@ -122,6 +122,7 @@ assert "wire (control)" "LIVE" "$(field wire)"
 
 assert "malformed records refused" "REFUSED" "$(field raw)"
 assert "base-uri pinned"           "REFUSED" "$(field base)"
+assert "inline script refused"     "BLOCKED" "$(field inline)"
 
 # A forged title is only refusable where the title is not the channel. Keying
 # this off the transport the build reports means the assertion follows the code
