@@ -479,7 +479,7 @@ if [ -z "${DISPLAY:-}" ] || ! nt_linux_runtime; then
 fi
 
 mkdir -p "$WORK/app"
-bash "$ROOT/build.sh" "$ROOT/test/neutrinotest.js" "$WORK/app/neutrinotest.cmd" >/dev/null 2>&1 ||
+bash "$ROOT/build.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$WORK/app/neutrinotest.cmd" >/dev/null 2>&1 ||
     { nt_fail "could not build the polyglot under test"; exit $((FAILURES + 1)); }
 
 nt_windows_gone() {

@@ -59,7 +59,7 @@ jobs:
           if ! command -v qml6 >/dev/null 2>&1 && ! command -v qml >/dev/null 2>&1 && ! command -v qmlscene6 >/dev/null 2>&1 && ! command -v qmlscene-qt6 >/dev/null 2>&1; then
             sudo apt install -y qml6 || sudo apt install -y qml-qt6 || sudo apt install -y qmlscene-qt6 || true
           fi
-      - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
+      - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: |
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb
@@ -136,7 +136,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
+      - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: |
           echo "=== Launching app ==="
           bash test/neutrinotest.cmd > ~/neutrino-stdout.log 2>&1 &

@@ -92,7 +92,7 @@ fi
 # The open question this suite exists to answer: the tier has to keep a real
 # webview alive, or it is not worth having.
 echo "=== Can a real webview still start under it? ==="
-bash "$ROOT/build.sh" "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
+bash "$ROOT/build.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
 GSPEC="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
 GAPP="$(nt_as "$BIN" "$GSPEC" "$WORK/bin")"
 GAPPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$GSPEC")/neutrinotest"
