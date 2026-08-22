@@ -1,0 +1,24 @@
+<!--
+SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+SPDX-License-Identifier: ISC
+
+Where test/neutrinoearly.js tries to go, served over loopback by the workflow.
+
+It has no script of its own and does not need any: the preload and the page
+script are registered on the engine, so whatever arrives in this view is handed
+both. That is the point of the test -- the page that got here inherits the
+whole API -- and it is neutrinoearly.js's own report, running in this document,
+that says so.
+
+The target used to be a host that never resolves. That was measured and it was
+not a test: on the macOS driver the provisional load simply fails, the app's
+document is never replaced, and "held" is what a driver with no guard at all
+answers. A navigation that cannot arrive proves nothing about a guard.
+-->
+<!doctype html>
+<html>
+<head><title>EARLY-TARGET</title></head>
+<body style="font-family:monospace;font-size:18px;padding:16px;">
+early navigation target
+</body>
+</html>

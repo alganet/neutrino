@@ -140,8 +140,18 @@ function withView(uri) {
     if (uri !== undefined) N.rememberTrustedView(uri);
     return N;
 }
-eq("nothing committed yet fails open",
-   withView().isTrustedView("https://example.com/"), true);
+// The fail-open this used to assert. It was defensible only while the macOS
+// driver remembered its document at the first message and so could not
+// distinguish "the app has not spoken yet" from "a page navigated before it
+// did"; every driver now arms at the load it started, before any page script
+// exists to send anything.
+eq("nothing committed yet is refused",
+   withView().isTrustedView("https://example.com/"), false);
+// A view that will not say what it committed is not a document to pin the
+// session to -- remembering the empty answer would refuse the app itself
+// forever after, and silently.
+eq("an empty answer is not remembered",
+   withView("").trustedView, null);
 eq("the remembered document is trusted",
    withView("about:blank").isTrustedView("about:blank"), true);
 // The half that would have muted working apps: hash routing changes the uri

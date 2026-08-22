@@ -68,12 +68,19 @@ jobs:
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           python3 test/stall.py 8099 > ~/stall.log 2>&1 &
           STALL_PID=$!
+          # Where the page under test navigates to. It has to answer: with a
+          # host that never resolves the navigation fails on its own and every
+          # driver reports "held", guard or no guard -- measured on macOS.
+          # This does not return until it is serving, so the app below cannot
+          # navigate into a port nothing has bound yet.
+          PAGES_PID="$(bash test/serve-target.sh ~/pages.log)"
           bash build.sh test/neutrinoearly.js test/neutrinoearly.cmd
           bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
           pkill -f neutrinoearly 2>/dev/null || true
           kill "$STALL_PID" 2>/dev/null || true
+          kill "$PAGES_PID" 2>/dev/null || true
           cat ~/early-verify.log
           bash test/annotate.sh gjs-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
@@ -162,12 +169,19 @@ jobs:
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           python3 test/stall.py 8099 > ~/stall.log 2>&1 &
           STALL_PID=$!
+          # Where the page under test navigates to. It has to answer: with a
+          # host that never resolves the navigation fails on its own and every
+          # driver reports "held", guard or no guard -- measured on macOS.
+          # This does not return until it is serving, so the app below cannot
+          # navigate into a port nothing has bound yet.
+          PAGES_PID="$(bash test/serve-target.sh ~/pages.log)"
           bash build.sh test/neutrinoearly.js test/neutrinoearly.cmd
           bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
           pkill -f neutrinoearly 2>/dev/null || true
           kill "$STALL_PID" 2>/dev/null || true
+          kill "$PAGES_PID" 2>/dev/null || true
           cat ~/early-verify.log
           bash test/annotate.sh kde-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
@@ -291,6 +305,12 @@ jobs:
       - run: |
           python3 test/stall.py 8099 > ~/stall.log 2>&1 &
           STALL_PID=$!
+          # Where the page under test navigates to. It has to answer: with a
+          # host that never resolves the navigation fails on its own and every
+          # driver reports "held", guard or no guard -- measured on macOS.
+          # This does not return until it is serving, so the app below cannot
+          # navigate into a port nothing has bound yet.
+          PAGES_PID="$(bash test/serve-target.sh ~/pages.log)"
           bash build.sh --tier=testing test/neutrinoearly.js test/neutrinoearly.cmd
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
@@ -298,6 +318,7 @@ jobs:
           bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
           pkill -f neutrinoearly 2>/dev/null || true
           kill "$STALL_PID" 2>/dev/null || true
+          kill "$PAGES_PID" 2>/dev/null || true
           cat ~/early-verify.log
           echo "=== app output ==="
           cat ~/early.log || true

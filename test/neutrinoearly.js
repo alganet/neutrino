@@ -29,6 +29,21 @@ var log = eval("console");
 // means the requests fail fast, the load completes, and `ready` says so.
 var STALL = "http://127.0.0.1:8099/never";
 
+/*
+ * Where this page tries to go, and it has to be somewhere that answers.
+ *
+ * This was a host that never resolves, and the macOS probing showed what that
+ * was worth: the provisional load fails on its own, the app's document is
+ * never replaced, and `at=held` is what a driver with no navigation guard at
+ * all reports. The same run measured this target arriving, the user scripts
+ * being reinjected into it, and the page that got here speaking to the native
+ * window. So the target is served by the workflow over loopback, the verifier
+ * asserts it is being served before it believes anything, and nothing leaves
+ * the machine either way.
+ */
+var TARGET = "http://127.0.0.1:8098/early-target.html";
+var TARGET_MARK = "early-target.html";
+
 function rawSend(record) {
     var encoded = encodeURIComponent(record);
     try { win.webkit.messageHandlers.neutrino.postMessage(record); } catch (_) {}
@@ -38,37 +53,16 @@ function rawSend(record) {
 }
 
 /*
- * Everything below runs at the top of the page script, synchronously. There is
- * no setTimeout in front of it on purpose: a navigation attempted from a later
- * turn is one the guard has already had time to arm against, which is the
- * window this test is not about.
- */
-try {
-    var sheet = doc.createElement("link");
-    sheet.setAttribute("rel", "stylesheet");
-    sheet.setAttribute("href", STALL + ".css");
-    doc.head.appendChild(sheet);
-} catch (_) {}
-try {
-    var img = doc.createElement("img");
-    img.setAttribute("src", STALL + ".png");
-    doc.body.appendChild(img);
-} catch (_) {}
-
-try {
-    win.location.href = "https://neutrino-early-probe.invalid/";
-} catch (_) {}
-
-/*
  * Where this ends up is the whole result, and the title cannot carry it on its
  * own: when the navigation is allowed, the page that arrives is handed the same
  * API and sets the same title, so a title alone reads identically either way.
- * What separates them is which document is speaking. The host name never
- * resolves, so nothing leaves the machine whichever way it goes.
+ * What separates them is which document is speaking. The target is on loopback
+ * and is served by the workflow, so nothing leaves the machine whichever way it
+ * goes.
  */
 function report() {
     var here = String(win.location.href);
-    var escaped = here.indexOf("neutrino-early-probe.invalid") >= 0;
+    var escaped = here.indexOf(TARGET_MARK) >= 0;
     var text = "EARLY at=" + (escaped ? "escaped" : "held") +
         // Which channel this build wired, so the verifier can tell which
         // engine's guard it is asserting against rather than inferring it from
@@ -89,4 +83,37 @@ function report() {
     try { win.neutrino.window.setTitle(text); } catch (_) { rawSend("setTitle" + String.fromCharCode(31) + text); }
 }
 
-win.setTimeout(report, 6000);
+/*
+ * The engine reinjects this script into whatever document arrives, which is the
+ * hole under test -- so where the navigation was allowed, this runs again in
+ * the page that got here. It must not navigate again from there: the target
+ * answers now, so that would be a loop and no report would ever settle.
+ * Arriving is the result. Report it and stop.
+ */
+if (String(win.location.href).indexOf(TARGET_MARK) >= 0) {
+    win.setTimeout(report, 500);
+} else {
+    /*
+     * Everything below runs at the top of the page script, synchronously. There
+     * is no setTimeout in front of it on purpose: a navigation attempted from a
+     * later turn is one the guard has already had time to arm against, which is
+     * the window this test is not about.
+     */
+    try {
+        var sheet = doc.createElement("link");
+        sheet.setAttribute("rel", "stylesheet");
+        sheet.setAttribute("href", STALL + ".css");
+        doc.head.appendChild(sheet);
+    } catch (_) {}
+    try {
+        var img = doc.createElement("img");
+        img.setAttribute("src", STALL + ".png");
+        doc.body.appendChild(img);
+    } catch (_) {}
+
+    try {
+        win.location.href = TARGET;
+    } catch (_) {}
+
+    win.setTimeout(report, 6000);
+}
