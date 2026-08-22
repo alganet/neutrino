@@ -4,3 +4,9 @@
 /test/neutrinoattack
 /test/neutrinotight.cmd
 /test/neutrinotight
+/test/neutrinoprobe.cmd
+/test/neutrinoprobe
+/test/neutrinoprobe-early.cmd
+/test/neutrinoprobe-early
+/test/neutrinocommitted.cmd
+/test/neutrinocommitted

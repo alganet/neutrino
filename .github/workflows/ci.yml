@@ -48,11 +48,77 @@ jobs:
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
-          bash test/neutrinoattack.cmd &
+          bash test/neutrinoattack.cmd > ~/attack.log 2>&1 &
           TEST_EXIT=0
-          bash test/verify-attack.sh || TEST_EXIT=$?
+          bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
           pkill -f neutrinoattack 2>/dev/null || true
+          cat ~/attack-verify.log
+          bash test/annotate.sh gjs-attack ~/attack-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # PR 5 probing. Measurements, not assertions. Every step below reports
+      # through annotations and then exits 0 on purpose: a job log needs a
+      # token the machine reading these results does not have, so an exit code
+      # with nothing attached to it costs a whole round trip and measures
+      # nothing.
+      - name: probe - what the gjs view answers, and when the page script runs
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinoprobe.js test/neutrinoprobe.cmd
+          bash test/neutrinoprobe.cmd > ~/probe.log 2>&1 &
+          sleep 30
+          wid=$(xdotool search --name "^PROBE " 2>/dev/null | head -1) || true
+          if [ -n "$wid" ]; then
+            xdotool getwindowname "$wid" >> ~/probe.log
+          else
+            echo "no PROBE window: nothing rendered, so an empty trace means nothing" >> ~/probe.log
+          fi
+          pkill -f neutrinoprobe 2>/dev/null || true
+          bash test/annotate.sh gjs-probe ~/probe.log 'probe5|PROBE |no PROBE'
+          exit 0
+      - name: probe - a navigation from the top of the page script (gjs)
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinoprobe-early.js test/neutrinoprobe-early.cmd
+          bash test/neutrinoprobe-early.cmd > ~/probe-early.log 2>&1 &
+          sleep 30
+          wid=$(xdotool search --name "^PROBE-EARLY" 2>/dev/null | head -1) || true
+          if [ -n "$wid" ]; then
+            xdotool getwindowname "$wid" >> ~/probe-early.log
+          else
+            echo "no PROBE-EARLY window: the document did not survive its own navigation" >> ~/probe-early.log
+          fi
+          pkill -f neutrinoprobe-early 2>/dev/null || true
+          bash test/annotate.sh gjs-probe-early ~/probe-early.log 'probe5|PROBE-EARLY|no PROBE-EARLY'
+          exit 0
+      # The candidate change tried, rather than reasoned about. Arming the
+      # guard at COMMITTED puts it live during the app's own initial load, and
+      # if isOwnDocument does not recognise the uri the engine gives that load
+      # the app locks itself out of its own document. That failure is a blank
+      # window and not an error, so the real test app and its verifier are what
+      # can tell it apart from a pass.
+      - name: probe - arm the gjs guard at COMMITTED and run the real test app
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          cp webview.cmd /tmp/webview.cmd.orig
+          n=$(grep -c 'WebKit2\.LoadEvent\.FINISHED' webview.cmd || true)
+          echo "probe5 trial: comparisons to rewrite=$n (want 1)" >> ~/committed.log
+          sed -i 's/WebKit2\.LoadEvent\.FINISHED/WebKit2.LoadEvent.COMMITTED/' webview.cmd
+          bash build.sh --tier=testing test/neutrinotest.js test/neutrinocommitted.cmd
+          cp /tmp/webview.cmd.orig webview.cmd
+          bash test/neutrinocommitted.cmd >> ~/committed.log 2>&1 &
+          APP_PID=$!
+          bash test/verify-linux.sh ~/committed-shots > ~/committed-verify.log 2>&1 || true
+          kill "$APP_PID" 2>/dev/null || true
+          pkill -f neutrinocommitted 2>/dev/null || true
+          grep -aE 'PASS|FAIL|TIMEOUT|Results' ~/committed-verify.log | sed 's/^/probe5 trial /' >> ~/committed.log || true
+          bash test/annotate.sh gjs-committed-trial ~/committed.log 'probe5'
+          exit 0
       - name: netinstall suite
         timeout-minutes: 35
         run: |
@@ -114,11 +180,57 @@ jobs:
           export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
-          bash test/neutrinoattack.cmd &
+          bash test/neutrinoattack.cmd > ~/attack.log 2>&1 &
           TEST_EXIT=0
-          bash test/verify-attack.sh || TEST_EXIT=$?
+          bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
           pkill -f neutrinoattack 2>/dev/null || true
+          cat ~/attack-verify.log
+          bash test/annotate.sh kde-attack ~/attack-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # PR 5 probing on the Qt driver. Same terms as the gjs lane: annotations,
+      # then exit 0, because the results have to be readable without a token.
+      - name: probe - what the Qt view answers, and when the page script runs
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          bash build.sh --tier=testing test/neutrinoprobe.js test/neutrinoprobe.cmd
+          bash test/neutrinoprobe.cmd > ~/probe.log 2>&1 &
+          sleep 40
+          wid=$(xdotool search --name "^PROBE " 2>/dev/null | head -1) || true
+          if [ -n "$wid" ]; then
+            xdotool getwindowname "$wid" >> ~/probe.log
+          else
+            echo "no PROBE window: nothing rendered, so an empty trace means nothing" >> ~/probe.log
+          fi
+          pkill -f neutrinoprobe 2>/dev/null || true
+          bash test/annotate.sh kde-probe ~/probe.log 'probe5|PROBE |no PROBE'
+          exit 0
+      - name: probe - a navigation from the top of the page script (Qt)
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          bash build.sh --tier=testing test/neutrinoprobe-early.js test/neutrinoprobe-early.cmd
+          bash test/neutrinoprobe-early.cmd > ~/probe-early.log 2>&1 &
+          sleep 40
+          wid=$(xdotool search --name "^PROBE-EARLY" 2>/dev/null | head -1) || true
+          if [ -n "$wid" ]; then
+            xdotool getwindowname "$wid" >> ~/probe-early.log
+          else
+            echo "no PROBE-EARLY window: the document did not survive its own navigation" >> ~/probe-early.log
+          fi
+          pkill -f neutrinoprobe-early 2>/dev/null || true
+          bash test/annotate.sh kde-probe-early ~/probe-early.log 'probe5|PROBE-EARLY|no PROBE-EARLY'
+          exit 0
       - name: netinstall suite
         timeout-minutes: 35
         run: |
@@ -169,9 +281,15 @@ jobs:
         shell: pwsh
         run: |
           .\test\neutrinoattack.cmd
-          & .\test\verify-attack.ps1
+          & .\test\verify-attack.ps1 *>&1 | Tee-Object -FilePath "$HOME\attack-verify.log"
           $testExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "ATTACK *" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          # PR 5 probing. This lane changes nothing, but it reports the new
+          # postnav field like every other, and a field nobody can read is not
+          # a measurement. The job log needs a token; annotations do not.
+          Select-String -Path "$HOME\attack-verify.log" -Pattern 'report:|FAIL:' |
+            Select-Object -First 8 |
+            ForEach-Object { Write-Host "::warning title=windows-attack::$($_.Line.Trim())" }
           exit $testExit
       - name: netinstall suite
         timeout-minutes: 20
@@ -220,11 +338,31 @@ jobs:
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/neutrinoattack.cmd > ~/neutrino-attack.log 2>&1 &
           TEST_EXIT=0
-          bash test/verify-attack.sh || TEST_EXIT=$?
+          bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
           pkill -f neutrinoattack 2>/dev/null || true
+          cat ~/attack-verify.log
           echo "=== app output ==="
           cat ~/neutrino-attack.log || true
+          bash test/annotate.sh macos-attack ~/attack-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # PR 5 probing. This driver is the only one that already checks who sent
+      # a message, and the check PR 5 proposes for all three is a generalised
+      # half of it -- so what this view answers is the reference the other two
+      # are being compared against.
+      - name: probe - what the macOS view answers at message time
+        run: |
+          bash build.sh --tier=testing test/neutrinoprobe.js test/neutrinoprobe.cmd
+          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+          bash test/neutrinoprobe.cmd > ~/probe.log 2>&1 &
+          sleep 30
+          pkill -f neutrinoprobe 2>/dev/null || true
+          if [ -f "${TMPDIR:-/tmp}/neutrino-title.txt" ]; then
+            sed -n '1p' "${TMPDIR:-/tmp}/neutrino-title.txt" >> ~/probe.log
+          else
+            echo "no PROBE title: nothing rendered, so an empty trace means nothing" >> ~/probe.log
+          fi
+          bash test/annotate.sh macos-probe ~/probe.log 'probe5|PROBE |no PROBE'
+          exit 0
       - name: netinstall suite
         timeout-minutes: 20
         run: |

@@ -197,6 +197,12 @@ Window {
         property bool documentLoaded: false
         property bool contentLoaded: false
         onLoadingChanged: function(info) {
+            // PR 5 probing, testing tier only. Qt's guard is already
+            // commit-time by construction, so what is being read here is the
+            // other half: what view.url answers, and when.
+            Neutrino.NeutrinoWebview.trace("probe5 qt load status=" + info.status +
+                " url=" + Neutrino.NeutrinoWebview.probeClip(view.url) +
+                " loaded=" + view.contentLoaded)
             if (info.status === WebEngineView.LoadSucceededStatus) {
                 if (!preloadInjected) {
                     preloadInjected = true
@@ -218,6 +224,14 @@ Window {
                 console.warn("neutrino page: " + message + " (" + sourceID + ":" + lineNumber + ")")
                 return
             }
+            // PR 5 probing. Qt routes any __NEUTRINO__ console message from
+            // any document, so the url recorded beside each one is what a
+            // sender check would have had to work with.
+            Neutrino.NeutrinoWebview.trace("probe5 qt msg url=" +
+                Neutrino.NeutrinoWebview.probeClip(view.url) +
+                " loaded=" + view.contentLoaded + " body=" +
+                decodeURIComponent(String(message).substring(12))
+                    .split(String.fromCharCode(31)).join("/"))
             Neutrino.NeutrinoWebview.routeQmlMessage(
                 decodeURIComponent(String(message).substring(12))
             )
@@ -231,6 +245,13 @@ Window {
         // platform keeps inventing.
         onNavigationRequested: function(request) {
             var target = String(request.url)
+            // PR 5 probing. The decision this build already makes, recorded
+            // before it is acted on, so a navigation that replaces the document
+            // still leaves its answer behind.
+            Neutrino.NeutrinoWebview.trace("probe5 qt nav target=" +
+                Neutrino.NeutrinoWebview.probeClip(target) + " own=" +
+                Neutrino.NeutrinoWebview.isOwnDocument(target) +
+                " loaded=" + view.contentLoaded)
             if (Neutrino.NeutrinoWebview.isOwnDocument(target)) {
                 return
             }
@@ -733,6 +754,14 @@ exit $?;:<<'//</script></head><body></body>' #-->
                                             return;
                                         }
                                         self.trace("message handler fired");
+                                        // PR 5 probing: the same question the
+                                        // other two drivers are asked, so the
+                                        // three answers can be compared before
+                                        // one check is written for all of them.
+                                        self.trace("probe5 mac msg uri=" +
+                                            self.probeViewUri(ObjCRef, webViewRef) +
+                                            " body=" + String(ObjCRef.unwrap(message.body))
+                                                .split(String.fromCharCode(31)).join("/"));
                                         if (!self.isTrustedMacSender(ObjCRef, message, webViewRef)) {
                                             return;
                                         }
@@ -1003,10 +1032,39 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 },
                 createWebView: function () {
                     var ucm = new WebKit2.UserContentManager();
+
+                    /*
+                     * PR 5 probing, testing tier only, and nothing here decides
+                     * anything: what the trace records is what this build
+                     * already did.
+                     *
+                     * The proposed sender check asks the view what it is
+                     * currently showing before trusting a message, and that
+                     * string is not the same on every engine -- this driver
+                     * loads with a null base url, the macOS one loads with a
+                     * file: base, and QtWebEngine navigates to a data: url to
+                     * hand the document over. An origin rule that refuses any
+                     * of those refuses the app's own messages, and the failure
+                     * is a window that comes up and does nothing. So it is read
+                     * off the engine first.
+                     */
+                    var probeLoad = "none";
+                    var probeUri = function () {
+                        try {
+                            return self.probeClip(wv.get_uri());
+                        } catch (e) {
+                            return "<unreadable: " + e + ">";
+                        }
+                    };
+
                     if (messageCallback) {
                         ucm.register_script_message_handler("neutrino");
                         ucm.connect("script-message-received::neutrino", function (_, result) {
-                            messageCallback(result.get_js_value().to_string());
+                            var body = result.get_js_value().to_string();
+                            self.trace("probe5 gjs msg load=" + probeLoad +
+                                " uri=" + probeUri() + " body=" +
+                                String(body).split(String.fromCharCode(31)).join("/"));
+                            messageCallback(body);
                         });
                     }
 
@@ -1034,6 +1092,8 @@ exit $?;:<<'//</script></head><body></body>' #-->
 
                     var wv = new WebKit2.WebView({ user_content_manager: ucm });
                     wv.connect("load-changed", function (_, loadEvent) {
+                        probeLoad = self.probeLoadEventName(WebKit2, loadEvent);
+                        self.trace("probe5 gjs load=" + probeLoad + " uri=" + probeUri());
                         if (loadEvent === WebKit2.LoadEvent.FINISHED) {
                             documentLoaded = true;
                         }
@@ -1076,7 +1136,15 @@ exit $?;:<<'//</script></head><body></body>' #-->
                         // means an engine that spells the initial load
                         // differently cannot lock the app out of its own
                         // document.
-                        if (!documentLoaded || self.isOwnDocument(uri)) {
+                        var allowed = !documentLoaded || self.isOwnDocument(uri);
+                        // PR 5 probing. The decision this build already makes,
+                        // with the state it made it in -- so a navigation that
+                        // destroys the document that provoked it still leaves
+                        // its answer behind.
+                        self.trace("probe5 gjs policy uri=" + uri +
+                            " load=" + probeLoad + " armed=" + documentLoaded +
+                            " decision=" + (allowed ? "ALLOW" : "REFUSE"));
+                        if (allowed) {
                             return false;
                         }
                         decision.ignore();
@@ -1291,6 +1359,21 @@ exit $?;:<<'//</script></head><body></body>' #-->
             return h === "" && (s === "" || s === "file");
         },
 
+        // PR 5 probing. Deliberately reports the whole url rather than the
+        // scheme isTrustedMacSender reads, because what a file: base actually
+        // produces here is the thing being measured.
+        probeViewUri: function (ObjCRef, webView) {
+            try {
+                var current = webView.URL;
+                if (!current) {
+                    return "<null>";
+                }
+                return this.probeClip(ObjCRef.unwrap(current.absoluteString));
+            } catch (e) {
+                return "<unreadable: " + e + ">";
+            }
+        },
+
         isTrustedMacSender: function (ObjCRef, message, webView) {
             // What the view is showing, independent of what the message claims.
             // Fails open on a bridge that will not answer, for the same reason
@@ -1399,6 +1482,44 @@ exit $?;:<<'//</script></head><body></body>' #-->
             }
 
             return null;
+        },
+
+        /*
+         * PR 5 probing. A url can be a whole document -- QtWebEngine hands
+         * this file's markup to the view as a data: url -- and an annotation
+         * carrying one crowds out every other line in the same step. What is
+         * being read off these is the scheme and the shape, so the tail is not
+         * worth the room, and saying it was clipped is worth more than the
+         * bytes that were dropped.
+         */
+        probeClip: function (value) {
+            var text = String(value == null ? "" : value);
+            if (text.length <= 140) {
+                return text;
+            }
+            return text.substring(0, 140) + "...[+" + (text.length - 140) + "]";
+        },
+
+        /*
+         * PR 5 probing. Named rather than numbered, because the ordering of
+         * these against the page script is the measurement and a bare integer
+         * in a trace is one more thing to go and look up.
+         *
+         * The last of the four is reached by falling off the end on purpose.
+         * The probing round rewrites the gjs driver's single comparison
+         * against that constant to COMMITTED, to try the candidate change
+         * against the real test app; naming the constant a second time here
+         * would rewrite this table with it and rename the event it reports.
+         */
+        probeLoadEventName: function (WebKit2, loadEvent) {
+            try {
+                var events = WebKit2.LoadEvent;
+                if (loadEvent === events.STARTED) return "STARTED";
+                if (loadEvent === events.REDIRECTED) return "REDIRECTED";
+                if (loadEvent === events.COMMITTED) return "COMMITTED";
+            } catch (_) {}
+            return ["STARTED", "REDIRECTED", "COMMITTED", "FINISHED"][loadEvent] ||
+                String(loadEvent);
         },
 
         buildPreloadScript: function (transport, name) {

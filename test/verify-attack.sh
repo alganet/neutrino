@@ -101,7 +101,10 @@ fi
 
 echo "  report: $TITLE"
 
-field() { echo "$TITLE" | sed -n "s/.*$1=\([A-Za-z]*\).*/\1/p"; }
+# Anchored on the space that separates one field from the next. Without it
+# "nav" also matches the tail of "postnav", and the two are different
+# answers to different questions.
+field() { echo "$TITLE" | sed -n "s/.* $1=\([A-Za-z]*\).*/\1/p"; }
 
 assert() {
     local name="$1" expected="$2" actual="$3"
@@ -150,6 +153,13 @@ else
     echo "  NOTE: data: navigation was permitted; the document that arrived"
     echo "        could not drive the window, so it is contained and not closed"
 fi
+
+# PR 5's before-state, recorded and not asserted. Where the navigation was
+# refused this document is still the app's own, so a well-formed record from it
+# being obeyed is the expected reading and not an escape; where it was not
+# refused, the same answer is the whole finding. Which of those each engine is
+# doing is what the probing round is for.
+echo "  NOTE: postnav = $(field postnav)"
 
 echo "=== Results: $FAILURES failure(s) ==="
 [ "$FAILURES" -eq 0 ]

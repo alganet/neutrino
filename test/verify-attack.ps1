@@ -75,7 +75,11 @@ if (-not $title) {
 Write-Host "  report: $title"
 
 function Get-Field($name) {
-    if ($title -match "$name=([A-Za-z]+)") { return $Matches[1] }
+    # Anchored on the space that separates one field from the next.
+    # -match takes the leftmost match, so an unanchored "nav" reads the
+    # tail of "postnav" instead -- a different question whose answer is
+    # the same often enough to go unnoticed.
+    if ($title -match " $name=([A-Za-z]+)") { return $Matches[1] }
     return "MISSING"
 }
 
@@ -128,6 +132,11 @@ if ((Get-Field "navdata") -eq "REFUSED") {
     Write-Host "  NOTE: data: navigation was permitted; the document that arrived"
     Write-Host "        could not drive the window, so it is contained not closed"
 }
+
+# PR 5's before-state, recorded and not asserted. There is no navigation
+# refusal on this platform, so what this reads is whether the document that
+# answered afterwards was still the app's own.
+Write-Host "  NOTE: postnav = $(Get-Field 'postnav')"
 
 Write-Host "=== Results: $Failures failure(s) ==="
 if ($Failures -gt 0) { exit 1 }
