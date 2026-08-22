@@ -132,6 +132,49 @@ for (var o = 0; o < origins.length; o++) {
        N.isTrustedOrigin(origins[o][0], origins[o][1]), origins[o][2]);
 }
 
+console.log("a message is judged by the document the view is showing");
+// trustedView is state, so each case starts from nothing rather than from
+// whatever the case above it left behind.
+function withView(uri) {
+    N.trustedView = null;
+    if (uri !== undefined) N.rememberTrustedView(uri);
+    return N;
+}
+eq("nothing committed yet fails open",
+   withView().isTrustedView("https://example.com/"), true);
+eq("the remembered document is trusted",
+   withView("about:blank").isTrustedView("about:blank"), true);
+// The half that would have muted working apps: hash routing changes the uri
+// every engine here reports, and it navigates nowhere.
+eq("a fragment on the remembered document is trusted",
+   withView("about:blank").isTrustedView("about:blank#route/2"), true);
+eq("the document was remembered without its fragment",
+   withView("about:blank#one").isTrustedView("about:blank#two"), true);
+eq("a remote origin is refused",
+   withView("about:blank").isTrustedView("https://example.com/"), false);
+// Qt hands the document over as a data: url, so the whole url is the identity
+// and a different data: document is a different document.
+eq("the data: document the view was given is trusted",
+   withView("data:text/html,neutrino").isTrustedView("data:text/html,neutrino"), true);
+eq("another data: document is not",
+   withView("data:text/html,neutrino").isTrustedView("data:text/html,evil"), false);
+// Stricter than the macOS origin rule it joins, which admits any file: url.
+eq("another local document is refused",
+   withView("file:///app/").isTrustedView("file:///app/other.html"), false);
+var remembered = withView("about:blank");
+remembered.rememberTrustedView("https://example.com/");
+eq("the first document remembered is the only one",
+   remembered.isTrustedView("about:blank"), true);
+N.trustedView = null;
+
+console.log("a fragment is not a navigation away from the document");
+eq("about:blank", N.isOwnDocument("about:blank"), true);
+eq("about:blank with a fragment", N.isOwnDocument("about:blank#route"), true);
+eq("a bare fragment", N.isOwnDocument("#route"), true);
+eq("empty", N.isOwnDocument(""), true);
+eq("a remote origin with a fragment", N.isOwnDocument("https://example.com/#x"), false);
+eq("a fragment that only looks local", N.isOwnDocument("https://about:blank"), false);
+
 console.log("the preload the page receives is valid javascript");
 var vm = require("vm");
 var transports = [

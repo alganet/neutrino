@@ -200,6 +200,9 @@ Window {
             if (info.status === WebEngineView.LoadSucceededStatus) {
                 if (!preloadInjected) {
                     preloadInjected = true
+                    // Before the injection, not after: from the next line on
+                    // there is page script in this view that can send.
+                    Neutrino.NeutrinoWebview.rememberTrustedView(view.url)
                     // The API first, then the page's own code. Both are handed
                     // to the engine rather than carried by the document, which
                     // is what lets the document forbid script of its own.
@@ -216,6 +219,14 @@ Window {
                 // this every error the page reports goes nowhere and a broken
                 // document looks identical to a silent one.
                 console.warn("neutrino page: " + message + " (" + sourceID + ":" + lineNumber + ")")
+                return
+            }
+            // The sender check. Qt routes a console message from whatever
+            // document is loaded, and this is the only thing that asks which
+            // one that is.
+            if (!Neutrino.NeutrinoWebview.isTrustedView(view.url)) {
+                Neutrino.NeutrinoWebview.note(
+                    "refused a message from a document the view was not given")
                 return
             }
             Neutrino.NeutrinoWebview.routeQmlMessage(
@@ -1003,9 +1014,25 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 },
                 createWebView: function () {
                     var ucm = new WebKit2.UserContentManager();
+
                     if (messageCallback) {
                         ucm.register_script_message_handler("neutrino");
                         ucm.connect("script-message-received::neutrino", function (_, result) {
+                            // The sender check. This handler is registered on
+                            // the content manager, not on a document, so it
+                            // hears from whatever the view is showing -- which
+                            // is the question, and the one thing a message
+                            // cannot lie about.
+                            var showing = "";
+                            try {
+                                showing = String(wv.get_uri());
+                            } catch (_) {
+                                showing = "";
+                            }
+                            if (!self.isTrustedView(showing)) {
+                                self.note("refused a message from " + showing);
+                                return;
+                            }
                             messageCallback(result.get_js_value().to_string());
                         });
                     }
@@ -1033,9 +1060,32 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     inject(pendingPageScript, WebKit2.UserScriptInjectionTime.END);
 
                     var wv = new WebKit2.WebView({ user_content_manager: ucm });
+                    /*
+                     * COMMITTED, not FINISHED, and the difference is a hole.
+                     *
+                     * The author's script is injected at DOCUMENT_END, which
+                     * runs after the document is committed and before its load
+                     * has finished -- measured. A navigation started from there
+                     * used to be decided while documentLoaded was still false,
+                     * which is to say allowed. It looked closed on a document
+                     * with nothing to fetch, because WebKitGTK delivers a policy
+                     * decision on a later turn of the main loop and the load
+                     * finished first and armed the guard in between. That is a
+                     * race, and the page picks the winner: a stylesheet on a
+                     * socket that never answers holds the load open for as long
+                     * as it likes. Measured both ways -- allowed with the load
+                     * held, refused once this armed at commit instead.
+                     *
+                     * The document the view committed is remembered here for
+                     * the same reason: this is the load this file started, and
+                     * nothing the page does has run yet.
+                     */
                     wv.connect("load-changed", function (_, loadEvent) {
-                        if (loadEvent === WebKit2.LoadEvent.FINISHED) {
+                        if (loadEvent === WebKit2.LoadEvent.COMMITTED) {
                             documentLoaded = true;
+                            try {
+                                self.rememberTrustedView(wv.get_uri());
+                            } catch (_) {}
                         }
                     });
 
@@ -1070,12 +1120,13 @@ exit $?;:<<'//</script></head><body></body>' #-->
                         } catch (_) {
                             uri = "";
                         }
-                        // Until the first document has finished loading, the
-                        // only navigation in flight is the one this file
-                        // started. Keying on that rather than only on the url
-                        // means an engine that spells the initial load
-                        // differently cannot lock the app out of its own
-                        // document.
+                        // Until the first document is committed, the only
+                        // navigation in flight is the one this file started --
+                        // measured: its decision is taken before any load event
+                        // fires at all, so this is false when it matters.
+                        // Keying on that rather than only on the url means an
+                        // engine that spells the initial load differently
+                        // cannot lock the app out of its own document.
                         if (!documentLoaded || self.isOwnDocument(uri)) {
                             return false;
                         }
@@ -1239,25 +1290,67 @@ exit $?;:<<'//</script></head><body></body>' #-->
             }
         },
 
+        /*
+         * The fragment is not part of the answer. Setting location.hash is how
+         * a great many apps move between screens; it does not navigate
+         * anywhere, and every engine here reports it in the uri anyway --
+         * measured on all three. Without this the guard refuses a navigation
+         * that is going to happen regardless and says so in a note, which is a
+         * refusal that did not take place.
+         */
         isOwnDocument: function (url) {
-            var u = String(url == null ? "" : url);
+            var u = this.viewIdentity(url);
             return u === "" || u === "about:blank";
         },
 
         /*
-         * A note worth making in a release build is a refusal or a failure.
-         * Anything that is only interesting while working out why a lane is red
-         * belongs here instead, where a release build never says it.
+         * The document a message is allowed to come from, as the engine names
+         * it rather than as this file would guess.
+         *
+         * The three engines answer differently and an origin rule that fits one
+         * mutes the others: gjs reports about:blank for a document loaded from
+         * a string, QtWebEngine reports the whole data: url it navigated to in
+         * order to hand the document over, and the macOS driver reports the
+         * file: directory it was given as a base. All three measured. A check
+         * built on schemes admits only the last, and the other two get a window
+         * that comes up and then ignores its own app.
+         *
+         * What all three can answer is whether the view is still showing the
+         * document that arrived first. So that one is remembered and every
+         * later message is judged against it, which needs no per-engine table
+         * and no allowlist. On macOS it is stricter than the origin rule it
+         * joins rather than replaces: that one admits any file: document, which
+         * is the residual its own comment names.
          */
-        trace: function (message) {
-            if (this.hasTier("testing")) {
-                this.note(message);
+        trustedView: null,
+
+        viewIdentity: function (uri) {
+            var text = String(uri == null ? "" : uri);
+            var fragment = text.indexOf("#");
+            return fragment < 0 ? text : text.substring(0, fragment);
+        },
+
+        // The first one wins and only the first. A driver calls this where it
+        // knows the document is the one it loaded: at the load it started,
+        // before anything the page does has run.
+        rememberTrustedView: function (uri) {
+            if (this.trustedView === null) {
+                this.trustedView = this.viewIdentity(uri);
             }
         },
 
-        isOwnDocument: function (url) {
-            var u = String(url == null ? "" : url);
-            return u === "" || u === "about:blank";
+        /*
+         * Fails open on a view that has committed nothing yet, for the reason
+         * the macOS origin check gives for the same choice: refusing every
+         * message leaves a window that does nothing and says nothing about why,
+         * which is the least informative failure available. Once a document has
+         * been remembered there is nothing left to fail open about.
+         */
+        isTrustedView: function (uri) {
+            if (this.trustedView === null) {
+                return true;
+            }
+            return this.viewIdentity(uri) === this.trustedView;
         },
 
         /*
@@ -1303,6 +1396,22 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     if (!this.isTrustedOrigin(currentScheme, "")) {
                         this.note("refused a message from a document at " +
                             currentScheme + ":");
+                        return false;
+                    }
+                    /*
+                     * And the same document, not merely the same kind of one.
+                     *
+                     * Remembered on the first message rather than at a load
+                     * event, because this driver has no navigation delegate to
+                     * hang one on -- that is the next PR's business. It is
+                     * sound in the meantime: no script runs in this view until
+                     * a document is loaded, and the only document loaded before
+                     * any script runs is the one this file handed over.
+                     */
+                    var currentUrl = String(ObjCRef.unwrap(current.absoluteString) || "");
+                    this.rememberTrustedView(currentUrl);
+                    if (!this.isTrustedView(currentUrl)) {
+                        this.note("refused a message from " + currentUrl);
                         return false;
                     }
                 }

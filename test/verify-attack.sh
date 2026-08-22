@@ -101,7 +101,10 @@ fi
 
 echo "  report: $TITLE"
 
-field() { echo "$TITLE" | sed -n "s/.*$1=\([A-Za-z]*\).*/\1/p"; }
+# Anchored on the space that separates one field from the next. Without it
+# "nav" also matches the tail of "postnav", and the two are different
+# answers to different questions.
+field() { echo "$TITLE" | sed -n "s/.* $1=\([A-Za-z]*\).*/\1/p"; }
 
 assert() {
     local name="$1" expected="$2" actual="$3"
@@ -149,6 +152,21 @@ if [ "$NAVDATA" = "REFUSED" ]; then
 else
     echo "  NOTE: data: navigation was permitted; the document that arrived"
     echo "        could not drive the window, so it is contained and not closed"
+fi
+
+# A refusal that also broke the channel would look like a pass everywhere else
+# on this line, so what happens after one is asserted rather than assumed: the
+# navigation is refused, this document is therefore still the app's own, and a
+# well-formed record from it has to be obeyed. OBEYED is the right answer here
+# and REFUSED would be the app unable to drive its own window.
+#
+# Where the navigation is not refused, the document answering afterwards is not
+# the app's and the same OBEYED would be an escape -- so this is asserted only
+# where the refusal above was, and recorded where it was not.
+if [ "$EXPECT_NAV" = "REFUSED" ]; then
+    assert "the refusal left the channel working" "OBEYED" "$(field postnav)"
+else
+    echo "  NOTE: postnav = $(field postnav) (no navigation refusal on this platform)"
 fi
 
 echo "=== Results: $FAILURES failure(s) ==="

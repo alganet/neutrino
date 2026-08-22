@@ -48,10 +48,34 @@ jobs:
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
-          bash test/neutrinoattack.cmd &
+          bash test/neutrinoattack.cmd > ~/attack.log 2>&1 &
           TEST_EXIT=0
-          bash test/verify-attack.sh || TEST_EXIT=$?
+          bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
           pkill -f neutrinoattack 2>/dev/null || true
+          cat ~/attack-verify.log
+          bash test/annotate.sh gjs-attack ~/attack-verify.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # A page that navigates before its own load has finished. Built at the
+      # default tier for the same reason the attack app is: this lane is what
+      # says the shipped configuration holds, not a configuration assembled for
+      # the test. stall.py is what keeps the document's load pending, which is
+      # what puts the guard under test instead of a race -- the verifier
+      # asserts the document really was still loading, so a listener that did
+      # not come up is a failure and not a quiet pass.
+      - run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          python3 test/stall.py 8099 > ~/stall.log 2>&1 &
+          STALL_PID=$!
+          bash build.sh test/neutrinoearly.js test/neutrinoearly.cmd
+          bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
+          TEST_EXIT=0
+          bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
+          pkill -f neutrinoearly 2>/dev/null || true
+          kill "$STALL_PID" 2>/dev/null || true
+          cat ~/early-verify.log
+          bash test/annotate.sh gjs-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       - name: netinstall suite
         timeout-minutes: 35
@@ -114,10 +138,38 @@ jobs:
           export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
-          bash test/neutrinoattack.cmd &
+          bash test/neutrinoattack.cmd > ~/attack.log 2>&1 &
           TEST_EXIT=0
-          bash test/verify-attack.sh || TEST_EXIT=$?
+          bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
           pkill -f neutrinoattack 2>/dev/null || true
+          cat ~/attack-verify.log
+          bash test/annotate.sh kde-attack ~/attack-verify.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # A page that navigates before its own load has finished. Built at the
+      # default tier for the same reason the attack app is: this lane is what
+      # says the shipped configuration holds, not a configuration assembled for
+      # the test. stall.py is what keeps the document's load pending, which is
+      # what puts the guard under test instead of a race -- the verifier
+      # asserts the document really was still loading, so a listener that did
+      # not come up is a failure and not a quiet pass.
+      - run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          python3 test/stall.py 8099 > ~/stall.log 2>&1 &
+          STALL_PID=$!
+          bash build.sh test/neutrinoearly.js test/neutrinoearly.cmd
+          bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
+          TEST_EXIT=0
+          bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
+          pkill -f neutrinoearly 2>/dev/null || true
+          kill "$STALL_PID" 2>/dev/null || true
+          cat ~/early-verify.log
+          bash test/annotate.sh kde-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       - name: netinstall suite
         timeout-minutes: 35
@@ -169,9 +221,15 @@ jobs:
         shell: pwsh
         run: |
           .\test\neutrinoattack.cmd
-          & .\test\verify-attack.ps1
+          & .\test\verify-attack.ps1 *>&1 | Tee-Object -FilePath "$HOME\attack-verify.log"
           $testExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "ATTACK *" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          # PR 5 probing. This lane changes nothing, but it reports the new
+          # postnav field like every other, and a field nobody can read is not
+          # a measurement. The job log needs a token; annotations do not.
+          Select-String -Path "$HOME\attack-verify.log" -Pattern 'report:|FAIL:' |
+            Select-Object -First 8 |
+            ForEach-Object { Write-Host "::warning title=windows-attack::$($_.Line.Trim())" }
           exit $testExit
       - name: netinstall suite
         timeout-minutes: 20
@@ -220,10 +278,30 @@ jobs:
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/neutrinoattack.cmd > ~/neutrino-attack.log 2>&1 &
           TEST_EXIT=0
-          bash test/verify-attack.sh || TEST_EXIT=$?
+          bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
           pkill -f neutrinoattack 2>/dev/null || true
+          cat ~/attack-verify.log
           echo "=== app output ==="
           cat ~/neutrino-attack.log || true
+          bash test/annotate.sh macos-attack ~/attack-verify.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # Recorded here rather than asserted: this driver has no navigation
+      # delegate to arm at all, which is PR 6's business. The testing tier is
+      # what writes the status file the verifier reads.
+      - run: |
+          python3 test/stall.py 8099 > ~/stall.log 2>&1 &
+          STALL_PID=$!
+          bash build.sh --tier=testing test/neutrinoearly.js test/neutrinoearly.cmd
+          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+          bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
+          TEST_EXIT=0
+          bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
+          pkill -f neutrinoearly 2>/dev/null || true
+          kill "$STALL_PID" 2>/dev/null || true
+          cat ~/early-verify.log
+          echo "=== app output ==="
+          cat ~/early.log || true
+          bash test/annotate.sh macos-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       - name: netinstall suite
         timeout-minutes: 20
