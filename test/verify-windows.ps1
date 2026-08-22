@@ -118,6 +118,92 @@ Write-Host "=== Waiting for window ==="
 $proc = Wait-ForApp
 Take-Screenshot "00-initial"
 
+# The Windows driver downloads its engine assemblies and calls Assembly.LoadFrom
+# on them, so what landed in the package directory is code this app runs and is
+# part of what this verifier is for. Two things are asserted: every pinned member
+# is there and hashes to its pin, and *nothing else is there* -- the unpack used
+# to build its destination out of the name the archive supplied, which walked out
+# of this directory entirely.
+#
+# The pinned list is read out of the artifact under test rather than repeated
+# here, for the same reason parse.sh lifts the splitter: a copy can go stale and
+# still pass.
+function Assert-WebView2Package($artifact, $packageRoot) {
+    if (-not (Test-Path -LiteralPath $packageRoot)) {
+        Write-Host "  FAIL: no package directory at $packageRoot"
+        Write-Host "::warning title=windows-package::no package directory at $packageRoot"
+        $script:Failures++
+        return
+    }
+
+    $lines = Get-Content -LiteralPath $artifact
+    $start = -1; $stop = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($start -lt 0 -and $lines[$i] -eq '    var NeutrinoWebview = {') { $start = $i; continue }
+        if ($start -ge 0 -and $lines[$i] -eq '    };') { $stop = $i; break }
+    }
+    if ($start -lt 0 -or $stop -lt 0) {
+        Write-Host "  FAIL: could not lift the pinned member list out of $artifact"
+        Write-Host "::warning title=windows-package::could not lift the pinned member list"
+        $script:Failures++
+        return
+    }
+
+    $work = Join-Path $env:TEMP 'neutrino-package-assert'
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    ($lines[$start..$stop] + 'module.exports = NeutrinoWebview;') |
+        Set-Content -LiteralPath (Join-Path $work 'obj.js') -Encoding UTF8
+    'console.log(JSON.stringify(require("./obj.js").webView2Members));' |
+        Set-Content -LiteralPath (Join-Path $work 'members.js') -Encoding UTF8
+
+    Push-Location $work
+    $members = (& node members.js) | ConvertFrom-Json
+    Pop-Location
+
+    $expected = @{}
+    foreach ($m in $members) { $expected[$m.path.Replace('/', '\')] = $m.sha256 }
+
+    $onDisk = @{}
+    foreach ($f in @(Get-ChildItem -LiteralPath $packageRoot -Recurse -File)) {
+        $onDisk[$f.FullName.Substring($packageRoot.Length).TrimStart('\')] = $f.FullName
+    }
+
+    # A pin nobody checked would pass this whole function, so say how many were
+    # checked and fail on zero.
+    if ($expected.Count -eq 0) {
+        Write-Host "  FAIL: the artifact pins no package members at all"
+        Write-Host "::warning title=windows-package::the artifact pins no package members at all"
+        $script:Failures++
+        return
+    }
+
+    foreach ($rel in $expected.Keys) {
+        if (-not $onDisk.ContainsKey($rel)) {
+            Write-Host "  FAIL: pinned member missing from the package: $rel"
+            Write-Host "::warning title=windows-package::pinned member missing: $rel"
+            $script:Failures++
+            continue
+        }
+        $got = (Get-FileHash -LiteralPath $onDisk[$rel] -Algorithm SHA256).Hash.ToLower()
+        if ($got -ne $expected[$rel]) {
+            Write-Host "  FAIL: $rel hashes to $got, pinned as $($expected[$rel])"
+            Write-Host "::warning title=windows-package::$rel does not match its pin"
+            $script:Failures++
+        } else {
+            Write-Host "  PASS: $rel matches its pin"
+        }
+    }
+
+    foreach ($rel in $onDisk.Keys) {
+        if (-not $expected.ContainsKey($rel)) {
+            Write-Host "  FAIL: the unpack wrote something nothing pinned: $rel"
+            Write-Host "::warning title=windows-package::unpinned file in the package directory: $rel"
+            $script:Failures++
+        }
+    }
+    Write-Host "  PASS: the package directory holds the $($expected.Count) pinned members and nothing else"
+}
+
 Write-Host "=== Step 0: Ready ==="
 $proc = Wait-ForTitle "STEP0"
 Assert-Title $proc "STEP0"
@@ -143,6 +229,9 @@ Take-Screenshot "04-step3"
 Write-Host "=== Waiting for TESTS DONE ==="
 $proc = Wait-ForTitle "TESTS DONE"
 Take-Screenshot "05-done"
+
+Write-Host "=== WebView2 package: pinned, and nothing else unpacked ==="
+Assert-WebView2Package (Join-Path $PSScriptRoot "neutrinotest.cmd") (Join-Path $PSScriptRoot "neutrinotest\Microsoft.Web.WebView2")
 
 Write-Host ""
 Write-Host "=== Results: $Failures failure(s) ==="

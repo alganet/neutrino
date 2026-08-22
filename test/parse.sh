@@ -218,6 +218,114 @@ var before = sent.length;
 sandbox.window.neutrino.send("evalThis", { payload: "x" });
 eq("an action nobody implements never reaches the wire", sent.length, before);
 
+console.log("the webview2 package is pinned, and only what is pinned is unpacked");
+// This app downloads its Windows engine assemblies and loads them, so what it
+// fetches and what it writes are both part of the boundary. None of that needs
+// Windows to assert: the pin is data and the unpack command is a string this
+// object builds.
+var HEX64 = /^[0-9a-f]{64}$/;
+eq("the pinned version is a version", /^[0-9]+(\.[0-9]+)+$/.test(N.webView2PinnedVersion), true);
+eq("the archive digest is a sha-256", HEX64.test(N.webView2PinnedSha256), true);
+// The version and the url are two ways of saying the same thing, and a bump
+// that changes one and not the other fetches a package the digests do not
+// describe.
+eq("the url names the pinned version",
+   N.webView2PackageUrl().split(N.webView2PinnedVersion).length - 1, 2);
+eq("the url is the flat container", N.webView2PackageUrl().indexOf("https://api.nuget.org/v3-flatcontainer/") , 0);
+
+// The member paths are what become filesystem paths, so they are the thing that
+// has to be safe. The old code took that name from the archive instead, and a
+// backslash in it walked out of the package directory.
+eq("there are members to pin at all", N.webView2Members.length > 0, true);
+var seenMember = {};
+for (var mi = 0; mi < N.webView2Members.length; mi++) {
+    var mem = N.webView2Members[mi];
+    eq(mem.path + " has a sha-256", HEX64.test(mem.sha256), true);
+    eq(mem.path + " is a relative forward-slash path",
+       /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)+$/.test(mem.path) &&
+       mem.path.indexOf("..") < 0, true);
+    eq(mem.path + " is pinned once", seenMember[mem.path] === undefined, true);
+    seenMember[mem.path] = true;
+}
+
+// The unpack command, built by the object that ships rather than described.
+var psCaptured = null;
+var psSystem = {
+    Convert: { ToBase64String: function (b) { return b; } },
+    Text: { Encoding: { Unicode: { GetBytes: function (x) { return x; } } } },
+    Diagnostics: {
+        ProcessStartInfo: function () {},
+        Process: { Start: function (si) { psCaptured = si.Arguments; return { WaitForExit: function () {}, ExitCode: 0 }; } }
+    }
+};
+N.extractArchiveWithPowerShell(psSystem, "C:\\tmp\\p.zip", "C:\\app\\Microsoft.Web.WebView2");
+// The whole of the zip-slip fix: the name that becomes a path comes from the
+// list above and never from the archive. A command that reads FullName is one
+// that joins an attacker-supplied string onto a destination again.
+eq("the unpack never builds a path from an archive-supplied name",
+   psCaptured.indexOf("FullName") < 0, true);
+eq("the unpack asks the archive for names it already holds",
+   psCaptured.indexOf("$zip.GetEntry($name)") >= 0, true);
+eq("a member the package does not have is fatal",
+   psCaptured.indexOf("package is missing") >= 0, true);
+for (var pi = 0; pi < N.webView2Members.length; pi++) {
+    eq("the unpack asks for " + N.webView2Members[pi].path,
+       psCaptured.indexOf("'" + N.webView2Members[pi].path + "'") >= 0, true);
+}
+
+console.log("an extracted package is checked against the pin, not its filenames");
+function hexBytes(hex) {
+    var out = [];
+    for (var h = 0; h < hex.length; h += 2) { out.push(hex.substr(h, 2).toUpperCase()); }
+    return out;
+}
+function fakeSystem(files) {
+    return {
+        IO: {
+            Path: { Combine: function (a, b) { return a + "\\" + b; } },
+            File: {
+                Exists: function (p) { return Object.prototype.hasOwnProperty.call(files, p); },
+                OpenRead: function (p) {
+                    if (!Object.prototype.hasOwnProperty.call(files, p)) { throw new Error("no such file"); }
+                    return { path: p, Close: function () {} };
+                }
+            }
+        },
+        Security: { Cryptography: { SHA256: { Create: function () {
+            return { ComputeHash: function (stream) { return files[stream.path]; } };
+        } } } },
+        BitConverter: { ToString: function (bytes) { return bytes.join("-"); } }
+    };
+}
+var PKGROOT = "C:\\app\\Microsoft.Web.WebView2";
+function packageOnDisk(overrides) {
+    var files = {};
+    for (var k = 0; k < N.webView2Members.length; k++) {
+        var m = N.webView2Members[k];
+        var digest = (overrides && overrides[m.path]) || m.sha256;
+        files[PKGROOT + "\\" + m.path.replace(/\//g, "\\")] = hexBytes(digest);
+    }
+    return files;
+}
+var WRONG = "0000000000000000000000000000000000000000000000000000000000000000";
+// The control: the digests this object pins, formatted the way it formats them,
+// have to come back matching -- otherwise every case below refuses for the
+// wrong reason and the app re-downloads on every launch forever.
+eq("a package matching every pin is accepted",
+   N.firstBadWebView2Member(fakeSystem(packageOnDisk()), PKGROOT), null);
+var lastMember = N.webView2Members[N.webView2Members.length - 1];
+var swapped = {};
+swapped[lastMember.path] = WRONG;
+eq("one member with the wrong contents refuses the package",
+   N.firstBadWebView2Member(fakeSystem(packageOnDisk(swapped)), PKGROOT), lastMember.path);
+eq("a member that is not there refuses the package",
+   N.firstBadWebView2Member(fakeSystem({}), PKGROOT), N.webView2Members[0].path);
+// A file that cannot be read is not a file that passed.
+var unreadable = packageOnDisk();
+unreadable[PKGROOT + "\\" + lastMember.path.replace(/\//g, "\\")] = null;
+eq("a member that cannot be hashed refuses the package",
+   N.firstBadWebView2Member(fakeSystem(unreadable), PKGROOT), lastMember.path);
+
 console.log("the document carries a content policy");
 var fs = require("fs");
 var html = N.extractHtmlDocument(fs.readFileSync(process.argv[2], "utf8"));

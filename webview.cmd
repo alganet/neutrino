@@ -1900,7 +1900,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 return;
             }
 
-            var packageRoot = SystemRef.IO.Path.GetFullPath(SystemRef.IO.Path.Combine(webView2LibDir, "..", ".."));
+            var packageRoot = this.webView2PackageRootOf(SystemRef, webView2LibDir);
             var loaderPaths = "";
 
             var x86Loader = SystemRef.IO.Path.Combine(packageRoot, "runtimes", "win-x86", "native", "WebView2Loader.dll");
@@ -1935,25 +1935,125 @@ exit $?;:<<'//</script></head><body></body>' #-->
         },
 
         /*
-         * The package is ~45 MB unpacked and almost all of it is native build
-         * headers and import libs for C++ hosts. Only the managed assemblies
-         * and the loaders are ever used, so extract those and skip the rest.
-         * The pattern avoids backslashes so it survives being embedded here.
+         * The package this build was made against, named by version and by the
+         * digest of the archive that version resolves to. Both are checked --
+         * the version alone only says which name was asked for, and a name is
+         * not what gets loaded.
+         *
+         * netinstall names every artifact it fetches by SHA-256 and re-checks
+         * it on every launch. This fetch used to be "whatever nuget.org serves
+         * today", which made the one directory the launcher loads code from the
+         * only thing in the chain nobody was verifying.
+         *
+         * Bumping this means changing the version, the archive digest and every
+         * member digest together. They are asserted against each other, so
+         * changing one alone fails the build's own suite rather than silently
+         * accepting a package nobody looked at.
          */
-        webView2KeepPattern: "^(lib/net4[0-9]+/[^/]+[.]dll|runtimes/win-(x86|x64|arm64)/native/WebView2Loader[.]dll)$",
+        webView2PinnedVersion: "1.0.4129.50",
+        webView2PinnedSha256: "d3934f482d484b89fb4825df720c710664e1143a1e90f7b3a60794ef33f473d2",
+
+        /*
+         * Exactly what is taken out of the archive, and what each one has to
+         * hash to. The package is ~45 MB unpacked and almost all of it is
+         * native build headers and import libs for C++ hosts; these are the
+         * managed assemblies and the loaders, which is everything this app ever
+         * touches.
+         *
+         * This list replaces a regular expression, and that is the fix for the
+         * zip-slip rather than a better regular expression. The old form built
+         * a destination out of the name the archive supplied -- and `[^/]+`
+         * admits backslashes, so `lib/net462/..\..\..\..\x.dll` matched the
+         * pattern and named a file four directories above the one being
+         * extracted into. Measured, twice: it wrote out of the package
+         * directory and into the user's profile directory. Now the extractor
+         * asks the archive for names it already holds, and the name that
+         * becomes a path is one of these literals. There is no attacker-shaped
+         * string on that side of the join any more.
+         */
+        webView2Members: [
+            { path: "lib/net462/Microsoft.Web.WebView2.Core.dll",
+              sha256: "958efdb7f13a6d1f3079756c96956cc96cf713ae46fa085c8b1e7f44316a4f7e" },
+            { path: "lib/net462/Microsoft.Web.WebView2.WinForms.dll",
+              sha256: "a7b8be525030f19d9e88c6e684bca053dc7a3b080c31c3d9428f7438e7b6768f" },
+            { path: "lib/net462/Microsoft.Web.WebView2.Wpf.dll",
+              sha256: "217874fcb11722cf41a11c6d0483eab3f9d9c310d63486068f194614a7778a56" },
+            { path: "runtimes/win-arm64/native/WebView2Loader.dll",
+              sha256: "b0bfa03347a00169903c4ef0c27579dd9e85236a6dcd637a941d20b86eeec8fc" },
+            { path: "runtimes/win-x64/native/WebView2Loader.dll",
+              sha256: "a9a09232c25805323d4cfb3fc8f545a190a9c8a99c93262ea99d0b88df99ec90" },
+            { path: "runtimes/win-x86/native/WebView2Loader.dll",
+              sha256: "cbcd9a820b23aec9d68a95fb8cfd8c7d48e5bac1129faaf87aecabf4409a2ee2" }
+        ],
+
+        /*
+         * The flat container serves the archive at its final address with no
+         * redirect. The v2 API this used to call answers with the same bytes
+         * but by way of a CDN hop, and a pin has no use for an extra place to
+         * be wrong.
+         */
+        webView2PackageUrl: function () {
+            var v = this.webView2PinnedVersion;
+            return "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/" +
+                v + "/microsoft.web.webview2." + v + ".nupkg";
+        },
+
+        sha256Hex: function (SystemRef, path) {
+            var hasher = SystemRef.Security.Cryptography.SHA256.Create();
+            var stream = SystemRef.IO.File.OpenRead(path);
+            var digest;
+            try {
+                digest = hasher.ComputeHash(stream);
+            } finally {
+                stream.Close();
+            }
+            return String(SystemRef.BitConverter.ToString(digest)).replace(/-/g, "").toLowerCase();
+        },
+
+        /*
+         * Returns null when every pinned member is present and hashes to what
+         * it should, and the path of the first one that does not otherwise. An
+         * unreadable file is a failure and not an exception: the caller's answer
+         * to both is the same, which is to throw the directory away and fetch
+         * the package again.
+         */
+        firstBadWebView2Member: function (SystemRef, packageRoot) {
+            for (var i = 0; i < this.webView2Members.length; i++) {
+                var member = this.webView2Members[i];
+                var full = SystemRef.IO.Path.Combine(packageRoot, member.path.replace(/\//g, "\\"));
+                try {
+                    if (!SystemRef.IO.File.Exists(full)) {
+                        return member.path;
+                    }
+                    if (this.sha256Hex(SystemRef, full) !== member.sha256) {
+                        return member.path;
+                    }
+                } catch (_) {
+                    return member.path;
+                }
+            }
+            return null;
+        },
 
         extractArchiveWithPowerShell: function (SystemRef, archivePath, destinationPath) {
+            var wanted = [];
+            for (var i = 0; i < this.webView2Members.length; i++) {
+                wanted.push("'" + this.escapeForSingleQuotedPowerShell(this.webView2Members[i].path) + "'");
+            }
+
             var psCommand = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; " +
                 "Add-Type -AssemblyName System.IO.Compression.FileSystem; " +
                 "$src='" + this.escapeForSingleQuotedPowerShell(String(archivePath)) + "'; " +
                 "$dst='" + this.escapeForSingleQuotedPowerShell(String(destinationPath)) + "'; " +
-                "$keep='" + this.webView2KeepPattern + "'; " +
+                "$want=@(" + wanted.join(",") + "); " +
                 "$zip=[System.IO.Compression.ZipFile]::OpenRead($src); " +
-                "try { foreach ($e in $zip.Entries) { if ($e.FullName -match $keep) { " +
-                "$out=Join-Path $dst ($e.FullName.Replace([char]47,[char]92)); " +
+                "try { foreach ($name in $want) { " +
+                "$e=$zip.GetEntry($name); " +
+                "if ($e -eq $null) { throw ('package is missing ' + $name) }; " +
+                "$out=Join-Path $dst ($name.Replace([char]47,[char]92)); " +
                 "$dir=Split-Path -Parent $out; " +
                 "if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }; " +
-                "[System.IO.Compression.ZipFileExtensions]::ExtractToFile($e,$out,$true) } } } " +
+                "[System.IO.Compression.ZipFileExtensions]::ExtractToFile($e,$out,$true) } } " +
                 "finally { $zip.Dispose() }";
 
             var encodedCommand = SystemRef.Convert.ToBase64String(SystemRef.Text.Encoding.Unicode.GetBytes(psCommand));
@@ -1990,7 +2090,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 SystemRef.IO.Path.GetTempPath(),
                 "Microsoft.Web.WebView2." + SystemRef.Guid.NewGuid().ToString("N") + ".zip"
             );
-            var packageUrl = "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2";
+            var packageUrl = this.webView2PackageUrl();
 
             var progressForm = new SystemRef.Windows.Forms.Form();
             progressForm.Text = "Downloading WebView2 Runtime";
@@ -2088,6 +2188,21 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 if (totalBytes > 0) {
                     progressBar.Value = 100;
                 }
+                progressLabel.Text = "Verifying package...";
+                SystemRef.Windows.Forms.Application.DoEvents();
+
+                /*
+                 * Before anything is taken out of it, and before anything is
+                 * written where the app will later load code from. A mismatch
+                 * is fatal rather than a fallback: there is no weaker thing to
+                 * fall back to that is still this app.
+                 */
+                var digest = this.sha256Hex(SystemRef, tempPackagePath);
+                if (digest !== this.webView2PinnedSha256) {
+                    throw new Error("WebView2 package does not match its pin.\n\nexpected " +
+                        this.webView2PinnedSha256 + "\ngot      " + digest);
+                }
+
                 progressLabel.Text = "Extracting package...";
                 SystemRef.Windows.Forms.Application.DoEvents();
 
@@ -2123,9 +2238,29 @@ exit $?;:<<'//</script></head><body></body>' #-->
             }
         },
 
+        webView2PackageRootOf: function (SystemRef, libDir) {
+            return SystemRef.IO.Path.GetFullPath(SystemRef.IO.Path.Combine(libDir, "..", ".."));
+        },
+
+        /*
+         * The pin is re-checked on every launch and not only on download, which
+         * is netinstall's rule for the launcher and had no counterpart here.
+         * This used to return the first directory holding two files with the
+         * right names, so an app directory somebody had been in was reused
+         * without anything being looked at -- and what is in there is what
+         * Assembly.LoadFrom loads.
+         *
+         * A package that does not match is not an error on its own. It is what
+         * an older pin looks like after this file is updated, so the answer is
+         * to fetch the one this build names; downloadWebView2WithProgress
+         * deletes the directory before writing to it. It only becomes fatal
+         * when a freshly extracted package is still wrong, because then it is
+         * not staleness.
+         */
         ensureWebView2Package: function (SystemRef, appFolder) {
             var existingLibDir = this.findWebView2LibDir(SystemRef, appFolder);
-            if (existingLibDir) {
+            if (existingLibDir &&
+                !this.firstBadWebView2Member(SystemRef, this.webView2PackageRootOf(SystemRef, existingLibDir))) {
                 return existingLibDir;
             }
 
@@ -2139,6 +2274,11 @@ exit $?;:<<'//</script></head><body></body>' #-->
 
             if (!libDir) {
                 throw new Error("WebView2 package download completed but required assemblies were not found.");
+            }
+
+            var bad = this.firstBadWebView2Member(SystemRef, this.webView2PackageRootOf(SystemRef, libDir));
+            if (bad) {
+                throw new Error("WebView2 package member does not match its pin: " + bad);
             }
             return libDir;
         },
