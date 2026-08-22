@@ -20,6 +20,10 @@
 #include "netinstall.h"
 #include "sandbox.h"
 
+/* What the fetch child exits with when it will not run unconfined. Out of the
+ * way of curl's own exit codes, which go up to 99. */
+#define NT_FETCH_REFUSED 120
+
 /*
  * Release binaries refuse anything but https. The test build additionally
  * allows http so the suite can serve fixtures from loopback; this is compiled
@@ -166,6 +170,24 @@ int nt_fetch_command(const char *url, const char *dest, char *shown, size_t show
     return 0;
 }
 
+/*
+ * The forced-off hook exists only in test builds, so a release binary has no
+ * way to be talked out of confining the downloader -- the same door, on the
+ * same terms, that nt_apply_confine opens for the run phase.
+ */
+static int nt_fetch_confine(const char *home, char *desc, size_t desclen)
+{
+#ifdef NEUTRINO_TESTING
+    const char *off = getenv("NEUTRINO_TEST_NO_CONFINE");
+
+    if (off && *off == '1') {
+        snprintf(desc, desclen, "none (disabled for testing)");
+        return -1;
+    }
+#endif
+    return nt_confine(NT_PHASE_FETCH, home, NULL, 1, desc, desclen);
+}
+
 int nt_fetch(const char *url, const char *dest, const char *home,
              char *shown, size_t shownlen)
 {
@@ -182,7 +204,28 @@ int nt_fetch(const char *url, const char *dest, const char *home,
     }
 
 #ifdef _WIN32
-    (void)home;
+    /*
+     * Before the spawn rather than inside the child, because what this platform
+     * has to offer -- a job object and an adjusted token -- is inherited rather
+     * than applied per process. It stays in force for the run phase too, which
+     * creates a job of its own on top of it; nested jobs are fine from windows
+     * 8 and CI says so.
+     */
+    {
+        char desc[256];
+
+        if (nt_fetch_confine(home, desc, sizeof(desc)) != 0) {
+#ifdef NEUTRINO_STRICT_SANDBOX
+            fprintf(stderr, "netinstall: refusing to fetch unconfined: %s\n", desc);
+            return -2;
+#else
+            fprintf(stderr, "netinstall: warning: fetching unconfined: %s\n", desc);
+#endif
+        }
+#ifdef NEUTRINO_TESTING
+        fprintf(stderr, "netinstall: fetch confine: %s\n", desc);
+#endif
+    }
     return nt_win_spawn(bin, argv) == 0 ? 0 : -1;
 #else
     {
@@ -201,12 +244,36 @@ int nt_fetch(const char *url, const char *dest, const char *home,
             setrlimit(RLIMIT_CORE, &rl);
             /* curl needs stdio and nothing else the caller happened to leave open. */
             nt_close_inherited();
-            nt_confine(NT_PHASE_FETCH, home, NULL, 1, desc, sizeof(desc));
+            /*
+             * The answer was thrown away here for as long as this file has
+             * existed. The downloader is the one process that reads bytes an
+             * attacker chose, off the network, before anything has verified
+             * them -- a strict build that refuses to *run* unconfined and then
+             * fetches unconfined is not strict, it is late.
+             */
+            if (nt_fetch_confine(home, desc, sizeof(desc)) != 0) {
+#ifdef NEUTRINO_STRICT_SANDBOX
+                fprintf(stderr, "netinstall: refusing to fetch unconfined: %s\n",
+                        desc);
+                _exit(NT_FETCH_REFUSED);
+#else
+                fprintf(stderr, "netinstall: warning: fetching unconfined: %s\n",
+                        desc);
+#endif
+            }
+#ifdef NEUTRINO_TESTING
+            fprintf(stderr, "netinstall: fetch confine: %s\n", desc);
+#endif
             execv(bin, argv);
             _exit(127);
         }
         if (waitpid(pid, &status, 0) < 0) {
             return -1;
+        }
+        if (WIFEXITED(status) && WEXITSTATUS(status) == NT_FETCH_REFUSED) {
+            /* The child already said why, and said it precisely. A second,
+             * vaguer line about the url on top of that helps nobody. */
+            return -2;
         }
         return (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : -1;
     }

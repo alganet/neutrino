@@ -559,16 +559,90 @@ static int nt_session_flags(int hide, int net)
 }
 
 /*
+ * Probing only, and compiled out of a release binary. A half-closed session is
+ * what PR 10 is about and no runner produces one on its own: CI either refuses
+ * the namespace before anything is entered, or grants it and every step after
+ * it succeeds. This makes one named step fail on demand so the suite can see
+ * what the app is left holding, and whether a strict build launches into it.
+ */
+static int nt_session_forced_fail(const char *step)
+{
+#ifdef NEUTRINO_TESTING
+    const char *want = getenv("NEUTRINO_TEST_SESSION_FAIL");
+
+    return want && *want && strcmp(want, step) == 0;
+#else
+    (void)step;
+    return 0;
+#endif
+}
+
+/*
+ * What a step that fails after the namespace was granted does on the way out.
+ *
+ * Measured, and it is why this function exists rather than a bare return:
+ * unshare(CLONE_NEWPID) puts the caller's *children* in the new namespace
+ * without entering it, so an app launched from here forks exactly once. Its
+ * first child becomes pid 1 of a namespace nobody is reaping, and when that
+ * child exits the namespace dies and every later fork gets ENOMEM -- measured
+ * as "Cannot fork" from the payload's shell on both linux lanes. That is not a
+ * weaker sandbox someone might accept, it is a broken process, and it fails in
+ * a way indistinguishable from a bug in the app.
+ *
+ * So the step that decides whether the app can fork gets finished even when an
+ * earlier one did not, whatever the earlier one was -- including the uid map,
+ * where the process is left as the overflow uid and being able to fork is the
+ * least of what it lost, but is still better than not.
+ *
+ * Returns -2 when what is left is a real process in a weaker session, and -3
+ * when even this could not be done and the app would launch into the fork
+ * ceiling. The fork is retried, because the only way it fails here is a
+ * transient refusal to make a process at all.
+ */
+static const char *nt_session_step = "";
+
+static int nt_session_half(int hide, const char *step)
+{
+    int tries;
+
+    nt_session_step = step;
+    if (!hide) {
+        return -2;              /* no pid namespace was asked for */
+    }
+    for (tries = 0; tries < 3; tries++) {
+        if (nt_enter_pidns() == 0) {
+            return -2;
+        }
+    }
+    return -3;
+}
+
+/*
  * Returns 0 when the session was closed as asked, -1 when the namespace was
- * refused outright, and -2 when it was granted and something after it failed --
- * which is a different sentence in --info, because the app is then in a
- * half-built namespace rather than the one it started in. May not return at
- * all: see nt_enter_pidns.
+ * refused outright and nothing changed, -2 when it was granted and a later step
+ * failed but what is left is a working process, and -3 when what is left is
+ * not. A strict build refuses -2 and -1 alike -- less was applied than was
+ * asked for -- and nothing may launch into -3 at all. May not return at all:
+ * see nt_enter_pidns.
  */
 static int nt_close_session(int hide, int net)
 {
-    if (unshare(nt_session_flags(hide, net)) != 0 || nt_map_self() != 0) {
+    if (unshare(nt_session_flags(hide, net)) != 0) {
         return -1;
+    }
+    /*
+     * A different answer from the one above: there the namespace was refused
+     * and nothing changed, here it was granted and this process is now the
+     * overflow uid, with every file it owns unreadable to it. It still gets the
+     * pid namespace finished on the way out, for the fork reason -- an app that
+     * is nobody is in trouble, but an app that is nobody *and* cannot fork is
+     * in trouble for two reasons and only reports one.
+     *
+     * Short-circuited on purpose: the state worth looking at is the one where
+     * the map was never written, not one where it was and we pretend.
+     */
+    if (nt_session_forced_fail("map") || nt_map_self() != 0) {
+        return nt_session_half(hide, "uid map");
     }
     if (net) {
         nt_loopback_up();
@@ -579,10 +653,10 @@ static int nt_close_session(int hide, int net)
     /* Or every cover below propagates back out into the session that started
      * us, and hides the bus from the whole desktop. */
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
-        return -2;
+        return nt_session_half(hide, "private mounts");
     }
-    if (nt_seal_runtime() != 0) {
-        return -2;
+    if (nt_session_forced_fail("seal") || nt_seal_runtime() != 0) {
+        return nt_session_half(hide, "runtime seal");
     }
     /* The system bus is not in the runtime dir, and the seal does not reach
      * it. polkit and systemd are on the other end of it. */
@@ -599,7 +673,17 @@ static int nt_close_session(int hide, int net)
         mount("none", "/tmp/.X11-unix", "tmpfs",
               MS_RDONLY | MS_NOSUID | MS_NODEV, "mode=0755");
     }
-    return nt_enter_pidns() == 0 ? 0 : -2;
+    if (nt_session_forced_fail("pid") || nt_enter_pidns() != 0) {
+        /*
+         * The one failure with nothing left to try: this *is* the step
+         * nt_session_half exists to finish. What is left cannot fork twice, so
+         * it is not a launch anyone should make.
+         */
+        nt_session_step = "pid namespace";
+        return -3;
+    }
+    return 0;
+
 }
 
 #ifdef NEUTRINO_CONFINE_NOSESSION
@@ -710,7 +794,7 @@ static const char *nt_session_unavailable(int hide, const char *why)
 }
 
 static const char *nt_apply_session(int enforce, int *net_closed, int *x11,
-                                   const char *appdir)
+                                   int *incomplete, int *unfit, const char *appdir)
 {
     char why[64];
     int hide = 0;
@@ -773,9 +857,25 @@ static const char *nt_apply_session(int enforce, int *net_closed, int *x11,
         *net_closed = net;
         return hide ? "session closed" : "";
     case -2:
-        return hide ? "session half closed (namespace granted, sealing failed)" : "";
+        /*
+         * Reported whether or not the tier hides anything: an offline build
+         * that got its network namespace and nothing else still applied less
+         * than it said it would.
+         */
+        *incomplete = 1;
+        snprintf(nt_session_desc, sizeof(nt_session_desc),
+                 "session partly closed (%s failed)", nt_session_step);
+        return nt_session_desc;
+
+    case -3:
+        *incomplete = 1;
+        *unfit = 1;
+        snprintf(nt_session_desc, sizeof(nt_session_desc),
+                 "session broken (%s failed, and could not be finished)",
+                 nt_session_step);
+        return nt_session_desc;
     default:
-        return hide ? "session open (namespace refused after it was granted)" : "";
+        return hide ? "session open (namespace refused)" : "";
     }
 }
 
@@ -1005,6 +1105,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     const char *secc;
     int net_closed = 0;
     int x11_untrusted = 0;
+    int session_incomplete = 0;
+    int session_unfit = 0;
     int abi, ruleset;
 
     /*
@@ -1031,12 +1133,17 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
      * business with the session either way.
      */
     if (phase == NT_PHASE_RUN) {
-        session = nt_apply_session(enforce, &net_closed, &x11_untrusted, appdir);
+        session = nt_apply_session(enforce, &net_closed, &x11_untrusted,
+                                   &session_incomplete, &session_unfit, appdir);
     }
 #endif
 
     (void)net_closed;       /* only read by the offline tier */
     (void)x11_untrusted;    /* only set by the session tier */
+#ifndef NT_USE_NAMESPACES
+    (void)session_incomplete;
+    (void)session_unfit;
+#endif
     abi = nt_ll_create(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION);
     if (abi < 1) {
         /*
@@ -1241,13 +1348,24 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         return 0;
     }
 
+
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 || nt_ll_restrict(ruleset) != 0) {
         close(ruleset);
         snprintf(desc, desclen, "none (landlock enforcement failed)%s", secc);
         return -1;
     }
     close(ruleset);
-    return 0;
+    /*
+     * Landlock is on and the description above is accurate, so this is not
+     * "unconfined" -- but the session tier applied less than it was asked for,
+     * and a caller that cannot tell the two apart cannot refuse one and accept
+     * the other. -3 is the narrower case still: not merely less confinement,
+     * but a process no build should launch an app into.
+     */
+    if (session_unfit) {
+        return -3;
+    }
+    return session_incomplete ? -2 : 0;
 }
 
 #endif

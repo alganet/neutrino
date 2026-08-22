@@ -191,13 +191,23 @@ static const char nt_profile[] =
     "  (subpath (param \"MAIL\"))\n"
     "  (subpath (param \"SAFARI\")))\n";
 
+/*
+ * The per-user temp dir is deliberately *not* writable here, unlike in the run
+ * profile above. The downloader writes one file, into the directory named by
+ * APPDIR, and measured on CI it needs nothing else: with this allow removed the
+ * fetch still succeeds and the child can no longer write anywhere under
+ * /private/var/folders. Leaving it in made "writes confined to <blobs>" a false
+ * sentence, which matters now that --info prints it.
+ *
+ * The exec denial keeps that subpath, because it costs nothing and w^x is not
+ * what was being narrowed.
+ */
 static const char nt_fetch_profile[] =
     "(version 1)\n"
     "(allow default)\n"
     "(deny file-write*)\n"
     "(allow file-write*\n"
     "  (subpath (param \"APPDIR\"))\n"
-    "  (subpath \"/private/var/folders\")\n"
     "  (regex #\"^/dev/(null|zero|random|urandom|tty)$\"))\n"
     "(deny process-exec*\n"
     "  (subpath (param \"APPDIR\"))\n"
