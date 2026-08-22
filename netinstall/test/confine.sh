@@ -420,6 +420,7 @@ else echo "PROCSELF_SKIP"; fi
 if [ "$(uname -s)" = "Darwin" ] && [ -n "${NEUTRINO_TEST_LSD_TAG:-}" ]; then
     drop_cmd="$NEUTRINO_TEST_FAKEHOME/lsd-command-$NEUTRINO_TEST_LSD_TAG"
     drop_app="$NEUTRINO_TEST_FAKEHOME/lsd-app-$NEUTRINO_TEST_LSD_TAG"
+    drop_ws="$NEUTRINO_TEST_FAKEHOME/lsd-ws-$NEUTRINO_TEST_LSD_TAG"
     printf '#!/bin/sh\n/usr/bin/touch "%s"\n' "$drop_cmd" > "$XDG_DATA_HOME/evil.command" 2>/dev/null
     chmod +x "$XDG_DATA_HOME/evil.command" 2>/dev/null
     # Which door /usr/bin/open ends up using depends on this. With Terminal
@@ -445,14 +446,38 @@ if [ "$(uname -s)" = "Darwin" ] && [ -n "${NEUTRINO_TEST_LSD_TAG:-}" ]; then
 PLIST
     /usr/bin/open "$XDG_DATA_HOME/Evil.app" >/dev/null 2>&1
     echo "LSD_APP_RC=$?"
+    # The third door, and the one an app actually has. /usr/bin/open is a
+    # convenience the payload could be denied outright; NSWorkspace.openURL is
+    # the same request made from inside any process that can reach AppKit,
+    # which under netinstall is arbitrary sh with osascript on it. A denial
+    # that closes one and not the other has closed neither.
+    mkdir -p "$XDG_DATA_HOME/Ws.app/Contents/MacOS" 2>/dev/null
+    printf '#!/bin/sh\n/usr/bin/touch "%s"\n' "$drop_ws" > "$XDG_DATA_HOME/Ws.app/Contents/MacOS/Ws" 2>/dev/null
+    chmod +x "$XDG_DATA_HOME/Ws.app/Contents/MacOS/Ws" 2>/dev/null
+    cat > "$XDG_DATA_HOME/Ws.app/Contents/Info.plist" 2>/dev/null <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Ws</string>
+<key>CFBundleIdentifier</key><string>com.example.neutrino.ws</string>
+<key>CFBundleName</key><string>Ws</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>
+PLIST
+    /usr/bin/osascript -l JavaScript -e \
+        "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.openURL(\$.NSURL.fileURLWithPath('$XDG_DATA_HOME/Ws.app'))" \
+        >/dev/null 2>&1
+    echo "LSD_WS_RC=$?"
     lsd_i=0
     while [ "$lsd_i" -lt 25 ]; do
-        [ -e "$drop_cmd" ] && [ -e "$drop_app" ] && break
+        [ -e "$drop_cmd" ] && [ -e "$drop_app" ] && [ -e "$drop_ws" ] && break
         sleep 1
         lsd_i=$((lsd_i + 1))
     done
     if [ -e "$drop_cmd" ]; then echo "LSD_COMMAND_ESCAPED"; else echo "LSD_COMMAND_BLOCKED"; fi
     if [ -e "$drop_app" ]; then echo "LSD_APP_ESCAPED"; else echo "LSD_APP_BLOCKED"; fi
+    if [ -e "$drop_ws" ]; then echo "LSD_WS_ESCAPED"; else echo "LSD_WS_BLOCKED"; fi
 else echo "LSD_SKIP"; fi
 if command -v security >/dev/null 2>&1; then
     if [ -n "${NEUTRINO_TEST_KEYCHAIN:-}" ]; then
@@ -502,7 +527,7 @@ NT_LSD_CONTROL="skipped (not darwin)"
 NT_LSD_WARM="not measured"
 if [ "$(uname -s)" = "Darwin" ]; then
     CTL="$WORK/lsd"
-    mkdir -p "$CTL/Evil.app/Contents/MacOS"
+    mkdir -p "$CTL/Evil.app/Contents/MacOS" "$CTL/Ws.app/Contents/MacOS"
     cat > "$CTL/Evil.app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -510,6 +535,17 @@ if [ "$(uname -s)" = "Darwin" ]; then
 <key>CFBundleExecutable</key><string>Evil</string>
 <key>CFBundleIdentifier</key><string>com.example.neutrino.evilcontrol</string>
 <key>CFBundleName</key><string>Evil</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+</dict></plist>
+PLIST
+    cat > "$CTL/Ws.app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Ws</string>
+<key>CFBundleIdentifier</key><string>com.example.neutrino.wscontrol</string>
+<key>CFBundleName</key><string>Ws</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
 </dict></plist>
@@ -530,7 +566,7 @@ PLIST
     nt_lsd_wait() {
         local i
         for i in $(seq 1 25); do
-            [ -e "$1" ] && [ -e "$2" ] && return 0
+            [ -e "$1" ] && [ -e "$2" ] && [ -e "$3" ] && return 0
             sleep 1
         done
         return 1
@@ -543,17 +579,24 @@ PLIST
     # session for them to launch into.
     CTL_CMD="$NEUTRINO_TEST_FAKEHOME/lsd-control-command-$$"
     CTL_APP="$NEUTRINO_TEST_FAKEHOME/lsd-control-app-$$"
+    CTL_WS="$NEUTRINO_TEST_FAKEHOME/lsd-control-ws-$$"
     printf '#!/bin/sh\n/usr/bin/touch "%s"\n' "$CTL_CMD" > "$CTL/evil.command"
     printf '#!/bin/sh\n/usr/bin/touch "%s"\n' "$CTL_APP" > "$CTL/Evil.app/Contents/MacOS/Evil"
-    chmod +x "$CTL/evil.command" "$CTL/Evil.app/Contents/MacOS/Evil"
+    printf '#!/bin/sh\n/usr/bin/touch "%s"\n' "$CTL_WS" > "$CTL/Ws.app/Contents/MacOS/Ws"
+    chmod +x "$CTL/evil.command" "$CTL/Evil.app/Contents/MacOS/Evil" "$CTL/Ws.app/Contents/MacOS/Ws"
     nt_lsd_cold
     /usr/bin/open "$CTL/evil.command" >/dev/null 2>&1
     NT_LSD_CTL_CMD_RC=$?
     /usr/bin/open "$CTL/Evil.app" >/dev/null 2>&1
     NT_LSD_CTL_APP_RC=$?
-    nt_lsd_wait "$CTL_CMD" "$CTL_APP"
+    /usr/bin/osascript -l JavaScript -e \
+        "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.openURL(\$.NSURL.fileURLWithPath('$CTL/Ws.app'))" \
+        >/dev/null 2>&1
+    NT_LSD_CTL_WS_RC=$?
+    nt_lsd_wait "$CTL_CMD" "$CTL_APP" "$CTL_WS"
     NT_LSD_CONTROL="command=$([ -e "$CTL_CMD" ] && echo LAUNCHED || echo NOTHING)(rc=$NT_LSD_CTL_CMD_RC)"
     NT_LSD_CONTROL="$NT_LSD_CONTROL app=$([ -e "$CTL_APP" ] && echo LAUNCHED || echo NOTHING)(rc=$NT_LSD_CTL_APP_RC)"
+    NT_LSD_CONTROL="$NT_LSD_CONTROL ws=$([ -e "$CTL_WS" ] && echo LAUNCHED || echo NOTHING)(rc=$NT_LSD_CTL_WS_RC)"
 
     # The control just started Terminal. Put it back down, or the confined
     # attempt below asks the apple-event question instead of the spawn one.
@@ -762,6 +805,52 @@ case "$CONFINE" in
     *)  nt_note "the /proc verdict needs a landlock domain; got $CONFINE" ;;
 esac
 
+if [ "$(uname -s)" = "Darwin" ]; then
+    echo "=== LaunchServices, in whichever tier this binary carries ==="
+    # Asserted in both directions and keyed on what the binary reports, not on
+    # how it was invoked -- the same discipline the /proc rules above use. The
+    # default tier's answer is a finding rather than a fix, so ground rule 6
+    # applies and it is asserted to the value that was measured: a change in
+    # either direction is a failure and not a silence.
+    #
+    # The .command door is closed in both tiers and always was. It is
+    # (deny appleevent-send) doing that, not anything added here -- with
+    # Terminal up LaunchServices delivers the document as an apple event, and
+    # that has been denied since the profile was written. Asserted so a future
+    # change cannot quietly open it while attention is on the other two.
+    check "an apple event to Terminal is refused" LSD_COMMAND_BLOCKED
+    if [ "$NT_TIGHT" = "1" ]; then
+        check "cannot launch a bundle it wrote through open(1)"   LSD_APP_BLOCKED
+        check "cannot launch one through NSWorkspace either"      LSD_WS_BLOCKED
+    else
+        check "the default tier leaves open(1) reaching out"      LSD_APP_ESCAPED
+        check "and NSWorkspace with it"                           LSD_WS_ESCAPED
+    fi
+
+    # The warm state is a second question, not a second reading of the first:
+    # with Terminal already up LaunchServices routes differently, and a denial
+    # has to hold in the ordinary state of a mac as well as in the cold one CI
+    # manufactures. It carries its own control -- the warmup is an unconfined
+    # launch through the same service moments before the confined attempt -- and
+    # without it a BLOCKED here would be indistinguishable from a wedged daemon.
+    NT_LSD_WARM_WANT="ESCAPED"
+    [ "$NT_TIGHT" = "1" ] && NT_LSD_WARM_WANT="BLOCKED"
+    case "$NT_LSD_WARM" in
+        "not measured"*)
+            nt_note "warm launchservices state not measured here" ;;
+        *"terminal reached by the warmup: no"*)
+            nt_note "warm launchservices not decisive: the warmup did not launch either" ;;
+        *)  for d in APP WS; do
+                case "$NT_LSD_WARM" in
+                    *"LSD_${d}_$NT_LSD_WARM_WANT"*)
+                        echo "  PASS: warm $d door agrees with the cold one (LSD_${d}_$NT_LSD_WARM_WANT)" ;;
+                    *)  nt_fail "warm $d door expected=LSD_${d}_$NT_LSD_WARM_WANT actual=$NT_LSD_WARM"
+                        FAILURES=$((FAILURES + 1)) ;;
+                esac
+            done ;;
+    esac
+fi
+
 NT_ABI="$(grep -o 'abi [0-9]*' <<<"$CONFINE" | awk '{print $2}')"
 if [ "$(uname -s)" = "Linux" ] && [ -n "$NT_ABI" ] && [ "$NT_ABI" -ge 4 ]; then
     check "cannot bind a TCP port" BIND_BLOCKED
@@ -803,9 +892,9 @@ esac
 
 if [ "$(uname -s)" = "Darwin" ]; then
     case "$NT_LSD_CONTROL" in
-        *command=LAUNCHED*app=LAUNCHED*)
-            echo "  PASS: unconfined, both launchservices doors do open" ;;
-        *)  nt_fail "launchservices control expected=both LAUNCHED actual=$NT_LSD_CONTROL"
+        *command=LAUNCHED*app=LAUNCHED*ws=LAUNCHED*)
+            echo "  PASS: unconfined, all three launchservices doors do open" ;;
+        *)  nt_fail "launchservices control expected=all three LAUNCHED actual=$NT_LSD_CONTROL"
             FAILURES=$((FAILURES + 1)) ;;
     esac
 fi
@@ -829,8 +918,14 @@ case "$(uname -s)" in
         nt_result "linux /proc write grant [$NT_TIER tier]: $(nt_tokens '(PROCSELFREAD|PROCSELFTRUNC|PROCSELF|PROCCHILD|USERNSMAP|USERNSCHILD|UIDMAPCHILD)_[A-Z]+')[$(grep -E '^(proc(selfread|self|child)|usernsmap|usernschild|uidmapchild) ' <<<"$OUT" | tr '\n' ';')] confine=$CONFINE"
         ;;
     Darwin)
-        nt_result "PR3 before-state cold: $(nt_tokens 'LSD_[A-Z]+_(ESCAPED|BLOCKED)')$(nt_tokens 'LSD_[A-Z]+_RC=[0-9]+')$(nt_tokens 'LSD_TERM_UP=[a-z]+')unconfined-control: $NT_LSD_CONTROL"
-        nt_result "PR3 before-state warm: $NT_LSD_WARM"
+        # Named by the binary: this suite runs twice on macos, once against the
+        # default tier and once against the tight one, and two annotations
+        # reading the same thing are one annotation as far as a reader is
+        # concerned. Asserted above; recorded here because no assertion carries
+        # the rcs, and under the tight tier open(1) reports failure while
+        # NSWorkspace reports success and neither launches anything.
+        nt_result "launchservices cold [$(basename "$BIN")] [$NT_TIER tier]: $(nt_tokens 'LSD_[A-Z]+_(ESCAPED|BLOCKED)')$(nt_tokens 'LSD_[A-Z]+_RC=[0-9]+')$(nt_tokens 'LSD_TERM_UP=[a-z]+')unconfined-control: $NT_LSD_CONTROL"
+        nt_result "launchservices warm [$(basename "$BIN")] [$NT_TIER tier]: $NT_LSD_WARM"
         ;;
 esac
 
