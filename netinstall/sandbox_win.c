@@ -278,6 +278,66 @@ static int nt_strip_privileges(int commit)
     return ok;
 }
 
+/*
+ * The fetch phase gets the same mechanism the run phase does, and for the same
+ * reason a strict build accepts it there: a job object plus a stripped token is
+ * what this platform offers an unprivileged process, and the alternative here
+ * was nothing at all. The job and the adjusted token are both inherited, so the
+ * downloader runs inside them without the launcher having to reach into it.
+ *
+ * Measured, because two things could have gone wrong and neither is obvious:
+ * the downloader still works inside it, and the run phase still gets a job
+ * object of its own afterwards -- that second one is a nested job, which
+ * windows has only allowed since 8.
+ *
+ * Deliberately not the low integrity half of the tight tier. That needs the
+ * download directory carrying a Low label, which widens who else on the machine
+ * can write there, and it is a larger question than this one. Reads are not
+ * confined here either; see the run phase for why that is a ceiling rather than
+ * an omission.
+ */
+static int nt_fetch_confine_win(int enforce, char *desc, size_t desclen)
+{
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
+    const char *privs;
+    HANDLE job;
+
+    if (!enforce) {
+        privs = nt_strip_privileges(0) ? " + privileges stripped" : "";
+        snprintf(desc, desclen, "job object%s (process limits only; no "
+                                "filesystem confinement on windows)", privs);
+        return 0;
+    }
+    job = CreateJobObjectA(NULL, NULL);
+    if (!job) {
+        snprintf(desc, desclen, "none (job object unavailable)");
+        return -1;
+    }
+    /*
+     * Eight, where the run phase allows sixty-four: this one holds a launcher
+     * and a downloader, and nothing either of them starts has any business
+     * here.
+     */
+    ZeroMemory(&limits, sizeof(limits));
+    limits.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION |
+        JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+    limits.BasicLimitInformation.ActiveProcessLimit = 8;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                 &limits, sizeof(limits)) ||
+        !AssignProcessToJobObject(job, GetCurrentProcess())) {
+        CloseHandle(job);
+        snprintf(desc, desclen, "none (job object rejected)");
+        return -1;
+    }
+    /* Best effort, and --info must not claim it happened when it did not --
+     * the same rule the run phase follows two screens down. */
+    privs = nt_strip_privileges(1) ? " + privileges stripped" : "";
+    snprintf(desc, desclen, "job object%s (process limits only; no "
+                            "filesystem confinement on windows)", privs);
+    return 0;
+}
+
 int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
                char *desc, size_t desclen)
 {
@@ -292,8 +352,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     (void)appdir;
 
     if (phase == NT_PHASE_FETCH) {
-        snprintf(desc, desclen, "none (fetch runs unconfined on windows)");
-        return -1;
+        return nt_fetch_confine_win(enforce, desc, desclen);
     }
 
     uimask = nt_job_ui_mask(uishown, sizeof(uishown));

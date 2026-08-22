@@ -1111,6 +1111,13 @@ int main(int argc, char **argv)
         }
         nt_apply_confine(NT_PHASE_RUN, home, appdir, 0, desc, sizeof(desc));
         printf("confine    %s\n", desc);
+        /*
+         * The phase that downloads had no line here at all, so the one
+         * platform where nothing confined it looked exactly like the three
+         * where something did.
+         */
+        nt_apply_confine(NT_PHASE_FETCH, home, NULL, 0, desc, sizeof(desc));
+        printf("fetch      %s\n", desc);
         {
             int total = 0;
             int dropped = nt_env_scrub(0, &total);
@@ -1156,10 +1163,17 @@ int main(int argc, char **argv)
             return 2;
         }
         remove(tmpfile);
-        if (nt_fetch(spec.url, tmpfile, home, shown, sizeof(shown)) != 0) {
-            remove(tmpfile);
-            fprintf(stderr, "netinstall: fetch failed: %s\n", spec.url);
-            return 1;
+        {
+            int got = nt_fetch(spec.url, tmpfile, home, shown, sizeof(shown));
+
+            if (got != 0) {
+                remove(tmpfile);
+                /* -2 is a refusal that already explained itself. */
+                if (got != -2) {
+                    fprintf(stderr, "netinstall: fetch failed: %s\n", spec.url);
+                }
+                return got == -2 ? 3 : 1;
+            }
         }
         if (nt_sha256_file(tmpfile, hex) != 0) {
             remove(tmpfile);
@@ -1236,13 +1250,33 @@ int main(int argc, char **argv)
     setenv_dir("TMP", appdir, "tmp");
 #endif
 
-    if (nt_apply_confine(NT_PHASE_RUN, home, appdir, 1, desc, sizeof(desc)) != 0) {
+    {
+        /*
+         * -1 is "nothing applied" and -2 is "less than was asked for" -- a
+         * session tier that entered a namespace and could not finish. They are
+         * different sentences and the same answer for a strict build: what was
+         * promised did not happen.
+         */
+        int got = nt_apply_confine(NT_PHASE_RUN, home, appdir, 1, desc, sizeof(desc));
+
+        if (got == -3) {
+            /*
+             * Not a matter of how much confinement was applied: the process
+             * this left is one an app cannot run in. Every build refuses.
+             */
+            fprintf(stderr, "netinstall: refusing to run: %s\n", desc);
+            return 3;
+        }
+        if (got != 0) {
+            const char *how = got == -2 ? "half confined" : "unconfined";
+
 #ifdef NEUTRINO_STRICT_SANDBOX
-        fprintf(stderr, "netinstall: refusing to run unconfined: %s\n", desc);
-        return 3;
+            fprintf(stderr, "netinstall: refusing to run %s: %s\n", how, desc);
+            return 3;
 #else
-        fprintf(stderr, "netinstall: warning: running unconfined: %s\n", desc);
+            fprintf(stderr, "netinstall: warning: running %s: %s\n", how, desc);
 #endif
+        }
     }
 
     return nt_exec(script, argc, argv, rest);

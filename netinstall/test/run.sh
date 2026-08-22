@@ -38,6 +38,14 @@ NETINSTALL_CFLAGS="-DNEUTRINO_TESTING -DNEUTRINO_CONFINE_NOSESSION -DNEUTRINO_CO
     bash "$HERE/../build.sh" host >/dev/null || exit 2
 mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-session-tight$NT_EXE"
 
+# phases.sh needs the session tier built fail-closed: the half-closed states
+# are asserted from both sides, and a build that refuses everything passes half
+# of that on its own.
+echo "### Building fail-closed session binary"
+NETINSTALL_CFLAGS="-DNEUTRINO_TESTING -DNEUTRINO_CONFINE_NOSESSION -DNEUTRINO_STRICT_SANDBOX" \
+    bash "$HERE/../build.sh" host >/dev/null || exit 2
+mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-failclosed-session$NT_EXE"
+
 echo "### Building strict-confinement binary"
 NETINSTALL_CFLAGS="-DNEUTRINO_TESTING -DNEUTRINO_CONFINE_TIGHT" \
     bash "$HERE/../build.sh" host >/dev/null || exit 2
@@ -45,7 +53,7 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 
 # job-ui is an investigation, not a gate, and it costs ten minutes of windows CI
 # per run. It answered its question -- see the README -- so it is opt-in now.
-SUITES="names verify confine confine-tight confine-strict confine-session privs env offline strict e2e"
+SUITES="names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
 # session.sh is a probe rather than a gate: it applies each candidate mechanism
 # on its own to a real webview. It answered -- the session tier is what came of
 # it, and confine-session.sh gates that -- so like job-ui it is opt-in now
@@ -73,6 +81,16 @@ for t in $SUITES; do
         # purpose, so this one needs a longer leash than the rest.
         job-ui) nt_timeout 1200 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-testing$NT_EXE" ;;
         strict) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-failclosed$NT_EXE" ;;
+        # Five binaries, because both halves of this one are asserted from both
+        # sides: what the fetch phase confines at each tier, and a session that
+        # fails a step -- refused by the fail-closed build, survived by the one
+        # that ships. No webview, so the default leash is enough.
+        phases) nt_timeout 600 bash "$HERE/$t.sh" \
+            "$HERE/../dist/netinstall-testing$NT_EXE" \
+            "$HERE/../dist/netinstall-strict$NT_EXE" \
+            "$HERE/../dist/netinstall-failclosed$NT_EXE" \
+            "$HERE/../dist/netinstall-failclosed-session$NT_EXE" \
+            "$HERE/../dist/netinstall-session$NT_EXE" ;;
         # confine.sh again, against the tight binary -- the /proc write grant is
         # the one rule that differs between the tiers. See the header of
         # confine-tight.sh for why it is the same instrument and not a second

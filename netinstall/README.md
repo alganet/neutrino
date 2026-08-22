@@ -257,6 +257,20 @@ If nothing is available the binary **runs anyway and warns on stderr**, naming w
 wasn't applied; confinement here is defence in depth, not the trust anchor. Building with
 `-DNEUTRINO_STRICT_SANDBOX` produces a binary that refuses to run unconfined instead.
 
+### The fetch is a phase of its own, and it is confined too
+
+The downloader is the one process here that reads bytes an attacker chose, off the network, before
+anything has verified them. It gets its own, narrower confinement — writes confined to
+`~/.cache/neutrino/blobs` and nothing else on Linux, macOS and OpenBSD; on Windows the job object
+and stripped token the run phase gets, which bounds processes rather than writes because nothing
+unprivileged on that platform bounds writes. `--info` prints it on a `fetch` line next to the
+run phase's `confine` line, so a platform that applies nothing does not look like one that does.
+
+A strict build refuses to fetch when nothing applied, on the same terms it refuses to run: the
+answer used to be thrown away, so `-DNEUTRINO_STRICT_SANDBOX` downloaded the payload unconfined and
+refused afterwards — which is not strict, it is late. `phases.sh` asserts both halves on every
+platform, including that a strict build still fetches and runs when both phases *are* confined.
+
 ### What was measured
 
 Every mechanism below was applied on its own to a real webview, on both Linux
@@ -744,6 +758,22 @@ that would make the tier unusable on the most common desktop base rather than ma
 `test/confine-session.sh` skips itself with a note on such a machine, and lifts the sysctl for the
 length of its own run on CI, which is one of them.
 
+**Where a step fails after the namespace was granted, it finishes the one that matters.** The tier
+is four steps and the first one changes the process, so "it did not work" has more than one shape.
+Measured rather than reasoned: `unshare(CLONE_NEWPID)` puts the caller's *children* in the new
+namespace without entering it, so an app launched from a half-built one forks exactly **once** —
+its first child becomes pid 1 of a namespace nobody is reaping, and when that child exits the
+namespace dies and every later fork gets `ENOMEM`. That is not a weaker sandbox someone might
+accept; it is a process that fails later, somewhere else, looking like a bug in the app.
+
+So the pid namespace gets entered even when an earlier step did not work, and what comes out is a
+real process in a weaker session, saying which step failed: `session partly closed (runtime seal
+failed)`. A strict build refuses it — `refusing to run half confined` — because less was applied
+than was promised, which is exactly what that flag is for. The one state that cannot be repaired is
+the pid namespace failing itself, and **no build launches into that**, strict or not:
+`refusing to run: ... session broken`. `phases.sh` forces each step in turn and asserts all three
+from both sides.
+
 What the tier does **not** close:
 
 - **Anything the app is meant to keep.** The compositor socket is the app's window and the audio
@@ -861,7 +891,8 @@ test/run.sh
 ```
 
 Builds a release binary, a `-DNEUTRINO_TESTING` binary, one each for the tight, offline and session
-tiers, and one with the session and tight tiers together, then runs eight suites: `names.sh` (the
+tiers, one with the session and tight tiers together, and one with the session tier built
+fail-closed, then runs the suites: `names.sh` (the
 grammar, accepted and rejected), `verify.sh` (pin mismatch, non-text payloads, oversized responses,
 offline cache, tampered cache), `confine.sh`
 (a hostile script that tries to escape — the filesystem, the environment, an inherited descriptor,
@@ -871,8 +902,12 @@ webview still starts under it), `confine-session.sh` (the session tier: both bus
 control that reaches them, the runtime dir sealed, no outside process visible, the screen
 unphotographable from inside, and a real webview under all of it), `offline.sh` (that the offline
 tier really refuses outbound TCP and, where it took a network namespace, UDP too, while the fetch
-still worked), `strict.sh` (that `-DNEUTRINO_STRICT_SANDBOX` really refuses to run unconfined), and
-`e2e.sh` (a real neutrino polyglot fetched, verified and launched).
+still worked), `phases.sh` (what confines the downloader on each platform, measured through curl's
+own config file rather than asserted from the source, that a strict build refuses to fetch when
+nothing does, and that a session tier which fails a step mid-way is refused by a strict build,
+survived by a normal one, and never left able to fork exactly once), `strict.sh` (that
+`-DNEUTRINO_STRICT_SANDBOX` really refuses to run unconfined), and `e2e.sh` (a real neutrino
+polyglot fetched, verified and launched).
 
 `session.sh` is a ninth that does not run by default. It is a probe rather than a gate: it applies
 each candidate mechanism on its own — covering the buses, sealing the runtime dir, hiding the
