@@ -212,8 +212,14 @@ static int nt_job_ui(HANDLE job, DWORD mask)
  * small win rather than a large one. What makes it worth having is that it
  * survives the hop to the real app, which a per-process mitigation policy set
  * here would not: the polyglot compiles itself, STARTs the result and returns.
+ *
+ * commit = 0 does everything up to the one call that cannot be undone and
+ * stops. That is what --info runs, so the description it prints is conditional
+ * on a token that opened and read rather than on nothing at all -- the shape
+ * sandbox_linux.c already uses, where --info builds the ruleset and reports
+ * "landlock unavailable" when it cannot.
  */
-static int nt_strip_privileges(void)
+static int nt_strip_privileges(int commit)
 {
     TOKEN_PRIVILEGES *tp = NULL;
     HANDLE token = NULL;
@@ -234,15 +240,38 @@ static int nt_strip_privileges(void)
         tp = (TOKEN_PRIVILEGES *)malloc(len);
     }
     if (tp && GetTokenInformation(token, TokenPrivileges, tp, len, &len)) {
+        ok = 1;
+    }
+    if (ok && commit) {
         for (i = 0; i < tp->PrivilegeCount; i++) {
             if (tp->Privileges[i].Luid.LowPart == keep.LowPart &&
                 tp->Privileges[i].Luid.HighPart == keep.HighPart) {
-                tp->Privileges[i].Attributes = 0;
+                /*
+                 * Not 0. AdjustTokenPrivileges reads 0 as "disable", so the
+                 * attribute that looks like "leave this one alone" is the one
+                 * that turns off the privilege this function exists to keep.
+                 * Measured on windows-latest: with 0 the payload's token has
+                 * SeChangeNotify present but Disabled, and a read through a
+                 * directory it has no traverse right on is refused. With
+                 * SE_PRIVILEGE_ENABLED, in this same mixed list, the privilege
+                 * comes out Enabled and the read succeeds.
+                 */
+                tp->Privileges[i].Attributes = SE_PRIVILEGE_ENABLED;
             } else {
                 tp->Privileges[i].Attributes = SE_PRIVILEGE_REMOVED;
             }
         }
         ok = AdjustTokenPrivileges(token, FALSE, tp, len, NULL, NULL) ? 1 : 0;
+        /*
+         * TRUE and ERROR_NOT_ALL_ASSIGNED means it applied some of the list and
+         * dropped the rest, and GetLastError is the only place it says so.
+         * Measured gle=0 with both the old attribute and the new one, so this
+         * has never fired here: it is the difference between a description that
+         * happens to be true and one that is checked.
+         */
+        if (ok && GetLastError() == ERROR_NOT_ALL_ASSIGNED) {
+            ok = 0;
+        }
     }
     free(tp);
     CloseHandle(token);
@@ -275,15 +304,21 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     }
 
     if (!enforce) {
+        /*
+         * The same phrase the enforcing path builds, from the same call, minus
+         * the adjustment. It used to be a constant inside the format string, so
+         * --info promised a stripping whatever the token turned out to be.
+         */
+        privs = nt_strip_privileges(0) ? " + privileges stripped" : "";
 #ifdef NEUTRINO_CONFINE_TIGHT
-        snprintf(desc, desclen, "job object%s + privileges stripped + low "
-                                "integrity, writes confined to %s (reads are "
-                                "not confined)" NT_OFFLINE_NOTE NT_SESSION_NOTE,
-                 uinote, appdir);
+        snprintf(desc, desclen, "job object%s%s + low integrity, writes "
+                                "confined to %s (reads are not confined)"
+                                NT_OFFLINE_NOTE NT_SESSION_NOTE,
+                 uinote, privs, appdir);
 #else
-        snprintf(desc, desclen, "job object%s + privileges stripped (process "
-                                "limits only; no filesystem confinement on "
-                                "windows)" NT_OFFLINE_NOTE NT_SESSION_NOTE, uinote);
+        snprintf(desc, desclen, "job object%s%s (process limits only; no "
+                                "filesystem confinement on windows)"
+                                NT_OFFLINE_NOTE NT_SESSION_NOTE, uinote, privs);
 #endif
         return 0;
     }
@@ -316,7 +351,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 
     /* Best effort: a token that refuses to shed its privileges is not a reason
      * to give up the job object, but --info must not then claim it. */
-    privs = nt_strip_privileges() ? " + privileges stripped" : "";
+    privs = nt_strip_privileges(1) ? " + privileges stripped" : "";
 
 #ifdef NEUTRINO_CONFINE_TIGHT
     /*

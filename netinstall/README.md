@@ -760,6 +760,19 @@ privileges to begin with, so this is a small win — but it is free, it survives
 app that per-process mitigation policies do not, and it was probed on its own against a real
 webview before being shipped.
 
+The one that is kept is kept **enabled**, which is a distinction `AdjustTokenPrivileges` makes and
+the obvious spelling gets wrong: the attribute `0` reads as *disable*, not as *leave alone*. For a
+while this code passed `0` and shipped a token where `SeChangeNotifyPrivilege` was present and
+switched off. `privs.sh` asserts the difference where it is visible rather than where it is
+convenient — the payload reads a file underneath a directory the account is explicitly denied
+traverse on, which is exactly the check this privilege bypasses. With the privilege disabled that
+read is refused; with it enabled it succeeds. Both states have been measured on a `windows-latest`
+runner.
+
+`--info` reports the same phrase from the same code, with the adjustment skipped. It used to be a
+constant in the format string, so it promised a stripping regardless of what the token turned out
+to be.
+
 **Job UI restrictions do not work with WebView2 at all**, and that is measured rather than argued.
 `JOBOBJECT_BASIC_UI_RESTRICTIONS` is the obvious remaining lever, and the only mechanism here that
 survives the hop to the real app — the polyglot compiles itself and `START`s the result, so job
