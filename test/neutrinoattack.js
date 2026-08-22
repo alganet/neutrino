@@ -13,6 +13,11 @@ var log = eval("console");
 var SEP = String.fromCharCode(31);
 var results = {};
 
+// Recorded from the first report onwards, so a build where the navigation
+// check never gets that far says PENDING rather than dropping the field and
+// leaving a verifier to match a name that is not there.
+results.postnav = "PENDING";
+
 // Reaching past the injected API, the way an attacker would. Every transport is
 // tried; the ones that do not belong to this platform are inert, and the host is
 // supposed to be the thing that decides, not the sender.
@@ -48,6 +53,7 @@ function report(navState) {
         " base=" + results.base +
         " inline=" + results.inline +
         " navdata=" + results.navdata +
+        " postnav=" + results.postnav +
         " nav=" + navState +
         // Only the settled report says DONE. The pending one is a snapshot
         // taken before a navigation that may destroy this document, so a
@@ -237,12 +243,28 @@ function checkNavData(next) {
 }
 
 // The host name never resolves, so nothing leaves the machine either way.
+//
+// What happens after the refusal is measured too, and is a separate question
+// from whether the refusal happened. Only the macOS driver asks who sent a
+// message; gjs and Qt take any record the transport carries, which means the
+// navigation guard is the only thing standing between a page that moved itself
+// and the native window. Where the guard held, this document is still the
+// app's own and a well-formed record should be obeyed -- so OBEYED here is the
+// expected reading and not an escape. Where the guard did not hold, the
+// document answering is no longer the app's, and the same OBEYED is the whole
+// finding. Recorded, not asserted, until the probing says which of those this
+// is measuring on each engine.
 function checkNav() {
     report("PENDING");
     win.setTimeout(function () {
         try { win.location.href = "https://neutrino-must-refuse.invalid/"; } catch (_) {}
         win.setTimeout(function () {
-            report("REFUSED");
+            var before = geometry();
+            rawSend("resize" + SEP + "660" + SEP + "500");
+            win.setTimeout(function () {
+                results.postnav = (geometry() === before) ? "REFUSED" : "OBEYED";
+                report("REFUSED");
+            }, 1500);
         }, 3000);
     }, 1000);
 }

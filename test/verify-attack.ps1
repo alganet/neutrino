@@ -75,7 +75,11 @@ if (-not $title) {
 Write-Host "  report: $title"
 
 function Get-Field($name) {
-    if ($title -match "$name=([A-Za-z]+)") { return $Matches[1] }
+    # Anchored on the space that separates one field from the next.
+    # -match takes the leftmost match, so an unanchored "nav" reads the
+    # tail of "postnav" instead -- a different question whose answer is
+    # the same often enough to go unnoticed.
+    if ($title -match " $name=([A-Za-z]+)") { return $Matches[1] }
     return "MISSING"
 }
 
@@ -128,6 +132,13 @@ if ((Get-Field "navdata") -eq "REFUSED") {
     Write-Host "  NOTE: data: navigation was permitted; the document that arrived"
     Write-Host "        could not drive the window, so it is contained not closed"
 }
+
+# There is no navigation refusal on this platform, so the page really does
+# leave and no settled report ever arrives -- which means this field cannot be
+# answered here at all, and PENDING is the honest reading rather than a
+# missing measurement. Recorded so the day a navigation guard lands here, the
+# change shows up instead of passing quietly.
+Assert-Field "the refusal left the channel working" "any" (Get-Field "postnav")
 
 Write-Host "=== Results: $Failures failure(s) ==="
 if ($Failures -gt 0) { exit 1 }
