@@ -688,8 +688,22 @@ exit $?;:<<'//</script></head><body></body>' #-->
             var webViewRef = null;
             var windowDelegateRef = null;
             var scriptHandlerRef = null;
+            var navDelegateRef = null;
             var pendingPreload = null;
             var pendingPageScript = null;
+            var documentLoaded = false;
+
+            // What the view is showing, as the view answers rather than as
+            // anything that called in claims. Empty is an answer too: a view
+            // that will not say is one nothing may be trusted from.
+            var currentUrl = function () {
+                try {
+                    var u = webViewRef ? webViewRef.URL : null;
+                    return u ? String(ObjCRef.unwrap(u.absoluteString) || "") : "";
+                } catch (_) {
+                    return "";
+                }
+            };
 
             return {
                 webMessageTransport: "window.webkit.messageHandlers.neutrino.postMessage",
@@ -710,6 +724,93 @@ exit $?;:<<'//</script></head><body></body>' #-->
                             }
                         }
                     });
+
+                    /*
+                     * A navigation guard, and deliberately not the one this
+                     * looks like it should be.
+                     *
+                     * WKNavigationDelegate decides a navigation through
+                     * -webView:decidePolicyForNavigationAction:decisionHandler:,
+                     * whose third argument is a block, and JXA cannot call one.
+                     * Implementing that selector here refuses nothing: it
+                     * wedges every load in the view including the first.
+                     * Measured -- with the selector registered, the policy
+                     * callback fires once for this file's own document, six
+                     * ways of calling the handler all throw, and the load never
+                     * reaches didStartProvisionalNavigation at all. Naming the
+                     * parameter @? or block instead does not help; it aborts
+                     * the process on an uncaught NSException. All four
+                     * spellings register cleanly, so nothing warns you. This
+                     * comment is here because adding that selector is the
+                     * obvious thing to try and it ships a window that never
+                     * loads.
+                     *
+                     * What is left needs no block, and it is enough.
+                     * didCommitNavigation: is the document this file loaded
+                     * arriving, which is where the view this driver is allowed
+                     * to hear from is remembered -- before the page script the
+                     * engine injects at document end, exactly as gjs arms at
+                     * COMMITTED. didStartProvisionalNavigation: is a navigation
+                     * beginning, and -stopLoading refuses it. Measured against
+                     * a page on loopback that really answers: without this the
+                     * document went, the user scripts were reinjected into what
+                     * arrived, and it spoke to the native window from an http
+                     * origin; with it the navigation is abandoned and the app's
+                     * own document is still the one there.
+                     *
+                     * It is later than a policy decision and that is the
+                     * ceiling here, not an oversight: the request has already
+                     * left. Nothing is handed to the desktop's URL handler on
+                     * refusal either, unlike gjs and Qt -- opening a link the
+                     * page chose is a feature this guard is not the place to
+                     * add.
+                     */
+                    try {
+                    ObjCRef.registerSubclass({
+                        name: "NeutrinoNavDelegate",
+                        superclass: "NSObject",
+                        methods: {
+                            "webView:didStartProvisionalNavigation:": {
+                                types: ["void", ["id", "id"]],
+                                implementation: function () {
+                                    var going = currentUrl();
+                                    // Until the first commit the only
+                                    // navigation in flight is the one this file
+                                    // started, which is the same reasoning the
+                                    // gjs guard is built on.
+                                    if (!documentLoaded || self.isTrustedView(going)) {
+                                        return;
+                                    }
+                                    try {
+                                        webViewRef.stopLoading();
+                                        self.note("refused navigation to " + going);
+                                    } catch (e) {
+                                        self.note("could not refuse navigation to " +
+                                            going + ": " + e);
+                                    }
+                                }
+                            },
+                            "webView:didCommitNavigation:": {
+                                types: ["void", ["id", "id"]],
+                                implementation: function () {
+                                    self.rememberTrustedView(currentUrl());
+                                    documentLoaded = true;
+                                }
+                            }
+                        }
+                    });
+                    } catch (e) {
+                        /*
+                         * Loud, because everything downstream depends on it.
+                         * With no delegate nothing is ever remembered, and the
+                         * sender check no longer fails open -- so the window
+                         * comes up and refuses its own app. That is inert
+                         * rather than dangerous, which is the trade this driver
+                         * makes everywhere, but only if it says so.
+                         */
+                        self.note("no navigation guard, and no message will be " +
+                            "trusted: " + e);
+                    }
 
                     /*
                      * A real message handler, replacing a timer that read
@@ -838,6 +939,14 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     var wv = dollar.WKWebView.alloc.initWithFrameConfiguration(frame, wkConfig);
                     try { wv.allowsLinkPreview = false; } catch (_) {}
                     webViewRef = wv;
+                    // Bracket notation for the same reason createWindow uses it
+                    // on a window's delegate.
+                    try {
+                        navDelegateRef = dollar.NeutrinoNavDelegate.alloc.init;
+                        wv["navigationDelegate"] = navDelegateRef;
+                    } catch (e) {
+                        self.note("no navigation guard on this view: " + e);
+                    }
                     return wv;
                 },
 
@@ -1330,25 +1439,50 @@ exit $?;:<<'//</script></head><body></body>' #-->
             return fragment < 0 ? text : text.substring(0, fragment);
         },
 
-        // The first one wins and only the first. A driver calls this where it
-        // knows the document is the one it loaded: at the load it started,
-        // before anything the page does has run.
+        /*
+         * The first one wins and only the first. A driver calls this where it
+         * knows the document is the one it loaded: at the load it started,
+         * before anything the page does has run.
+         *
+         * A view that cannot say what it is showing has not handed over a
+         * document to trust, and remembering the empty answer would pin the
+         * whole session to it. Said out loud, because what follows from it is a
+         * window that comes up and then refuses everything, and a refusal
+         * nobody can account for is the failure this file keeps legislating
+         * against.
+         */
         rememberTrustedView: function (uri) {
-            if (this.trustedView === null) {
-                this.trustedView = this.viewIdentity(uri);
+            if (this.trustedView !== null) {
+                return;
             }
+            var identity = this.viewIdentity(uri);
+            if (identity === "") {
+                this.note("the view did not say which document it committed");
+                return;
+            }
+            this.trustedView = identity;
         },
 
         /*
-         * Fails open on a view that has committed nothing yet, for the reason
-         * the macOS origin check gives for the same choice: refusing every
-         * message leaves a window that does nothing and says nothing about why,
-         * which is the least informative failure available. Once a document has
-         * been remembered there is nothing left to fail open about.
+         * No longer fails open on a view that has committed nothing yet.
+         *
+         * That choice was made when the macOS driver remembered its document at
+         * the *first message*, having no load event to hang one on -- so a page
+         * that navigated before the app ever spoke got itself remembered as the
+         * view to trust, and the guard adopted the attacker. Every driver now
+         * arms at the load it started and before any page script exists to send
+         * anything: gjs at COMMITTED, Qt immediately before it injects the
+         * preload, macOS at didCommitNavigation:. A message arriving with
+         * nothing remembered is therefore not an app that has not got going
+         * yet; it is a view that never committed the document this file loaded.
+         *
+         * The reason the fail-open was there in the first place still holds and
+         * is answered rather than dropped: every caller says why it refused, so
+         * the inert window explains itself instead of merely being inert.
          */
         isTrustedView: function (uri) {
             if (this.trustedView === null) {
-                return true;
+                return false;
             }
             return this.viewIdentity(uri) === this.trustedView;
         },
@@ -1385,37 +1519,45 @@ exit $?;:<<'//</script></head><body></body>' #-->
         },
 
         isTrustedMacSender: function (ObjCRef, message, webView) {
-            // What the view is showing, independent of what the message claims.
-            // Fails open on a bridge that will not answer, for the same reason
-            // the origin check does: refusing every message leaves a window
-            // that does nothing and says nothing about why.
+            /*
+             * What the view is showing, independent of what the message claims.
+             *
+             * Nothing here fails open any more. The document to trust is
+             * remembered at didCommitNavigation: now -- the load this file
+             * started, before the page script the engine injects at document
+             * end can run -- so a message arriving with nothing remembered is
+             * not an app still getting going. Remembering it here instead, as
+             * this did while the driver had no delegate to hang one on, meant a
+             * page that navigated before the app ever spoke was the one that
+             * got remembered.
+             *
+             * A bridge that will not answer is refused for the same reason. It
+             * leaves a window that does nothing, which was the objection -- so
+             * it says which call would not answer, and an inert window that
+             * explains itself is not the failure that objection was about.
+             */
             try {
                 var current = webView.URL;
-                if (current) {
-                    var currentScheme = String(ObjCRef.unwrap(current.scheme) || "");
-                    if (!this.isTrustedOrigin(currentScheme, "")) {
-                        this.note("refused a message from a document at " +
-                            currentScheme + ":");
-                        return false;
-                    }
-                    /*
-                     * And the same document, not merely the same kind of one.
-                     *
-                     * Remembered on the first message rather than at a load
-                     * event, because this driver has no navigation delegate to
-                     * hang one on -- that is the next PR's business. It is
-                     * sound in the meantime: no script runs in this view until
-                     * a document is loaded, and the only document loaded before
-                     * any script runs is the one this file handed over.
-                     */
-                    var currentUrl = String(ObjCRef.unwrap(current.absoluteString) || "");
-                    this.rememberTrustedView(currentUrl);
-                    if (!this.isTrustedView(currentUrl)) {
-                        this.note("refused a message from " + currentUrl);
-                        return false;
-                    }
+                var currentScheme = current
+                    ? String(ObjCRef.unwrap(current.scheme) || "") : "";
+                var currentUrl = current
+                    ? String(ObjCRef.unwrap(current.absoluteString) || "") : "";
+                if (!this.isTrustedOrigin(currentScheme, "")) {
+                    this.note("refused a message from a document at " +
+                        currentScheme + ":");
+                    return false;
                 }
-            } catch (_) {}
+                // And the same document, not merely the same kind of one.
+                if (!this.isTrustedView(currentUrl)) {
+                    this.note("refused a message from " +
+                        (currentUrl === "" ? "a view showing nothing" : currentUrl));
+                    return false;
+                }
+            } catch (e) {
+                this.note("refused a message: could not read what the view is " +
+                    "showing: " + e);
+                return false;
+            }
 
             var frame = null;
             try {
@@ -1430,14 +1572,20 @@ exit $?;:<<'//</script></head><body></body>' #-->
             }
 
             /*
-             * The real protection is here: a document the webview navigated to
-             * has a scheme, and the document this file loads does not. Reading
-             * the origin is kept separate from reading the frame because the
-             * two fail differently -- a frame that cannot be read is a message
-             * with no sender and is refused, while an origin that cannot be
-             * read is this bridge not exposing something it was expected to,
-             * which is a reason to say so rather than to refuse every message
-             * the app ever sends and leave a window that does nothing.
+             * The sender's own account of itself, kept separate from reading
+             * the frame because the two used to fail differently: a frame that
+             * cannot be read is a message with no sender, while an origin that
+             * cannot be read was this bridge not exposing something it was
+             * expected to, and refusing on that would have muted the app over a
+             * bridge quirk.
+             *
+             * They no longer fail differently, because the premise was
+             * measured and did not hold: across every arrangement of the macOS
+             * probe -- four navigation targets, a document that arrived from a
+             * remote origin, and a view with nothing loaded at all -- the read
+             * never once threw. A catch insuring against something that does
+             * not happen, at the price of admitting everything if it ever did,
+             * is not a trade this file makes anywhere else.
              */
             try {
                 var origin = frame.securityOrigin;
@@ -1449,8 +1597,9 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 this.note("refused a message from " + scheme + "://" + host);
                 return false;
             } catch (e) {
-                this.note("could not read the sender's origin: " + e);
-                return true;
+                this.note("refused a message whose sender's origin could not " +
+                    "be read: " + e);
+                return false;
             }
         },
 

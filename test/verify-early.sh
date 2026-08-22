@@ -16,19 +16,37 @@ set -euo pipefail
 TIMEOUT=90
 POLL_INTERVAL=0.5
 FAILURES=0
+TARGET_URL="http://127.0.0.1:8098/early-target.html"
+
+# The control, and it comes before everything because everything depends on it.
+#
+# The target used to be a host that never resolves, and that made `held` free:
+# a driver with no navigation guard at all reports it, because the provisional
+# load fails on its own. Measured on macOS, which is why the target is now
+# served over loopback -- and a server that is not up puts the test straight
+# back where it was, passing every lane by refusing a navigation nobody could
+# have made. Written without a pipe on purpose: `curl | grep -q` under
+# `set -o pipefail` reports failure when grep exits early on a match, which is
+# a control that reads DOWN whatever happens.
+echo "=== Checking the navigation target is being served ==="
+TARGET_BODY="$(mktemp)"
+trap 'rm -f "$TARGET_BODY"' EXIT
+if curl -fsS -m 5 "$TARGET_URL" -o "$TARGET_BODY" 2>/dev/null &&
+   grep -q "EARLY-TARGET" "$TARGET_BODY"; then
+    echo "  PASS: control the target answers at $TARGET_URL"
+else
+    echo "  FAIL: nothing is serving $TARGET_URL"
+    echo "        the page under test cannot navigate anywhere, so a guard that"
+    echo "        does nothing would pass this run -- which is the reason this"
+    echo "        target stopped being a host that never resolves"
+    exit 1
+fi
 
 case "$(uname -s)" in
     Darwin)
         # No window the shell can query, so the title arrives through the same
         # status file every other macOS check uses.
         read_title() { sed -n '1p' "${TMPDIR:-/tmp}/neutrino-title.txt" 2>/dev/null || true; }
-        # This driver has no navigation delegate at all -- there is nothing
-        # here to arm early or late, and giving it one is the next PR. So the
-        # result is recorded rather than asserted, and the number is on the
-        # table when that PR opens. What is still asserted here is that a
-        # report arrives at all: a page that navigates out from under this
-        # driver must not take the window with it.
-        EXPECT_AT="any"
         ;;
     *)
         if command -v xdotool >/dev/null 2>&1; then
@@ -45,7 +63,6 @@ case "$(uname -s)" in
             echo "verify-early.sh: need xdotool or wmctrl to read a window title" >&2
             exit 1
         fi
-        EXPECT_AT="held"
         ;;
 esac
 
@@ -72,9 +89,7 @@ field() { echo "$TITLE" | sed -n "s/.* $1=\([A-Za-z]*\).*/\1/p"; }
 
 assert() {
     local name="$1" expected="$2" actual="$3"
-    if [ "$expected" = "any" ]; then
-        echo "  NOTE: $name = $actual (recorded, not asserted on this platform)"
-    elif [ "$actual" = "$expected" ]; then
+    if [ "$actual" = "$expected" ]; then
         echo "  PASS: $name = $actual"
     else
         echo "  FAIL: $name expected=$expected actual=$actual"
@@ -91,11 +106,12 @@ echo "  transport: $TRANSPORT"
 # pressure -- a pass that proves nothing.
 #
 # It only means that where the guard keys on the load finishing, which is the
-# WebKitGTK driver and only it: Qt's arms on the first navigation and macOS has
-# no guard at all, so on those a completed load says nothing either way about
-# the answer beside it. Keyed off the transport the build reports rather than
-# off the platform, so it follows the code: the day another driver starts
-# keying on the load, this starts demanding the control from it too.
+# WebKitGTK driver and only it: Qt's arms on the first navigation and the macOS
+# one at the commit of the document this file loaded, so on those a completed
+# load says nothing either way about the answer beside it. Keyed off the
+# transport the build reports rather than off the platform, so it follows the
+# code: the day another driver starts keying on the load, this starts demanding
+# the control from it too.
 READY="$(field ready)"
 if [ "$TRANSPORT" = "scriptmessage" ]; then
     if [ "$READY" = "complete" ]; then
@@ -110,9 +126,22 @@ else
     echo "  NOTE: ready = $READY (this guard does not key on the load finishing)"
 fi
 
-# The result. "escaped" means the page navigated to a remote origin and the
-# document that arrived was handed the channel to the native window.
-assert "the page kept out of the window" "$EXPECT_AT" "$(field at)"
+# The result, and every platform is asserted to it now. "escaped" means the
+# page navigated to a remote origin and the document that arrived was handed
+# the channel to the native window.
+#
+# macOS was recorded rather than asserted until this PR, because that driver
+# had no navigation guard to assert against. It has one now -- not a policy
+# decision, since WKNavigationDelegate takes a block for that and JXA cannot
+# call one, but -stopLoading from didStartProvisionalNavigation:, measured to
+# abandon the navigation and leave the app's own document standing.
+#
+# What the failure looks like there is worth knowing, because it is not
+# `at=escaped`: the navigation succeeds, the app's document is destroyed with
+# its pending report, and the page that arrives is refused by the origin check
+# when it tries to set the title. So no report arrives and the run fails above
+# instead. Both are failures; only `held` is a pass.
+assert "the page kept out of the window" "held" "$(field at)"
 
 echo "=== Results: $FAILURES failure(s) ==="
 [ "$FAILURES" -eq 0 ]
