@@ -121,6 +121,51 @@ fi
 # for cmd.exe. Bare "whoami" is not the windows one here: the suite runs under
 # git-bash and hands cmd.exe a PATH with git's coreutils on it, whose whoami
 # takes no arguments and answered nothing at all the first time this ran.
+# =====================================================================
+# The windows half of PR 9's reach question
+# =====================================================================
+#
+# env.c's windows allowlist is names plus one prefix (PROCESSOR_), so unlike the
+# unix side it admits no toolkit namespace at all -- and the loader knobs that
+# matter here are not toolkit-shaped anyway. WEBVIEW2_BROWSER_EXECUTABLE_FOLDER
+# names the folder the WebView2 browser process is loaded from,
+# WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is appended to that process's command
+# line, and the COR_/DOTNET_ family injects into the .NET runtime jsc.exe
+# compiles with. If any of them arrives, the allowlist admits on windows exactly
+# what env.sh is measuring on the other two platforms.
+#
+# Measured before anything was written, and the answer was that none of them
+# arrive: windows admits one prefix and it is PROCESSOR_. So PR 9 changes no
+# windows behaviour and this is a regression assertion rather than a fix --
+# a prefix added here later would have to answer for it.
+#
+# PATH is in the battery because it is kept out of necessity and windows
+# resolves DLLs along it. That one is asserted to *arrive*, so the pair reads
+# as what it is: the one loader-shaped name this platform cannot drop.
+export NEUTRINO_TEST_BATTERY="WEBVIEW2_BROWSER_EXECUTABLE_FOLDER \
+WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS WEBVIEW2_USER_DATA_FOLDER \
+WEBVIEW2_RELEASE_CHANNEL_PREFERENCE COR_ENABLE_PROFILING COR_PROFILER \
+COR_PROFILER_PATH COMPlus_ZapDisable DOTNET_STARTUP_HOOKS __COMPAT_LAYER \
+PATH PROCESSOR_ARCHITECTURE NT_ENV_CONTROL_DROPPED NEUTRINO_ENV_CONTROL_KEPT"
+
+# Inert values on purpose: the enable flag is 0 and the CLSID is the null one,
+# so nothing is loaded by setting these -- the question is whether the name
+# arrives, not what it would have done.
+NT_ENV_SET=(
+    "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=C:\\nonexistent\\neutrino-probe"
+    "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--no-sandbox"
+    "WEBVIEW2_USER_DATA_FOLDER=C:\\nonexistent\\neutrino-probe"
+    "WEBVIEW2_RELEASE_CHANNEL_PREFERENCE=1"
+    "COR_ENABLE_PROFILING=0"
+    "COR_PROFILER={00000000-0000-0000-0000-000000000000}"
+    "COR_PROFILER_PATH=C:\\nonexistent\\neutrino-probe.dll"
+    "COMPlus_ZapDisable=0"
+    "DOTNET_STARTUP_HOOKS=C:\\nonexistent\\neutrino-probe.dll"
+    "__COMPAT_LAYER=RunAsInvoker"
+    "NT_ENV_CONTROL_DROPPED=dropped-control"
+    "NEUTRINO_ENV_CONTROL_KEPT=kept-control"
+)
+
 cat > "$SERVE/privs.cmd" <<BATCH
 @echo off
 echo PRIV_BEGIN
@@ -132,6 +177,7 @@ type "$CTL_W" >nul 2>&1
 if errorlevel 1 (echo CONTROL_DENIED) else (echo CONTROL_OK)
 type "$TRAV_W" >nul 2>&1
 if errorlevel 1 (echo TRAVERSE_DENIED) else (echo TRAVERSE_OK)
+for %%V in (%NEUTRINO_TEST_BATTERY%) do (if defined %%V (echo env %%V SEEN) else (echo env %%V GONE))
 echo PROBE_END
 BATCH
 
@@ -144,7 +190,7 @@ APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 # =====================================================================
 echo "=== The token before netinstall touches it ==="
 cp "$SERVE/privs.cmd" "$WORK/control.bat"
-CONTROL_RAW="$(cmd //c "$(cygpath -w "$WORK/control.bat")" 2>&1 | tr -d '\r')"
+CONTROL_RAW="$(env "${NT_ENV_SET[@]}" cmd //c "$(cygpath -w "$WORK/control.bat")" 2>&1 | tr -d '\r')"
 CONTROL="$(sed -n '/^PRIV_BEGIN/,/^PRIV_END/p' <<<"$CONTROL_RAW" | nt_priv_list)"
 CONTROL_N="$(wc -w <<<"$CONTROL" | tr -d ' ')"
 CONTROL_TRAV="$(grep -o 'TRAVERSE_[A-Z]*' <<<"$CONTROL_RAW" | head -1)"
@@ -156,7 +202,7 @@ echo "  $CONTROL_CTL $CONTROL_TRAV"
 # The measurement.
 # =====================================================================
 echo "=== The token the payload actually runs with ==="
-OUT="$(nt_timeout 180 "$APP" 2>"$WORK/err" | tr -d '\r')"
+OUT="$(nt_timeout 180 env "${NT_ENV_SET[@]}" "$APP" 2>"$WORK/err" | tr -d '\r')"
 CONFINED="$(sed -n '/^PRIV_BEGIN/,/^PRIV_END/p' <<<"$OUT" | nt_priv_list)"
 CONFINED_N="$(wc -w <<<"$CONFINED" | tr -d ' ')"
 CONFINED_TRAV="$(grep -o 'TRAVERSE_[A-Z]*' <<<"$OUT" | head -1)"
@@ -248,6 +294,60 @@ fi
 
 nt_result "PR4 token: control n=$CONTROL_N -> confined n=$CONFINED_N \
 [$CONFINED] $CONFINED_CTL $CONFINED_TRAV --info-claims-stripped=$CLAIMS"
+
+# --- PR 9's reach, on the platform confine.sh cannot ask ---
+#
+# The control run says which of these the runner had in the first place: a name
+# nobody set reads GONE for a reason that has nothing to do with the allowlist,
+# and that is the shape a reassuring wrong answer takes here.
+NT_ENV_REACHED=""
+NT_ENV_STOPPED=""
+NT_ENV_UNSET_BEFORE=""
+for n in $NEUTRINO_TEST_BATTERY; do
+    if ! grep -qx "env $n SEEN" <<<"$CONTROL_RAW"; then
+        NT_ENV_UNSET_BEFORE="$NT_ENV_UNSET_BEFORE $n"
+    elif grep -qx "env $n SEEN" <<<"$OUT"; then
+        NT_ENV_REACHED="$NT_ENV_REACHED $n"
+    else
+        NT_ENV_STOPPED="$NT_ENV_STOPPED $n"
+    fi
+done
+if grep -qx "env NEUTRINO_ENV_CONTROL_KEPT SEEN" <<<"$OUT"; then
+    pass "the battery reached the payload (NEUTRINO_ENV_CONTROL_KEPT)"
+else
+    fail "battery control expected=NEUTRINO_ENV_CONTROL_KEPT SEEN actual=$(nt_raw <<<"$OUT")"
+fi
+if grep -qx "env NT_ENV_CONTROL_DROPPED GONE" <<<"$OUT"; then
+    pass "a name outside the allowlist is dropped (NT_ENV_CONTROL_DROPPED)"
+else
+    fail "battery control expected=NT_ENV_CONTROL_DROPPED GONE actual=$(nt_raw <<<"$OUT")"
+fi
+
+# The names themselves. A run where the control never set one of these says so
+# instead of passing: a name nobody set is absent for a reason that has nothing
+# to do with the allowlist.
+for n in WEBVIEW2_BROWSER_EXECUTABLE_FOLDER WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS \
+         WEBVIEW2_USER_DATA_FOLDER WEBVIEW2_RELEASE_CHANNEL_PREFERENCE \
+         COR_ENABLE_PROFILING COR_PROFILER COR_PROFILER_PATH COMPlus_ZapDisable \
+         DOTNET_STARTUP_HOOKS __COMPAT_LAYER; do
+    if ! grep -qx "env $n SEEN" <<<"$CONTROL_RAW"; then
+        nt_note "$n was never set on this runner; unmeasured here"
+    elif grep -qx "env $n GONE" <<<"$OUT"; then
+        pass "$n does not reach the app"
+    else
+        fail "$n expected=GONE actual=reached the app"
+    fi
+done
+for n in PATH PROCESSOR_ARCHITECTURE; do
+    if grep -qx "env $n SEEN" <<<"$OUT"; then
+        pass "$n still arrives"
+    else
+        fail "$n expected=SEEN actual=dropped; cmd.exe and the CRT need it"
+    fi
+done
+nt_result "env reach [windows]: reached:$NT_ENV_REACHED | stopped:$NT_ENV_STOPPED | \
+never set on this runner:$NT_ENV_UNSET_BEFORE | --info says: \
+$("$APP" --info 2>/dev/null | tr -d '\r' | awk '$1 == "env" { $1 = ""; sub(/^ +/, ""); print }')"
 
 echo "=== Results: $FAILURES failure(s) ==="
 exit $FAILURES

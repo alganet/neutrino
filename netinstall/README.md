@@ -127,6 +127,28 @@ Mesa namespaces, the handful of names cmd.exe and the CRT need on Windows, and a
 with `NEUTRINO_`. `LD_*` and `DYLD_*` are absent by construction. `--info` reports how many
 variables that drops.
 
+**A prefix admits a namespace, not every name in it.** A toolkit namespace is mostly modes and
+sizes, but it also contains the names that answer *which file should I load*, *which program should
+I run* and *should I sandbox myself* — `GTK_MODULES`, `GDK_PIXBUF_MODULE_FILE`, `QT_PLUGIN_PATH`,
+`QTWEBENGINE_PROCESS_PATH`, `WEBKIT_INJECTED_BUNDLE_PATH`, `WEBKIT_EXEC_PATH`, `LIBGL_DRIVERS_PATH`,
+`VK_LAYER_PATH`, and `QTWEBENGINE_CHROMIUM_FLAGS`, which Qt appends to Chromium's own command line.
+Those are matched by shape rather than by a list, so a knob a toolkit grows later is denied before
+anyone here hears about it, and they are dropped even though their prefix is admitted. Names that
+carry data rather than code stay: `XDG_DATA_DIRS` and `GSETTINGS_SCHEMA_DIR` point at icons and
+schemas, and `XDG_RUNTIME_DIR` at the directory holding the session's sockets — dropping that one
+would cost every Wayland session its display and buy nothing, since a socket is not something this
+process loads.
+
+That this is worth doing at all is a measurement rather than an argument, and it is in
+`netinstall/test/env.sh`: `GTK_MODULES` loads the file it names into the app, and
+`WEBKIT_INJECTED_BUNDLE_PATH` loads one into the *web* process, the one holding page content;
+`--renderer-cmd-prefix` inside `QTWEBENGINE_CHROMIUM_FLAGS` chooses the program the renderer runs.
+Neither sandbox covers for it — both platforms refuse to `execve` a file the app has written and
+then map a library out of that same directory without a word, in both tiers, because the rights
+these sandboxes mediate are about `execve` and not about `mmap`. On Windows nothing changes: that
+allowlist admits one prefix, `PROCESSOR_`, so `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER`, `COR_PROFILER`
+and `DOTNET_STARTUP_HOOKS` were already dropped and are now asserted to stay that way.
+
 Worth being precise about what this buys. A secret that exists **only** as a variable is now
 completely out of reach. A socket whose path is guessable — the session bus at
 `$XDG_RUNTIME_DIR/bus`, X11 at `/tmp/.X11-unix/X0` — is not: dropping the variable raises the bar,
