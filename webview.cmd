@@ -332,6 +332,21 @@ nt_resolve() {
 # picked is an ordinary app. Confining writes, refusing to execute what was
 # written, and closing the services that hand out secrets is the part that holds
 # regardless of what the app legitimately does.
+#
+# Write xor execute has a second door and it is not a file rule. An app can
+# write an .app bundle into the directory this profile makes writable, hand it
+# to /usr/bin/open or to NSWorkspace.openURL, and LaunchServices does the spawn
+# from a daemon that is in nobody's sandbox -- so the bundle runs outside every
+# profile in the stack. Denying the binary settles nothing, because the AppKit
+# call is right there; the service is the boundary.
+#
+# It takes two names, measured one candidate at a time on a macos runner with an
+# unconfined control after every attempt: launchservicesd alone leaves the
+# bundle launching, quarantine-resolver alone leaves it launching, the pair
+# shuts both doors. What stays open, also measured: an already-installed app
+# still launches and an http url still reaches the browser, so
+# shell.openExternal is unaffected. This is only in the tight tier because that
+# is the only tier this function is reached from.
 nt_macos_profile() {
     appdir_r="$(nt_resolve "$1")"
     tmpdir_r="$(nt_resolve "${TMPDIR:-/tmp}")"
@@ -365,6 +380,13 @@ nt_macos_profile() {
   (global-name "com.apple.securityd.xpc")
   (global-name "com.apple.tccd")
   (global-name "com.apple.tccd.system"))
+
+; LaunchServices. Both names, and it has to be both -- see the comment above
+; this function. Denying either one on its own leaves an .app bundle written
+; from inside the sandbox launching normally.
+(deny mach-lookup
+  (global-name "com.apple.coreservices.launchservicesd")
+  (global-name "com.apple.coreservices.quarantine-resolver"))
 (deny appleevent-send)
 (deny mach-priv-task-port)
 (deny signal (target others))

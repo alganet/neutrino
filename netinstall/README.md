@@ -272,10 +272,14 @@ What the probing did *not* find is much worth adding. That is the honest result:
   covers the dump.
 - **On macOS every denial tried survives except writing sysctls**, which breaks
   startup and is therefore out. The rest — pasteboard, IOKit, opendirectory,
-  LaunchServices, exec under `$HOME` — are *startup*-compatible and nothing
-  more. `NSWorkspace.openURL` needs LaunchServices and the clipboard is a thing
-  users press keys for; a table built from a local page cannot speak to either,
-  so none of them is shipped on this evidence.
+  exec under `$HOME` — are *startup*-compatible and nothing more, and the
+  clipboard is a thing users press keys for, so none of those is shipped on
+  this evidence.
+
+  **LaunchServices was in that list and has been taken out of it.** The reason
+  given for passing it over — that `NSWorkspace.openURL` needs it — is false,
+  and what it was hiding is an escape rather than a nicety. See
+  [the door that is not a file](#launchservices-and-the-door-that-is-not-a-file).
 - **Namespaces work where the distribution allows them, and the verdict here was
   the conclusion rather than the symptom.** An earlier version of this file
   recorded `unshare` succeeding and the `uid_map` write then returning `EPERM`,
@@ -327,6 +331,13 @@ while these stand:
   [The tight tier](#the-tight-tier-experimental) narrows the grant to the app's own entry and
   [the session tier](#the-session-tier-experimental) leaves no peer in `/proc` to write to at all.
   The default tier keeps it, and this is why.
+- **The default tier on macOS leaves the LaunchServices door open**, and it is an escape rather than
+  a nuisance: an `.app` bundle written into the app dir and handed to LaunchServices is spawned
+  outside every profile in the stack. [The tight tier](#the-tight-tier-experimental) closes it; the
+  default tier does not, and `confine.sh` asserts that it does not, so the ceiling is on the record
+  in both directions. Even in the tight tier an **already-installed** app can still be launched —
+  what is closed is launching a bundle the app itself wrote. See
+  [the door that is not a file](#launchservices-and-the-door-that-is-not-a-file).
 - **Windows cannot confine reads.** AppContainer is the only mechanism that would, and low integrity
   already stops WebView2 rendering, so there is no reason to expect AppContainer to fare better.
 - **FreeBSD gets no confinement**, and that is unlikely to change while Capsicum needs the target's
@@ -374,6 +385,65 @@ Also denied:
 - **`mach-priv-task-port`**, the macOS spelling of `ptrace` — a task port is read and write access
   to another process's memory — and **`signal` to processes outside the sandbox**, which is what
   `LANDLOCK_SCOPE_SIGNAL` buys on the other side.
+
+### LaunchServices, and the door that is not a file
+
+Write xor execute stops an app running what it wrote. It does not stop the app asking someone else
+to run it. An app writes an `.app` bundle into the directory the profile makes writable, hands it to
+LaunchServices, and the spawn is done by a daemon that is in nobody's sandbox — so the bundle runs
+outside this profile, and outside netinstall's too when netinstall is what launched it. A write from
+inside a seatbelt sandbox sets no quarantine attribute, so Gatekeeper does not intervene either.
+This is the same two-line escape the `process-exec*` denials were added to close, taking a different
+door.
+
+Denying `/usr/bin/open` would settle nothing. Anything that can reach AppKit calls
+`NSWorkspace.openURL` instead, and under netinstall the app is arbitrary `sh` with `osascript` on
+it. **Both doors were measured open** under the shipped profile, so the service is the boundary and
+the binary is not.
+
+**The tight tier denies two names, and it has to be both:**
+
+```
+(deny mach-lookup
+  (global-name "com.apple.coreservices.launchservicesd")
+  (global-name "com.apple.coreservices.quarantine-resolver"))
+```
+
+That pair is not a guess and not belt-and-braces. Each candidate below was applied on its own to a
+bundle written from inside the sandbox, on a macos-latest runner, with an unconfined control after
+every attempt so a wedged daemon could not answer for a boundary:
+
+| denied | `.app` via `open` | via `NSWorkspace` |
+|---|---|---|
+| nothing — the shipped default tier | **launches** | **launches** |
+| `com.apple.coreservices.launchservicesd` — the obvious one | launches | launches |
+| `com.apple.lsd.openurl` | launches | launches |
+| all of `com.apple.lsd.*` | launches | launches |
+| `com.apple.runningboard` | launches — and it is never even looked up | launches |
+| `com.apple.coreservices.quarantine-resolver` | launches | launches |
+| `com.apple.coreservices.sharedfilelistd.xpc` | launches — never looked up either | launches |
+| **`launchservicesd` + `quarantine-resolver`** | **refused** | **refused** |
+| all of `com.apple.coreservices.*` | refused | refused |
+
+LaunchServices has a way round each name and no way round the two. Which way round is Apple's
+business and is not documented; what is recorded here is the measurement. `confine.sh` asserts the
+outcome in **both** tiers, so a macOS that makes either name sufficient — or neither — is a failure
+and not a silence.
+
+**What it costs: nothing that could be measured.** A real webview renders under the profile carrying
+it, and `shell.openExternal` keeps working — an http url still reaches the browser, because a url is
+not a file and has no quarantine to resolve. The user-visible trade this denial was expected to make
+does not exist, and the older note that `NSWorkspace.openURL` needs LaunchServices was measuring the
+wrong call.
+
+**What it does not close**, said here rather than letting the denial look total: an app that is
+**already installed and registered still launches**. What is closed is getting LaunchServices to
+spawn a bundle the app itself wrote, which is the escape. Launching Calculator hands an attacker
+nothing; launching a bundle they authored hands them everything.
+
+Both halves are asserted, in the polyglot's tier as well as netinstall's: `verify-macos-tight.sh`
+plants a bundle in the app dir, proves it launches unconfined, and then fails if either door reaches
+LaunchServices under the profile `webview.cmd` generated for itself.
 
 ### The seccomp filter
 
@@ -499,7 +569,7 @@ different on each platform, because the mechanisms differ in what they can expre
 | Platform | What the tight tier adds |
 |---|---|
 | **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default, and execute becomes an allowlist that omits every writable directory. `~/.Xauthority` stays readable unless the session tier replaced the cookie with an untrusted one, in which case allowlisting it would hand back exactly what that took away. The `/proc` write grant narrows from every process's entry to `/proc/self` — see [what Landlock costs](#what-landlock-costs-in-both-tiers) for what that buys and what it takes. |
-| **macOS** | Seatbelt denies reads of all of `$HOME` rather than a named list of secrets. |
+| **macOS** | Seatbelt denies reads of all of `$HOME` rather than a named list of secrets, and closes the LaunchServices escape — see [the door that is not a file](#launchservices-and-the-door-that-is-not-a-file). |
 | **Windows** | The process drops to low integrity, so writes outside the app dir fail. |
 | **OpenBSD** | Nothing — `unveil` is already an allowlist, so the default tier is the tight one. |
 
@@ -760,7 +830,8 @@ tiers, and one with the session and tight tiers together, then runs eight suites
 grammar, accepted and rejected), `verify.sh` (pin mismatch, non-text payloads, oversized responses,
 offline cache, tampered cache), `confine.sh`
 (a hostile script that tries to escape — the filesystem, the environment, an inherited descriptor,
-an abstract socket, another process's memory), `confine-strict.sh` (the tight tier, and whether a
+an abstract socket, another process's memory, and on macOS a bundle it wrote handed to
+LaunchServices two different ways), `confine-strict.sh` (the tight tier, and whether a
 webview still starts under it), `confine-session.sh` (the session tier: both buses closed against a
 control that reaches them, the runtime dir sealed, no outside process visible, the screen
 unphotographable from inside, and a real webview under all of it), `offline.sh` (that the offline

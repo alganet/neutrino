@@ -143,6 +143,39 @@ static const char nt_profile[] =
     "  (global-name \"com.apple.securityd.xpc\")\n"
     "  (global-name \"com.apple.tccd\")\n"
     "  (global-name \"com.apple.tccd.system\"))\n"
+#ifdef NEUTRINO_CONFINE_TIGHT
+    /*
+     * LaunchServices, and the door that walks out of every profile in the
+     * stack. A confined app writes an .app bundle into the directory this
+     * profile makes writable, hands it to /usr/bin/open, and the spawn is done
+     * by a daemon that is in nobody's sandbox. Denying the binary would settle
+     * nothing: anything that can reach AppKit calls NSWorkspace.openURL
+     * instead, and that door was measured open under this profile too. Both
+     * had to close or neither was closed.
+     *
+     * Both names, and it has to be both. Measured one candidate at a time on a
+     * macos-latest runner, each against a bundle written from inside the
+     * sandbox, with an unconfined control after every attempt: launchservicesd
+     * alone leaves it launching, quarantine-resolver alone leaves it launching,
+     * and the pair shuts both doors. LaunchServices has a way round each of
+     * them and no way round the two. That is also why the obvious one-line fix
+     * -- launchservicesd, the daemon the escape is named after -- is not the
+     * fix, and why this comment names the measurement rather than the reason:
+     * the reason is Apple's and it is not documented.
+     *
+     * What this does not close, also measured: an app that is already installed
+     * and registered still launches, and an http url still reaches the browser,
+     * so shell.openExternal keeps working. The boundary is on launching a
+     * bundle the app itself wrote, which is the escape, and not on
+     * LaunchServices as such.
+     *
+     * confine.sh asserts the outcome in both tiers, so a macOS that makes
+     * either name sufficient -- or neither -- is a failure and not a silence.
+     */
+    "(deny mach-lookup\n"
+    "  (global-name \"com.apple.coreservices.launchservicesd\")\n"
+    "  (global-name \"com.apple.coreservices.quarantine-resolver\"))\n"
+#endif
     "(deny appleevent-send)\n"
     /* The macOS spelling of ptrace: a task port is read and write access to
      * another process's memory. Signals are scoped to our own sandbox, which is
