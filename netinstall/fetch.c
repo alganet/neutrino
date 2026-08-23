@@ -11,7 +11,11 @@
 #include <windows.h>
 #include <process.h>
 #else
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -23,6 +27,14 @@
 /* What the fetch child exits with when it will not run unconfined. Out of the
  * way of curl's own exit codes, which go up to 99. */
 #define NT_FETCH_REFUSED 120
+
+/*
+ * One number for the clock, spent as curl's --max-time on the branch that has
+ * such a flag and as an alarm on the branch that does not.
+ */
+#define NT_FETCH_MAX_SECONDS 120
+#define NT_STR_(x) #x
+#define NT_STR(x) NT_STR_(x)
 
 /*
  * Release binaries refuse anything but https. The test build additionally
@@ -42,6 +54,7 @@
  * the user's curl config are the trust anchor this design chose, so
  * scrubbing them would remove exactly the control that was the point.
  */
+#if !(defined(NEUTRINO_TESTING) && defined(NEUTRINO_FETCH_PREFER_WGET)) || defined(_WIN32)
 static const char *nt_curl_paths[] = {
 #ifdef _WIN32
     "C:\\Windows\\System32\\curl.exe",
@@ -53,14 +66,48 @@ static const char *nt_curl_paths[] = {
 #endif
     NULL
 };
+#endif
 
 #ifndef _WIN32
+/*
+ * The same list, and it has to be: the curl list above carries
+ * /opt/homebrew/bin and this one did not, so on an Apple Silicon mac -- where
+ * homebrew installs there rather than to /usr/local -- a wget the user has is
+ * a wget this never finds. Harmless in practice, because macOS ships curl in
+ * /usr/bin and the fallback is never reached; visible immediately once
+ * something tried to reach it on purpose, which is how it was found.
+ */
 static const char *nt_wget_paths[] = {
     "/usr/bin/wget",
     "/bin/wget",
     "/usr/local/bin/wget",
+    "/opt/homebrew/bin/wget",
     NULL
 };
+#endif
+
+#ifndef _WIN32
+/*
+ * The fetch deadline is the parent's, and it took a measurement to learn why.
+ *
+ * The obvious place is the child: alarm() before execv, since a pending alarm
+ * survives an exec. It does -- against curl, which is what the probe ran, and
+ * which dies at the second with SIGALRM. wget implements its own --timeout with
+ * SIGALRM and overwrites ours the moment it starts, so the one branch that
+ * needs a total is the one branch where that mechanism does nothing. Measured:
+ * curl rc 142 at eight seconds, wget still dribbling three minutes into an
+ * eight-second deadline.
+ *
+ * netinstall is already waiting on the child and has no alarms of its own, so
+ * the deadline goes here, where nothing can clear it.
+ */
+static volatile sig_atomic_t nt_fetch_timed_out;
+
+static void nt_fetch_alarm(int sig)
+{
+    (void)sig;
+    nt_fetch_timed_out = 1;
+}
 #endif
 
 static const char *nt_first_existing(const char **paths)
@@ -101,15 +148,36 @@ static void nt_join(char *out, size_t len, char *const argv[])
     }
 }
 
+/*
+ * `wget` is set when the fallback was taken, because that branch's bounds are
+ * not in its argv and the two callers both need to know: the child, which has
+ * to impose them, and --info, which would otherwise print a command line that
+ * understates what is in force.
+ */
 static const char *nt_build(const char *url, const char *dest, char *maxsize,
-                            size_t maxlen, char **argv)
+                            size_t maxlen, char **argv, int *wget)
 {
     const char *bin;
     int n = 0;
 
     snprintf(maxsize, maxlen, "%d", NT_MAX_PAYLOAD);
+    if (wget) {
+        *wget = 0;
+    }
 
+#if defined(NEUTRINO_TESTING) && defined(NEUTRINO_FETCH_PREFER_WGET) && !defined(_WIN32)
+    /*
+     * Every runner this suite has -- and every machine anyone is likely to run
+     * netinstall on -- resolves curl, so the fallback is a branch nothing has
+     * ever taken. Measured: curl PRESENT on all five reporting lanes. This
+     * exists only in test builds, so a release binary cannot be talked out of
+     * the stronger downloader; it is the door confine already opens on the
+     * same terms.
+     */
+    bin = NULL;
+#else
     bin = nt_first_existing(nt_curl_paths);
+#endif
     if (bin) {
         argv[n++] = (char *)bin;
         argv[n++] = (char *)"-fsSL";
@@ -120,7 +188,7 @@ static const char *nt_build(const char *url, const char *dest, char *maxsize,
         argv[n++] = (char *)"--max-redirs";
         argv[n++] = (char *)"5";
         argv[n++] = (char *)"--max-time";
-        argv[n++] = (char *)"120";
+        argv[n++] = (char *)NT_STR(NT_FETCH_MAX_SECONDS);
         argv[n++] = (char *)"--max-filesize";
         argv[n++] = maxsize;
         argv[n++] = (char *)"-o";
@@ -137,15 +205,24 @@ static const char *nt_build(const char *url, const char *dest, char *maxsize,
             fprintf(stderr, "netinstall: no curl or wget found\n");
             return NULL;
         }
+        if (wget) {
+            *wget = 1;
+        }
         argv[n++] = (char *)bin;
         /*
          * --https-only governs recursive link following, not redirects for a
-         * single file, and wget has no equivalent of --max-filesize. Refusing
-         * redirects outright is the only way to keep the scheme constrained
-         * here; the size is bounded after transfer instead of during it.
+         * single file, so refusing redirects outright is the only way to keep
+         * the scheme constrained here.
+         *
+         * The two bounds this branch cannot express in its argv are imposed on
+         * it in the child below instead. wget has no equivalent of
+         * --max-filesize, and --timeout is per read rather than a total, so a
+         * host sending one byte a second satisfies it forever -- measured, on
+         * five lanes, still alive at forty seconds with nothing else stopping
+         * it.
          */
         argv[n++] = (char *)"--max-redirect=0";
-        argv[n++] = (char *)"--timeout=120";
+        argv[n++] = (char *)"--timeout=" NT_STR(NT_FETCH_MAX_SECONDS);
         argv[n++] = (char *)"-q";
         argv[n++] = (char *)"-O";
         argv[n++] = (char *)dest;
@@ -157,16 +234,39 @@ static const char *nt_build(const char *url, const char *dest, char *maxsize,
     return bin;
 }
 
-int nt_fetch_command(const char *url, const char *dest, char *shown, size_t shownlen)
+int nt_fetch_command(const char *url, const char *dest, char *shown,
+                     size_t shownlen, char *bounds, size_t boundslen)
 {
     char maxsize[32];
     char *argv[24];
+    int wget = 0;
 
-    if (!nt_build(url, dest, maxsize, sizeof(maxsize), argv)) {
+    if (!nt_build(url, dest, maxsize, sizeof(maxsize), argv, &wget)) {
         snprintf(shown, shownlen, "(no downloader found)");
+        if (bounds) {
+            snprintf(bounds, boundslen, "none -- no downloader found");
+        }
         return -1;
     }
     nt_join(shown, shownlen, argv);
+    /*
+     * The wget branch's bounds are nowhere in the line above, so a --info that
+     * printed only the command would understate what is in force -- which is
+     * the same complaint this document makes about every other --info line.
+     */
+    if (bounds) {
+        if (wget) {
+            snprintf(bounds, boundslen,
+                     "%d bytes and %d seconds, from the kernel "
+                     "(RLIMIT_FSIZE and alarm; wget expresses neither)",
+                     NT_MAX_PAYLOAD, NT_FETCH_MAX_SECONDS);
+        } else {
+            snprintf(bounds, boundslen,
+                     "%d bytes and %d seconds, from curl "
+                     "(--max-filesize and --max-time)",
+                     NT_MAX_PAYLOAD, NT_FETCH_MAX_SECONDS);
+        }
+    }
     return 0;
 }
 
@@ -194,8 +294,9 @@ int nt_fetch(const char *url, const char *dest, const char *home,
     char maxsize[32];
     char *argv[24];
     const char *bin;
+    int wget = 0;
 
-    bin = nt_build(url, dest, maxsize, sizeof(maxsize), argv);
+    bin = nt_build(url, dest, maxsize, sizeof(maxsize), argv, &wget);
     if (!bin) {
         return -1;
     }
@@ -245,6 +346,56 @@ int nt_fetch(const char *url, const char *dest, const char *home,
             /* curl needs stdio and nothing else the caller happened to leave open. */
             nt_close_inherited();
             /*
+             * What the wget branch cannot say in its own argv, said here by
+             * the kernel instead. curl carries --max-filesize and --max-time
+             * and needs neither of these; giving them to it would buy nothing
+             * and take on the stderr hazard below for free.
+             *
+             * Measured on linux, macos and openbsd: a downloader with no size
+             * flag writes every byte a host offers -- 64 MiB and exit 0 in the
+             * probe -- and under RLIMIT_FSIZE stops at exactly the limit with
+             * SIGXFSZ. The clock half is the parent's; see nt_fetch_alarm.
+             */
+            if (wget) {
+                /*
+                 * RLIMIT_FSIZE bounds the file *offset* a write lands at, not
+                 * the size of the write, and it applies to every regular file
+                 * this process holds -- including a stderr it inherited. A
+                 * caller who redirected netinstall into a log already past the
+                 * limit would otherwise watch wget die of its own first
+                 * diagnostic, and read it as a network error. Measured: rc 153
+                 * on all three POSIX lanes.
+                 *
+                 * Both the size and the offset, because either can be the one
+                 * that matters and the first draft of this checked only the
+                 * offset. `2>>log` opens with O_APPEND, where lseek reports 0
+                 * until the first write and the kernel then places that write
+                 * at the end anyway -- so the guard saw a fresh fd at offset
+                 * zero and let the child straight into the trap it was written
+                 * to avoid. Caught by the assertion in fetchbound.sh.
+                 *
+                 * A pipe or a tty is not S_ISREG and is left alone.
+                 */
+                struct stat st;
+
+                if (fstat(2, &st) == 0 && S_ISREG(st.st_mode) &&
+                    (st.st_size >= (off_t)NT_MAX_PAYLOAD ||
+                     lseek(2, 0, SEEK_CUR) >= (off_t)NT_MAX_PAYLOAD)) {
+                    int devnull = open("/dev/null", O_WRONLY);
+
+                    if (devnull >= 0) {
+                        dup2(devnull, 2);
+                        if (devnull > 2) {
+                            close(devnull);
+                        }
+                    }
+                }
+                rl.rlim_cur = (rlim_t)NT_MAX_PAYLOAD;
+                rl.rlim_max = (rlim_t)NT_MAX_PAYLOAD;
+                setrlimit(RLIMIT_FSIZE, &rl);
+                /* The clock is the parent's; see nt_fetch_alarm above. */
+            }
+            /*
              * The answer was thrown away here for as long as this file has
              * existed. The downloader is the one process that reads bytes an
              * attacker chose, off the network, before anything has verified
@@ -267,13 +418,69 @@ int nt_fetch(const char *url, const char *dest, const char *home,
             execv(bin, argv);
             _exit(127);
         }
-        if (waitpid(pid, &status, 0) < 0) {
-            return -1;
+        {
+            struct sigaction sa, old;
+            int armed = 0;
+
+            nt_fetch_timed_out = 0;
+            /*
+             * Only the fallback branch: curl carries --max-time, and a second
+             * deadline racing its own would make which message arrives a coin
+             * toss.
+             */
+            if (wget) {
+                sa.sa_handler = nt_fetch_alarm;
+                sigemptyset(&sa.sa_mask);
+                /* No SA_RESTART, or waitpid resumes and the deadline becomes a
+                 * flag nobody reads. */
+                sa.sa_flags = 0;
+                if (sigaction(SIGALRM, &sa, &old) == 0) {
+                    armed = 1;
+                    alarm(NT_FETCH_MAX_SECONDS);
+                }
+            }
+            while (waitpid(pid, &status, 0) < 0) {
+                if (errno != EINTR) {
+                    if (armed) {
+                        alarm(0);
+                        sigaction(SIGALRM, &old, NULL);
+                    }
+                    return -1;
+                }
+                if (nt_fetch_timed_out) {
+                    kill(pid, SIGKILL);
+                }
+            }
+            if (armed) {
+                alarm(0);
+                sigaction(SIGALRM, &old, NULL);
+            }
+            if (nt_fetch_timed_out) {
+                fprintf(stderr,
+                        "netinstall: the host held the download open past %d seconds\n",
+                        NT_FETCH_MAX_SECONDS);
+                return -2;
+            }
         }
         if (WIFEXITED(status) && WEXITSTATUS(status) == NT_FETCH_REFUSED) {
             /* The child already said why, and said it precisely. A second,
              * vaguer line about the url on top of that helps nobody. */
             return -2;
+        }
+        /*
+         * RLIMIT_FSIZE kills the child before it can say anything, so the
+         * reason has to be read out of the status here. Without this a host
+         * that filled a disk is indistinguishable from a flaky network.
+         */
+        if (WIFSIGNALED(status)) {
+            int sig = WTERMSIG(status);
+
+            if (sig == SIGXFSZ) {
+                fprintf(stderr,
+                        "netinstall: the host sent more than %d bytes; refusing\n",
+                        NT_MAX_PAYLOAD);
+                return -2;
+            }
         }
         return (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : -1;
     }

@@ -46,6 +46,15 @@ NETINSTALL_CFLAGS="-DNEUTRINO_TESTING -DNEUTRINO_CONFINE_NOSESSION -DNEUTRINO_ST
     bash "$HERE/../build.sh" host >/dev/null || exit 2
 mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-failclosed-session$NT_EXE"
 
+# fetchbound.sh needs the fallback branch built, because no machine anyone can
+# rent resolves wget: curl is present on all five reporting lanes, so the branch
+# whose bounds this PR added is otherwise never taken. The flag exists only
+# under NEUTRINO_TESTING, so a release binary cannot be talked down to it.
+echo "### Building prefer-wget binary"
+NETINSTALL_CFLAGS="-DNEUTRINO_TESTING -DNEUTRINO_FETCH_PREFER_WGET" \
+    bash "$HERE/../build.sh" host >/dev/null || exit 2
+mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-wget$NT_EXE"
+
 echo "### Building strict-confinement binary"
 NETINSTALL_CFLAGS="-DNEUTRINO_TESTING -DNEUTRINO_CONFINE_TIGHT" \
     bash "$HERE/../build.sh" host >/dev/null || exit 2
@@ -58,7 +67,7 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 # annotations per level per step and drops the rest without saying so, and this
 # step already emits more results than that. A measurement taken last is a
 # measurement nobody outside the runner gets to read.
-SUITES="pinfloor names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
+SUITES="pinfloor fetchbound names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
 # The BSDs have no webview on any runner that can be had, so e2e and env -- the
 # two suites that launch one -- would fail for the absence of a toolkit rather
 # than anything about the confinement. Everything that measures unveil and
@@ -66,7 +75,7 @@ SUITES="pinfloor names verify confine confine-tight confine-strict confine-sessi
 # this platform) and says so, which is a statement and not a silent pass.
 case "$(uname -s)" in
     OpenBSD|FreeBSD|NetBSD|DragonFly)
-        SUITES="pinfloor names verify confine confine-tight confine-strict offline phases strict" ;;
+        SUITES="pinfloor fetchbound names verify confine confine-tight confine-strict offline phases strict" ;;
 esac
 # session.sh is a probe rather than a gate: it applies each candidate mechanism
 # on its own to a real webview. It answered -- the session tier is what came of
@@ -82,6 +91,13 @@ for t in $SUITES; do
     case "$t" in
         names) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-release$NT_EXE" ;;
         confine-strict) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-strict$NT_EXE" ;;
+        # Two binaries: the branch every machine actually takes, and the
+        # fallback, whose two bounds come from the kernel and can therefore
+        # only be asserted against a build that reaches it. The longer leash is
+        # the clock assertion, which waits out a real deadline on purpose.
+        fetchbound) nt_timeout 900 bash "$HERE/$t.sh" \
+            "$HERE/../dist/netinstall-testing$NT_EXE" \
+            "$HERE/../dist/netinstall-wget$NT_EXE" ;;
         # Three binaries: the tier, one without it as the control that says the
         # bus was there to be closed, and one with the tight tier on top, which
         # is where the untrusted X cookie stops being a bar and starts being a
