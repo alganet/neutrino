@@ -53,6 +53,17 @@
  * Its own configuration is deliberately left alone: the OS trust store and
  * the user's curl config are the trust anchor this design chose, so
  * scrubbing them would remove exactly the control that was the point.
+ *
+ * That decision is about trust, and a configuration file is not limited to
+ * trust. Measured, on four curl versions across five lanes: the two bounds
+ * below survive it -- a config asking for a larger --max-filesize or a smaller
+ * --max-time loses to the argv, because curl parses the config first and a
+ * last-wins option is therefore won by the command line. What does not
+ * last-win is -o, which pairs with URLs in the order both appear: an `output`
+ * line in a config takes the one URL and leaves this program's -o holding
+ * nothing. So the decision stands, and the two things that were false about it
+ * do not -- see nt_fetch_config below, and the "wrote nothing" refusal in
+ * netinstall.c.
  */
 #if !(defined(NEUTRINO_TESTING) && defined(NEUTRINO_FETCH_PREFER_WGET)) || defined(_WIN32)
 static const char *nt_curl_paths[] = {
@@ -234,8 +245,34 @@ static const char *nt_build(const char *url, const char *dest, char *maxsize,
     return bin;
 }
 
+/*
+ * Where the downloader looks for the options this program did not give it.
+ * Asserted to the measured set rather than to the manual: fetchconf.sh probes
+ * each location on every lane, so a curl that grows or drops one fails here
+ * instead of quietly making this sentence wrong.
+ */
+#if defined(__OpenBSD__)
+/* unveil is an allowlist for reads and the fetch list does not include any of
+ * them, so on this platform the sentence is that nothing is read at all. */
+#define NT_CURL_CONFIG "curl reads none of its own config here: the fetch " \
+                       "phase's unveil set does not include it"
+#define NT_WGET_CONFIG "wget reads none of its own config here: the fetch " \
+                       "phase's unveil set does not include it"
+#elif defined(_WIN32)
+#define NT_CURL_CONFIG "curl also reads its own config, and it is not " \
+                       "suppressed: %CURL_HOME%, %XDG_CONFIG_HOME%, %HOME%, " \
+                       "%APPDATA%, %USERPROFILE%"
+#define NT_WGET_CONFIG "no wget branch on windows"
+#else
+#define NT_CURL_CONFIG "curl also reads its own config, and it is not " \
+                       "suppressed: $CURL_HOME/.curlrc, then ~/.curlrc"
+#define NT_WGET_CONFIG "wget also reads its own config, and it is not " \
+                       "suppressed: $WGETRC, then ~/.wgetrc, then /etc/wgetrc"
+#endif
+
 int nt_fetch_command(const char *url, const char *dest, char *shown,
-                     size_t shownlen, char *bounds, size_t boundslen)
+                     size_t shownlen, char *bounds, size_t boundslen,
+                     char *config, size_t configlen)
 {
     char maxsize[32];
     char *argv[24];
@@ -246,7 +283,13 @@ int nt_fetch_command(const char *url, const char *dest, char *shown,
         if (bounds) {
             snprintf(bounds, boundslen, "none -- no downloader found");
         }
+        if (config) {
+            snprintf(config, configlen, "none -- no downloader found");
+        }
         return -1;
+    }
+    if (config) {
+        snprintf(config, configlen, "%s", wget ? NT_WGET_CONFIG : NT_CURL_CONFIG);
     }
     nt_join(shown, shownlen, argv);
     /*

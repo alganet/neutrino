@@ -75,7 +75,13 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 # round, to put its own after-values on the record once -- envlen for PR 15 and
 # writable for PR 16. A failure is an ::error, which has a bucket of its own, so
 # nothing that matters is lost back here.
-SUITES="pinfloor fetchbound envlen writable names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
+#
+# fetchconf sits back here beside envlen and writable, and for the same reason:
+# it was in front for exactly the rounds that had to put its readings on the
+# record -- three probing and one candidate -- and it is an assertion suite now.
+# Its reports fall past the cap, a green tick is its whole answer, and a failure
+# is an ::error, which has a bucket of its own.
+SUITES="pinfloor fetchbound envlen writable fetchconf names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
 # The BSDs have no webview on any runner that can be had, so e2e and env -- the
 # two suites that launch one -- would fail for the absence of a toolkit rather
 # than anything about the confinement. Everything that measures unveil and
@@ -83,7 +89,7 @@ SUITES="pinfloor fetchbound envlen writable names verify confine confine-tight c
 # this platform) and says so, which is a statement and not a silent pass.
 case "$(uname -s)" in
     OpenBSD|FreeBSD|NetBSD|DragonFly)
-        SUITES="pinfloor fetchbound envlen writable names verify confine confine-tight confine-strict offline phases strict" ;;
+        SUITES="pinfloor fetchbound envlen writable fetchconf names verify confine confine-tight confine-strict offline phases strict" ;;
 esac
 # session.sh is a probe rather than a gate: it applies each candidate mechanism
 # on its own to a real webview. It answered -- the session tier is what came of
@@ -113,6 +119,16 @@ for t in $SUITES; do
         fetchbound) nt_timeout 900 bash "$HERE/$t.sh" \
             "$HERE/../dist/netinstall-testing$NT_EXE" \
             "$HERE/../dist/netinstall-wget$NT_EXE" ;;
+        # Three binaries. The first two for the same reason fetchbound takes
+        # them: the question is what else is on each downloader's command line,
+        # and the fallback is the branch whose bounds are not on one at all.
+        # The third because nt_fetch_confine_win has no tier branch in it, so
+        # whether the tight tier confines the fetch phase's writes is a thing to
+        # measure rather than to infer from an #ifdef that is not there.
+        fetchconf) nt_timeout 900 bash "$HERE/$t.sh" \
+            "$HERE/../dist/netinstall-testing$NT_EXE" \
+            "$HERE/../dist/netinstall-wget$NT_EXE" \
+            "$HERE/../dist/netinstall-strict$NT_EXE" ;;
         # Three binaries: the tier, one without it as the control that says the
         # bus was there to be closed, and one with the tight tier on top, which
         # is where the untrusted X cookie stops being a bar and starts being a
