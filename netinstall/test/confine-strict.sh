@@ -65,11 +65,10 @@ OUT="$(nt_timeout 60 "$APP" 2>"$WORK/err" | tr -d "\r")"
 CONFINE="$("$APP" --info 2>/dev/null | awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')"
 nt_note "confinement: $CONFINE"
 
-case "$CONFINE" in
-    *"reads and writes"*|*"low integrity"*) ;;
-    *)  nt_note "SKIP: this binary has no tight confinement ($CONFINE)"
-        exit 0 ;;
-esac
+if ! nt_tight_tier "$CONFINE"; then
+    nt_note "SKIP: this binary has no tight confinement ($CONFINE)"
+    exit 0
+fi
 
 check() {
     local label="$1" want="$2"

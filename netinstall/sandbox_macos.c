@@ -213,6 +213,25 @@ static const char nt_fetch_profile[] =
     "  (subpath (param \"APPDIR\"))\n"
     "  (subpath \"/private/var/folders\"))\n";
 
+/*
+ * The rest of the writable set, spelled where a user can read it.
+ *
+ * The profile above grants every one of these deliberately -- the Library
+ * subtrees because CFPreferences and WebKit write there on every launch and
+ * denying them takes the window down, /private/var/folders because macOS is the
+ * one platform where TMPDIR is deliberately not redirected, and the device
+ * nodes because a shell script that cannot open /dev/null is a script whose
+ * every redirection fails. None of that is new and all of it has a comment.
+ * What was wrong is that "writes confined to <appdir>" was the only one of
+ * those a user ever saw, and it named one of six.
+ *
+ * Measured on a macos-latest runner, both tiers: tmpdir=CTO darwin=CTO
+ * libcache=CTO libprefs=CTO, against home=--- and tmp=--- beside them.
+ */
+#define NT_ALSO_WRITABLE ", /private/var/folders, " \
+    "~/Library/{Caches,Preferences,WebKit,Saved Application State} " \
+    "and six /dev nodes"
+
 /* Seatbelt compares resolved paths, and /var and /tmp are both symlinks. */
 static const char *nt_resolve(const char *path, char *buf, size_t len)
 {
@@ -249,33 +268,40 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         "/Library/Safari", "/Library/Fonts"
     };
 
-    if (!enforce) {
-#ifdef NEUTRINO_CONFINE_TIGHT
-        snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", reads and writes confined to %s",
-                 phase == NT_PHASE_FETCH ? "" : NT_OFFLINE_NOTE,
-                 phase == NT_PHASE_FETCH ? home : appdir);
-#else
-        snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", writes confined to %s",
-                 phase == NT_PHASE_FETCH ? "" : NT_OFFLINE_NOTE,
-                 phase == NT_PHASE_FETCH ? home : appdir);
-#endif
-        return 0;
-    }
-
+    /*
+     * No early return for --info, and that is the fix rather than a tidy-up.
+     * The description used to be written twice: once here from `home` and
+     * `appdir` as handed in, and once below from the directory the profile is
+     * actually built around. They said different things, and only the one
+     * nobody applies was printed. Measured on a macos-latest runner: --info's
+     * fetch line named the cache root while the profile confined the downloader
+     * to the blobs directory inside it, and a tight build claimed "reads and
+     * writes confined to" for a fetch profile that confines no reads at all.
+     *
+     * So the description is built once, at the bottom of each phase, from the
+     * same resolved path the profile got -- which is what linux has always done
+     * and why linux was the one platform saying the right thing here.
+     */
     if (phase == NT_PHASE_FETCH) {
         snprintf(blobs, sizeof(blobs), "%s/blobs", home);
         dir = nt_resolve(blobs, dirbuf, sizeof(dirbuf));
-        params[n++] = "APPDIR";
-        params[n++] = dir;
-        params[n] = NULL;
-        if (sandbox_init_with_parameters(nt_fetch_profile, 0, params, &err) != 0) {
-            snprintf(desc, desclen, "none (seatbelt rejected: %s)", err ? err : "?");
-            if (err) {
-                sandbox_free_error(err);
+        if (enforce) {
+            params[n++] = "APPDIR";
+            params[n++] = dir;
+            params[n] = NULL;
+            if (sandbox_init_with_parameters(nt_fetch_profile, 0, params, &err) != 0) {
+                snprintf(desc, desclen, "none (seatbelt rejected: %s)", err ? err : "?");
+                if (err) {
+                    sandbox_free_error(err);
+                }
+                return -1;
             }
-            return -1;
         }
-        snprintf(desc, desclen, "seatbelt, writes confined to %s", dir);
+        /* The fetch profile makes no read claim, in either tier, because it
+         * imposes no read rule. It grants the blobs directory and five device
+         * nodes and that is the whole of it. */
+        snprintf(desc, desclen,
+                 "seatbelt, writes confined to %s and five /dev nodes", dir);
         return 0;
     }
 
@@ -283,7 +309,9 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     if (!userhome || !*userhome) {
         userhome = "/var/empty";
     }
-    dir = nt_resolve(appdir, dirbuf, sizeof(dirbuf));
+    /* Every caller passes an appdir for the run phase; realpath would take a
+     * null one personally, and this path is now walked by --info too. */
+    dir = nt_resolve(appdir ? appdir : "/var/empty", dirbuf, sizeof(dirbuf));
     snprintf(tmpbuf, sizeof(tmpbuf), "%s/tmp", dir);
 
     for (i = 0; i < 12; i++) {
@@ -323,7 +351,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
      * The Library carve-outs are not optional: CFPreferences and WebKit write
      * there on every launch, and denying them takes the window down with them.
      */
-    if (sandbox_init_with_parameters(nt_profile, 0, params, &err) != 0) {
+    if (enforce &&
+        sandbox_init_with_parameters(nt_profile, 0, params, &err) != 0) {
         snprintf(desc, desclen, "none (seatbelt rejected: %s)", err ? err : "?");
         if (err) {
             sandbox_free_error(err);
@@ -332,10 +361,15 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     }
 
 #ifdef NEUTRINO_CONFINE_TIGHT
-    snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", reads and writes confined to %s",
+    /* Not "reads confined to the app dir": the tight profile denies reads under
+     * $HOME and hands back the subtrees Cocoa and WebKit read on the way up,
+     * and everything outside $HOME is readable as it is in the default tier. */
+    snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", reads denied under "
+                            "$HOME, writes confined to %s" NT_ALSO_WRITABLE,
              NT_OFFLINE_NOTE, dir);
 #else
-    snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", writes confined to %s",
+    snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", writes confined to "
+                            "%s" NT_ALSO_WRITABLE,
              NT_OFFLINE_NOTE, dir);
 #endif
     return 0;

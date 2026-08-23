@@ -218,6 +218,26 @@ nt_ptrace_scope_restore() {
     NT_PTRACE_SCOPE_SAVED=""
 }
 
+# Which tier a binary is, read off the sentence --info prints, because that is
+# the only channel that says so.
+#
+# It used to be the phrase "reads and writes confined to", matched in two
+# suites independently. That phrase was also a false claim -- the tight tier
+# confines reads to an allowlist, not to the app dir -- and removing it would
+# have made confine-strict.sh skip its whole battery with a note and exit 0,
+# which is a green tick for a suite that asserted nothing. Caught locally, and
+# writable.sh now asserts that this function still recognises the tier, so the
+# next rewording fails loudly instead of quietly.
+#
+# Keyed on the read claim each platform actually makes, and on windows on the
+# mechanism, because that platform confines no reads and says so.
+nt_tight_tier() {
+    case "$1" in
+        *"reads allowlisted"*|*"reads denied under"*|*"low integrity"*) return 0 ;;
+    esac
+    return 1
+}
+
 # The app directory is keyed on the spec without its pin, so versions of the
 # same app share it.
 nt_appkey() {

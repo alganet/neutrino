@@ -68,12 +68,14 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 # step already emits more results than that. A measurement taken last is a
 # measurement nobody outside the runner gets to read.
 #
-# envlen sits behind them and its reports fall past the cap, which is where
-# env.sh and confine.sh already are. That is what being asserted rather than
+# envlen and writable sit behind them and their reports fall past the cap, which
+# is where env.sh and confine.sh already are. That is what being asserted rather than
 # reported buys: a green tick is its whole answer, and its report lines are for
-# whoever is already reading the log. They were in front for one round, to put
-# the after-values of PR 15 on the record once.
-SUITES="pinfloor fetchbound envlen names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
+# whoever is already reading the log. Each of them was in front for exactly one
+# round, to put its own after-values on the record once -- envlen for PR 15 and
+# writable for PR 16. A failure is an ::error, which has a bucket of its own, so
+# nothing that matters is lost back here.
+SUITES="pinfloor fetchbound envlen writable names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
 # The BSDs have no webview on any runner that can be had, so e2e and env -- the
 # two suites that launch one -- would fail for the absence of a toolkit rather
 # than anything about the confinement. Everything that measures unveil and
@@ -81,7 +83,7 @@ SUITES="pinfloor fetchbound envlen names verify confine confine-tight confine-st
 # this platform) and says so, which is a statement and not a silent pass.
 case "$(uname -s)" in
     OpenBSD|FreeBSD|NetBSD|DragonFly)
-        SUITES="pinfloor fetchbound envlen names verify confine confine-tight confine-strict offline phases strict" ;;
+        SUITES="pinfloor fetchbound envlen writable names verify confine confine-tight confine-strict offline phases strict" ;;
 esac
 # session.sh is a probe rather than a gate: it applies each candidate mechanism
 # on its own to a real webview. It answered -- the session tier is what came of
@@ -97,6 +99,13 @@ for t in $SUITES; do
     case "$t" in
         names) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-release$NT_EXE" ;;
         confine-strict) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-strict$NT_EXE" ;;
+        # Two binaries, because the sentence under test is printed by both
+        # tiers and the grants behind it differ between them -- /proc narrows,
+        # reads become an allowlist, and on windows the tight tier is the only
+        # one that claims to confine a write at all.
+        writable) nt_timeout 600 bash "$HERE/$t.sh" \
+            "$HERE/../dist/netinstall-testing$NT_EXE" \
+            "$HERE/../dist/netinstall-strict$NT_EXE" ;;
         # Two binaries: the branch every machine actually takes, and the
         # fallback, whose two bounds come from the kernel and can therefore
         # only be asserted against a build that reaches it. The longer leash is
