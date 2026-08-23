@@ -40,6 +40,12 @@ cat > "$SERVE/offline.cmd" <<'SCRIPT'
 echo "APP_RAN"
 NEUTRINO_TEST_PORT="${NEUTRINO_TEST_ORIGIN##*:}"
 export NEUTRINO_TEST_PORT
+# Two interpreters, not one, and the exit status is part of the answer.
+# pledge does not refuse a syscall, it kills the process -- so on OpenBSD the
+# first probe took the second one down with it and the whole tier read as
+# NET_ERR, which is "the instrument broke" and not "the network is closed".
+# A death by signal here is the denial; it is reported as one, and NET_KILLED says
+# which mechanism did it.
 python3 -c "
 import os, socket
 s = socket.socket()
@@ -51,13 +57,30 @@ except PermissionError:
     print('NET_BLOCKED')
 except OSError:
     print('NET_ERR')
+" 2>/dev/null
+net_rc=$?
+if [ "$net_rc" -gt 128 ]; then
+    echo "NET_BLOCKED"
+    echo "NET_KILLED"
+elif [ "$net_rc" -ne 0 ]; then
+    echo "NET_ERR"
+fi
+python3 -c "
+import socket
 u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 try:
     u.sendto(b'probe', ('1.1.1.1', 53))
     print('UDP_OK')
 except OSError:
     print('UDP_BLOCKED')
-" 2>/dev/null || echo "NET_ERR"
+" 2>/dev/null
+udp_rc=$?
+if [ "$udp_rc" -gt 128 ]; then
+    echo "UDP_BLOCKED"
+    echo "UDP_KILLED"
+elif [ "$udp_rc" -ne 0 ]; then
+    echo "UDP_ERR"
+fi
 SCRIPT
 
 SPEC="offline-com-example-0$(nt_pin "$SERVE/offline.cmd")"
@@ -134,6 +157,12 @@ if [ "$(uname -s)" = "Linux" ] && nt_userns nt_offline_has_netns; then
     fi
 fi
 nt_result "offline tier as measured: $CONFINE"
+# How it was refused, not just that it was. pledge kills, landlock and seatbelt
+# return an error, and a tier that closes the network by killing the process is
+# worth saying out loud rather than folding into one marker.
+case "$OUT" in
+    *_KILLED*) nt_result "refused by killing the process: $(grep -o '[A-Z]*_KILLED' <<<"$OUT" | tr '\n' ' ')" ;;
+esac
 case "$CONFINE" in
     *"tcp only"*)
         nt_result "no network namespace here, so the tier is tcp-only; udp: $(grep -o 'UDP_[A-Z]*' <<<"$OUT")" ;;

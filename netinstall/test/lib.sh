@@ -21,8 +21,11 @@ nt_python() {
 nt_sha256() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | cut -d' ' -f1
-    else
+    elif command -v shasum >/dev/null 2>&1; then
         shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        # OpenBSD ships neither, and the suite is otherwise portable to it.
+        sha256 -q "$1"
     fi
 }
 

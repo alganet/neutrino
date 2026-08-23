@@ -248,7 +248,7 @@ and the network, so "deny everything" is not on the table.
 | Platform | What is applied |
 |---|---|
 | **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied; signals scoped to the sandbox, and abstract unix sockets too where there is no X11 display. A seccomp filter on top. The session bus stays reachable unless the session tier is built in. The `/proc` write grant is every process's entry, not just the app's — see [what is still open](#what-is-still-open). |
-| **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. See the caveat below. |
+| **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. Writes confined to the app dir, and **write xor execute** on it — the one directory the app can write to is one it cannot run anything from, at every tier. Reads are an allowlist too, because `unveil` is one. See the caveat below. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
 | **Windows** | Job object — process limits only — plus every token privilege but `SeChangeNotify` removed. **No filesystem confinement** by default; see the tight tier. |
 | **FreeBSD** | No confinement. `PROC_NO_NEW_PRIVS_CTL` only, which is a floor rather than a boundary. |
@@ -376,6 +376,20 @@ while these stand:
   [the door that is not a file](#launchservices-and-the-door-that-is-not-a-file).
 - **Windows cannot confine reads.** AppContainer is the only mechanism that would, and low integrity
   already stops WebView2 rendering, so there is no reason to expect AppContainer to fare better.
+- **OpenBSD leaves existing files under `/tmp` writable.** `/tmp` is unveiled `rw`, which is not
+  `c`: the app cannot create a file there, and cannot write one through a shell redirection either
+  — `>` is `O_CREAT`, which `unveil` refuses whether or not the file exists — but a deliberate
+  `open(2)` without `O_CREAT` on a file that is already there succeeds. Measured, both halves. It
+  stays because an X11 client reaches the display through `/tmp/.X11-unix`, and there is no
+  display on any OpenBSD runner to measure a narrower rule against; narrowing it blind would be
+  the kind of change this file exists to avoid. So "writes confined to the app dir" is true of
+  everything an app can *create* and not of the handful of files that were already in `/tmp`.
+- **OpenBSD's fetch phase cannot read a user's curl config.** `unveil` is an allowlist for reads,
+  and the fetch list grants the blobs directory, `/usr`, `/bin`, the TLS trust store,
+  `resolv.conf`, `/dev/urandom` and `ld.so`'s hints file — nothing else. On Linux and macOS the
+  default tier restricts writes and leaves reads alone, so `~/.curlrc` is read there and is part
+  of the trust model [above](#trust-model). On OpenBSD it is not read at all. Narrower, and
+  different; said here rather than discovered by someone whose proxy settings stopped applying.
 - **FreeBSD gets no confinement**, and that is unlikely to change while Capsicum needs the target's
   cooperation, and jail, chroot and ugidfw all need root. It does get the environment allowlist, no
   core dumps and `PROC_NO_NEW_PRIVS_CTL`, none of which is a boundary; a strict build still refuses

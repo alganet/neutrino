@@ -83,14 +83,28 @@ if echo owned > "$outside" 2>/dev/null; then echo "ESCAPED_HOME"; else echo "BLO
 if echo owned > "$(dirname "$0")/hostile.cmd" 2>/dev/null; then echo "ESCAPED_LAUNCHER"; else echo "BLOCKED_LAUNCHER"; fi
 if echo owned > "$XDG_DATA_HOME/ok" 2>/dev/null; then echo "OWN_DIR_WRITABLE"; else echo "OWN_DIR_BLOCKED"; fi
 if cat /etc/hosts >/dev/null 2>&1; then echo "READS_WORK"; else echo "READS_BLOCKED"; fi
-cp /bin/true "$XDG_DATA_HOME/probe" 2>/dev/null && chmod +x "$XDG_DATA_HOME/probe" 2>/dev/null
-if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC_BLOCKED"; fi
+nt_true=""
+for c in /bin/true /usr/bin/true; do [ -x "$c" ] && { nt_true="$c"; break; }; done
+echo "EXECSRC:${nt_true:-none}"
+if [ -n "$nt_true" ] && cp "$nt_true" "$XDG_DATA_HOME/probe" 2>/dev/null &&
+   chmod +x "$XDG_DATA_HOME/probe" 2>/dev/null; then
+    if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC_BLOCKED"; fi
+else
+    echo "EXEC_NOCOPY"
+fi
 if command -v python3 >/dev/null 2>&1; then
     if python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0))" 2>/dev/null; then echo "BIND_OK"; else echo "BIND_BLOCKED"; fi
 else echo "BIND_SKIP"; fi
 probe_tmp="${TMPDIR:-/tmp}/neutrino-exec-probe"
-cp /bin/echo "$probe_tmp" 2>/dev/null && chmod +x "$probe_tmp" 2>/dev/null
-if "$probe_tmp" >/dev/null 2>&1; then echo "EXEC_TMP"; else echo "EXEC_TMP_BLOCKED"; fi
+nt_echo=""
+for c in /bin/echo /usr/bin/echo; do [ -x "$c" ] && { nt_echo="$c"; break; }; done
+echo "EXECTMPSRC:${nt_echo:-none}"
+if [ -n "$nt_echo" ] && cp "$nt_echo" "$probe_tmp" 2>/dev/null &&
+   chmod +x "$probe_tmp" 2>/dev/null; then
+    if "$probe_tmp" >/dev/null 2>&1; then echo "EXEC_TMP"; else echo "EXEC_TMP_BLOCKED"; fi
+else
+    echo "EXEC_TMP_NOCOPY"
+fi
 rm -f "$probe_tmp" 2>/dev/null
 if read -r _ <&3 2>/dev/null; then echo "FD_INHERITED"; else echo "FD_CLOSED"; fi
 if [ -n "${NEUTRINO_TEST_ABSTRACT:-}" ]; then
@@ -654,17 +668,27 @@ check "a token that lives only in the env is dropped" SECRET_SCRUBBED
 check "the ssh agent socket is dropped"               AGENT_SCRUBBED
 check "what a toolkit needs survives"                 BASICS_KEPT
 
-if [ "$(uname -s)" = "Darwin" ]; then
-    # Write xor execute: the one directory an app can write to is the one it
-    # must not be able to run anything from. On linux this needs the exec
-    # allowlist, so it lives in the tight tier and confine-strict.sh covers it.
-    check "cannot execute what it wrote"                 EXEC_BLOCKED
-    # TMPDIR is not redirected on macOS, so it is a real writable directory
-    # outside the app dir -- w^x is a lie if it stays executable.
-    check "cannot execute what it wrote to the temp dir" EXEC_TMP_BLOCKED
-else
-    nt_note "w^x is tight-tier only on linux; got $(grep -o 'EXEC_[A-Z_]*' <<<"$OUT" | tr '\n' ' ')"
-fi
+case "$(uname -s)" in
+    Darwin|OpenBSD)
+        # Write xor execute: the one directory an app can write to is the one it
+        # must not be able to run anything from. On linux this needs the exec
+        # allowlist, so it lives in the tight tier and confine-strict.sh covers
+        # it; on these two the mechanism is an allowlist already and it costs
+        # nothing, so it is asserted at every tier.
+        check "cannot execute what it wrote"                 EXEC_BLOCKED
+        # macOS does not redirect TMPDIR, so that is a real writable directory
+        # outside the app dir; OpenBSD does redirect it, into the app dir the
+        # line above just took execute off. Two different reasons, one answer,
+        # and w^x is a lie on either platform if it comes back executable.
+        check "cannot execute what it wrote to the temp dir" EXEC_TMP_BLOCKED ;;
+    *)
+        nt_note "w^x is tight-tier only on linux; got $(grep -o 'EXEC_[A-Z_]*' <<<"$OUT" | tr '\n' ' ')" ;;
+esac
+
+# What the probe actually copied. A denial and a copy that never happened have
+# looked identical here for as long as this file has existed -- and on any
+# platform without /bin/true they are not the same thing at all.
+nt_note "exec probe sources: $(grep -oE 'EXEC(TMP)?SRC:[^ ]*' <<<"$OUT" | tr '\n' ' ')"
 
 if [ "$(uname -s)" = "Darwin" ]; then
     # Recorded, not asserted. Denying securityd is what actually closes the

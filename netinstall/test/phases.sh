@@ -107,8 +107,8 @@ nt_native() {
 # everywhere else.
 nt_curlrc() {
     local dir="$1" jar="$2"
-    rm -rf "$dir"
     mkdir -p "$dir"
+    rm -f "$dir/.curlrc" "$dir/_curlrc"
     printf 'cookie-jar = %s\n' "$(nt_native "$jar")" > "$dir/.curlrc"
     cp "$dir/.curlrc" "$dir/_curlrc"
 }
@@ -190,8 +190,16 @@ probe_write() {
 
     rm -rf "$NEUTRINO_HOME"
     rm -f "$jar"
-    nt_curlrc "$WORK/rc-probe" "$jar"
-    out="$(CURL_HOME="$(nt_native "$WORK/rc-probe")" nt_timeout 60 "$app" 2>"$WORK/err")"
+    # In the blobs directory, not a temp dir of the suite's own. The fetch phase
+    # confines writes everywhere and reads too where the mechanism is an
+    # allowlist -- OpenBSD's unveil is, so a config anywhere else is unreadable
+    # and the child never learns where to write. That reads as BLOCKED, which is
+    # the answer this is trying to earn, and the in-reach control below is what
+    # caught it. blobs is the one directory every platform's fetch phase can
+    # both read and write, so the instrument works the same in all four.
+    mkdir -p "$NEUTRINO_HOME/blobs"
+    nt_curlrc "$NEUTRINO_HOME/blobs" "$jar"
+    out="$(CURL_HOME="$(nt_native "$NEUTRINO_HOME/blobs")" nt_timeout 60 "$app" 2>"$WORK/err")"
     rc=$?
     if ! grep -q APP_RAN <<<"$out"; then
         nt_fail "$label/$name: the fetch itself did not complete (rc=$rc) err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
@@ -240,8 +248,8 @@ echo "=== Default tier: the in-reach control ==="
 # read the config and every BLOCKED above is vacuous.
 rm -rf "$NEUTRINO_HOME"
 mkdir -p "$NEUTRINO_HOME/blobs"
-nt_curlrc "$WORK/rc-inreach" "$BLOBJAR"
-OUT="$(CURL_HOME="$(nt_native "$WORK/rc-inreach")" nt_timeout 60 "$APP" 2>"$WORK/err")"
+nt_curlrc "$NEUTRINO_HOME/blobs" "$BLOBJAR"
+OUT="$(CURL_HOME="$(nt_native "$NEUTRINO_HOME/blobs")" nt_timeout 60 "$APP" 2>"$WORK/err")"
 if [ -f "$BLOBJAR" ]; then
     echo "  PASS: INJAR_WRITTEN -- the config is read from inside the confinement"
 else
@@ -265,9 +273,10 @@ echo "=== --info and the fetch phase ==="
 # that was nothing looked exactly like the three where it was something.
 INFO="$("$APP" --info 2>/dev/null | grep '^fetch' | sed 's/^fetch *//')"
 case "$(uname -s)" in
-    Linux)  WANT_INFO="landlock" ;;
-    Darwin) WANT_INFO="seatbelt" ;;
-    *)      WANT_INFO="job object" ;;
+    Linux)                      WANT_INFO="landlock" ;;
+    Darwin)                     WANT_INFO="seatbelt" ;;
+    OpenBSD|FreeBSD|NetBSD)     WANT_INFO="unveil" ;;
+    *)                          WANT_INFO="job object" ;;
 esac
 probe "--info fetch line: ${INFO:-<absent>}"
 if [ -z "$INFO" ]; then
