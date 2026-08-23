@@ -93,11 +93,26 @@ else
 fi
 
 echo "=== Rejections ==="
-assert_reject "pin mismatch"      "$(spec_for mismatch "$WORK/good.cmd" deadbeefdeadbeef)"
+MISMATCH="$(spec_for mismatch "$WORK/good.cmd" deadbeefdeadbeefdeadbeefdeadbeef)"
+assert_reject "pin mismatch"      "$MISMATCH"
 assert_reject "binary payload"    "$(spec_for elf "$WORK/elf.bin")"
 assert_reject "embedded nul"      "$(spec_for nul "$WORK/nul.cmd")"
 assert_reject "oversized payload" "$(spec_for huge "$WORK/huge.cmd")"
-assert_reject "missing file"      "absent-com-example-0a1b2c3d4e5f60718"
+assert_reject "missing file"      "absent-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718"
+
+echo "=== The mismatch is refused for being a mismatch ==="
+# Both literals above used to be sixteen characters, which the parser now
+# refuses on sight. assert_reject only asks whether the exit code was non-zero,
+# so this case would have gone on passing while never reaching the comparison
+# it exists to make. Asserting the message is what keeps it honest.
+MISERR="$(run "$MISMATCH" --fetch 2>&1 >/dev/null)"
+case "$MISERR" in
+    *"pin mismatch"*)
+        echo "  PASS: refused as a pin mismatch, not as a name" ;;
+    *)
+        nt_fail "mismatch cause expected=pin-mismatch actual=$(printf '%s' "$MISERR" | tr '\n' ' ' | cut -c1-200)"
+        FAILURES=$((FAILURES + 1)) ;;
+esac
 
 echo "=== Cached launch works with the server down ==="
 kill $NT_SERVER_PID 2>/dev/null

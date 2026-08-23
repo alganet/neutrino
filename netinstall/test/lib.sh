@@ -29,8 +29,12 @@ nt_sha256() {
     fi
 }
 
+# Thirty-two, which is the floor the parser enforces. Every fixture in this
+# suite gets its name from here, so this one number is what keeps the suite
+# above the floor; it was run at 32 for a full round before the floor moved,
+# which is what said the change cost nothing.
 nt_pin() {
-    nt_sha256 "$1" | cut -c1-"${2:-16}"
+    nt_sha256 "$1" | cut -c1-"${2:-32}"
 }
 
 # Serves $1 on a free-ish port. Sets NT_SERVER_PID and NEUTRINO_TEST_ORIGIN in

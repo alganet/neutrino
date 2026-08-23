@@ -53,7 +53,12 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 
 # job-ui is an investigation, not a gate, and it costs ten minutes of windows CI
 # per run. It answered its question -- see the README -- so it is opt-in now.
-SUITES="names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
+#
+# pinfloor runs first, and the position is the point: GitHub keeps ten
+# annotations per level per step and drops the rest without saying so, and this
+# step already emits more results than that. A measurement taken last is a
+# measurement nobody outside the runner gets to read.
+SUITES="pinfloor names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
 # The BSDs have no webview on any runner that can be had, so e2e and env -- the
 # two suites that launch one -- would fail for the absence of a toolkit rather
 # than anything about the confinement. Everything that measures unveil and
@@ -61,7 +66,7 @@ SUITES="names verify confine confine-tight confine-strict confine-session privs 
 # this platform) and says so, which is a statement and not a silent pass.
 case "$(uname -s)" in
     OpenBSD|FreeBSD|NetBSD|DragonFly)
-        SUITES="names verify confine confine-tight confine-strict offline phases strict" ;;
+        SUITES="pinfloor names verify confine confine-tight confine-strict offline phases strict" ;;
 esac
 # session.sh is a probe rather than a gate: it applies each candidate mechanism
 # on its own to a real webview. It answered -- the session tier is what came of
