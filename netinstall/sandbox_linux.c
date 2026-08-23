@@ -117,6 +117,30 @@ struct nt_ruleset_attr {
 #define NT_EXEC_RIGHT 0ULL
 #endif
 
+/*
+ * The rest of the writable set, spelled where a user can read it.
+ *
+ * Every path in here is granted deliberately, a few lines from the sentence
+ * that used to name one directory and stop: /dev/shm is where a renderer puts
+ * its shared memory and takes the full write set; /dev takes the writes every
+ * shell redirection in a launched script depends on; /proc is every process's
+ * entry in the default tier, narrowed to this one's in the tight tier, and the
+ * README explains what that trade costs. Each was measured -- shm=CTO,
+ * devnull=OK, and confine.sh's PEEROOM_ESCAPED for the /proc half -- and the
+ * one grant that measured backwards, $XDG_RUNTIME_DIR, is gone rather than
+ * described.
+ *
+ * "writes confined to" is a claim about a set. It named the first member of it
+ * for as long as this file has existed.
+ */
+#ifdef NEUTRINO_CONFINE_TIGHT
+#define NT_ALSO_WRITABLE ", /dev, /dev/shm and /proc/self"
+#define NT_FETCH_ALSO_WRITABLE " and /dev"
+#else
+#define NT_ALSO_WRITABLE ", /dev, /dev/shm and every process's /proc entry"
+#define NT_FETCH_ALSO_WRITABLE ""
+#endif
+
 #define NT_WRITE_RIGHTS ( \
     LANDLOCK_ACCESS_FS_WRITE_FILE | \
     LANDLOCK_ACCESS_FS_REMOVE_DIR | \
@@ -1098,7 +1122,6 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     unsigned long long rights = NT_WRITE_RIGHTS | NT_READ_RIGHTS;
     char path[NT_PATH_MAX];
     char notes[160] = "";
-    const char *runtime;
     const char *scoped = "";
     const char *offline = "";
     const char *session = "";
@@ -1259,7 +1282,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         nt_allow(ruleset, "/proc", NT_READ_RIGHTS);
         nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
 #endif
-        snprintf(desc, desclen, "landlock abi %d%s%s, writes confined to %s",
+        snprintf(desc, desclen, "landlock abi %d%s%s, writes confined to %s"
+                 NT_FETCH_ALSO_WRITABLE,
                  abi, notes, secc, path);
     } else {
         nt_allow(ruleset, appdir, rights);
@@ -1311,10 +1335,37 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 #else
         nt_allow(ruleset, "/proc", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
 #endif
-        runtime = getenv("XDG_RUNTIME_DIR");
-        if (runtime && *runtime) {
-            nt_allow(ruleset, runtime, NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
+        /*
+         * Reads here, and no write, and the write is what this rule used to be.
+         * It granted WRITE_FILE with no MAKE_REG beside it, and the two halves
+         * of that are not the same thing: measured on both linux lanes and in
+         * both tiers, a confined app could neither create a file in the session
+         * runtime directory nor truncate one, and could write over one that was
+         * already there. Creating is what a toolkit wanting a runtime file of
+         * its own would do; writing over what is already there is what nothing
+         * legitimate here does, because nothing here owns a file in that
+         * directory. So the grant admitted the half nobody needed and refused
+         * the half it was presumably for, and every lane was green without it.
+         *
+         * The read stays, and only the tight tier has one to keep: reads are
+         * unhandled in the default tier, so with the write gone there is no
+         * rule left to add there at all. A client that cannot read
+         * $XDG_RUNTIME_DIR is a client with no display, which is the cost the
+         * tight tier already pays attention to.
+         *
+         * The session tier is the better answer where it can be had, and it is
+         * a different one: a tmpfs over this directory with the compositor and
+         * audio sockets bound back in. See nt_seal_runtime.
+         */
+#ifdef NEUTRINO_CONFINE_TIGHT
+        {
+            const char *runtime = getenv("XDG_RUNTIME_DIR");
+
+            if (runtime && *runtime) {
+                nt_allow(ruleset, runtime, NT_READ_RIGHTS);
+            }
         }
+#endif
 #ifdef NEUTRINO_CONFINE_TIGHT
         /*
          * The script lives one level above the writable dir so an app cannot
@@ -1335,10 +1386,12 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         }
         nt_allow_system_reads(ruleset);
         snprintf(desc, desclen,
-                 "landlock abi %d%s%s, reads and writes confined to %s",
+                 "landlock abi %d%s%s, reads allowlisted, writes confined to "
+                 "%s" NT_ALSO_WRITABLE,
                  abi, notes, secc, appdir);
 #else
-        snprintf(desc, desclen, "landlock abi %d%s%s, writes confined to %s",
+        snprintf(desc, desclen, "landlock abi %d%s%s, writes confined to "
+                 "%s" NT_ALSO_WRITABLE,
                  abi, notes, secc, appdir);
 #endif
     }

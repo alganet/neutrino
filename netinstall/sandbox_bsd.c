@@ -38,6 +38,19 @@
 #ifdef __OpenBSD__
 
 /*
+ * The rest of the run phase's writable set, spelled where a user can read it.
+ *
+ * /dev is unveiled "rwc" and /tmp "rw" -- both for reasons that are in the
+ * comments beside the rules, and neither of them is the app dir. Measured on
+ * the openbsd lane in both tiers, on a VM running as root, so nothing there was
+ * refused by ordinary permissions and the letters are unveil and nothing else:
+ * appdir=CTO, devnull=OK, and tmp=--O -- an existing file written, and neither
+ * created nor truncated, which is "rw" without a "c" exactly as this file and
+ * the README have been describing it since PR 11. First time it was asked.
+ */
+#define NT_ALSO_WRITABLE " and /dev, plus files that already exist under /tmp"
+
+/*
  * The unveil table is destroyed on execve unless execpromises were set, so the
  * order matters: unveil, lock, then pledge with execpromises, then exec. Both
  * survive into the child that way.
@@ -55,15 +68,22 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 {
     char path[NT_PATH_MAX];
 
-    if (!enforce) {
-        snprintf(desc, desclen, "unveil + pledge%s" NT_SESSION_NOTE ", writes confined to %s",
-                 phase == NT_PHASE_FETCH ? "" : NT_OFFLINE_NOTE,
-                 phase == NT_PHASE_FETCH ? home : appdir);
-        return 0;
-    }
-
+    /*
+     * No early return for --info. The description used to be written twice --
+     * once here from `home` as handed in, and once below from the blobs
+     * directory the unveil is actually built around -- and the two said
+     * different things. Measured on the openbsd lane: --info's fetch line named
+     * the cache root while the confinement was the directory inside it. macOS
+     * had the same split for the same reason and lost it in the same change;
+     * linux never had it, because linux describes what it applies from the
+     * place it applies it.
+     */
     if (phase == NT_PHASE_FETCH) {
         snprintf(path, sizeof(path), "%s/blobs", home);
+        if (!enforce) {
+            snprintf(desc, desclen, "unveil + pledge, writes confined to %s", path);
+            return 0;
+        }
         /*
          * /usr covers /usr/local/lib, but ld.so is how a binary gets there and
          * ld.so reads the hints file to know that /usr/local/lib exists at all.
@@ -88,6 +108,13 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
             return -1;
         }
         snprintf(desc, desclen, "unveil + pledge, writes confined to %s", path);
+        return 0;
+    }
+
+    if (!enforce) {
+        snprintf(desc, desclen, "unveil + pledge%s" NT_SESSION_NOTE
+                                ", writes confined to %s" NT_ALSO_WRITABLE,
+                 NT_OFFLINE_NOTE, appdir);
         return 0;
     }
 
@@ -148,7 +175,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         snprintf(desc, desclen, "none (pledge failed)");
         return -1;
     }
-    snprintf(desc, desclen, "unveil + pledge%s" NT_SESSION_NOTE ", writes confined to %s",
+    snprintf(desc, desclen, "unveil + pledge%s" NT_SESSION_NOTE
+                            ", writes confined to %s" NT_ALSO_WRITABLE,
              NT_OFFLINE_NOTE, appdir);
     return 0;
 }

@@ -41,6 +41,24 @@
 #endif
 
 /*
+ * The rest of the tight tier's writable set, spelled where a user can read it.
+ *
+ * Low integrity is a label on a token, not a directory, and windows keeps two
+ * places writable at that level on purpose so that low-integrity processes have
+ * somewhere to put things: the LocalLow folder and the AppDataLow key. Neither
+ * is the app dir and neither can be taken away from here -- they are what the
+ * mechanism is, not something this program grants.
+ *
+ * Measured on a windows-latest runner, tight tier: locallow=CT- and reglow=K--
+ * writable, against home, the user temp dir, C:\Windows\Temp and
+ * HKCU\Software all refused, and the same battery fully writable in the
+ * default tier, which confines no writes and says so.
+ */
+/* No percent signs: this is concatenated into a printf format string. */
+#define NT_ALSO_WRITABLE ", the user's AppData\\LocalLow folder and " \
+                         "HKCU\\Software\\AppDataLow"
+
+/*
  * A job object is a resource boundary, not a filesystem one, and this file does
  * not pretend otherwise. Low integrity was the obvious next step and does not
  * work: it stops writes but not reads, %TEMP% does not redirect so jsc.exe
@@ -371,7 +389,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         privs = nt_strip_privileges(0) ? " + privileges stripped" : "";
 #ifdef NEUTRINO_CONFINE_TIGHT
         snprintf(desc, desclen, "job object%s%s + low integrity, writes "
-                                "confined to %s (reads are not confined)"
+                                "confined to %s" NT_ALSO_WRITABLE
+                                " (reads are not confined)"
                                 NT_OFFLINE_NOTE NT_SESSION_NOTE,
                  uinote, privs, appdir);
 #else
@@ -427,7 +446,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         return -1;
     }
     snprintf(desc, desclen, "job object%s%s + low integrity, writes confined to "
-                            "%s (reads are not confined)" NT_OFFLINE_NOTE NT_SESSION_NOTE,
+                            "%s" NT_ALSO_WRITABLE " (reads are not confined)"
+                            NT_OFFLINE_NOTE NT_SESSION_NOTE,
              uinote, privs, appdir);
     return 0;
 #else

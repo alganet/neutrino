@@ -770,7 +770,7 @@ esac
 # assertions have to follow the binary, or a tier could be measured against the
 # other one's expectations and pass.
 NT_TIGHT=0
-case "$CONFINE" in *"reads and writes"*) NT_TIGHT=1 ;; esac
+nt_tight_tier "$CONFINE" && NT_TIGHT=1
 
 case "$CONFINE" in
     *landlock*)

@@ -283,10 +283,16 @@ and the network, so "deny everything" is not on the table.
 
 | Platform | What is applied |
 |---|---|
-| **Linux** | Landlock. Writes confined to the app dir (plus `/proc`, `/dev`, `/dev/shm`); reads unrestricted; binding a TCP port denied; signals scoped to the sandbox, and abstract unix sockets too where there is no X11 display. A seccomp filter on top. The session bus stays reachable unless the session tier is built in. The `/proc` write grant is every process's entry, not just the app's — see [what is still open](#what-is-still-open). |
-| **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. Writes confined to the app dir, and **write xor execute** on it — the one directory the app can write to is one it cannot run anything from, at every tier. Reads are an allowlist too, because `unveil` is one. See the caveat below. |
-| **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
+| **Linux** | Landlock. Writes confined to the app dir, `/dev`, `/dev/shm` and `/proc`; reads unrestricted; binding a TCP port denied; signals scoped to the sandbox, and abstract unix sockets too where there is no X11 display. A seccomp filter on top. The session bus stays reachable unless the session tier is built in. The `/proc` write grant is every process's entry, not just the app's — see [what is still open](#what-is-still-open). |
+| **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. Writes confined to the app dir and `/dev`, plus files that already exist under `/tmp`, and **write xor execute** on the app dir — the one directory the app can write to is one it cannot run anything from, at every tier. Reads are an allowlist too, because `unveil` is one. See the caveat below. |
+| **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, the Darwin per-user temp directory, four `~/Library` subtrees and six `/dev` nodes — the carve-outs are what CFPreferences and WebKit need and are listed in [write xor execute on macOS](#write-xor-execute-on-macos). Read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
 | **Windows** | Job object — process limits only — plus every token privilege but `SeChangeNotify` removed. **No filesystem confinement** by default; see the tight tier. |
+
+Each of those sets is what `--info`'s `confine` line names, in full. It named the app dir alone
+until it was measured: every platform grants writes somewhere else as well, deliberately and for
+a reason, and a sentence that describes one of five is the same defect as a sentence that
+describes none. The set was enumerated from inside the confinement on all six lanes —
+`netinstall/test/writable.sh` is that measurement, and it now asserts every letter of it.
 | **FreeBSD** | No confinement. `PROC_NO_NEW_PRIVS_CTL` only, which is a floor rather than a boundary. |
 
 If nothing is available the binary **runs anyway and warns on stderr**, naming what was and
@@ -297,7 +303,8 @@ wasn't applied; confinement here is defence in depth, not the trust anchor. Buil
 
 The downloader is the one process here that reads bytes an attacker chose, off the network, before
 anything has verified them. It gets its own, narrower confinement — writes confined to
-`~/.cache/neutrino/blobs` and nothing else on Linux, macOS and OpenBSD; on Windows the job object
+`~/.cache/neutrino/blobs`, plus the handful of `/dev` nodes a downloader opens on macOS and in
+Linux's tight tier, and nothing else on Linux, macOS and OpenBSD; on Windows the job object
 and stripped token the run phase gets, which bounds processes rather than writes because nothing
 unprivileged on that platform bounds writes. `--info` prints it on a `fetch` line next to the
 run phase's `confine` line, so a platform that applies nothing does not look like one that does.
@@ -415,11 +422,13 @@ while these stand:
 - **OpenBSD leaves existing files under `/tmp` writable.** `/tmp` is unveiled `rw`, which is not
   `c`: the app cannot create a file there, and cannot write one through a shell redirection either
   — `>` is `O_CREAT`, which `unveil` refuses whether or not the file exists — but a deliberate
-  `open(2)` without `O_CREAT` on a file that is already there succeeds. Measured, both halves. It
-  stays because an X11 client reaches the display through `/tmp/.X11-unix`, and there is no
-  display on any OpenBSD runner to measure a narrower rule against; narrowing it blind would be
-  the kind of change this file exists to avoid. So "writes confined to the app dir" is true of
-  everything an app can *create* and not of the handful of files that were already in `/tmp`.
+  `open(2)` without `O_CREAT` on a file that is already there succeeds. Measured from inside the
+  confinement, all three operations separately, on a lane running as root so that nothing was
+  refused by ordinary permissions instead. It stays because an X11 client reaches the display
+  through `/tmp/.X11-unix`, and there is no display on any OpenBSD runner to measure a narrower
+  rule against; narrowing it blind would be the kind of change this file exists to avoid. So it is
+  in the sentence: `--info` says `writes confined to <app dir> and /dev, plus files that already
+  exist under /tmp`.
 - **OpenBSD's fetch phase cannot read a user's curl config.** `unveil` is an allowlist for reads,
   and the fetch list grants the blobs directory, `/usr`, `/bin`, the TLS trust store,
   `resolv.conf`, `/dev/urandom` and `ld.so`'s hints file — nothing else. On Linux and macOS the
@@ -654,9 +663,9 @@ different on each platform, because the mechanisms differ in what they can expre
 
 | Platform | What the tight tier adds |
 |---|---|
-| **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default, and execute becomes an allowlist that omits every writable directory. `~/.Xauthority` stays readable unless the session tier replaced the cookie with an untrusted one, in which case allowlisting it would hand back exactly what that took away. The `/proc` write grant narrows from every process's entry to `/proc/self` — see [what Landlock costs](#what-landlock-costs-in-both-tiers) for what that buys and what it takes. |
+| **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default, and execute becomes an allowlist that omits every writable directory. `~/.Xauthority` stays readable unless the session tier replaced the cookie with an untrusted one, in which case allowlisting it would hand back exactly what that took away. `$XDG_RUNTIME_DIR` becomes readable here and is writable in neither tier. The `/proc` write grant narrows from every process's entry to `/proc/self` — see [what Landlock costs](#what-landlock-costs-in-both-tiers) for what that buys and what it takes. |
 | **macOS** | Seatbelt denies reads of all of `$HOME` rather than a named list of secrets, and closes the LaunchServices escape — see [the door that is not a file](#launchservices-and-the-door-that-is-not-a-file). |
-| **Windows** | The process drops to low integrity, so writes outside the app dir fail. |
+| **Windows** | The process drops to low integrity, so writes outside the app dir fail — except the two places the label leaves open by design, `AppData\LocalLow` and `HKCU\Software\AppDataLow`. Measured: `%USERPROFILE%`, the user temp directory, `C:\Windows\Temp` and `HKCU\Software` all refuse. |
 | **OpenBSD** | Nothing — `unveil` is already an allowlist, so the default tier is the tight one. |
 
 On Linux and macOS the tier is also **write xor execute**: a directory an app can write to is one it
@@ -670,7 +679,10 @@ directory — anything you want withheld somewhere has to be allowlisted everywh
 On Linux and macOS the allowlist is the system tree plus the handful of `$HOME` subpaths a GTK,
 Qt or Cocoa app reads on the way up: fonts, icons, themes, and the toolkit's own settings.
 Everything else in `$HOME` is denied, which is what finally puts `~/.ssh`, `~/.gnupg`, `~/.aws`
-and browser profiles out of reach. `--info` reports `reads and writes confined to ...`.
+and browser profiles out of reach. `--info` says `reads allowlisted` on Linux and `reads denied
+under $HOME` on macOS, rather than the `reads and writes confined to <app dir>` it used to print:
+the read allowlist is the system tree, and a sentence claiming reads stop at the app dir was not
+true of either platform.
 
 **Windows confines writes, not reads.** Low integrity is a no-write-up rule; a low-IL process can
 still read `~/.ssh` and browser cookie stores. Only an AppContainer would close that, and it is
