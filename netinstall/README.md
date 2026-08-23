@@ -131,6 +131,21 @@ Mesa namespaces, the handful of names cmd.exe and the CRT need on Windows, and a
 with `NEUTRINO_`. `LD_*` and `DYLD_*` are absent by construction. `--info` reports how many
 variables that drops.
 
+**How they are dropped, because for a while the answer mattered.** On POSIX the kept entries are
+collected into a new array and `environ` is pointed at it. Nothing is removed by name, so there is
+no name to spell and no walk to get stuck in. The first version did remove names one at a time with
+`unsetenv`, restarting the walk after every removal — `unsetenv` rewrites `environ` underneath the
+caller — and bounding the restarts by the number of entries it had counted. A name it could not
+spell was then a name the next pass found in exactly the same place: the walk stopped at it, and
+everything the allowlist was going to drop after that point went to the app while the count went on
+saying otherwise. Two entries could do it — a name longer than 255 characters, which the drop
+truncated into something that did not exist (and occasionally into the name of a variable the
+allowlist meant to *keep*), and an entry whose name is empty, where `unsetenv("")` is `EINVAL`.
+Both were measured on all four POSIX lanes and both are closed; `netinstall/test/envlen.sh` asserts
+the readings in both directions. Windows still removes by name, because its environment is a block
+owned by the CRT rather than an array this program may replace — there the name is built on the
+heap at whatever length it is, and one that cannot be built is reported rather than counted.
+
 **A prefix admits a namespace, not every name in it.** A toolkit namespace is mostly modes and
 sizes, but it also contains the names that answer *which file should I load*, *which program should
 I run* and *should I sandbox myself* — `GTK_MODULES`, `GDK_PIXBUF_MODULE_FILE`, `QT_PLUGIN_PATH`,

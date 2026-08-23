@@ -245,30 +245,58 @@ static int nt_env_keep(const char *name, size_t namelen)
     return 0;
 }
 
-static void nt_env_drop(const char *name, size_t namelen)
+#ifdef _WIN32
+/*
+ * Windows is the only platform that still removes a variable by name: its
+ * environment is a block owned by the CRT and by Win32, not an array this
+ * program may replace. So the name has to be spelled out in full.
+ *
+ * It used to be spelled into a 256-byte buffer with anything longer truncated,
+ * which is two bugs rather than one. A truncated name is usually a name that
+ * does not exist, so the variable stays -- measured, on every lane: a
+ * 300-character name arrives at the app untouched. And sometimes it is the name
+ * of something else: QT_ plus 252 characters is a name the allowlist keeps, the
+ * same string with PATH on the end is one it drops, and truncating the second
+ * produces the first exactly. Measured on all four POSIX lanes as
+ * keep255=GONE -- the drop removing a variable it was told to keep.
+ *
+ * Every lane delivers names up to 65536 characters across execv, so there is no
+ * length that would have been a safe guess. The heap is the answer, and
+ * SetEnvironmentVariableA was measured taking a 4096-character name and the
+ * variable going away.
+ *
+ * Returns 0 when the name could be spelled, -1 when it could not, because a
+ * scrub that reports a count it did not deliver is the other half of this bug.
+ */
+static int nt_env_drop(const char *name, size_t namelen)
 {
-    char buf[256];
+    char stack[256];
+    char *buf = stack;
 
-    if (namelen >= sizeof(buf)) {
-        namelen = sizeof(buf) - 1;
+    if (namelen >= sizeof(stack)) {
+        buf = malloc(namelen + 1);
+        if (!buf) {
+            return -1;
+        }
     }
     memcpy(buf, name, namelen);
     buf[namelen] = '\0';
-#ifdef _WIN32
     /* Both copies: the CRT keeps its own, and the Win32 block is what a child
      * created with a NULL environment actually inherits. */
     _putenv_s(buf, "");
     SetEnvironmentVariableA(buf, NULL);
-#else
-    unsetenv(buf);
-#endif
+    if (buf != stack) {
+        free(buf);
+    }
+    return 0;
 }
+#endif
 
 #ifdef _WIN32
 int nt_env_scrub(int enforce, int *total)
 {
     char *block, *p;
-    int seen = 0, dropped = 0;
+    int seen = 0, dropped = 0, refused = 0;
 
     block = GetEnvironmentStringsA();
     if (!block) {
@@ -294,26 +322,59 @@ int nt_env_scrub(int enforce, int *total)
             continue;
         }
         dropped++;
-        if (enforce) {
-            nt_env_drop(p, (size_t)(eq - p));
+        if (enforce && nt_env_drop(p, (size_t)(eq - p)) != 0) {
+            refused++;
         }
     }
     FreeEnvironmentStringsA(block);
     if (total) {
         *total = seen;
     }
-    return dropped;
+    return refused ? -1 : dropped;
 }
 #else
 extern char **environ;
 
+/*
+ * Not by unsetting names one at a time, which is how this was written and why
+ * it had a hole in it. unsetenv rewrites environ underneath the caller, so the
+ * old walk restarted from the beginning after every removal and bounded itself
+ * by the number of entries it had counted -- and a name it could not remove was
+ * a name the next pass found in exactly the same place. It did not skip what it
+ * could not drop; it stopped at it, and everything the allowlist was going to
+ * remove after that point went to the app.
+ *
+ * Two entries could do that. A name over 255 characters, which nt_env_drop
+ * truncated into something that did not exist; and an entry whose name is empty
+ * -- strchr finds the '=' at offset zero, the allowlist says no to it, and
+ * unsetenv("") is EINVAL. Measured on all four POSIX lanes: with either one in
+ * front of them, nine markers including SSH_AUTH_SOCK reached the payload and
+ * --info reported a hundred and sixteen of a hundred and thirty-one variables
+ * dropped while nothing at all had been.
+ *
+ * So the array is built instead. There is no name to spell, so nothing to
+ * truncate; there is one pass, so there is nothing to get stuck in; the
+ * empty-name entry is simply not copied; and what the counting pass predicts is
+ * what the enforcing pass delivers, which is what makes --info's number true.
+ *
+ * The one thing this rests on is that setenv still works on an environ this
+ * program allocated rather than the libc -- main() scrubs and then sets five
+ * XDG directories -- and that is measured rather than assumed: envlen.sh's
+ * `setafter` assigns, calls setenv four times, execs, and has the child report
+ * which survived. glibc, Darwin's libc and OpenBSD's libc all keep all four.
+ *
+ * The array is never freed. It is the process's environment until execv, which
+ * is the whole remaining life of this process.
+ */
 int nt_env_scrub(int enforce, int *total)
 {
-    int seen = 0, dropped = 0;
+    char **kept;
+    int seen = 0, dropped = 0, at = 0;
     int i;
 
     for (i = 0; environ[i]; i++) {
         const char *eq = strchr(environ[i], '=');
+
         seen++;
         if (eq && !nt_env_keep(environ[i], (size_t)(eq - environ[i]))) {
             dropped++;
@@ -326,29 +387,27 @@ int nt_env_scrub(int enforce, int *total)
         return dropped;
     }
 
-    /*
-     * unsetenv rewrites environ underneath us, so restart the scan after every
-     * removal rather than trusting the index. The list is short and this runs
-     * once per launch; the bound is only there so a libc that fails to remove a
-     * name cannot spin forever.
-     */
-    for (i = 0; i <= seen; i++) {
-        const char *eq;
-        int j, found = -1;
-
-        for (j = 0; environ[j]; j++) {
-            eq = strchr(environ[j], '=');
-            if (eq && !nt_env_keep(environ[j], (size_t)(eq - environ[j]))) {
-                found = j;
-                break;
-            }
-        }
-        if (found < 0) {
-            break;
-        }
-        eq = strchr(environ[found], '=');
-        nt_env_drop(environ[found], (size_t)(eq - environ[found]));
+    kept = malloc(sizeof(*kept) * (size_t)(seen - dropped + 1));
+    if (!kept) {
+        /* The caller is told, because a scrub that did not happen and a scrub
+         * that dropped nothing to drop look identical from a count. */
+        return -1;
     }
+    for (i = 0; environ[i]; i++) {
+        const char *eq = strchr(environ[i], '=');
+
+        /*
+         * An entry with no '=' at all is malformed and was kept by the walk
+         * this replaces -- there was no name in it to unset. Kept here too:
+         * changing that is a different decision than this one, and no lane has
+         * been asked about it.
+         */
+        if (!eq || nt_env_keep(environ[i], (size_t)(eq - environ[i]))) {
+            kept[at++] = environ[i];
+        }
+    }
+    kept[at] = NULL;
+    environ = kept;
     return dropped;
 }
 #endif

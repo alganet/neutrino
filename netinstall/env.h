@@ -12,7 +12,9 @@
  * describe it without side effects.
  *
  * Returns the number of variables dropped, and writes the number seen into
- * total when it is not NULL.
+ * total when it is not NULL. Returns -1 when enforcing and the scrub could not
+ * be carried out -- the count is then a claim about something that did not
+ * happen, and the caller has to say so rather than print it.
  */
 int nt_env_scrub(int enforce, int *total);
 
