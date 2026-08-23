@@ -417,9 +417,14 @@ jobs:
           run: |
             bash netinstall/test/run.sh > openbsd-suite.log 2>&1
             echo "$?" > openbsd-suite.rc
+      # `report:` is in the pattern because a suite's nt_result never leaves this
+      # lane on its own: the `::warning` it writes is written inside the VM,
+      # where GitHub is not listening, and arrives here as a line in a log file.
+      # Anchored to the plain echo so the smuggled `::warning` copy of the same
+      # line is not annotated twice.
       - name: results
         if: always()
-        run: bash test/annotate.sh openbsd openbsd-suite.log 'FAIL:|failure\(s\)|SKIP'
+        run: bash test/annotate.sh openbsd openbsd-suite.log 'FAIL:|failure\(s\)|SKIP|^ +report:'
       - name: outcome
         if: always()
         run: |

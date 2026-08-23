@@ -10,12 +10,12 @@ A name-addressed launcher. It is a small compiled binary that derives everything
 its own filename — rename it, and it fetches and runs something else.
 
 ```
-neutrino-io-github-alganet-0a1b2c3d4e5f60718
-└─name─┘└─host reversed──┘└──────pin───────┘
+neutrino-io-github-alganet-0a1b2c3d4e5f60718a1b2c3d4e5f60718
+└─name─┘└─host reversed──┘└──────────────pin───────────────┘
 
   fetch  https://alganet.github.io/neutrino.cmd
-  verify sha256 starts with "a1b2c3d4e5f60718"
-  run    sh ~/.cache/neutrino/apps/neutrino-io-github-alganet-0a1b2c3d4e5f60718/neutrino.cmd
+  verify sha256 starts with "a1b2c3d4e5f60718a1b2c3d4e5f60718"
+  run    sh ~/.cache/neutrino/apps/neutrino-io-github-alganet/neutrino.cmd
 ```
 
 No config file, no registry, no subcommand, no state that isn't derivable from the name.
@@ -34,11 +34,15 @@ you never need netinstall to run one.
 - The **first** segment is the app name and the URL path stem.
 - The **last** segment is always the token. Position decides, so nothing is ambiguous.
 - The **middle** segments are the host's DNS labels, reversed. At least three segments total.
-- **`_` means `-`** in the resolved value, so `my_app-com-example-0a1b2c3d4e5f60718` resolves to
-  `https://example.com/my-app.cmd`. DNS labels cannot contain `_`, so only app names give
-  anything up.
+- **`_` means `-`** in the resolved value, so `my_app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718`
+  resolves to `https://example.com/my-app.cmd`. DNS labels cannot contain `_`, so only app names
+  give anything up.
 - The **token** is one version character plus the pin. `0` means "SHA-256, lowercase hex,
-  truncated to the length given". **Minimum sixteen pin characters**; longer is stronger and free.
+  truncated to the length given". **Minimum thirty-two pin characters**, up to the full
+  sixty-four; longer is stronger and free. A name below the floor is refused by length, and the
+  refusal says which rather than leaving you to count.
+- The pin is in the binary's name and in **no directory netinstall creates**: the cache is keyed
+  on the app and its host, so lengthening a pin re-verifies against a blob already there.
 - Only `[a-z0-9_-]` is accepted. Rejecting everything else also rules out path traversal.
 
 Copy or hardlink the binary to rename it. **Symlinks do not work**: the real executable path is
@@ -214,14 +218,15 @@ link following rather than redirects for a single file, and wget has no equivale
 only after transfer rather than during it. Install `curl` if that matters to you.
 
 **The pin is a content pin.** It catches corruption, mirror drift, and a host silently changing
-the file after you pinned it. Sixteen hex characters is 64 bits, which puts a second preimage —
-a host grinding a *different* file that matches a pin you already chose — out of reach at 2^64.
+the file after you pinned it. Sixteen hex characters would be 64 bits, which puts a second
+preimage — a host grinding a *different* file that matches a pin you already chose — out of
+reach at 2^64.
 
 What 64 bits does not buy you is collision resistance against a **malicious publisher**, who can
 craft two files sharing a truncated digest for about 2^32 work: one benign to get reviewed and
-pinned, one hostile to serve later. If you are pinning something you did not build and the
-publisher is part of your threat model, use a longer pin — 32 characters restores 2^64 against
-that attack too. `--info` prints the full digest, so lengthening one is a copy-paste.
+pinned, one hostile to serve later. Thirty-two characters restores 2^64 against that attack too,
+and thirty-two is the floor — for a while it was only the advice, while the parser went on
+taking half of it. `--info` prints the full digest, so lengthening a pin further is a copy-paste.
 
 Defends against: a network attacker between you and the host; the host silently changing the
 file; mirror drift and corrupt downloads; a rogue `curl` earlier in `$PATH`; being tricked into

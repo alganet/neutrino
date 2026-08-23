@@ -148,13 +148,32 @@ int nt_self_path(char *buf, size_t len, const char *argv0)
 #endif
 }
 
+/* Writes the reason a name was refused, where the caller asked for one. */
+static void nt_why(char *why, size_t whylen, const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!why || whylen == 0) {
+        return;
+    }
+    va_start(ap, fmt);
+    vsnprintf(why, whylen, fmt, ap);
+    va_end(ap);
+}
+
 /*
  * The last segment is always the token and the first is always the name, so
  * position decides and no segment ever needs to be disambiguated by shape.
  * A '_' stands for a '-' in the resolved value; DNS labels cannot contain
  * '_', so only app names give anything up.
+ *
+ * `why` is written only for the token, and the reason is the pin floor: a name
+ * that parsed before this binary was built refuses now, and "not a valid spec"
+ * is a true thing to say to someone whose problem is sixteen missing
+ * characters. Every other refusal keeps the message it had -- a reason channel
+ * for the whole grammar is a different change than this one.
  */
-int nt_parse_name(const char *base, nt_spec *out)
+int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
 {
     char work[NT_SPEC_MAX];
     char *seg[64];
@@ -249,14 +268,30 @@ int nt_parse_name(const char *base, nt_spec *out)
     }
     strcpy(out->token, seg[nseg - 1]);
     if (out->token[0] != '0') {
+        nt_why(why, whylen, "pin version '%c' is not one this build knows; "
+                            "'0' is sha-256, lowercase hex", out->token[0]);
         return -1;
     }
-    if (strlen(out->token) - 1 < NT_TOKEN_MIN ||
-        strlen(out->token) - 1 > 64) {
-        return -1;
+    {
+        size_t pinlen = strlen(out->token) - 1;
+
+        if (pinlen < NT_TOKEN_MIN) {
+            nt_why(why, whylen, "the pin is %lu hex characters and the minimum "
+                                "is %d; take the extra ones from the digest you "
+                                "pinned from", (unsigned long)pinlen,
+                                NT_TOKEN_MIN);
+            return -1;
+        }
+        if (pinlen > 64) {
+            nt_why(why, whylen, "the pin is %lu hex characters and a sha-256 "
+                                "digest is 64", (unsigned long)pinlen);
+            return -1;
+        }
     }
     for (p = out->token + 1; *p; p++) {
         if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f'))) {
+            nt_why(why, whylen, "the pin has a '%c' in it, and a pin is "
+                                "lowercase hex", *p);
             return -1;
         }
     }
@@ -433,9 +468,10 @@ static void nt_usage(FILE *out, const char *self)
         "Rename this binary to a spec and run it:\n"
         "\n"
         "    <name>-<host labels reversed>-<token>\n"
-        "    neutrino-io-github-alganet-0a1b2c3d4e5f60718\n"
+        "    neutrino-io-github-alganet-0a1b2c3d4e5f60718a1b2c3d4e5f60718\n"
         "        -> https://alganet.github.io/neutrino.cmd\n"
-        "        -> verified against sha256 prefix \"a1b2c3d4e5f60718\"\n"
+        "        -> verified against sha256 prefix\n"
+        "           \"a1b2c3d4e5f60718a1b2c3d4e5f60718\"\n"
         "\n"
         "Options:\n"
         "  --info      show what this name resolves to, then exit\n"
@@ -1066,11 +1102,20 @@ int main(int argc, char **argv)
         rest = i + 1;
     }
 
-    if (nt_parse_name(nt_basename(self), &spec) != 0) {
-        fprintf(stderr, "netinstall: \"%s\" is not a valid spec\n\n",
-                nt_basename(self));
-        nt_usage(stderr, nt_basename(self));
-        return 2;
+    {
+        char why[256];
+
+        why[0] = '\0';
+        if (nt_parse_name(nt_basename(self), &spec, why, sizeof(why)) != 0) {
+            fprintf(stderr, "netinstall: \"%s\" is not a valid spec\n",
+                    nt_basename(self));
+            if (why[0]) {
+                fprintf(stderr, "  %s\n", why);
+            }
+            fputc('\n', stderr);
+            nt_usage(stderr, nt_basename(self));
+            return 2;
+        }
     }
 
     if (nt_home(home, sizeof(home)) != 0) {

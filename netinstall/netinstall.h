@@ -16,7 +16,15 @@
 #define NT_SPEC_MAX 512
 #define NT_PATH_MAX 4096
 
-#define NT_TOKEN_MIN 16
+/*
+ * Thirty-two hex characters, not sixteen. Sixteen is 64 bits, which puts a
+ * second preimage out of reach and does not touch the attack that matters when
+ * you did not build what you are pinning: a publisher grinding two files to one
+ * truncated digest, benign to get pinned and hostile to serve, at about 2^32.
+ * The README recommended 32 for exactly that while the parser accepted 16, so
+ * the safe length was advice and the floor was the length it argued against.
+ */
+#define NT_TOKEN_MIN 32
 #define NT_MAX_PAYLOAD (16 * 1024 * 1024)
 
 typedef struct {
@@ -28,7 +36,8 @@ typedef struct {
     char url[NT_PATH_MAX];
 } nt_spec;
 
-int nt_parse_name(const char *base, nt_spec *out);
+/* `why`, when not NULL, is filled with the reason a token was refused. */
+int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen);
 int nt_self_path(char *buf, size_t len, const char *argv0);
 const char *nt_basename(const char *path);
 
