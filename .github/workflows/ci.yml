@@ -408,8 +408,15 @@ jobs:
           # payloads and drives the network probes. The image carries the rest --
           # seq, timeout, perl and sha256(1), which lib.sh now knows about
           # because this platform ships neither sha256sum nor shasum.
+          #
+          # wget is here for fetchbound.sh alone. It is the branch whose two
+          # bounds come from the kernel rather than from the downloader, and
+          # without it installed this lane skips every assertion about them --
+          # on the one platform in the matrix with a different libc and a
+          # different kernel, which is exactly where setrlimit and sigaction
+          # are worth asking twice.
           prepare: |
-            pkg_add -I bash curl || true
+            pkg_add -I bash curl wget || true
             pkg_add -I python3 || pkg_add -I python%3 || true
           # The log comes back rather than going to the job log: reading a job
           # log needs a token and reading annotations does not, which is the

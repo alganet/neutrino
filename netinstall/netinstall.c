@@ -1173,8 +1173,19 @@ int main(int argc, char **argv)
                 printf("limits     %s\n", limits);
             }
         }
-        if (nt_fetch_command(spec.url, script, shown, sizeof(shown)) == 0) {
-            printf("downloader %s\n", shown);
+        {
+            char bounds[256];
+
+            if (nt_fetch_command(spec.url, script, shown, sizeof(shown),
+                                 bounds, sizeof(bounds)) == 0) {
+                printf("downloader %s\n", shown);
+                /*
+                 * On the wget branch neither limit is in the line above: that
+                 * downloader can express neither, so the kernel holds them.
+                 * Printing the command alone would understate what is in force.
+                 */
+                printf("bounds     %s\n", bounds);
+            }
         }
         return 0;
     }

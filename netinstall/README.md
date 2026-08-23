@@ -212,10 +212,26 @@ the user can see and change it. This is the same posture as `curl | sh`.
 the fetch. Its own configuration is *not* scrubbed: that config is the trust anchor you chose,
 and removing your control over it would defeat the point. `--info` prints the effective command.
 
-The `wget` fallback is weaker and only used when no `curl` exists. `--https-only` governs recursive
-link following rather than redirects for a single file, and wget has no equivalent of
-`--max-filesize`, so the fallback **refuses redirects entirely** and its response size is bounded
-only after transfer rather than during it. Install `curl` if that matters to you.
+**Two bounds, and where each comes from.** A host you have pinned is a host you do not trust, and
+the pin is checked after the bytes are on disk — so something has to bound what a compromised host
+can spend of yours before anything verifies it. The bounds are 16 MiB and 120 seconds, and `--info`
+prints them on a `bounds` line, because on one of the two branches they are not visible in the
+command it prints.
+
+On `curl` both are flags: `--max-filesize` and `--max-time`. `--max-filesize` refuses a declared
+`Content-Length` before any body arrives, and — measured on curl 8.5, 8.7, 8.16 and 8.21, across
+Linux, macOS, Windows and OpenBSD — stops a chunked or close-delimited body mid-transfer at exactly
+the limit. A response that declares a small length and then sends more gets no further than the
+length it declared, and the digest refuses it.
+
+The `wget` fallback is only used when no `curl` exists, and it can express neither bound: it has no
+equivalent of `--max-filesize`, and `--timeout` is per read rather than a total, so a host sending
+one byte a second satisfies it forever. So the kernel holds them instead — `RLIMIT_FSIZE` and an
+`alarm` set on the child before `execv`, which no flag can be missing. Exceeding either kills the
+downloader, and netinstall says which of the two it was rather than blaming the network.
+`--https-only` governs recursive link following rather than redirects for a single file, so the
+fallback also **refuses redirects entirely**. Install `curl` anyway if you have the choice: its
+bounds stop the transfer, and the kernel's stop the process.
 
 **The pin is a content pin.** It catches corruption, mirror drift, and a host silently changing
 the file after you pinned it. Sixteen hex characters would be 64 bits, which puts a second
@@ -910,9 +926,11 @@ test/run.sh
 ```
 
 Builds a release binary, a `-DNEUTRINO_TESTING` binary, one each for the tight, offline and session
-tiers, one with the session and tight tiers together, and one with the session tier built
-fail-closed, then runs the suites: `names.sh` (the
-grammar, accepted and rejected), `verify.sh` (pin mismatch, non-text payloads, oversized responses,
+tiers, one with the session and tight tiers together, one with the session tier built fail-closed,
+and one that prefers the `wget` fallback — every machine that can be rented resolves `curl`, so that
+branch is otherwise never taken. Then it runs the suites: `names.sh` (the
+grammar, accepted and rejected), `fetchbound.sh` (what bounds a hostile response's size and
+duration, on both downloader branches), `verify.sh` (pin mismatch, non-text payloads, oversized responses,
 offline cache, tampered cache), `confine.sh`
 (a hostile script that tries to escape — the filesystem, the environment, an inherited descriptor,
 an abstract socket, another process's memory, and on macOS a bundle it wrote handed to
