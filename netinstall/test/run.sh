@@ -67,7 +67,13 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 # annotations per level per step and drops the rest without saying so, and this
 # step already emits more results than that. A measurement taken last is a
 # measurement nobody outside the runner gets to read.
-SUITES="pinfloor fetchbound names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
+#
+# envlen sits behind them and its reports fall past the cap, which is where
+# env.sh and confine.sh already are. That is what being asserted rather than
+# reported buys: a green tick is its whole answer, and its report lines are for
+# whoever is already reading the log. They were in front for one round, to put
+# the after-values of PR 15 on the record once.
+SUITES="pinfloor fetchbound envlen names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
 # The BSDs have no webview on any runner that can be had, so e2e and env -- the
 # two suites that launch one -- would fail for the absence of a toolkit rather
 # than anything about the confinement. Everything that measures unveil and
@@ -75,7 +81,7 @@ SUITES="pinfloor fetchbound names verify confine confine-tight confine-strict co
 # this platform) and says so, which is a statement and not a silent pass.
 case "$(uname -s)" in
     OpenBSD|FreeBSD|NetBSD|DragonFly)
-        SUITES="pinfloor fetchbound names verify confine confine-tight confine-strict offline phases strict" ;;
+        SUITES="pinfloor fetchbound envlen names verify confine confine-tight confine-strict offline phases strict" ;;
 esac
 # session.sh is a probe rather than a gate: it applies each candidate mechanism
 # on its own to a real webview. It answered -- the session tier is what came of

@@ -1281,7 +1281,24 @@ int main(int argc, char **argv)
      * sandbox touches them. This runs on every platform, including the ones
      * that get no confinement at all.
      */
-    nt_env_scrub(1, NULL);
+    /*
+     * The answer was thrown away here, and for one release it would have been
+     * the wrong thing to throw away: the scrub used to stop at the first name
+     * it could not remove and hand the rest to the app while still returning
+     * the count it had predicted. It cannot do that any more -- see env.c --
+     * but a scrub that could not run at all is still a thing this must not
+     * report as done.
+     */
+    if (nt_env_scrub(1, NULL) < 0) {
+#ifdef NEUTRINO_STRICT_SANDBOX
+        fprintf(stderr, "netinstall: refusing to run: the environment could not "
+                        "be reduced to the allowlist\n");
+        return 3;
+#else
+        fprintf(stderr, "netinstall: warning: running with the environment the "
+                        "caller had; it could not be reduced to the allowlist\n");
+#endif
+    }
     nt_limits(1);
 
     setenv_dir("XDG_CACHE_HOME", appdir, "cache");
