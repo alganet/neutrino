@@ -50,6 +50,11 @@ echo "=== Can a real webview still come up under the profile? ==="
 mkdir -p "$APP_DIR"
 rm -f "$STALE_FILE" "${TMPDIR:-/tmp}/neutrino-title.txt"
 bash "$APP_CMD" > "${TMPDIR:-/tmp}/neutrino-tight.log" 2>&1 &
+# The call below writes verify-macos.sh's own PASS lines and its own
+# "=== Results: N failure(s) ===" into this script's output, and the annotated
+# report therefore carries two result lines. Green they are indistinguishable;
+# red, a reader cannot tell which verifier failed. So this script's three are
+# labelled [tight] and the unlabelled one is verify-macos.sh's.
 if bash "$(dirname "$0")/verify-macos.sh" "$SHOTS"; then
     pass "the app ran confined"
 else
@@ -75,13 +80,13 @@ case "$PROFILE" in
         pass "generator extracted, ${#PROFILE} bytes" ;;
     *)
         fail "could not extract a profile from $APP_CMD; every check below would pass by refusing everything"
-        echo "=== Results: $FAILURES failure(s) ==="
+        echo "=== Results: $FAILURES failure(s) [tight] ==="
         exit 1 ;;
 esac
 
 if ! /usr/bin/sandbox-exec -p "$PROFILE" /usr/bin/true >/dev/null 2>&1; then
     fail "seatbelt will not take the profile the app builds"
-    echo "=== Results: $FAILURES failure(s) ==="
+    echo "=== Results: $FAILURES failure(s) [tight] ==="
     exit 1
 fi
 
@@ -269,5 +274,5 @@ else
     fail "system reads are broken; the profile is too tight to be useful"
 fi
 
-echo "=== Results: $FAILURES failure(s) ==="
+echo "=== Results: $FAILURES failure(s) [tight] ==="
 [ "$FAILURES" -eq 0 ]
