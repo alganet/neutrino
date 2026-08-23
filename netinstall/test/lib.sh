@@ -238,6 +238,24 @@ nt_tight_tier() {
     return 1
 }
 
+# A path as a native downloader will read it. curl.exe and wget.exe do not read
+# a git-bash path, and git-bash rewrites path-shaped *arguments* on the way to
+# them but not the contents of a config file and not the value of an
+# environment variable -- which is where every path these suites hand a
+# downloader goes. Forward slashes on purpose: curl's config parser treats a
+# backslash as an escape.
+#
+# Lifted here from phases.sh when fetchconf.sh turned out to need the same
+# thing. Two copies of this is how the two suites drift into disagreeing about
+# what a path is.
+nt_native() {
+    if [ "${NT_WINDOWS:-0}" = "1" ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 # The app directory is keyed on the spec without its pin, so versions of the
 # same app share it.
 nt_appkey() {

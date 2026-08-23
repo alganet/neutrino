@@ -93,16 +93,6 @@ if [ -z "$CURLBIN" ]; then
     exit 0
 fi
 
-# Native for curl.exe, which does not read a git-bash path. Forward slashes on
-# purpose: curl's config parser treats a backslash as an escape.
-nt_native() {
-    if [ "$NT_WINDOWS" = "1" ]; then
-        cygpath -m "$1"
-    else
-        printf '%s\n' "$1"
-    fi
-}
-
 # Both names, because curl looks for _curlrc first on windows and .curlrc
 # everywhere else.
 nt_curlrc() {

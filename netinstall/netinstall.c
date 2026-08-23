@@ -1175,9 +1175,11 @@ int main(int argc, char **argv)
         }
         {
             char bounds[256];
+            char config[256];
 
             if (nt_fetch_command(spec.url, script, shown, sizeof(shown),
-                                 bounds, sizeof(bounds)) == 0) {
+                                 bounds, sizeof(bounds),
+                                 config, sizeof(config)) == 0) {
                 printf("downloader %s\n", shown);
                 /*
                  * On the wget branch neither limit is in the line above: that
@@ -1185,6 +1187,16 @@ int main(int argc, char **argv)
                  * Printing the command alone would understate what is in force.
                  */
                 printf("bounds     %s\n", bounds);
+                /*
+                 * And the line above it is not the whole command either. Both
+                 * downloaders read a configuration file, deliberately -- it is
+                 * the trust anchor this design chose -- and neither is told not
+                 * to, so options this program never wrote can be on the command
+                 * that runs. Printing the argv alone was a claim a file can add
+                 * to, which is the complaint this document makes about every
+                 * other --info line.
+                 */
+                printf("config     %s\n", config);
             }
         }
         return 0;
@@ -1230,6 +1242,24 @@ int main(int argc, char **argv)
                 }
                 return got == -2 ? 3 : 1;
             }
+        }
+        /*
+         * The downloader said it succeeded and there is nothing where it was
+         * told to write. A configuration file is how that happens: curl's -o
+         * does not last-win, it pairs with URLs in the order both appear, so an
+         * `output` line in a config takes the one URL and the -o this program
+         * passed is left holding nothing. Measured on five lanes.
+         *
+         * This used to fall through to the line below and report "payload too
+         * large or unreadable", which is a true sentence about a file that is
+         * not there and sends whoever reads it looking for the wrong thing.
+         */
+        if (!nt_exists(tmpfile)) {
+            fprintf(stderr, "netinstall: the downloader reported success and "
+                            "wrote nothing to %s\n", tmpfile);
+            fprintf(stderr, "  a configuration file can redirect its output; "
+                            "--info names the ones it reads\n");
+            return 1;
         }
         if (nt_sha256_file(tmpfile, hex) != 0) {
             remove(tmpfile);

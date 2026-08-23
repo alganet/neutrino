@@ -65,8 +65,8 @@ name cannot be spoofed by the caller does not hold.
 ```
 
 `--info` is the audit path — it prints the resolved URL, the full SHA-256, every cache path, the
-exact downloader command that would run, the confinement that would be applied, and how much of the
-environment would be dropped. It describes
+downloader command that would run, **what that downloader reads besides that command**, the
+confinement that would be applied, and how much of the environment would be dropped. It describes
 without enforcing, so it changes nothing and reports what a real launch would do.
 
 ## Layout
@@ -225,7 +225,24 @@ the user can see and change it. This is the same posture as `curl | sh`.
 
 `curl` is resolved from absolute paths rather than `$PATH`, so a planted `curl` cannot take over
 the fetch. Its own configuration is *not* scrubbed: that config is the trust anchor you chose,
-and removing your control over it would defeat the point. `--info` prints the effective command.
+and removing your control over it would defeat the point.
+
+That is a decision about **trust**, and a config file is not limited to trust — so `--info` prints
+a `config` line naming the files each downloader reads, beside the command line it prints, because
+the command line alone is not the whole command. What a config can and cannot do, measured on curl
+8.5, 8.7, 8.16 and 8.21 and on wget 1.21 and 1.25, across all six lanes:
+
+| | |
+|---|---|
+| raise `--max-filesize`, lower `--max-time` | **no** — curl parses the config *before* the command line, so a last-wins option is won by the argv. The two bounds below hold. |
+| redirect the download with `output` | **yes** — `-o` does not last-win, it pairs with URLs in order, so a config's `output` takes the URL and netinstall's `-o` is left holding nothing |
+| …and where those bytes land | wherever the fetch phase allows: refused outside `blobs` on Linux, macOS and OpenBSD in **both** tiers; on Windows the fetch phase confines no filesystem in either tier, and its `fetch` line says so |
+| the same through `wget` | **no** — `output_document` loses to the argv's `-O`, and that branch's two bounds are held by the kernel, where no config reaches |
+
+A redirected download is a failed one: nothing arrives where netinstall told the downloader to put
+it, so nothing is verified and nothing is cached. netinstall says exactly that — *"the downloader
+reported success and wrote nothing to …"* — rather than reporting the missing file as an unreadable
+payload, which is what it used to say.
 
 **Two bounds, and where each comes from.** A host you have pinned is a host you do not trust, and
 the pin is checked after the bytes are on disk — so something has to bound what a compromised host

@@ -22,8 +22,15 @@ int nt_fetch(const char *url, const char *dest, const char *home,
  * Builds the command that a fetch would run, without running it. `bounds`, when
  * not NULL, is filled with the size and time limits in force -- which on the
  * wget branch are imposed by the kernel and appear nowhere in `shown`.
+ *
+ * `config`, when not NULL, is filled with what the downloader reads *besides*
+ * the argv in `shown`. Both downloaders read a configuration file, deliberately
+ * -- see the trust model in README.md -- and neither is told not to. So `shown`
+ * is the command this program builds and not the whole command that runs, and
+ * a --info that printed only the first was making a claim a file can add to.
  */
 int nt_fetch_command(const char *url, const char *dest, char *shown,
-                     size_t shownlen, char *bounds, size_t boundslen);
+                     size_t shownlen, char *bounds, size_t boundslen,
+                     char *config, size_t configlen);
 
 #endif
