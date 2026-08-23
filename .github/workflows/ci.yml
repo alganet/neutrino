@@ -336,6 +336,48 @@ jobs:
           path: |
             ~/screenshots/
             ~/netinstall-screenshots/
+  # netinstall/sandbox_bsd.c describes a confinement that, until this lane, had
+  # never been compiled by anything in this repository -- build.sh cross-compiles
+  # six targets and none of them is a BSD, and no runner GitHub offers is one
+  # either. Four of its rules were wrong, including one that made every shell
+  # script it launched fail on `2>/dev/null`. A VM is the only way to ask, so
+  # this asks on every push, with the same suite the other four lanes answer to.
+  openbsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      # Pinned to the commit v1.4.6 points at, on the same terms as everything
+      # else this branch pinned: a tag is a name its owner can move.
+      - name: netinstall suite
+        id: vm
+        continue-on-error: true
+        uses: vmactions/openbsd-vm@e6c68b637a12e83519688d115d57d5b0b53923cd
+        with:
+          usesh: true
+          copyback: true
+          # bash and curl are what the suite runs on; python3 is what serves the
+          # payloads and drives the network probes. The image carries the rest --
+          # seq, timeout, perl and sha256(1), which lib.sh now knows about
+          # because this platform ships neither sha256sum nor shasum.
+          prepare: |
+            pkg_add -I bash curl || true
+            pkg_add -I python3 || pkg_add -I python%3 || true
+          # The log comes back rather than going to the job log: reading a job
+          # log needs a token and reading annotations does not, which is the
+          # same reason annotate.sh exists for the webview lanes.
+          run: |
+            bash netinstall/test/run.sh > openbsd-suite.log 2>&1
+            echo "$?" > openbsd-suite.rc
+      - name: results
+        if: always()
+        run: bash test/annotate.sh openbsd openbsd-suite.log 'FAIL:|failure\(s\)|SKIP'
+      - name: outcome
+        if: always()
+        run: |
+          [ "${{ steps.vm.outcome }}" = "success" ] ||
+            echo "::error title=openbsd::the vm step itself did not complete"
+          exit "$(cat openbsd-suite.rc 2>/dev/null || echo 1)"
   netinstall-cross:
     runs-on: ubuntu-latest
     steps:

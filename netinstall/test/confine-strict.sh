@@ -46,8 +46,15 @@ if echo x > "$XDG_DATA_HOME/ok" 2>/dev/null; then echo "OWN_DIR_OK"; else echo "
 if cat "$NEUTRINO_TEST_OUTSIDE/secret" >/dev/null 2>&1; then echo "READ_SECRET"; else echo "SECRET_BLOCKED"; fi
 if cat /etc/hosts >/dev/null 2>&1; then echo "ETC_OK"; else echo "ETC_BLOCKED"; fi
 if ls /usr/share >/dev/null 2>&1; then echo "USR_OK"; else echo "USR_BLOCKED"; fi
-cp /bin/true "$XDG_DATA_HOME/probe" 2>/dev/null && chmod +x "$XDG_DATA_HOME/probe" 2>/dev/null
-if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC_BLOCKED"; fi
+nt_true=""
+for c in /bin/true /usr/bin/true; do [ -x "$c" ] && { nt_true="$c"; break; }; done
+echo "EXECSRC:${nt_true:-none}"
+if [ -n "$nt_true" ] && cp "$nt_true" "$XDG_DATA_HOME/probe" 2>/dev/null &&
+   chmod +x "$XDG_DATA_HOME/probe" 2>/dev/null; then
+    if "$XDG_DATA_HOME/probe" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC_BLOCKED"; fi
+else
+    echo "EXEC_NOCOPY"
+fi
 SCRIPT
 fi
 
