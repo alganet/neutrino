@@ -238,13 +238,48 @@ jobs:
           & .\test\verify-attack.ps1 *>&1 | Tee-Object -FilePath "$HOME\attack-verify.log"
           $testExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "ATTACK *" } | Stop-Process -Force -ErrorAction SilentlyContinue
-          # PR 5 probing. This lane changes nothing, but it reports the new
-          # postnav field like every other, and a field nobody can read is not
-          # a measurement. The job log needs a token; annotations do not.
-          Select-String -Path "$HOME\attack-verify.log" -Pattern 'report:|FAIL:' |
-            Select-Object -First 8 |
-            ForEach-Object { Write-Host "::warning title=windows-attack::$($_.Line.Trim())" }
           exit $testExit
+      # The report line, carried out where it can be read without a token. This
+      # was a Select-String written into the step above, the fifth hand-rolled
+      # annotator in a file with four lanes; annotate.sh is what the other four
+      # call and it produces a byte-identical annotation here -- measured, on
+      # the same log, in the same run. What it adds is the cases the inline form
+      # could not express, and they are exactly the ones a red lane produces: a
+      # log that is not there, and a log that matched nothing.
+      #
+      # A note this lane was carrying and should not: `postnav=PENDING
+      # nav=PENDING` here is not the earliest of several reports, and the
+      # Select-Object -First 8 was not truncating anything. verify-attack.ps1
+      # prints `report:` exactly once, after settling, and says in its own
+      # comment that the settled report is not expected to arrive on this
+      # platform because there is no navigation refusal to refuse with.
+      # Measured: matched=1 reports=1.
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-attack ~/attack-verify.log 'report:|FAIL:'
+      # A failed initialisation has to end, and has to leave a record. Both
+      # halves were measured absent before this: the driver sat holding a modal
+      # box ninety seconds after the download threw, and its app folder held
+      # `neutrinoerr.exe`, its manifest and the build stamp and nothing that
+      # named the failure. Provoked by pinning a version that does not exist, so
+      # the package URL 404s and the download throws the way a digest mismatch
+      # would -- the real path into handleError, with nothing about the driver
+      # modified for the test.
+      - shell: bash
+        run: |
+          bash build.sh test/neutrinotest.js test/neutrinoerr.cmd
+          sed -i 's/webView2PinnedVersion: "[^"]*"/webView2PinnedVersion: "0.0.0-neutrino-does-not-exist"/' test/neutrinoerr.cmd
+          grep -q 'webView2PinnedVersion: "0.0.0-neutrino-does-not-exist"' test/neutrinoerr.cmd
+      - timeout-minutes: 10
+        shell: pwsh
+        run: |
+          & .\test\verify-winerr.ps1 .\test\neutrinoerr.cmd *>&1 | Tee-Object -FilePath "$HOME\winerr-verify.log"
+          $testExit = $LASTEXITCODE
+          Get-Process -Name "neutrinoerr" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $testExit
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-winerr ~/winerr-verify.log 'report:|PASS:|FAIL:|failure\(s\)'
       - name: netinstall suite
         timeout-minutes: 20
         shell: bash
@@ -286,7 +321,20 @@ jobs:
       # either half alone passes for the wrong reason.
       - run: |
           bash build.sh --tier=testing,tight test/neutrinotest.js test/neutrinotight.cmd
-          bash test/verify-macos-tight.sh test/neutrinotight.cmd ~/screenshots
+          # This lane reported to its job log and called nothing that carried
+          # the result out, so a red tight tier said FAILURES=0 is false and
+          # nothing finer -- the gap PR 7 and PR 8 both parked here. The third
+          # argument is not optional: this verifier speaks in PASS/FAIL and
+          # annotate.sh's stock `report:|FAIL:` pattern matches nothing at all
+          # in its output. Measured, on the real log: 43 lines, 18 of them
+          # caught by the pattern below and none by the default, packing into
+          # four annotations against a cap of eight.
+          TIGHT_EXIT=0
+          bash test/verify-macos-tight.sh test/neutrinotight.cmd ~/screenshots \
+            > ~/tight.log 2>&1 || TIGHT_EXIT=$?
+          cat ~/tight.log
+          bash test/annotate.sh macos-tight ~/tight.log 'PASS:|FAIL:|failure\(s\)'
+          exit $TIGHT_EXIT
       - run: |
           bash build.sh --tier=testing test/neutrinoattack.js test/neutrinoattack.cmd
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"

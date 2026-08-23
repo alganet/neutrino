@@ -89,7 +89,9 @@ All coordinates use top-left origin on every platform (macOS coordinates are nor
 - .NET Framework with `jsc.exe` (v4.x), available on modern Windows by default.
 - WebView2 runtime, downloaded automatically with progress bar on first run.
   The package is pinned to one version and one SHA-256, and every file taken out
-  of it is pinned too; all of it is re-checked on every launch.
+  of it is pinned too; all of it is re-checked on every launch. If that fails,
+  the reason goes on screen for twenty seconds and into `neutrino-error.log` in
+  the app folder, which is where to look when nobody was watching the screen.
 
 ### Linux
 
