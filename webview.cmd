@@ -745,6 +745,162 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     NeutrinoWebMessageSink.queue.Add(args);
                 }
             }
+
+            // The navigation policy, and it cannot use the queue above.
+            // Cancel and Handled are read by the engine the moment the handler
+            // returns, so a decision drained from a loop is a decision taken
+            // after the navigation has already gone -- the one place in this
+            // file where the work has to happen inside the handler.
+            //
+            // What it needs from the driver is therefore statics the loop sets
+            // rather than a callback it calls: `armed` is the documentLoaded
+            // gate the gjs, Qt and macOS guards all use, and the refusals are
+            // drained by the loop so the note is written by the side of this
+            // file that can write one.
+            //
+            // Measured, on the pinned runtime the driver loads: every event is
+            // an EventHandler`1 so one Handle binds to all of them;
+            // NavigationStartingEventArgs.Cancel and
+            // NewWindowRequestedEventArgs.Handled are both writable; and
+            // NavigationStarting fires for the driver's own load twice, as
+            // about:blank and then as the data: url NavigateToString makes --
+            // which is why the gate exists and why the url alone cannot be the
+            // rule. Source stays about:blank throughout.
+            class NeutrinoNavSink {
+                // Set by the driver's loop the moment it has issued its own
+                // NavigateToString. Everything below keys off it: the first
+                // navigation after it is the app's own document, and the
+                // commit of that document is what arms the guard.
+                static var navIssued : boolean = false;
+                // The url the driver's own NavigateToString produced, as the
+                // engine spells it, fragment stripped. Not guessed: a data: url
+                // is what NavigateToString makes here, and the view's Source
+                // stays about:blank throughout, so the only place this can be
+                // learned is the navigation event itself.
+                static var ownDocument : String = "";
+                // The documentLoaded gate the gjs, Qt and macOS guards all use.
+                // Armed from inside the engine at the commit of the document
+                // this file loaded -- the Windows spelling of gjs's COMMITTED
+                // and macOS's didCommitNavigation:.
+                static var armed : boolean = false;
+                static var refusals : ArrayList = new ArrayList();
+                var kind : String;
+
+                function Handle(sender : Object, args : Object) : void {
+                    if (this.kind == "commit") {
+                        // On ownDocument and not on navIssued, so there is no
+                        // ordering to get right. The about:blank the control is
+                        // created with commits too, and if that commit landed
+                        // after the flag were set the gate would arm one
+                        // navigation early -- and the navigation it would then
+                        // refuse is the app's own document. Keyed this way the
+                        // gate cannot arm before the load it is meant to arm at,
+                        // whatever order the engine fires these in.
+                        if (NeutrinoNavSink.ownDocument != "") {
+                            NeutrinoNavSink.armed = true;
+                        }
+                        return;
+                    }
+                    var going : String = NeutrinoNavSink.uriOf(args);
+                    if (this.kind == "navstart" && !NeutrinoNavSink.armed) {
+                        // The app's own document, on its way in. Remembered the
+                        // way rememberTrustedView remembers one: the first wins
+                        // and only the first, at the load this file started and
+                        // before any page script exists to send anything.
+                        if (NeutrinoNavSink.navIssued && NeutrinoNavSink.ownDocument == "") {
+                            NeutrinoNavSink.ownDocument = NeutrinoNavSink.identity(going);
+                        }
+                        return;
+                    }
+                    if (!NeutrinoNavSink.armed) {
+                        return;
+                    }
+                    if (this.kind == "newwindow") {
+                        // Every one of them. A window opened from the app's
+                        // document is a second view with no driver behind it,
+                        // and the shipped build was measured handing one a real
+                        // window: popup_arrived=YES opened=HANDLE, and the frame
+                        // it got wore a forged __NEUTRINO__ title.
+                        if (NeutrinoNavSink.setTrue(args, "Handled")) {
+                            NeutrinoNavSink.refusals.Add("refused a new window for " +
+                                NeutrinoNavSink.shorten(going));
+                        } else {
+                            NeutrinoNavSink.refusals.Add("could not refuse a new window for " +
+                                NeutrinoNavSink.shorten(going));
+                        }
+                        return;
+                    }
+                    if (NeutrinoNavSink.isOwn(going)) {
+                        return;
+                    }
+                    if (NeutrinoNavSink.setTrue(args, "Cancel")) {
+                        NeutrinoNavSink.refusals.Add("refused navigation to " +
+                            NeutrinoNavSink.shorten(going));
+                    } else {
+                        NeutrinoNavSink.refusals.Add("could not refuse navigation to " +
+                            NeutrinoNavSink.shorten(going));
+                    }
+                }
+
+                // isOwnDocument's rule and viewIdentity's, spelled out again
+                // because a JScript.NET class cannot call a JScript global --
+                // the same reason the message sink queues instead of calling
+                // back out. If either of those changes this has to change with
+                // it, which is why they are named here.
+                //
+                // The fragment is not part of the answer, and on this engine
+                // that is not a nicety. The document this driver loads is a
+                // data: url, so an app moving between screens with
+                // location.hash produces a navigation to that same url with a
+                // fragment on it -- a guard comparing whole strings would
+                // refuse the app's own screen changes and report each one.
+                static function identity(uri : String) : String {
+                    var cut : int = uri.IndexOf("#");
+                    return cut < 0 ? uri : uri.Substring(0, cut);
+                }
+
+                static function isOwn(uri : String) : boolean {
+                    var id : String = NeutrinoNavSink.identity(uri);
+                    if (id == "" || id == "about:blank") {
+                        return true;
+                    }
+                    return NeutrinoNavSink.ownDocument != "" &&
+                        id == NeutrinoNavSink.ownDocument;
+                }
+
+                static function uriOf(args : Object) : String {
+                    try {
+                        var p : PropertyInfo = args.GetType().GetProperty("Uri");
+                        if (p == null) {
+                            return "";
+                        }
+                        var v : Object = p.GetValue(args, null);
+                        return v == null ? "" : String(v);
+                    } catch (e) {
+                        return "";
+                    }
+                }
+
+                // For the note only. A data: url is longer than an annotation
+                // and the part that identifies it is the scheme; the comparison
+                // above is made on the whole string.
+                static function shorten(uri : String) : String {
+                    return uri.Length > 120 ? uri.Substring(0, 120) + "..." : uri;
+                }
+
+                static function setTrue(args : Object, name : String) : boolean {
+                    try {
+                        var p : PropertyInfo = args.GetType().GetProperty(name);
+                        if (p == null || !p.CanWrite) {
+                            return false;
+                        }
+                        p.SetValue(args, true, null);
+                        return true;
+                    } catch (e) {
+                        return false;
+                    }
+                }
+            }
         @end
     @*/
 
@@ -2675,6 +2831,71 @@ exit $?;:<<'//</script></head><body></body>' #-->
             }
         },
 
+        /*
+         * The navigation policy, and the platform PRs 5 and 6 left out. gjs, Qt
+         * and macOS each refuse a navigation away from the app's document, and
+         * each comment says why: a page that moves itself to a remote origin is
+         * then the document holding the channel to the native window. This
+         * driver subscribed to no navigation event at all, and the preload and
+         * the app author's own page script go in through
+         * AddScriptToExecuteOnDocumentCreated, which registers them on the view
+         * rather than on a document -- so whatever the page navigated to was
+         * handed both. Measured, against a target that answered:
+         * nav_arrived=YES, after_nav api=object page=number.
+         *
+         * Three subscriptions, and ContentLoading is one of them because the
+         * gate has to be armed from inside the engine. NavigationStarting fires
+         * for this driver's own load -- twice, as about:blank and then as the
+         * data: url NavigateToString makes -- so a policy that refuses what it
+         * does not recognise refuses the app's own document, which is PR 6's
+         * lesson arriving from the other direction.
+         *
+         * Partial is reported rather than silently accepted: a guard that got
+         * two of three is a different build from one that got all three.
+         */
+        wireWebView2Navigation: function (SystemRef, coreWv2) {
+            var wanted = [
+                ["NavigationStarting", "navstart"],
+                ["NewWindowRequested", "newwindow"],
+                ["ContentLoading", "commit"]
+            ];
+            var wired = 0;
+            for (var i = 0; i < wanted.length; i++) {
+                try {
+                    var evt = coreWv2.GetType().GetEvent(wanted[i][0]);
+                    if (!evt) {
+                        continue;
+                    }
+                    var sink = new NeutrinoNavSink();
+                    sink.kind = wanted[i][1];
+                    evt.AddEventHandler(coreWv2, SystemRef.Delegate.CreateDelegate(
+                        evt.EventHandlerType, sink, sink.GetType().GetMethod("Handle")
+                    ));
+                    wired++;
+                } catch (_) {
+                }
+            }
+            if (wired < wanted.length) {
+                this.note("navigation guard wired " + wired + " of " +
+                    wanted.length + " events; a navigation may not be refused here");
+            }
+            return wired === wanted.length;
+        },
+
+        /*
+         * Whatever the guard refused, said out loud by the side of this file
+         * that can say it. The decision itself is taken inside the handler --
+         * Cancel and Handled are read the moment it returns -- so only the
+         * telling is deferred to the loop.
+         */
+        drainNavRefusals: function () {
+            while (NeutrinoNavSink.refusals.Count > 0) {
+                var text = String(NeutrinoNavSink.refusals[0]);
+                NeutrinoNavSink.refusals.RemoveAt(0);
+                this.note(text);
+            }
+        },
+
         // The event args carry both the text and who sent it. Source is the url
         // of the document that called postMessage, and the document this file
         // loads through NavigateToString has none worth the name -- so a
@@ -2831,6 +3052,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     win.Show();
                     var coreWv2 = null;
                     var titleProp = null;
+                    var sourceProp = null;
                     var preloadInjected = false;
                     while (win.Visible) {
                         SystemRef.Windows.Forms.Application.DoEvents();
@@ -2850,6 +3072,11 @@ exit $?;:<<'//</script></head><body></body>' #-->
                                 // page is told to send on depends on whether
                                 // this took.
                                 webMessagesWired = self.wireWebView2Messages(SystemRef, coreWv2);
+                                // Before anything is injected and before the
+                                // app's own document is navigated to, so the
+                                // gate is armed by that navigation and not
+                                // after it.
+                                self.wireWebView2Navigation(SystemRef, coreWv2);
                                 pendingPreload = self.buildPreloadScript(
                                     webMessagesWired
                                         ? "function(m){window.chrome.webview.postMessage(m);}"
@@ -2882,8 +3109,21 @@ exit $?;:<<'//</script></head><body></body>' #-->
                                 if (navMethod && scriptPath && SystemRef.IO.File.Exists(scriptPath)) {
                                     var htmlText = self.applyContentPolicy(self.extractHtmlDocument(
                                         SystemRef.IO.File.ReadAllText(scriptPath)));
+                                    /*
+                                     * Set before the call and not after it. The
+                                     * navigation is queued here and its events
+                                     * fire on the DoEvents below, so a flag set
+                                     * after Invoke returns is still set in time
+                                     * -- but only by luck of this method not
+                                     * pumping, and the guard reads the flag
+                                     * from inside the engine.
+                                     */
+                                    NeutrinoNavSink.navIssued = true;
                                     navMethod.Invoke(coreWv2, [htmlText]);
                                 }
+                            }
+                            if (coreWv2) {
+                                self.drainNavRefusals();
                             }
                             if (coreWv2 && messageCallback && webMessagesWired) {
                                 // Drained here rather than handled in the event
@@ -2902,14 +3142,52 @@ exit $?;:<<'//</script></head><body></body>' #-->
                             } else if (coreWv2 && messageCallback) {
                                 if (!titleProp) {
                                     titleProp = coreWv2.GetType().GetProperty("DocumentTitle");
+                                    sourceProp = coreWv2.GetType().GetProperty("Source");
                                 }
                                 if (titleProp) {
                                     var docTitle = String(titleProp.GetValue(coreWv2, null) || "");
+                                    /*
+                                     * Who set it, asked the same way
+                                     * readWebView2Message asks. This branch used
+                                     * to ask nothing at all, which made this the
+                                     * one driver that never checked a sender --
+                                     * and wherever wireWebView2Messages returns
+                                     * false it is the whole channel, so a page
+                                     * navigated to could drive the native window
+                                     * by writing its own title.
+                                     *
+                                     * Source is the reading that makes it
+                                     * checkable and it had to be measured: the
+                                     * view's Source stays about:blank across the
+                                     * driver's NavigateToString, and names the
+                                     * remote document once a navigation has
+                                     * arrived -- polled on this same clock, a
+                                     * foreign title and a foreign Source were
+                                     * seen in the same pair.
+                                     *
+                                     * A view that cannot say what it is showing
+                                     * is refused rather than trusted, which is
+                                     * the rule isTrustedView already settled.
+                                     */
+                                    var showing = null;
+                                    if (sourceProp) {
+                                        try {
+                                            showing = String(sourceProp.GetValue(coreWv2, null) || "");
+                                        } catch (_) {
+                                            showing = null;
+                                        }
+                                    }
+                                    var mine = (showing !== null) && self.isOwnDocument(showing);
                                     if (docTitle !== lastDocTitle && docTitle.indexOf("__NEUTRINO__") === 0) {
                                         lastDocTitle = docTitle;
-                                        try {
-                                            messageCallback(decodeURIComponent(docTitle.substring(12)));
-                                        } catch (_) {}
+                                        if (mine) {
+                                            try {
+                                                messageCallback(decodeURIComponent(docTitle.substring(12)));
+                                            } catch (_) {}
+                                        } else {
+                                            self.note("refused a record in the title of " +
+                                                (showing === null ? "a view that did not say" : showing));
+                                        }
                                     }
                                 }
                             }

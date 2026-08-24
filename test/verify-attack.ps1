@@ -117,8 +117,12 @@ if ($transport -eq "title") {
     Assert-Field "forged title" "REFUSED" (Get-Field "forge")
 }
 
-# No navigation refusal on Windows.
-Assert-Field "navigation refused" "any" (Get-Field "nav")
+# There is a navigation refusal on Windows now, so this is asserted like
+# everywhere else. What it is worth here is limited by the lane and not by the
+# guard: this page aims at a host that never resolves, so the load would fail on
+# its own and a REFUSED here does not by itself prove a guard ran. The suite
+# that proves it is test/verify-nav.ps1, against a target that answers.
+Assert-Field "navigation refused" "REFUSED" (Get-Field "nav")
 
 # A frame that drove the window would have said so in the title, and that is
 # checked before any of this is read. Reaching here means it did not.
@@ -133,12 +137,18 @@ if ((Get-Field "navdata") -eq "REFUSED") {
     Write-Host "        could not drive the window, so it is contained not closed"
 }
 
-# There is no navigation refusal on this platform, so the page really does
-# leave and no settled report ever arrives -- which means this field cannot be
-# answered here at all, and PENDING is the honest reading rather than a
-# missing measurement. Recorded so the day a navigation guard lands here, the
-# change shows up instead of passing quietly.
-Assert-Field "the refusal left the channel working" "any" (Get-Field "postnav")
+# A refusal that also broke the channel would look like a pass everywhere else
+# on this line, so what happens after one is asserted rather than assumed --
+# the same rule verify-attack.sh applies on the other three engines. The
+# navigation is refused, this document is therefore still the app's own, and a
+# well-formed record from it has to be obeyed: OBEYED is the right answer and
+# REFUSED would be the app unable to drive its own window.
+#
+# This field was `any` while the guard did not exist, and the comment that stood
+# here said the day one landed the change should show up instead of passing
+# quietly. It landed; the page no longer leaves, so a settled report arrives and
+# the question can be answered here at last.
+Assert-Field "the refusal left the channel working" "OBEYED" (Get-Field "postnav")
 
 Write-Host "=== Results: $Failures failure(s) ==="
 if ($Failures -gt 0) { exit 1 }

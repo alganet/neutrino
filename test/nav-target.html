@@ -1,0 +1,70 @@
+<!--
+SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+SPDX-License-Identifier: ISC
+
+Where the Windows navigation probe goes, served over loopback by the workflow.
+
+The document reports out of band, through the server's own request log, and not
+through the window. That is deliberate: what is being measured here is what a
+page inherits after it has replaced the app's document, and every in-window
+channel it might report through is one of the things under test -- a page that
+could only say "I have the API" by using the API would answer NO for a build
+where the API is present and merely unusable.
+
+So: a beacon per fact, as a query string on a GET this server writes to its own
+log. It answers whatever the guard does, which makes it the positive control as
+well -- a request that never arrives is a navigation that never happened.
+-->
+<!doctype html>
+<html>
+<head><title>NAV-TARGET</title></head>
+<body style="font-family:monospace;font-size:18px;padding:16px;">
+navigation target
+<script>
+(function () {
+    var q = String(location.search || "");
+
+    function beacon(name, value) {
+        try {
+            var img = new Image();
+            img.src = "/neutrino-beacon?phase=" + encodeURIComponent(q) +
+                "&" + name + "=" + encodeURIComponent(String(value));
+            // Held on the document so the image is not collected before it is
+            // sent. A beacon nobody keeps is a reading that arrives sometimes.
+            (document.body || document.documentElement).appendChild(img);
+        } catch (_) {}
+    }
+
+    // What arrived with this document. `api` is the preload -- the engine
+    // injects it on document creation, so if that reaches here it reaches every
+    // document this view ever loads. `page` is the app's *own* script, which
+    // matters more: it is the part an author wrote, and it would be running in
+    // a remote origin's document.
+    var api = (typeof window.neutrino);
+    var page = (typeof window.__neutrinoNavProbe);
+    beacon("api", api);
+    beacon("page", page);
+    beacon("tx", (api === "object" && window.neutrino) ? window.neutrino.transport : "none");
+
+    // And whether it can drive the native window from here. Two routes, told
+    // apart in the title the host would end up wearing: the injected API, and
+    // a forged record placed in this document's title for a host whose
+    // transport is the title and which never asks whose title it is.
+    try {
+        window.neutrino.window.setTitle("NAV-ESCAPED-API api=" + api + " page=" + page);
+    } catch (_) {}
+    try {
+        document.title = "__NEUTRINO__" + encodeURIComponent(
+            "setTitle" + String.fromCharCode(31) +
+            "NAV-ESCAPED-TITLE api=" + api + " page=" + page);
+    } catch (_) {}
+
+    // A window opened from the app's document is a second view of this app,
+    // and this says whether one arrived and what it was handed.
+    if (q.indexOf("popup") >= 0) {
+        beacon("popup", "ARRIVED");
+    }
+})();
+</script>
+</body>
+</html>
