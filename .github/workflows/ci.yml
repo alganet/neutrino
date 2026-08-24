@@ -135,6 +135,33 @@ jobs:
           fi
       - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
+      # The Qt launch path's document, which no longer has a name. Every check
+      # is one that fails against the commit before it, and the payloads it
+      # plants are proven live against qml itself first. It runs first in this
+      # lane for the round that measures it and goes back behind the other
+      # suites afterwards.
+      #
+      # QTWEBENGINE_CHROMIUM_FLAGS and QML_XHR_ALLOW_FILE_READ are for the
+      # sections that drive qml directly and so do not get what run_qt sets for
+      # its own launch. Neither reaches an app launch: the scrub takes both
+      # before any engine starts.
+      - timeout-minutes: 25
+        run: |
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_DISABLE_SANDBOX=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage"
+          export QML_XHR_ALLOW_FILE_READ=1
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoappdir.cmd
+          TEST_EXIT=0
+          bash test/appdir.sh test/neutrinoappdir.cmd > ~/appdir.log 2>&1 || TEST_EXIT=$?
+          cat ~/appdir.log
+          bash test/annotate.sh kde-appdir ~/appdir.log 'report:|FAIL:'
+          exit $TEST_EXIT
       # The loader environment the standalone launch path hands its engine.
       # Every check here is against the same build with the fix cut out of it,
       # so "it would have failed before" is measured in this run rather than
@@ -262,6 +289,20 @@ jobs:
         run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - shell: bash
         run: bash test/parse.sh test/neutrinotest.cmd
+      # The exe the batch region runs, which is now the one it just compiled.
+      # Same finding as kde-appdir in a different mechanism: there the launcher
+      # wrote the program every launch into a directory anyone could rewrite,
+      # here it wrote it once and trusted a stamp beside it afterwards.
+      - shell: bash
+        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinocache.cmd
+      - timeout-minutes: 30
+        shell: pwsh
+        run: |
+          & .\test\appcache.ps1 .\test\neutrinocache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
+          exit $LASTEXITCODE
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-appcache ~/appcache.log 'report:|FAIL:'
       # The netinstall step below has had a timeout all along and this one has
       # not, so anything that fails to exit here stops the whole run rather
       # than the step. The app not exiting is exactly what a missing close

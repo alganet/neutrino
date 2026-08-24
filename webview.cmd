@@ -12,7 +12,6 @@ SET "SCRIPT_DIR=%~dp0"
 SET "APP_FOLDER=%SCRIPT_DIR%%SCRIPT_NAME%"
 SET "FX_DIR=%WINDIR%\Microsoft.NET\Framework\v4.0.30319"
 SET "JSC=%FX_DIR%\jsc.exe"
-SET "MANIFEST=%APP_FOLDER%\%SCRIPT_NAME%.exe.manifest"
 SET "WEBVIEW2_ROOT=%APP_FOLDER%\Microsoft.Web.WebView2"
 
 IF NOT EXIST "%JSC%" (
@@ -22,20 +21,43 @@ IF NOT EXIST "%JSC%" (
 
 IF NOT EXIST "%JSC%" ( EXIT /B 1 )
 
-IF NOT EXIST "%APP_FOLDER%" MKDIR "%APP_FOLDER%"
-IF ERRORLEVEL 1 EXIT /B 1
-
-REM The app folder can outlive any single version of this script, so a compiled
-REM exe is only reused when the source it was built from is unchanged.
-SET "APP_EXE=%APP_FOLDER%\%SCRIPT_NAME%.exe"
-SET "APP_STAMP=%APP_FOLDER%\%SCRIPT_NAME%.stamp"
-FOR %%A IN ("%~f0") DO SET "SRC_ID=%%~zA %%~tA"
-SET "OLD_ID="
-IF EXIST "%APP_STAMP%" SET /P OLD_ID=<"%APP_STAMP%"
-
-IF EXIST "%APP_EXE%" IF "!OLD_ID!"=="!SRC_ID!" (
-    GOTO :START_APP
+SET "FIRST_RUN="
+IF NOT EXIST "%APP_FOLDER%" (
+    SET "FIRST_RUN=1"
+    MKDIR "%APP_FOLDER%"
+    IF ERRORLEVEL 1 EXIT /B 1
 )
+
+REM The app folder outlives any single version of this script, and everything
+REM running as this user can write it -- so an exe found sitting there is not
+REM evidence of anything. This used to reuse one whenever a stamp beside it, the
+REM source's size and modification time, still matched. Measured on a runner: an
+REM exe replaced in place with the stamp left exactly as this file wrote it was
+REM launched, and went on being launched until the source itself changed. The
+REM stamp is as writable as the exe it vouches for, and the digest netinstall
+REM pins covers the .cmd and not the artifact compiled out of it.
+REM
+REM So it compiles every launch. 340 ms measured against the 86 ms the reuse
+REM cost, which is the price of the thing that runs being the thing just built
+REM from the source that was verified. What is left is the gap between the
+REM compile and the START at the end -- cmd cannot hand CreateProcess a handle
+REM the way the Qt path hands qml a descriptor -- and that is a race rather
+REM than an implant that outlives every launch.
+REM
+REM Compiled under another name and rotated into place, because a running
+REM instance holds its own exe open: Windows refuses to overwrite that file but
+REM allows it to be renamed, which is what keeps a second window openable.
+SET "APP_EXE=%APP_FOLDER%\%SCRIPT_NAME%.exe"
+SET "APP_NEW=%APP_FOLDER%\%SCRIPT_NAME%.new%RANDOM%%RANDOM%.exe"
+SET "APP_OLD=%APP_FOLDER%\%SCRIPT_NAME%.old%RANDOM%%RANDOM%.exe"
+SET "MANIFEST=%APP_EXE%.manifest"
+DEL /Q "%APP_FOLDER%\%SCRIPT_NAME%.new*.exe" >NUL 2>&1
+DEL /Q "%APP_FOLDER%\%SCRIPT_NAME%.old*.exe" >NUL 2>&1
+DEL /Q "%APP_FOLDER%\%SCRIPT_NAME%.stamp" >NUL 2>&1
+
+REM Only on a genuinely first run. A cold .NET start makes that compile seconds
+REM rather than the third of one every launch after it costs.
+IF NOT DEFINED FIRST_RUN GOTO :COMPILE
 
 SET "MSG=Your application is getting ready to run for the first time..."
 SET "N=0"
@@ -51,7 +73,8 @@ FOR /L %%I IN (1,1,!PAD!) DO SET "SPACES=!SPACES! "
 CLS
 <NUL SET /P =[!HALF_ROW!;1H!SPACES!!MSG!
 
-"%JSC%" /nologo /debug- /t:winexe /out:"%APP_FOLDER%\%SCRIPT_NAME%.exe" ^
+:COMPILE
+"%JSC%" /nologo /debug- /t:winexe /out:"%APP_NEW%" ^
     /autoref+ ^
     /lib:"%FX_DIR%" ^
     /r:"%FX_DIR%\mscorlib.dll" ^
@@ -63,6 +86,12 @@ CLS
     "%~f0"
     SET "JSC_EXIT=%ERRORLEVEL%"
     IF NOT "%JSC_EXIT%"=="0" EXIT /B %JSC_EXIT%
+
+REM Renaming a running exe is allowed where overwriting it is not, so an
+REM earlier instance keeps its own file under a name the next launch deletes.
+IF EXIST "%APP_EXE%" MOVE /Y "%APP_EXE%" "%APP_OLD%" >NUL 2>&1
+MOVE /Y "%APP_NEW%" "%APP_EXE%" >NUL
+IF ERRORLEVEL 1 EXIT /B 1
 
 > "%MANIFEST%" (
     ECHO ^<?xml version="1.0" encoding="UTF-8" standalone="yes"?^>
@@ -87,11 +116,8 @@ CLS
     ECHO ^</assembly^>
 )
 
-> "%APP_STAMP%" ECHO !SRC_ID!
-
-:START_APP
 SET "NEUTRINO_SCRIPT_PATH=%~f0"
-START "" /D "%APP_FOLDER%" "%APP_FOLDER%\%SCRIPT_NAME%.exe"
+START "" /D "%APP_FOLDER%" "%APP_EXE%"
 IF ERRORLEVEL 1 EXIT /B 1
 EXIT /B 0
 EXIT
@@ -211,6 +237,48 @@ find_qt_runtime() {
     return 1
 }
 
+# The QML engine's document, and the fact that it has no name.
+#
+# It used to be two files -- window.qml and a `.pragma library` neutrino.js --
+# written into app_dir, the one directory the sandbox makes writable and, under
+# netinstall, the app's own. Three things were measured on a runner, each with
+# the window up and the launch looking normal from outside:
+#
+#   - a planted neutrino.js this run could not overwrite ran anyway; the `cat`
+#     failed with `Permission denied` and nothing looked at the status
+#   - a planted window.qml ran as an entirely different program under the same
+#     title
+#   - a file this run *did* write, replaced between the write and the engine's
+#     open, ran as well
+#
+# The third is why checking the write would not have been the fix. PR 7 met the
+# same shape on macOS and answered it by putting the seatbelt profile on
+# sandbox-exec's command line; qml has no -p, and it refuses a pipe outright --
+# `file:///dev/stdin: File is empty` -- because the engine wants a sized,
+# seekable file.
+#
+# An unlinked one is exactly that. The document is created under `set -C`, so a
+# name planted in advance -- a symlink included -- makes the create fail rather
+# than be followed; it is unlinked immediately; and the engine is handed a path
+# into this shell's own descriptors. Whatever anyone puts at the name afterwards
+# is a different inode, and the name is gone before the first byte is written.
+#
+# One document rather than two, because a relative import has nowhere to resolve
+# from once there is no directory. What neutrino.js contributed is inline below,
+# and the source it used to eval under `.pragma library` is evaluated in a
+# Function body instead, with NeutrinoQml handed in as a parameter so the
+# source's own dispatch still finds it.
+
+# A path becomes a JavaScript string literal here, which is what nt_sbquote does
+# for the seatbelt profile. Measured before this existed: a directory named
+# `A");console.warn(...` closed the string and ran the statement after it. The
+# newline case is folded rather than escaped away because a raw one ends the
+# literal and takes the document with it.
+nt_qmlquote() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' |
+        awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }'
+}
+
 run_qt() {
     qml_runner="$1"
     [ -z "$qml_runner" ] && return 1
@@ -220,60 +288,86 @@ run_qt() {
     script_name="${script_name%.*}"
     app_dir="$script_dir/$script_name"
     mkdir -p "$app_dir" || return 1
-    app_qml="$app_dir/window.qml"
-    app_config_js="$app_dir/neutrino.js"
 
-    cat > "$app_config_js" <<JSEOF
-.pragma library
-var NeutrinoQml = true
-var xhr = new XMLHttpRequest()
-xhr.open("GET", "file://$script_path", false)
-xhr.send()
-var _neutrinoRawSource = xhr.responseText
-eval(_neutrinoRawSource)
-
-var _qmlRoot = null
-
-var _qt = null
-
-NeutrinoWebview.initQml = function (root, callbacks) {
-    _qmlRoot = root
-    _qt = callbacks
-}
-
-NeutrinoWebview.routeQmlMessage = function (raw) {
-    var msg = NeutrinoWebview.parseMessage(raw)
-    if (!msg) {
-        console.warn("neutrino: refused a malformed record")
-        return
+    # Somewhere to create the inode, and app_dir rather than a temporary
+    # directory because under netinstall it is the only place a write is
+    # granted. The name exists for one line.
+    #
+    # The directory is what gets tested, not the name: a probe that opens the
+    # name to see whether it can be written would follow a symlink planted
+    # there and truncate whatever it points at, which is a worse thing to do
+    # than the bug this is fixing.
+    [ -w "$app_dir" ] || {
+        echo "neutrino: cannot write $app_dir" >&2
+        return 1
     }
-    if (!_qmlRoot) return
-    if (msg.action === "setTitle") _qmlRoot.title = msg.title
-    else if (msg.action === "resize") { _qmlRoot.width = msg.width; _qmlRoot.height = msg.height }
-    else if (msg.action === "move") { _qmlRoot.x = msg.x; _qmlRoot.y = msg.y }
-    else if (msg.action === "close") _qmlRoot.close()
-    else if (msg.action === "openExternal" && _qt) _qt.openUrl(msg.url)
-}
 
-// Encoded for the same reason the Windows title is: a record separator is a
-// control character, and a console message is a diagnostic channel that nothing
-// promises will carry one through Chromium and out the other side unchanged.
-NeutrinoWebview.qmlPreloadScript = NeutrinoWebview.buildPreloadScript(
-    'function(m){console.log("__NEUTRINO__"+encodeURIComponent(m));}',
-    "console"
-)
-JSEOF
+    # `set -C` is doing the work here: with it, creating the document fails
+    # outright if the name already exists or is a symlink, rather than opening
+    # whatever is on the other end. Two shells then answer a failed `exec`
+    # redirection differently -- one exits, the other carries on with the
+    # descriptor unopened -- and both are fine, because every path from here
+    # ends at the refusal below and not at a document written where it could
+    # be replaced.
+    qml_doc="$app_dir/.window.$$.qml"
+    set -C
+    exec 8>"$qml_doc"
+    set +C
+    rm -f "$qml_doc"
 
-    cat > "$app_qml" <<'EOF'
+    qml_url="file://$(nt_qmlquote "$script_path")"
+    cat >&8 <<QMLEOF
 import QtQuick
 import QtWebEngine
-import "neutrino.js" as Neutrino
 
 Window {
     id: root
-    readonly property var cfg: Neutrino.NeutrinoWebview.config
+
+    // The polyglot's own source, read once, by XHR rather than by import:
+    // this document has no directory for an import to resolve against, which
+    // is the point of it.
+    readonly property string ntSource: ntRead()
+    readonly property var nt: ntBuild(ntSource)
+    readonly property var cfg: nt.config
+
+    // Encoded for the same reason the Windows title is: a record separator is
+    // a control character, and a console message is a diagnostic channel that
+    // nothing promises will carry one through Chromium and out the other side
+    // unchanged.
+    readonly property string ntPreload: nt.buildPreloadScript(
+        'function(m){console.log("__NEUTRINO__"+encodeURIComponent(m));}',
+        "console")
+
     visible: true
     title: cfg.title + " - Qt"
+
+    function ntRead() {
+        var xhr = new XMLHttpRequest()
+        xhr.open("GET", "$qml_url", false)
+        xhr.send()
+        return xhr.responseText
+    }
+
+    // A Function body is the scope .pragma library used to provide. The flag
+    // the source dispatches on goes in as a parameter, so nothing it defines
+    // arrives as a global of this document's.
+    function ntBuild(src) {
+        return (new Function("NeutrinoQml", src + "; return NeutrinoWebview;"))(true)
+    }
+
+    function ntRoute(raw) {
+        var msg = root.nt.parseMessage(raw)
+        if (!msg) {
+            console.warn("neutrino: refused a malformed record")
+            return
+        }
+        if (msg.action === "setTitle") root.title = msg.title
+        else if (msg.action === "resize") { root.width = msg.width; root.height = msg.height }
+        else if (msg.action === "move") { root.x = msg.x; root.y = msg.y }
+        else if (msg.action === "close") root.close()
+        else if (msg.action === "openExternal") Qt.openUrlExternally(msg.url)
+    }
+
     Component.onCompleted: {
         root.width = cfg.width
         root.height = cfg.height
@@ -293,13 +387,12 @@ Window {
                     preloadInjected = true
                     // Before the injection, not after: from the next line on
                     // there is page script in this view that can send.
-                    Neutrino.NeutrinoWebview.rememberTrustedView(view.url)
+                    root.nt.rememberTrustedView(view.url)
                     // The API first, then the page's own code. Both are handed
                     // to the engine rather than carried by the document, which
                     // is what lets the document forbid script of its own.
-                    view.runJavaScript(Neutrino.NeutrinoWebview.qmlPreloadScript)
-                    view.runJavaScript(Neutrino.NeutrinoWebview.extractPageScript(
-                        Neutrino._neutrinoRawSource))
+                    view.runJavaScript(root.ntPreload)
+                    view.runJavaScript(root.nt.extractPageScript(root.ntSource))
                 }
                 view.documentLoaded = true
             }
@@ -315,14 +408,12 @@ Window {
             // The sender check. Qt routes a console message from whatever
             // document is loaded, and this is the only thing that asks which
             // one that is.
-            if (!Neutrino.NeutrinoWebview.isTrustedView(view.url)) {
-                Neutrino.NeutrinoWebview.note(
+            if (!root.nt.isTrustedView(view.url)) {
+                root.nt.note(
                     "refused a message from a document the view was not given")
                 return
             }
-            Neutrino.NeutrinoWebview.routeQmlMessage(
-                decodeURIComponent(String(message).substring(12))
-            )
+            root.ntRoute(decodeURIComponent(String(message).substring(12)))
         }
         // The document is loaded once, from this file, and never navigates
         // again. Without this a link or a script assignment could replace it
@@ -333,7 +424,7 @@ Window {
         // platform keeps inventing.
         onNavigationRequested: function(request) {
             var target = String(request.url)
-            if (Neutrino.NeutrinoWebview.isOwnDocument(target)) {
+            if (root.nt.isOwnDocument(target)) {
                 return
             }
             // QtWebEngine hands this file's document to the view by navigating
@@ -352,22 +443,35 @@ Window {
             } else {
                 request.action = WebEngineNavigationRequest.IgnoreRequest
             }
-            if (Neutrino.NeutrinoWebview.isExternalUrl(String(request.url))) {
+            if (root.nt.isExternalUrl(String(request.url))) {
                 Qt.openUrlExternally(request.url)
             }
         }
         Component.onCompleted: {
-            Neutrino.NeutrinoWebview.initQml(root, {
-                openUrl: function(url) { Qt.openUrlExternally(url) }
-            })
-            view.loadHtml(Neutrino.NeutrinoWebview.applyContentPolicy(
-                Neutrino.NeutrinoWebview.extractHtmlDocument(Neutrino._neutrinoRawSource)))
+            view.loadHtml(root.nt.applyContentPolicy(
+                root.nt.extractHtmlDocument(root.ntSource)))
         }
     }
 }
-EOF
+QMLEOF
 
-    [ ! -s "$app_qml" ] && return 1
+    # Reopened read-only from the descriptor, and the write handle closed before
+    # the engine starts: from here on nothing on this machine holds the inode
+    # open for writing and nothing can reach it by name at all. /dev/fd first
+    # because it is the spelling more than one kernel has; both were measured
+    # working on the lane that runs this.
+    qml_fd=""
+    for qml_fddir in /dev/fd /proc/self/fd; do
+        if [ -r "$qml_fddir/8" ] && exec 9<"$qml_fddir/8"; then
+            qml_fd="$qml_fddir/9"
+            break
+        fi
+    done
+    exec 8>&-
+    if [ -z "$qml_fd" ]; then
+        echo "neutrino: cannot hand the engine a document without a name here" >&2
+        return 1
+    fi
 
     # Chromium's own sandbox is the only thing standing between hostile page
     # content and this machine, so a release build has no way to turn it off.
@@ -381,7 +485,7 @@ EOF
     QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" \
     LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}" \
     QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---disable-dev-shm-usage}" \
-    "$qml_runner" "$app_qml"
+    "$qml_runner" "$qml_fd"
 }
 
 # WebKitGTK's sandbox is bubblewrap, and bubblewrap needs an unprivileged user

@@ -93,6 +93,10 @@ All coordinates use top-left origin on every platform (macOS coordinates are nor
 ### Windows
 
 - .NET Framework with `jsc.exe` (v4.x), available on modern Windows by default.
+  The launcher compiles the script into the app folder on every launch, about a
+  third of a second, rather than reusing what it finds there: the app folder is
+  writable by everything running as you, so an executable sitting in it is not
+  evidence of anything.
 - WebView2 runtime, downloaded automatically with progress bar on first run.
   The package is pinned to one version and one SHA-256, and every file taken out
   of it is pinned too; all of it is re-checked on every launch. If that fails,
