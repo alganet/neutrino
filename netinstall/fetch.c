@@ -370,7 +370,47 @@ int nt_fetch(const char *url, const char *dest, const char *home,
         fprintf(stderr, "netinstall: fetch confine: %s\n", desc);
 #endif
     }
-    return nt_win_spawn(bin, argv) == 0 ? 0 : -1;
+    /*
+     * The tight tier's grant, and the only write its downloader is allowed. In
+     * the default tier both calls are no-ops and the spawn is the one that has
+     * always been here.
+     *
+     * The order is the whole mechanism: create and label the destination, run
+     * the child that may write nothing else, then take the label straight back
+     * off. Revoking is not cleanup -- main() hashes this file next, and a
+     * payload still writable at low integrity is a digest checked against
+     * content that any low integrity process on the machine can still change.
+     */
+    {
+        int rc;
+
+        if (!nt_fetch_grant(dest)) {
+#ifdef NEUTRINO_STRICT_SANDBOX
+            fprintf(stderr, "netinstall: refusing to fetch: the payload file "
+                            "could not be made the downloader's only write\n");
+            return -2;
+#else
+            fprintf(stderr, "netinstall: warning: the payload file could not be "
+                            "made the downloader's only write\n");
+#endif
+        }
+        rc = nt_win_spawn_as(bin, argv, nt_fetch_token());
+        /*
+         * In every build, not only a strict one. This is not the tier failing
+         * to apply -- it is the tier having applied and not come back off, and
+         * the next thing that happens to this file is nt_sha256_file. A digest
+         * taken over content a low integrity process can still rewrite before
+         * the rename is worse than no download.
+         */
+        if (!nt_fetch_revoke(dest)) {
+            fprintf(stderr, "netinstall: refusing the payload: it could not be "
+                            "taken back from low integrity, so its digest "
+                            "cannot be trusted\n");
+            remove(dest);
+            return -2;
+        }
+        return rc == 0 ? 0 : -1;
+    }
 #else
     {
         pid_t pid = fork();

@@ -97,6 +97,13 @@ esac
 # rather than costing eight webview launches on every push. The machinery stays
 # for the next engine or kernel.
 [ "${NEUTRINO_SESSION_PROBE:-}" = "1" ] && SUITES="$SUITES session"
+# lowfetch answered its question -- the windows tight tier's fetch phase is what
+# came of it, and phases.sh gates that -- so like job-ui and session it is opt-in
+# now rather than costing five spawn matrices on every push. The machinery stays
+# for the next mechanism this platform grows, and for the two it has already
+# ruled out: it is the only thing here that can tell a write-restricted token
+# that never reached main from one that refused a write.
+[ "${NEUTRINO_LOWFETCH_PROBE:-}" = "1" ] && SUITES="$SUITES lowfetch"
 [ "${NEUTRINO_JOB_UI_BISECT:-}" = "1" ] && SUITES="$SUITES job-ui"
 
 for t in $SUITES; do
@@ -105,6 +112,10 @@ for t in $SUITES; do
     case "$t" in
         names) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-release$NT_EXE" ;;
         confine-strict) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-strict$NT_EXE" ;;
+        # The tight binary, because the tier is the question: nt_fetch_confine_win
+        # has no tier branch in it, and the sentence this probe would change is
+        # the one that build prints.
+        lowfetch) nt_timeout 900 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-strict$NT_EXE" ;;
         # Two binaries, because the sentence under test is printed by both
         # tiers and the grants behind it differ between them -- /proc narrows,
         # reads become an allowlist, and on windows the tight tier is the only

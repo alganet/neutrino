@@ -214,14 +214,22 @@ report_confine() {
     probe "$label: fetch phase says '${line:-<nothing printed>}'"
 }
 
-# What each platform is asserted to. Windows has no unprivileged mechanism that
-# confines a write, so the job object and stripped token it now gets are a
-# resource boundary and nothing more -- asserted as such rather than wished
-# otherwise. The other three confine the downloader to the blobs directory, and
-# on macOS that is true only since the per-user temp allow came out of the
-# fetch profile.
+# What each platform is asserted to. The other three confine the downloader to
+# the blobs directory at both tiers, and on macOS that is true only since the
+# per-user temp allow came out of the fetch profile.
+#
+# Windows is the one that differs by tier, and since PR 18 it is the one place
+# in this suite where the two tiers are asserted to different answers. Its
+# default tier has no unprivileged mechanism that confines a write, so the job
+# object and stripped token are a resource boundary and nothing more -- asserted
+# as such rather than wished otherwise. Its tight tier spawns the downloader
+# under a low integrity token with a Low label on the payload file alone, so
+# both of these targets become refusals; WANT_TIGHT_* is what would have failed
+# before that landed.
 WANT_HOME=BLOCKED
 WANT_TMP=BLOCKED
+WANT_TIGHT_HOME=BLOCKED
+WANT_TIGHT_TMP=BLOCKED
 if [ "$NT_WINDOWS" = "1" ]; then
     WANT_HOME=ESCAPED
     WANT_TMP=ESCAPED
@@ -249,9 +257,38 @@ fi
 
 if [ -n "$APP_TIGHT" ]; then
     echo "=== Tight tier: the same two questions ==="
-    probe_write "$APP_TIGHT" tight "$HOMEJAR" HOMEJAR "$WANT_HOME"
+    probe_write "$APP_TIGHT" tight "$HOMEJAR" HOMEJAR "$WANT_TIGHT_HOME"
     report_confine tight
-    probe_write "$APP_TIGHT" tight "$TMPJAR" TMPJAR "$WANT_TMP"
+    probe_write "$APP_TIGHT" tight "$TMPJAR" TMPJAR "$WANT_TIGHT_TMP"
+
+    # The strongest thing the tight tier says, and the one that separates it
+    # from every other platform here: the fetch child may write the payload file
+    # and nothing else -- not even inside the blobs directory it downloads into,
+    # which the other three grant wholesale. The default tier's in-reach control
+    # above writes this same jar; at the tight tier it must not.
+    #
+    # It is also the control that says the tier is a file grant rather than a
+    # directory one. A tight tier that had taken the obvious route -- labelling
+    # blobs -- would write this jar and pass everything above it.
+    if [ "$NT_WINDOWS" = "1" ]; then
+        echo "=== Tight tier: and nothing else, not even in blobs ==="
+        rm -rf "$NEUTRINO_HOME"
+        mkdir -p "$NEUTRINO_HOME/blobs"
+        nt_curlrc "$NEUTRINO_HOME/blobs" "$BLOBJAR"
+        OUT="$(CURL_HOME="$(nt_native "$NEUTRINO_HOME/blobs")" nt_timeout 60 "$APP_TIGHT" 2>"$WORK/err")"
+        if grep -q APP_RAN <<<"$OUT" && [ ! -f "$BLOBJAR" ]; then
+            probe "tight: BLOBJAR_BLOCKED -- the payload file was the only write"
+            echo "  PASS: BLOBJAR_BLOCKED"
+        elif [ -f "$BLOBJAR" ]; then
+            probe "tight: BLOBJAR_ESCAPED -- the grant is wider than the payload file"
+            nt_fail "tight/BLOBJAR expected=BLOCKED actual=ESCAPED; the fetch child wrote $BLOBJAR"
+            FAILURES=$((FAILURES + 1))
+        else
+            nt_fail "tight/BLOBJAR: the fetch itself did not complete; err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
+            FAILURES=$((FAILURES + 1))
+        fi
+        rm -f "$BLOBJAR"
+    fi
 fi
 
 # =====================================================================
@@ -269,6 +306,21 @@ case "$(uname -s)" in
     *)                          WANT_INFO="job object" ;;
 esac
 probe "--info fetch line: ${INFO:-<absent>}"
+# And the tight tier's own line, which was the default tier's word for word
+# until PR 18 -- measured empty for a round because netinstall parses its spec
+# out of argv[0], which is why this asks the installed app and not the binary.
+if [ -n "$APP_TIGHT" ]; then
+    TINFO="$("$APP_TIGHT" --info 2>/dev/null | grep '^fetch' | sed 's/^fetch *//')"
+    probe "--info fetch line, tight: ${TINFO:-<absent>}"
+    if [ "$NT_WINDOWS" = "1" ]; then
+        if grep -q "low integrity" <<<"$TINFO"; then
+            echo "  PASS: the tight tier's fetch line names what it applies"
+        else
+            nt_fail "--info fetch tight expected=low integrity actual=$TINFO"
+            FAILURES=$((FAILURES + 1))
+        fi
+    fi
+fi
 if [ -z "$INFO" ]; then
     nt_fail "--info expected=a fetch line actual=none"
     FAILURES=$((FAILURES + 1))

@@ -123,6 +123,196 @@ static int nt_drop_to_low(void)
 #endif
 
 /*
+ * The fetch phase's half of the tight tier, which the run phase's half above
+ * cannot be: nt_confine runs in the launcher, and a process may never raise its
+ * own integrity back. Everything after nt_fetch returns -- the digest, the pin,
+ * the rename, the hard link, the app directory -- is work at the launcher's own
+ * level, so lowering it here would trade the download's confinement for the
+ * install. The child is the only thing that can be lowered, which is why this
+ * is a token handed to nt_win_spawn_as rather than a call that changes anyone.
+ *
+ * Measured on windows-latest, and each of these was a candidate that lost:
+ *
+ *   - A Low label on the blobs *directory* is what the obvious version of this
+ *     does, and it is inadmissible twice over. It lets every low integrity
+ *     process on the machine write there -- measured, an unrelated one did --
+ *     and worse, nt_link_or_copy commits the verified payload with
+ *     CreateHardLink. A hard link is a second name for one file object and the
+ *     descriptor belongs to the file, so the label reached
+ *     <home>/apps/<app>/<name>.cmd and an intruder rewrote the script nt_exec
+ *     runs, after the digest had been checked. SCRIPT_WRITABLE.
+ *
+ *   - A write-restricted token (CreateRestrictedToken, WRITE_RESTRICTED) is the
+ *     narrower mechanism on paper: it admits only objects whose DACL names
+ *     S-1-5-33, which nothing carries unless it asked to be restricted, where a
+ *     Low label is authority every low integrity process already holds. It does
+ *     not survive contact with a downloader. A trivial child runs under it
+ *     (restricted=yes, exit 0) once the window station and desktop are granted
+ *     that sid; curl returns STATUS_DLL_INIT_FAILED under the same token with
+ *     the same grants, every time. What is left to open is the session's named
+ *     object directory, which is ntdll and a great deal more machinery than low
+ *     integrity already delivers here.
+ *
+ * So: lower the child, label the one file it has to write, and take the label
+ * off before anything hashes it. The last part is not tidiness. While the label
+ * is on, any low integrity process on the machine can rewrite that file, and
+ * netinstall does not re-read it between nt_sha256_file and the rename -- so a
+ * label left on is a digest checked against content that can still change.
+ */
+#ifdef NEUTRINO_CONFINE_TIGHT
+/*
+ * Built by nt_confine and spent by nt_fetch, because the fetch phase's answer
+ * has one caller and one consumer and threading a handle through nt_confine's
+ * signature would put a windows type in a header three other platforms include.
+ */
+static HANDLE nt_fetch_low_token = NULL;
+
+/*
+ * A duplicate of this process's own token, lowered. Deliberately after
+ * nt_strip_privileges: CreateProcessAsUser is documented to want
+ * SeIncreaseQuotaPrivilege and the stripping removes it, so the order this runs
+ * in is the order that had to be measured. It succeeds with every privilege but
+ * SeChangeNotify gone -- which is what says the mechanism is the user's and not
+ * the administrator a CI runner happens to be.
+ */
+static HANDLE nt_low_token(void)
+{
+    TOKEN_MANDATORY_LABEL tml;
+    HANDLE self = NULL;
+    HANDLE dup = NULL;
+    PSID low = NULL;
+
+    if (!OpenProcessToken(GetCurrentProcess(),
+                          TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY |
+                          TOKEN_ADJUST_DEFAULT, &self)) {
+        return NULL;
+    }
+    if (!DuplicateTokenEx(self, TOKEN_ALL_ACCESS, NULL, SecurityImpersonation,
+                          TokenPrimary, &dup)) {
+        CloseHandle(self);
+        return NULL;
+    }
+    CloseHandle(self);
+    if (!ConvertStringSidToSidA("S-1-16-4096", &low)) {
+        CloseHandle(dup);
+        return NULL;
+    }
+    ZeroMemory(&tml, sizeof(tml));
+    tml.Label.Attributes = SE_GROUP_INTEGRITY;
+    tml.Label.Sid = low;
+    if (!SetTokenInformation(dup, TokenIntegrityLevel, &tml,
+                             (DWORD)(sizeof(tml) + GetLengthSid(low)))) {
+        LocalFree(low);
+        CloseHandle(dup);
+        return NULL;
+    }
+    LocalFree(low);
+    return dup;
+}
+
+/* One object, no inheritance: this is a file, and nothing is created under it. */
+static int nt_label_file_low(const char *path)
+{
+    PSECURITY_DESCRIPTOR sd = NULL;
+    PACL sacl = NULL;
+    BOOL present = FALSE;
+    BOOL defaulted = FALSE;
+    int ok = 0;
+
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
+            "S:(ML;;NW;;;LW)", SDDL_REVISION_1, &sd, NULL)) {
+        return 0;
+    }
+    if (GetSecurityDescriptorSacl(sd, &present, &sacl, &defaulted) && present) {
+        ok = SetNamedSecurityInfoA((LPSTR)path, SE_FILE_OBJECT,
+                                   LABEL_SECURITY_INFORMATION,
+                                   NULL, NULL, NULL, sacl) == ERROR_SUCCESS;
+    }
+    LocalFree(sd);
+    return ok;
+}
+#endif
+
+void *nt_fetch_token(void)
+{
+#ifdef NEUTRINO_CONFINE_TIGHT
+    return (void *)nt_fetch_low_token;
+#else
+    return NULL;
+#endif
+}
+
+int nt_fetch_grant(const char *dest)
+{
+#ifdef NEUTRINO_CONFINE_TIGHT
+    HANDLE h;
+
+    if (!nt_fetch_low_token) {
+        /* Nothing was lowered, so there is nothing to widen for. */
+        return 1;
+    }
+    /*
+     * Created here rather than by the downloader. A low integrity child cannot
+     * add a file to a directory it has no write on, and the directory is
+     * exactly what must not be granted -- so the file has to exist before the
+     * child does. curl's -o writes into it; measured on four grants, this is
+     * the only one a lowered curl completes a transfer through.
+     */
+    h = CreateFileA(dest, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                    FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    CloseHandle(h);
+    if (!nt_label_file_low(dest)) {
+        remove(dest);
+        return 0;
+    }
+    return 1;
+#else
+    (void)dest;
+    return 1;
+#endif
+}
+
+int nt_fetch_revoke(const char *dest)
+{
+#ifdef NEUTRINO_CONFINE_TIGHT
+    ACL empty;
+
+    if (!nt_fetch_low_token) {
+        return 1;
+    }
+    /*
+     * Nothing there is nothing to take back. The grant removes the file when it
+     * cannot label it, and a fetch that never wrote leaves the same absence --
+     * neither is a failure of this, and reporting one would send whoever reads
+     * it looking for the wrong thing.
+     */
+    if (GetFileAttributesA(dest) == INVALID_FILE_ATTRIBUTES) {
+        return 1;
+    }
+    /*
+     * An empty but valid sacl removes the label, and the object falls back to
+     * the default -- this process's own level. Measured: while the label is on,
+     * an unrelated low integrity process writes the file; the moment it is off,
+     * the same process is refused, and the hard link the commit makes carries no
+     * label either.
+     */
+    if (!InitializeAcl(&empty, sizeof(empty), ACL_REVISION) ||
+        SetNamedSecurityInfoA((LPSTR)dest, SE_FILE_OBJECT,
+                              LABEL_SECURITY_INFORMATION,
+                              NULL, NULL, NULL, &empty) != ERROR_SUCCESS) {
+        return 0;
+    }
+    return 1;
+#else
+    (void)dest;
+    return 1;
+#endif
+}
+
+/*
  * Job UI restrictions, by name rather than by bit, because the whole point of
  * this table is that the suite drives it and CI output has to be readable.
  *
@@ -308,23 +498,66 @@ static int nt_strip_privileges(int commit)
  * object of its own afterwards -- that second one is a nested job, which
  * windows has only allowed since 8.
  *
- * Deliberately not the low integrity half of the tight tier. That needs the
- * download directory carrying a Low label, which widens who else on the machine
- * can write there, and it is a larger question than this one. Reads are not
- * confined here either; see the run phase for why that is a ceiling rather than
- * an omission.
+ * The tight tier adds low integrity, and adds it to the child rather than here
+ * -- see nt_fetch_token above for why the launcher cannot take it itself, and
+ * for the two narrower-looking mechanisms that lost. Reads are not confined at
+ * either tier; see the run phase for why that is a ceiling rather than an
+ * omission.
  */
+/*
+ * The sentence, built once from the same three answers both callers have. Kept
+ * out of the two snprintf sites because the tight tier's version has to name
+ * what the run phase's NT_ALSO_WRITABLE names -- a low integrity child can
+ * write LocalLow and AppDataLow whatever this program grants -- and PR 16 is
+ * what happens when a "writes confined to" sentence names less than it means.
+ */
+static void nt_fetch_desc(char *desc, size_t desclen, const char *privs,
+                          int lowered)
+{
+    (void)lowered;
+#ifdef NEUTRINO_CONFINE_TIGHT
+    if (lowered) {
+        snprintf(desc, desclen, "job object%s + low integrity, writes confined "
+                                "to the payload file" NT_ALSO_WRITABLE
+                                " (reads are not confined)", privs);
+        return;
+    }
+    snprintf(desc, desclen, "job object%s (process limits only; the tight "
+                            "tier's low integrity token was unavailable)",
+             privs);
+#else
+    snprintf(desc, desclen, "job object%s (process limits only; no "
+                            "filesystem confinement on windows)", privs);
+#endif
+}
+
 static int nt_fetch_confine_win(int enforce, char *desc, size_t desclen)
 {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
     const char *privs;
     HANDLE job;
+    int lowered = 1;
 
     if (!enforce) {
         privs = nt_strip_privileges(0) ? " + privileges stripped" : "";
-        snprintf(desc, desclen, "job object%s (process limits only; no "
-                                "filesystem confinement on windows)", privs);
-        return 0;
+#ifdef NEUTRINO_CONFINE_TIGHT
+        /*
+         * Built and dropped, so --info reports a token that this machine really
+         * produced rather than one the tier promises -- the shape nt_confine
+         * already uses for the privilege stripping on the line above, and for
+         * the landlock ruleset on linux.
+         */
+        {
+            HANDLE probe = nt_low_token();
+
+            lowered = probe != NULL;
+            if (probe) {
+                CloseHandle(probe);
+            }
+        }
+#endif
+        nt_fetch_desc(desc, desclen, privs, lowered);
+        return lowered ? 0 : -1;
     }
     job = CreateJobObjectA(NULL, NULL);
     if (!job) {
@@ -351,9 +584,25 @@ static int nt_fetch_confine_win(int enforce, char *desc, size_t desclen)
     /* Best effort, and --info must not claim it happened when it did not --
      * the same rule the run phase follows two screens down. */
     privs = nt_strip_privileges(1) ? " + privileges stripped" : "";
-    snprintf(desc, desclen, "job object%s (process limits only; no "
-                            "filesystem confinement on windows)", privs);
-    return 0;
+#ifdef NEUTRINO_CONFINE_TIGHT
+    /*
+     * After the stripping, which is the order that had to be measured:
+     * CreateProcessAsUser is documented to want SeIncreaseQuotaPrivilege and the
+     * line above has just removed it. It works anyway, on a token with nothing
+     * left but SeChangeNotify -- so the tier does not depend on privileges the
+     * user this ships to would not have had in the first place.
+     */
+    nt_fetch_low_token = nt_low_token();
+    lowered = nt_fetch_low_token != NULL;
+#endif
+    nt_fetch_desc(desc, desclen, privs, lowered);
+    /*
+     * A tight build whose token could not be made has the default tier's fetch
+     * phase and must say so as a failure, not as a quieter sentence: a strict
+     * build refuses on it, which is the whole point of the phase having an
+     * answer at all.
+     */
+    return lowered ? 0 : -1;
 }
 
 int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
