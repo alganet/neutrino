@@ -9,3 +9,7 @@
 /test/neutrinoloaders.cmd
 /test/neutrinoloaders-default.cmd
 /test/neutrinoloaders
+/test/neutrinoappdir.cmd
+/test/neutrinoappdir
+/test/neutrinocache.cmd
+/test/neutrinocache
