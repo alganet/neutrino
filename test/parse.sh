@@ -40,6 +40,42 @@ if printf '%s' "$CC_BLOCK" | sed 's/@\*\///' | grep -q '[*]/'; then
     exit 1
 fi
 
+# And the document's opening tag has to be the first one in the file, because
+# extractPageScript takes the first one it finds. A line in the shell region
+# that merely mentions it -- a comment, a here-document, a message -- moves the
+# start of the page script hundreds of lines up, and the only symptom is the
+# assertion far below reporting that the page script does not parse. That is a
+# true failure and a confusing way to learn this, so it is caught here where
+# the message can say what happened.
+FIRST_TAG="$(grep -n '<script' "$TARGET" | head -1 | cut -d: -f1)"
+DOC_TAG="$(grep -n '^<script type=text/javascript>' "$TARGET" | head -1 | cut -d: -f1)"
+if [ -z "$DOC_TAG" ] || [ "$FIRST_TAG" != "$DOC_TAG" ]; then
+    echo "parse.sh: the document's opening tag is not the first one in the file" >&2
+    echo "          first at line ${FIRST_TAG:-none}, the document's at line ${DOC_TAG:-none}" >&2
+    echo "          page-script extraction starts at the first one; do not name it earlier" >&2
+    exit 1
+fi
+echo "  PASS: the page script starts at the document"
+
+# The same hazard, everywhere else in the file, caught by its consequence
+# rather than by its shape. Everything from the first line to the <script> tag
+# is one block comment, and the shell region lives inside it -- so a sed
+# expression ending in ".*" then "/" closes the comment two hundred lines early
+# and gjs, jsc, JXA and QML all fail at once on a line that is not the one that
+# broke them. The check above only ever looked at the @cc_on block; this asks
+# the parser, which is what actually decides.
+#
+# node is not the engine any lane ships, and it does not have to be: what is
+# being caught here is a file that stopped being one comment, which every
+# JavaScript parser agrees about.
+cp "$TARGET" "$WORK/whole.js"
+if ! node --check "$WORK/whole.js" 2>"$WORK/whole.err"; then
+    echo "parse.sh: the polyglot does not parse as JavaScript" >&2
+    sed 's/^/          /' "$WORK/whole.err" >&2
+    exit 1
+fi
+echo "  PASS: the whole file still parses as JavaScript"
+
 sed -n '/^    var NeutrinoWebview = {/,/^    };$/p' "$TARGET" > "$WORK/obj.js"
 echo "module.exports = NeutrinoWebview;" >> "$WORK/obj.js"
 

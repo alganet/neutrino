@@ -26,6 +26,28 @@ jobs:
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
+      # The loader environment the standalone launch path hands its engine.
+      # Every check here is against the same build with the fix cut out of it,
+      # so "it would have failed before" is measured in this run rather than
+      # claimed. Two builds go in: the testing tier, because the suite has to
+      # know the app came up and on two lanes that is scaffolding -- the macOS
+      # driver writes its title to a file only there, and Qt's Chromium needs
+      # the no-sandbox flag this container cannot do without -- and the default
+      # tier, which is the only build the sandbox section can ask its question
+      # of, since the testing tier is what puts --no-sandbox on the command
+      # line. Neither tier touches the environment.
+      - timeout-minutes: 25
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          bash build.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
+          TEST_EXIT=0
+          bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
+          cat ~/loaders.log
+          bash test/annotate.sh gjs-loaders ~/loaders.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -113,6 +135,32 @@ jobs:
           fi
       - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
+      # The loader environment the standalone launch path hands its engine.
+      # Every check here is against the same build with the fix cut out of it,
+      # so "it would have failed before" is measured in this run rather than
+      # claimed. Two builds go in: the testing tier, because the suite has to
+      # know the app came up and on two lanes that is scaffolding -- the macOS
+      # driver writes its title to a file only there, and Qt's Chromium needs
+      # the no-sandbox flag this container cannot do without -- and the default
+      # tier, which is the only build the sandbox section can ask its question
+      # of, since the testing tier is what puts --no-sandbox on the command
+      # line. Neither tier touches the environment.
+      - timeout-minutes: 25
+        run: |
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_DISABLE_SANDBOX=1
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          bash build.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
+          TEST_EXIT=0
+          bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
+          cat ~/loaders.log
+          bash test/annotate.sh kde-loaders ~/loaders.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - run: |
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb
@@ -301,6 +349,24 @@ jobs:
       - uses: actions/checkout@v7
       - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
+      # The loader environment the standalone launch path hands its engine.
+      # Every check here is against the same build with the fix cut out of it,
+      # so "it would have failed before" is measured in this run rather than
+      # claimed. Two builds go in: the testing tier, because the suite has to
+      # know the app came up and on two lanes that is scaffolding -- the macOS
+      # driver writes its title to a file only there, and Qt's Chromium needs
+      # the no-sandbox flag this container cannot do without -- and the default
+      # tier, which is the only build the sandbox section can ask its question
+      # of, since the testing tier is what puts --no-sandbox on the command
+      # line. Neither tier touches the environment.
+      - timeout-minutes: 25
+        run: |
+          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          TEST_EXIT=0
+          bash test/loaders.sh test/neutrinoloaders.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
+          cat ~/loaders.log
+          bash test/annotate.sh macos-loaders ~/loaders.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - run: |
           echo "=== Launching app ==="
           bash test/neutrinotest.cmd > ~/neutrino-stdout.log 2>&1 &

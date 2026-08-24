@@ -104,6 +104,97 @@ script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 neutrino_tiers="$(sed -n 's/^ *tiers: "\([a-z,]*\)",.*$/\1/p' "$script_path" | head -1)"
 [ -z "$neutrino_tiers" ] && neutrino_tiers="default"
 has_tier() { case ",$neutrino_tiers," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+# Every name a toolkit reads as "open this file", "run this program" or "do not
+# sandbox yourself", removed before any engine is launched.
+#
+# Under netinstall this is env.c's job and it does it with an allowlist. There
+# is no netinstall here: standalone, this file hands the engine whatever it was
+# given, and measurement says what that means. As shipped, GTK_MODULES loads a
+# file of the caller's choosing into the gjs process; WEBKIT_INJECTED_BUNDLE_PATH
+# loads one into the WebKitWebProcess, the process holding page content;
+# GIO_EXTRA_MODULES loads into that and the network process; LD_AUDIT loads
+# everywhere, engine included; and on the Qt branch nothing was removed at all,
+# so QTWEBENGINE_CHROMIUM_FLAGS chose the program the renderer ran. Each of
+# those is a measurement in test/loaders.sh, not a worry.
+#
+# Two of them are worse than a load, because they undo a decision this file
+# makes on purpose. neutrino_webkit_sandbox below runs bubblewrap to find out
+# whether WebKitGTK can be sandboxed and says of the answer that it is "never
+# defaulted from the environment". It is not -- and
+# WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS turned the sandbox off anyway,
+# measured by the absence of a bwrap process under a launch that still came up.
+# QTWEBENGINE_DISABLE_SANDBOX does the same to Chromium's.
+#
+# Matched by shape, not by name, which is PR 9's rule and for its reason: a list
+# of the names measured would be right today and wrong the first time a toolkit
+# grows a knob. The shapes are env.c's, so the two files agree by construction
+# rather than by anyone remembering to edit both.
+#
+# Two things bound it, and both are the reason it is safe to apply to a whole
+# environment rather than to an allowlisted one:
+#
+#   - LD_ and DYLD_ go wholesale. Every name in them is dynamic-linker
+#     machinery; there is nothing in there to keep.
+#   - Everything else is tested only inside a namespace a toolkit owns. XDG_ is
+#     deliberately not one of them: a session sets XDG_SESSION_PATH and
+#     XDG_SEAT_PATH, both of which match "PATH" and neither of which names code,
+#     and XDG_RUNTIME_DIR is where the display socket lives. Measured on a real
+#     desktop, not reasoned about.
+#
+# What must still arrive is asserted too, and that is half the rule: DISPLAY,
+# GDK_BACKEND, XDG_RUNTIME_DIR, QT_QPA_PLATFORM, LIBGL_ALWAYS_SOFTWARE and the
+# locale all carry data or a mode rather than a file, and a rule that took the
+# namespaces outright would satisfy every "is removed" check and leave a window
+# that never opens.
+nt_scrub_loaders() {
+    # The names, collected before anything is removed.
+    #
+    # An environment value may contain a newline, so a walk over `env` output
+    # sees lines that are not entries. sed is what makes that harmless: only a
+    # line shaped like a variable name yields one, and a forged line can name
+    # nothing outside the set being removed anyway. It is also why this is not
+    # a here-document -- a value holding the terminator would end the walk
+    # early and leave every name after it in place, which is a scrub an
+    # attacker gets to stop. A `for` over names cannot be stopped, and names
+    # have no character word-splitting or globbing would touch.
+    nt_name=""
+    # The trailing $ is not decoration. Everything from this file's first line
+    # down to the document below is one JavaScript block comment, so a star
+    # followed by a slash anywhere in the shell region closes it early and the
+    # rest of the file is parsed as code -- which is what a regex ending
+    # ".*" then "/" does. Anchoring with $ first is how the tier line above
+    # already avoids it, and test/parse.sh asserts the region contains none.
+    #
+    # Two sequences, not one: the opening tag of that document is also the
+    # first one extractPageScript finds, so naming it here in prose moves the
+    # start of the page script two hundred lines up. Both hazards cost a CI
+    # round each, and both are now checks rather than things to remember.
+    nt_names="$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*$/\1/p')"
+    for nt_name in $nt_names; do
+        case "$nt_name" in
+            LD_*|DYLD_*) ;;
+            GTK_*|GDK_*|GIO_*|GSETTINGS_*|GI_*|GJS_*|GST_*|QT_*|QTWEBENGINE_*|\
+            QML_*|QML2_*|WEBKIT_*|LIBGL_*|MESA_*|EGL_*|VK_*)
+                case "$nt_name" in
+                    *MODULE*|*PLUGIN*|*PRELOAD*|*LIBRAR*|*LAYER*|*DRIVER*|*ICD*|\
+                    *BUNDLE*|*SANDBOX*|*EXEC*|*LAUNCH*|*PROFIL*|*FLAGS*|*ARGS*|\
+                    *PATH*|*PREFIX*|*AUDIT*) ;;
+                    *) continue ;;
+                esac ;;
+            *) continue ;;
+        esac
+        unset "$nt_name" 2>/dev/null
+    done
+    unset nt_name nt_names
+}
+
+# Read before the scrub takes it, and used only by a testing build. CI cannot
+# start Chromium in its container without it, and a release build has no way to
+# reach this: the tier is stamped into the file, not taken from the caller.
+neutrino_qt_disable_sandbox="${QTWEBENGINE_DISABLE_SANDBOX:-}"
+nt_scrub_loaders
+
 find_qt_runtime() {
     for cmd in qml6 qml; do
         if command -v "$cmd" >/dev/null 2>&1; then
@@ -282,7 +373,7 @@ EOF
     # content and this machine, so a release build has no way to turn it off.
     # CI needs it off because its containers cannot create user namespaces, and
     # CI builds with --tier=testing to say so out loud.
-    if has_tier testing && [ "$QTWEBENGINE_DISABLE_SANDBOX" = "1" ]; then
+    if has_tier testing && [ "$neutrino_qt_disable_sandbox" = "1" ]; then
         QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS} --no-sandbox"
     fi
 
@@ -494,6 +585,12 @@ then
     # may export GLib/GTK loader overrides pointing at its own libraries,
     # which then get loaded against the system glibc and crash. Clear them so
     # gjs resolves modules from the system defaults.
+    #
+    # This is a compatibility rule and it predates the scrub above, which now
+    # covers all but two of these by shape. Kept whole rather than reduced to
+    # its remainder: the two it still adds -- GSETTINGS_SCHEMA_DIR and LOCPATH
+    # -- name data and not code, so they are not the scrub's to take, and a
+    # crash is a good enough reason to drop them on its own.
     unset GTK_PATH GTK_EXE_PREFIX GTK_IM_MODULE_FILE \
           GDK_PIXBUF_MODULE_FILE GDK_PIXBUF_MODULEDIR \
           GIO_MODULE_DIR GSETTINGS_SCHEMA_DIR LOCPATH \
