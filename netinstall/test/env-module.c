@@ -18,6 +18,21 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+
+/*
+ * The running program's name, for the stderr mark below. glibc keeps it in a
+ * global; the BSDs and macOS have getprogname(). Neither needs /proc, which a
+ * sandboxed web process may not have.
+ */
+#if defined(__GLIBC__)
+extern char *program_invocation_short_name;
+static const char *nt_mod_self(void) { return program_invocation_short_name; }
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+static const char *nt_mod_self(void) { return getprogname(); }
+#else
+static const char *nt_mod_self(void) { return "?"; }
+#endif
 
 #ifndef NT_MOD_TAG
 #define NT_MOD_TAG "untagged"
@@ -43,6 +58,37 @@ static void nt_mod_mark(void)
     }
     fputs(NT_MOD_TAG "\n", f);
     fclose(f);
+}
+
+/*
+ * The same mark, on a channel a filesystem cannot take away.
+ *
+ * WebKitGTK's own sandbox is bubblewrap, and a bundle loaded into the web
+ * process runs inside it -- where the harness's mark directory is not
+ * necessarily bound. A file that cannot be written and a knob that was never
+ * honoured produce the same silence, and this is the only thing that tells
+ * them apart. Off unless asked for, so netinstall's suite reads what it always
+ * read.
+ */
+static void nt_mod_say(void) __attribute__((constructor));
+
+static void nt_mod_say(void)
+{
+    const char *on = getenv("NEUTRINO_TEST_MODULE_STDERR");
+
+    if (!on || on[0] != '1') {
+        return;
+    }
+    /*
+     * Which process, because one of the knobs under test is LD_PRELOAD and it
+     * applies to the launcher's own shell as much as to the engine the
+     * launcher execs. "Something loaded this" would answer the wrong question
+     * there -- the whole point is whether the name survived as far as the
+     * engine.
+     */
+    fprintf(stderr, "NT_MOD_LOADED " NT_MOD_TAG " pid=%ld in=%s\n",
+            (long)getpid(), nt_mod_self());
+    fflush(stderr);
 }
 
 /*

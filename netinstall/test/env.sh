@@ -485,6 +485,23 @@ if [ "$NT_HAVE_APP" = "1" ]; then
     if bash "$ROOT/build.sh" --tier=testing "$ROOT/test/neutrinotest.js" \
             "$SERVE/neutrinotest.cmd" >/dev/null 2>&1 &&
        [ -s "$SERVE/neutrinotest.cmd" ]; then
+        # With webview.cmd's own loader scrub cut out of it, and both launches
+        # get the same file so the pair still differ by netinstall alone.
+        #
+        # That scrub removes these knobs before any engine starts, which would
+        # cost this suite both halves of the toolkit question at once: the
+        # control would stop honouring the knob, so the section would report
+        # itself unmeasured; and the netinstall launch would be denied twice,
+        # so this suite would go on passing after an env.c regression. What is
+        # under test here is env.c's allowlist. webview.cmd's rule is asserted
+        # by test/loaders.sh, against a control patched exactly this way.
+        awk '/^nt_scrub_loaders$/ { next } { print }' \
+            "$SERVE/neutrinotest.cmd" > "$SERVE/neutrinotest.patched" &&
+            mv "$SERVE/neutrinotest.patched" "$SERVE/neutrinotest.cmd"
+        if grep -q '^nt_scrub_loaders$' "$SERVE/neutrinotest.cmd"; then
+            nt_fail "the polyglot's loader scrub is still in the file under test; the toolkit half measures two rules"
+            FAILURES=$((FAILURES + 1))
+        fi
         ASPEC="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
         AAPP="$(nt_as "$BIN" "$ASPEC" "$WORK/bin")"
         AAPPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$ASPEC")/neutrinotest"

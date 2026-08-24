@@ -6,3 +6,6 @@
 /test/neutrinotight
 /test/neutrinoearly.cmd
 /test/neutrinoearly
+/test/neutrinoloaders.cmd
+/test/neutrinoloaders-default.cmd
+/test/neutrinoloaders
