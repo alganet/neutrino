@@ -377,6 +377,34 @@ jobs:
         run: |
           export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
           bash netinstall/test/run.sh
+      # The navigation lane. The Windows driver subscribes to NavigationStarting
+      # and NewWindowRequested now, and this is the suite that says so: against
+      # a target that answers, the driver without a guard reported
+      # nav_arrived=YES and popup_arrived=YES opened=HANDLE, with the injected
+      # API and the app author's own page script both present in the remote
+      # document. test/neutrinoattack.js could never see this -- it aims at a
+      # host that never resolves, which test/early-target.html's own comment
+      # calls not a test, because the load fails on its own and a driver with a
+      # guard reports the same "held" as one without.
+      #
+      # Last in the lane, and that is not tidiness. When these steps sat in the
+      # middle and the build ahead of them failed, the winerr and netinstall
+      # steps were skipped with them -- a lane that takes assertion coverage
+      # down with it costs a whole run to find out something unrelated.
+      - shell: bash
+        run: bash build.sh test/neutrinonav.js test/neutrinonav.cmd
+      - timeout-minutes: 15
+        shell: pwsh
+        run: |
+          & .\test\verify-nav.ps1 .\test\neutrinonav.cmd "$HOME\navlogs" *>&1 |
+            Tee-Object -FilePath "$HOME\navlogs-full.log"
+          $navExit = $LASTEXITCODE
+          Get-Process | Where-Object { $_.MainWindowTitle -like "NAV-*" } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $navExit
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-nav ~/navlogs/nav.log 'report:|FAIL:'
       - uses: actions/upload-artifact@v7
         if: always()
         with:
