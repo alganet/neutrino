@@ -652,6 +652,11 @@ static int nt_build_cmdline(char *const *args, char *out, size_t len)
  */
 int nt_win_spawn(const char *exe, char *const *args)
 {
+    return nt_win_spawn_as(exe, args, NULL);
+}
+
+int nt_win_spawn_as(const char *exe, char *const *args, void *token)
+{
     LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;
     PROCESS_INFORMATION pi;
     STARTUPINFOEXA six;
@@ -797,8 +802,20 @@ int nt_win_spawn(const char *exe, char *const *args)
     /* cb describes which of the two structures this actually is. */
     si->cb = flags ? sizeof(six) : sizeof(*si);
 
-    if (!CreateProcessA(exe, cmdline, NULL, NULL, inherit, flags,
-                        NULL, NULL, si, &pi)) {
+    /*
+     * One call or the other, and everything above is the same either way: the
+     * handle list, the console cases and the fail-closed fallback all describe
+     * what the child inherits, which a derived token does not change.
+     *
+     * lpDesktop is left unset. A lowered token opens the window station and the
+     * desktop on its own account and the inherited one admits it -- measured on
+     * windows-latest, where the first of three fallbacks was the one that
+     * carried every spawn.
+     */
+    if (!(token ? CreateProcessAsUserA((HANDLE)token, exe, cmdline, NULL, NULL,
+                                       inherit, flags, NULL, NULL, si, &pi)
+                : CreateProcessA(exe, cmdline, NULL, NULL, inherit, flags,
+                                 NULL, NULL, si, &pi))) {
         fprintf(stderr, "netinstall: cannot start %s (error %lu)\n", exe,
                 (unsigned long)GetLastError());
         if (attrs) {

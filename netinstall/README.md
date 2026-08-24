@@ -236,7 +236,7 @@ the command line alone is not the whole command. What a config can and cannot do
 |---|---|
 | raise `--max-filesize`, lower `--max-time` | **no** — curl parses the config *before* the command line, so a last-wins option is won by the argv. The two bounds below hold. |
 | redirect the download with `output` | **yes** — `-o` does not last-win, it pairs with URLs in order, so a config's `output` takes the URL and netinstall's `-o` is left holding nothing |
-| …and where those bytes land | wherever the fetch phase allows: refused outside `blobs` on Linux, macOS and OpenBSD in **both** tiers; on Windows the fetch phase confines no filesystem in either tier, and its `fetch` line says so |
+| …and where those bytes land | wherever the fetch phase allows: refused outside `blobs` on Linux, macOS and OpenBSD in **both** tiers; on Windows refused outside the payload file itself in the tight tier, and unconfined in the default tier, whose `fetch` line says so |
 | the same through `wget` | **no** — `output_document` loses to the argv's `-O`, and that branch's two bounds are held by the kernel, where no config reaches |
 
 A redirected download is a failed one: nothing arrives where netinstall told the downloader to put
@@ -321,10 +321,29 @@ wasn't applied; confinement here is defence in depth, not the trust anchor. Buil
 The downloader is the one process here that reads bytes an attacker chose, off the network, before
 anything has verified them. It gets its own, narrower confinement — writes confined to
 `~/.cache/neutrino/blobs`, plus the handful of `/dev` nodes a downloader opens on macOS and in
-Linux's tight tier, and nothing else on Linux, macOS and OpenBSD; on Windows the job object
-and stripped token the run phase gets, which bounds processes rather than writes because nothing
-unprivileged on that platform bounds writes. `--info` prints it on a `fetch` line next to the
-run phase's `confine` line, so a platform that applies nothing does not look like one that does.
+Linux's tight tier, and nothing else on Linux, macOS and OpenBSD. On Windows the default tier gets
+the job object and stripped token the run phase gets, which bounds processes rather than writes.
+`--info` prints it on a `fetch` line next to the run phase's `confine` line, so a platform that
+applies nothing does not look like one that does.
+
+**Windows' tight tier confines it to a single file**, and it is the narrowest fetch grant here.
+Everywhere else the downloader may write a directory; here it may write the payload and nothing
+else — not even the rest of `blobs`. The mechanism is a low integrity token, and unlike every other
+confinement in this program it is applied to the *child*: integrity is a one-way trip, and the
+digest, the pin, the rename and the hard link all happen after the download returns, so a launcher
+that lowered itself would trade the download's confinement for the install's. So netinstall creates
+the destination, puts a `Low` label on that one file, spawns the downloader under a lowered token,
+and **takes the label back off before hashing it** — while it is on, any low integrity process on
+the machine can rewrite that file, and nothing re-reads it between the digest and the rename.
+
+Two narrower-looking routes were measured and are not taken. Labelling the `blobs` **directory** is
+the obvious version and is wrong twice: it lets every low integrity process on the machine write
+there, and because the commit is a `CreateHardLink` — a second name for one file object, sharing its
+descriptor — the label reaches `apps/<app>/<name>.cmd`, the file that is then run. A
+**write-restricted token** admits only objects naming `S-1-5-33`, which is authority nothing holds
+unless it asked for it; a trivial child runs under one, but `curl` returns `STATUS_DLL_INIT_FAILED`
+under the same token even with the window station and desktop granted that sid. Reads are not
+confined at either tier, for the same reason the run phase's are not.
 
 A strict build refuses to fetch when nothing applied, on the same terms it refuses to run: the
 answer used to be thrown away, so `-DNEUTRINO_STRICT_SANDBOX` downloaded the payload unconfined and
@@ -1004,6 +1023,14 @@ that.
 `job-ui.sh` is an eighth suite that does not run by default: it is the Windows job UI bisect
 described above, it needs `NEUTRINO_JOB_UI_BISECT=1`, and it takes about ten minutes because every
 flag costs a real webview launch.
+
+`lowfetch.sh` is a tenth, Windows only, behind `NEUTRINO_LOWFETCH_PROBE=1`. It is what priced the
+tight tier's fetch phase: it applies each candidate token to a child and puts a real `curl` behind
+it, across five grants, and asks at each step both what the child can write and what an *unrelated*
+low integrity process gained — which is the half a reading off the label cannot give you. It
+answered, and `phases.sh` gates the answer, so it is opt-in. The machinery stays because it is the
+only thing here that can tell a token that never reached `main` from one that refused a write, and
+that distinction is what ruled out the write-restricted route.
 
 The `NEUTRINO_TEST_ORIGIN` override the suite needs to serve fixtures from loopback is compiled
 in only under `-DNEUTRINO_TESTING`; release binaries ignore it entirely.
