@@ -26,6 +26,26 @@ jobs:
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
+      # The assembler, and the stamp it says it applied. Pure shell, no display
+      # and about a second, so it runs beside parse.sh on every lane that
+      # assembles anything -- and it has to run on all of them, because the
+      # spelling of what it asserts is sed's and the three seds here are not the
+      # same program. Every defect is measured against `oldbuild.sh`, the
+      # assembler as it shipped through PR 23, carried inside the suite.
+      #
+      # Bounded, because the first version of it was not: it launched the
+      # artifact and waited on it, the Windows lane went from twelve minutes to
+      # fifty and lost its runner, and a lane that dies publishes nothing -- so
+      # which step blocked was not readable afterwards. The suite no longer
+      # starts anything whose exit it does not control, and this is the second
+      # half of that.
+      - timeout-minutes: 5
+        run: |
+          TEST_EXIT=0
+          bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
+          cat ~/assemble.log
+          bash test/annotate.sh gjs-assemble ~/assemble.log 'report:|FAIL:|failure\(s\)'
+          exit $TEST_EXIT
       # The loader environment the standalone launch path hands its engine.
       # Every check here is against the same build with the fix cut out of it,
       # so "it would have failed before" is measured in this run rather than
@@ -167,6 +187,26 @@ jobs:
           fi
       - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
+      # The assembler, and the stamp it says it applied. Pure shell, no display
+      # and about a second, so it runs beside parse.sh on every lane that
+      # assembles anything -- and it has to run on all of them, because the
+      # spelling of what it asserts is sed's and the three seds here are not the
+      # same program. Every defect is measured against `oldbuild.sh`, the
+      # assembler as it shipped through PR 23, carried inside the suite.
+      #
+      # Bounded, because the first version of it was not: it launched the
+      # artifact and waited on it, the Windows lane went from twelve minutes to
+      # fifty and lost its runner, and a lane that dies publishes nothing -- so
+      # which step blocked was not readable afterwards. The suite no longer
+      # starts anything whose exit it does not control, and this is the second
+      # half of that.
+      - timeout-minutes: 5
+        run: |
+          TEST_EXIT=0
+          bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
+          cat ~/assemble.log
+          bash test/annotate.sh kde-assemble ~/assemble.log 'report:|FAIL:|failure\(s\)'
+          exit $TEST_EXIT
       # The Qt launch path's document, which no longer has a name. Every check
       # is one that fails against the commit before it, and the payloads it
       # plants are proven live against qml itself first. It runs first in this
@@ -357,6 +397,27 @@ jobs:
         run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - shell: bash
         run: bash test/parse.sh test/neutrinotest.cmd
+      # The assembler, and the stamp it says it applied. Pure shell, no display
+      # and about a second, so it runs beside parse.sh on every lane that
+      # assembles anything -- and it has to run on all of them, because the
+      # spelling of what it asserts is sed's and the three seds here are not the
+      # same program. Every defect is measured against `oldbuild.sh`, the
+      # assembler as it shipped through PR 23, carried inside the suite.
+      #
+      # Bounded, because the first version of it was not: it launched the
+      # artifact and waited on it, this lane went from twelve minutes to fifty
+      # and lost its runner, and a lane that dies publishes nothing -- so which
+      # step blocked was not readable afterwards. The suite no longer starts
+      # anything whose exit it does not control, and this is the second half of
+      # that.
+      - timeout-minutes: 5
+        shell: bash
+        run: |
+          TEST_EXIT=0
+          bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
+          cat ~/assemble.log
+          bash test/annotate.sh windows-assemble ~/assemble.log 'report:|FAIL:|failure\(s\)'
+          exit $TEST_EXIT
       # The exe the batch region runs, which is now the one it just compiled.
       # Same finding as kde-appdir in a different mechanism: there the launcher
       # wrote the program every launch into a directory anyone could rewrite,
@@ -528,6 +589,26 @@ jobs:
       - uses: actions/checkout@v7
       - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
+      # The assembler, and the stamp it says it applied. Pure shell, no display
+      # and about a second, so it runs beside parse.sh on every lane that
+      # assembles anything -- and it has to run on all of them, because the
+      # spelling of what it asserts is sed's and the three seds here are not the
+      # same program. Every defect is measured against `oldbuild.sh`, the
+      # assembler as it shipped through PR 23, carried inside the suite.
+      #
+      # Bounded, because the first version of it was not: it launched the
+      # artifact and waited on it, the Windows lane went from twelve minutes to
+      # fifty and lost its runner, and a lane that dies publishes nothing -- so
+      # which step blocked was not readable afterwards. The suite no longer
+      # starts anything whose exit it does not control, and this is the second
+      # half of that.
+      - timeout-minutes: 5
+        run: |
+          TEST_EXIT=0
+          bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
+          cat ~/assemble.log
+          bash test/annotate.sh macos-assemble ~/assemble.log 'report:|FAIL:|failure\(s\)'
+          exit $TEST_EXIT
       # The loader environment the standalone launch path hands its engine.
       # Every check here is against the same build with the fix cut out of it,
       # so "it would have failed before" is measured in this run rather than
