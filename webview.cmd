@@ -1168,6 +1168,24 @@ exit $?;:<<'//</script></head><body></body>' #-->
                      * refusal either, unlike gjs and Qt -- opening a link the
                      * page chose is a feature this guard is not the place to
                      * add.
+                     *
+                     * -stopLoading is read and not called, and that is not a
+                     * typo. JXA runs a zero-argument selector when the property
+                     * is *read*: -stopLoading returns void, so the read stops
+                     * the load and yields undefined, and a `()` after it throws
+                     * having already had its effect. This shipped as
+                     * `stopLoading()` from PR 6 until PR 23 -- refusing the
+                     * navigation every time and logging "could not refuse
+                     * navigation to ..." every time, which is why nobody
+                     * noticed for four PRs. Measured, on the same artifact one
+                     * line apart: with this line deleted the page takes the
+                     * window, and with the read -- either spelling -- the app
+                     * keeps its own document. The same rule reaches win.center
+                     * in createWindow and app.run in runEventLoop, and both
+                     * carry a note. test/navrefuse.sh asserts this one from
+                     * both sides, because a guard that says it failed while
+                     * succeeding and one that says it succeeded while failing
+                     * read the same from any single lane.
                      */
                     try {
                     ObjCRef.registerSubclass({
@@ -1186,7 +1204,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                                         return;
                                     }
                                     try {
-                                        webViewRef.stopLoading();
+                                        webViewRef.stopLoading;
                                         self.note("refused navigation to " + going);
                                     } catch (e) {
                                         self.note("could not refuse navigation to " +
@@ -1285,7 +1303,12 @@ exit $?;:<<'//</script></head><body></body>' #-->
                         false
                     );
                     win.title = config.title + " - macOS";
-                    try { win.center(); } catch (_) {}
+                    // Read and not called, by the rule the navigation
+                    // guard's comment sets out. This was win.center(), which
+                    // centred the window and then threw into this catch on
+                    // every launch it ever made. Measured: deleting the line
+                    // moves the window, keeping it in either spelling does not.
+                    try { win.center; } catch (_) {}
                     windowDelegateRef = dollar.NeutrinoWindowDelegate.alloc.init;
                     win["delegate"] = windowDelegateRef;
                     this.writeStatus(config.title + " - macOS", win);
@@ -1430,6 +1453,11 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 },
                 runEventLoop: function () {
                     dollar.NSApp.setActivationPolicy(0);
+                    // Left as a call on purpose. By the same rule, reading
+                    // `run` is what enters the event loop, and that does not
+                    // return -- so the `()` after it is code that has never run
+                    // and never can. Right by accident rather than wrong, and
+                    // this PR changed the two lines it measured breaking.
                     app.run();
                 }
             };

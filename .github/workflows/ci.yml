@@ -651,6 +651,28 @@ jobs:
           cat ~/offline.log
           bash test/annotate.sh macos-offline ~/offline.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # The navigation guard PR 6 built, and the account it gives of itself.
+      #
+      # It shipped spelled `webViewRef.stopLoading()`, and JXA runs a
+      # zero-argument selector when the property is read -- so the read stopped
+      # the load and the `()` after it threw, and for four PRs the guard refused
+      # every navigation and logged that it could not. Nothing here could catch
+      # that: verify-attack.sh aims at a host that never resolves, so its `nav`
+      # field is free whatever the guard does, and verify-early.sh asserts
+      # `at=held` with no control -- and `held` was the reading before the fix
+      # and after it, because the guard was working the whole time.
+      #
+      # So this asserts the effect and the account separately, against a control
+      # that is this artifact with the refusal deleted and against the spelling
+      # the fix replaced. Three launches of the same build, one line apart.
+      - timeout-minutes: 20
+        run: |
+          bash build.sh --tier=testing test/neutrinoearly.js test/neutrinonavrefuse.cmd
+          TEST_EXIT=0
+          bash test/navrefuse.sh test/neutrinonavrefuse.cmd > ~/navrefuse.log 2>&1 || TEST_EXIT=$?
+          cat ~/navrefuse.log
+          bash test/annotate.sh macos-navrefuse ~/navrefuse.log 'report:|FAIL:|PASS:|NOTE:'
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
         with:

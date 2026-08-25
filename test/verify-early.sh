@@ -141,6 +141,12 @@ fi
 # its pending report, and the page that arrives is refused by the origin check
 # when it tries to set the title. So no report arrives and the run fails above
 # instead. Both are failures; only `held` is a pass.
+#
+# This line has no control behind it and cannot have one -- it reads a single
+# build. `held` was also the reading while the macOS guard was announcing its
+# own failure on every launch, which is how PR 23's finding survived four PRs
+# of this suite passing. test/navrefuse.sh is where that build is compared
+# against itself with the refusal deleted; this stays the end-to-end reading.
 assert "the page kept out of the window" "held" "$(field at)"
 
 echo "=== Results: $FAILURES failure(s) ==="
