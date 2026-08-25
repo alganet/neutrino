@@ -24,9 +24,15 @@ case "$(uname -s)" in
         # arrives through the same status file every other macOS check uses.
         read_title() { sed -n '1p' "${TMPDIR:-/tmp}/neutrino-title.txt" 2>/dev/null || true; }
         EXPECT_FORGE="REFUSED"
-        # No navigation refusal on macOS: the policy callback wants a decision
-        # block and calling one from JXA is not established. Recorded, not
-        # asserted, because either answer here is a finding and not a break.
+        # Recorded and not asserted, and no longer for the reason this used to
+        # give. This driver does have a navigation guard -- PR 6 built one out
+        # of didStartProvisionalNavigation: and -stopLoading, because the policy
+        # callback wants a decision block and JXA cannot call one -- and PR 23
+        # measured it refusing. What is free here is the field, not the guard:
+        # the navigation above aims at a host that never resolves, so the
+        # provisional load fails on its own and every driver reports REFUSED
+        # whether it refused anything or not. The suite that asks this question
+        # against a target that answers is test/navrefuse.sh.
         EXPECT_NAV="any"
         ;;
     *)
