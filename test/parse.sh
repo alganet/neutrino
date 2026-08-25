@@ -40,22 +40,35 @@ if printf '%s' "$CC_BLOCK" | sed 's/@\*\///' | grep -q '[*]/'; then
     exit 1
 fi
 
-# And the document's opening tag has to be the first one in the file, because
-# extractPageScript takes the first one it finds. A line in the shell region
-# that merely mentions it -- a comment, a here-document, a message -- moves the
-# start of the page script hundreds of lines up, and the only symptom is the
-# assertion far below reporting that the page script does not parse. That is a
-# true failure and a confusing way to learn this, so it is caught here where
-# the message can say what happened.
-FIRST_TAG="$(grep -n '<script' "$TARGET" | head -1 | cut -d: -f1)"
-DOC_TAG="$(grep -n '^<script type=text/javascript>' "$TARGET" | head -1 | cut -d: -f1)"
-if [ -z "$DOC_TAG" ] || [ "$FIRST_TAG" != "$DOC_TAG" ]; then
-    echo "parse.sh: the document's opening tag is not the first one in the file" >&2
-    echo "          first at line ${FIRST_TAG:-none}, the document's at line ${DOC_TAG:-none}" >&2
-    echo "          page-script extraction starts at the first one; do not name it earlier" >&2
+# And the document's doctype has to be the first one in the file, because both
+# halves are cut from it: the document runs from the doctype to the script tag
+# after it, and the page script from that same tag. A line in the shell region
+# that merely mentions the doctype -- a comment, a here-document, a message --
+# starts the cut hundreds of lines early, and the document that comes out has
+# the launcher's own text ahead of its <head>. That was measured on four
+# engines: a content policy meta outside head is in the DOM and is not a
+# policy, Chromium enforces none of it, WebKit enforces only the element-driven
+# half, and the page reports the policy it can see either way. The launcher
+# refuses such a source at run time; this catches it a push earlier, where the
+# message can say what happened.
+FIRST_DOC="$(grep -in '<!doctype html' "$TARGET" | head -1 | cut -d: -f1)"
+DOC_LINE="$(grep -n '^<!doctype html><html>' "$TARGET" | head -1 | cut -d: -f1)"
+if [ -z "$DOC_LINE" ] || [ "$FIRST_DOC" != "$DOC_LINE" ]; then
+    echo "parse.sh: the document's doctype is not the first one in the file" >&2
+    echo "          first at line ${FIRST_DOC:-none}, the document's at line ${DOC_LINE:-none}" >&2
+    echo "          both halves are cut from it; do not name it earlier" >&2
     exit 1
 fi
-echo "  PASS: the page script starts at the document"
+# The script tag no longer has to be first -- extraction anchors on the doctype
+# and searches from there -- but it does have to be after it, which is the same
+# check said the way the code now reads.
+DOC_TAG="$(grep -n '^<script type=text/javascript>' "$TARGET" | head -1 | cut -d: -f1)"
+if [ -z "$DOC_TAG" ] || [ "$DOC_TAG" -lt "$DOC_LINE" ]; then
+    echo "parse.sh: the document's script tag is not after its doctype" >&2
+    echo "          doctype at line ${DOC_LINE:-none}, script tag at line ${DOC_TAG:-none}" >&2
+    exit 1
+fi
+echo "  PASS: the document is cut from the first doctype in the file"
 
 # The same hazard, everywhere else in the file, caught by its consequence
 # rather than by its shape. Everything from the first line to the <script> tag
@@ -503,6 +516,90 @@ N.tiers = "default,offline";
 eq("offline tier gets the offline policy", policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
 N.tiers = "default";
 eq("default tier leaves the document alone", policyOf(N.applyContentPolicy(html)), N.defaultContentPolicy);
+
+// The shapes this launcher refuses, and the reason they are assertions rather
+// than a probe: both functions are pure, so what an engine would do with a
+// document that came out wrong is a consequence and what comes out is a fact.
+// The consequences were measured once, on four engines -- a document cut from
+// the wrong doctype carries a policy that is in the DOM and not in force, and
+// one cut with no doctype at all carries none -- and every case below returned
+// something before this PR instead of refusing.
+console.log("");
+console.log("a source this launcher cannot split is refused, and says why");
+
+var DOC = '<!doctype html><html><head>' +
+          '<meta http-equiv="Content-Security-Policy" content="' + N.defaultContentPolicy + '">' +
+          '</head>';
+var TAG = '\n<script type=text/javascript>';
+var CODE = '\nvar x = 1;\n';
+var ENDS = '//</script>\n';
+var WHOLE = 'shell region\n' + DOC + TAG + CODE + ENDS;
+// The cut runs to the script tag, so whatever sits between the document and
+// that tag belongs to the document -- here the newline TAG opens with, exactly
+// as in this file.
+var SPLIT_DOC = DOC + '\n<body></body></html>';
+
+function refuses(name, source) {
+    var results = [
+        ["extractHtmlDocument", function () { return N.extractHtmlDocument(source); }],
+        ["extractPageScript", function () { return N.extractPageScript(source); }]
+    ];
+    for (var i = 0; i < results.length; i++) {
+        var what = results[i][0], got = null, threw = false, msg = "";
+        try { got = results[i][1](); } catch (e) { threw = true; msg = String(e.message || e); }
+        if (!threw) {
+            failures++;
+            console.log("  FAIL: " + name + " -- " + what + " returned " +
+                        JSON.stringify(String(got).slice(0, 60)) + " instead of refusing");
+        } else if (msg.indexOf("neutrino: cannot tell") !== 0) {
+            failures++;
+            console.log("  FAIL: " + name + " -- " + what + " refused without saying why: " + msg);
+        } else {
+            console.log("  PASS: " + name + " (" + what + ")");
+        }
+    }
+}
+
+// The control. Every refusal below is only a reading if the shape they are
+// derived from splits, and splits into exactly these two halves.
+eq("a well-formed source gives the document", N.extractHtmlDocument(WHOLE), SPLIT_DOC);
+eq("and the page script the tag encloses", N.extractPageScript(WHOLE), CODE);
+
+// The anchoring, which is what stops the two halves being cut from different
+// places. A script tag above the document used to move the page script and not
+// the document; now neither moves, and parse.sh no longer has to forbid it.
+var ABOVE = 'shell <script> region\n' + DOC + TAG + CODE + ENDS;
+eq("a script tag above the document moves neither half",
+   [N.extractHtmlDocument(ABOVE), N.extractPageScript(ABOVE)], [SPLIT_DOC, CODE]);
+
+// Before this PR: the whole file, cut at the first script tag. On the real file
+// that was 186 bytes of locateDocument's own source and no content policy.
+refuses("no doctype at all", 'shell region\n<html><head></head>' + TAG + CODE + ENDS);
+// Before this PR: a document starting in the shell region, with the policy meta
+// outside its own head.
+refuses("a doctype named above the document",
+        'a line naming <!doctype html> up here\n' + DOC + TAG + CODE + ENDS);
+// Before this PR: an empty page script, injected by every driver without a word.
+refuses("nothing opening a script after the doctype", 'shell <script> region\n' + DOC);
+refuses("nothing closing the page script", 'shell region\n' + DOC + TAG + CODE);
+refuses("an empty source", "");
+
+// The offline tier is one string replace and it used to have no failure path:
+// a document that did not carry the policy came back unchanged, so a build that
+// says it denies the network shipped the policy that permits it.
+console.log("");
+console.log("the offline tier refuses a document it cannot make offline");
+var NOPOLICY = '<!doctype html><html><head></head>';
+N.tiers = "default,offline";
+var refusedNoPolicy = false;
+try { N.applyContentPolicy(NOPOLICY); } catch (e) { refusedNoPolicy = true; }
+eq("a document with no policy to replace is refused", refusedNoPolicy, true);
+eq("and one that has it is still swapped",
+   policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
+N.tiers = "default";
+// The boundary: the default tier has nothing to swap and must not start caring.
+eq("the default tier still passes a policy-less document through",
+   N.applyContentPolicy(NOPOLICY), NOPOLICY);
 
 // The half of the offline tier a content policy cannot express. `openExternal`
 // hands a url to the machine's browser, which is the page reaching the network

@@ -227,10 +227,15 @@ nt_scrub_loaders() {
     # ".*" then "/" does. Anchoring with $ first is how the tier line above
     # already avoids it, and test/parse.sh asserts the region contains none.
     #
-    # Two sequences, not one: the opening tag of that document is also the
-    # first one extractPageScript finds, so naming it here in prose moves the
-    # start of the page script two hundred lines up. Both hazards cost a CI
-    # round each, and both are now checks rather than things to remember.
+    # Two sequences, not one. The other is the document's doctype: it is where
+    # both halves of this file are cut from, so a line up here that merely names
+    # it starts the cut in the shell region -- and a document whose content
+    # policy is no longer inside its own <head> is one four engines do not
+    # enforce and no page can tell apart from one they do. Naming the script tag
+    # up here is harmless now; naming the doctype is not. Both hazards cost a CI
+    # round each, and both are checks rather than things to remember: the
+    # launcher refuses a source with two of them, and test/parse.sh says so
+    # before it gets that far.
     nt_names="$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*$/\1/p')"
     for nt_name in $nt_names; do
         case "$nt_name" in
@@ -973,32 +978,97 @@ exit $?;:<<'//</script></head><body></body>' #-->
         },
 
         /*
-         * The document, with the script taken out of it.
+         * Where this file's document begins and where it ends -- decided once,
+         * so that the two halves cut out of it below cannot come from different
+         * places.
          *
-         * This file's JavaScript -- including whatever an author spliced into
-         * runWeb -- used to be an inline script inside the document it loads,
-         * which meant the document's content policy had to permit inline
-         * script, which meant it could never say script-src 'none'. Every
-         * driver already injects the preload through its engine, so the page's
-         * own code goes the same way and the document ends up carrying no
-         * executable content at all.
+         * This file's JavaScript, including whatever an author spliced into
+         * runWeb, used to be an inline script inside the document it loads,
+         * which meant the document's content policy had to permit inline script
+         * and could never say script-src 'none'. Every driver injects the
+         * preload through its engine, so the page's own code goes the same way
+         * and the document carries no executable content at all. What that buys
+         * is worth the trouble: an injection bug in someone's app cannot run
+         * script in this document, because nothing in the document is allowed
+         * to.
          *
-         * What that buys is worth the trouble: an injection bug in someone's
-         * app cannot run script in this document, because nothing in the
-         * document is allowed to.
+         * All of which rests on the cut being in the right place, and the two
+         * cuts used to be taken independently -- the document from the first
+         * `<script` after the doctype, the page script from the first one in
+         * the whole file. They agreed because a test said they had to.
+         *
+         * Every index below is found or the source is refused, and refusing is
+         * the point. There used to be a fallback: no doctype meant "return the
+         * whole file cut at the first `<script`", and no script tag or no
+         * terminator meant an empty page script that every driver injected
+         * without a word. Neither of those is ever the right answer, and on
+         * this file the first is not even a near miss -- the string being
+         * searched for appears in the source of the function searching for it,
+         * a few lines below, inside the page script region. Measured: the
+         * document that came out was 186 bytes of this function, it carried no
+         * content policy at all on any of the four engines, and the page script
+         * was injected into it whole.
          */
-        extractHtmlDocument: function (content) {
+        locateDocument: function (content) {
             var text = String(content || "");
             var lower = text.toLowerCase();
-            var doctypeIndex = lower.indexOf("<!doctype html");
-            if (doctypeIndex >= 0) {
-                text = text.substring(doctypeIndex);
+
+            var start = lower.indexOf("<!doctype html");
+            if (start < 0) {
+                return { error: "there is no <!doctype html> in it" };
             }
-            var scriptIndex = text.indexOf("<script");
-            if (scriptIndex < 0) {
-                return text;
+
+            // Anchored at the doctype, which is what makes the two halves agree
+            // by construction rather than by anyone remembering to check.
+            var tag = text.indexOf("<script", start);
+            if (tag < 0) {
+                return { error: "nothing opens a script after the doctype" };
             }
-            return text.substring(0, scriptIndex) + "<body></body></html>";
+
+            // Exactly one, and this is the guard for the shape that measured
+            // worst. A doctype above the document -- a line in the shell region
+            // naming it is enough -- starts the cut there, and the document that
+            // comes out has the launcher's own text ahead of its <head>. A
+            // content policy meta that is not a child of head is in the DOM and
+            // is not a policy: Chromium enforced none of it, WebKit enforced
+            // only the element-driven half, and the page reported the policy it
+            // could see the whole time. Nothing downstream can tell that apart
+            // from a policy that held, so it is refused here.
+            var second = lower.indexOf("<!doctype html", start + 1);
+            if (second >= 0 && second < tag) {
+                return { error: "the document names its doctype more than once" };
+            }
+
+            var open = text.indexOf(">", tag);
+            if (open < 0) {
+                return { error: "the script tag after the doctype is never closed" };
+            }
+
+            var end = text.lastIndexOf("//</script>");
+            if (end <= open) {
+                return { error: "nothing closes the page script" };
+            }
+
+            return { start: start, tag: tag, open: open, end: end };
+        },
+
+        // Both halves go through it, so a file this launcher cannot split fails
+        // once, in one place, saying which part of the shape was missing --
+        // rather than twice, silently, in opposite directions.
+        splitOrThrow: function (content) {
+            var at = this.locateDocument(content);
+            if (at.error) {
+                throw new Error(
+                    "neutrino: cannot tell this file's document from its script: " + at.error);
+            }
+            return at;
+        },
+
+        // The document, with the script taken out of it.
+        extractHtmlDocument: function (content) {
+            var text = String(content || "");
+            var at = this.splitOrThrow(text);
+            return text.substring(at.start, at.tag) + "<body></body></html>";
         },
 
         // The other half: everything the document used to carry, handed to the
@@ -1006,19 +1076,8 @@ exit $?;:<<'//</script></head><body></body>' #-->
         // markup pretending to be a comment and is not wanted in either half.
         extractPageScript: function (content) {
             var text = String(content || "");
-            var start = text.indexOf("<script");
-            if (start < 0) {
-                return "";
-            }
-            start = text.indexOf(">", start);
-            if (start < 0) {
-                return "";
-            }
-            var end = text.lastIndexOf("//</script>");
-            if (end < 0 || end <= start) {
-                return "";
-            }
-            return text.substring(start + 1, end);
+            var at = this.splitOrThrow(text);
+            return text.substring(at.open + 1, at.end);
         },
 
         getMacScriptPath: function (ObjCRef, dollar) {
@@ -2274,10 +2333,20 @@ exit $?;:<<'//</script></head><body></body>' #-->
             // Anchored on the attribute, so it cannot match this file's own
             // mention of the policy string further down the document -- the
             // whole script region is inside the document it is describing.
-            return String(html).replace(
-                'content="' + this.defaultContentPolicy + '"',
-                'content="' + this.offlineContentPolicy + '"'
-            );
+            var text = String(html);
+            var wanted = 'content="' + this.defaultContentPolicy + '"';
+            // A string replace has no failure path, and this one is the whole
+            // of the offline tier: a document that does not carry the policy
+            // being replaced used to come back unchanged, shipping the default
+            // policy under a build that says it denies the network. The tier is
+            // stamped into this file and cannot be got wrong from outside it,
+            // so a build asking for it and a document that cannot take it is a
+            // launcher that has no business coming up.
+            if (text.indexOf(wanted) < 0) {
+                throw new Error("neutrino: this build is offline and its document " +
+                    "does not carry the policy the tier replaces");
+            }
+            return text.replace(wanted, 'content="' + this.offlineContentPolicy + '"');
         },
 
         boot: function (driver, config) {
@@ -3130,6 +3199,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
             var lastDocTitle = "";
             var pendingPreload = null;
             var pendingPageScript = null;
+            var pendingDocument = null;
             var settingsApplied = false;
             var webMessagesWired = false;
 
@@ -3213,6 +3283,22 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     win.Controls.Add(wv);
                 },
                 loadHTML: function (wv, html) {
+                    // Kept, not dropped. This driver used to throw the document
+                    // boot had extracted and applied the content policy to on
+                    // the floor, and read the file off NEUTRINO_SCRIPT_PATH a
+                    // second time inside the event loop to make another one.
+                    // Measured: the exe appears about 350 ms in and the second
+                    // read lands between half a second and a second after that,
+                    // so a file replaced inside the gap was the one that
+                    // rendered -- content policy and all -- while the page
+                    // script running in it came from the first read. The folder
+                    // it sits in is one appcache.ps1 measured this account can
+                    // write.
+                    //
+                    // about:blank still has to come first: CoreWebView2 does
+                    // not exist yet and nothing can be handed a string until it
+                    // does. What changes is where the string comes from then.
+                    pendingDocument = html;
                     wv.Source = new SystemRef.Uri("about:blank");
                 },
                 setTitle: function (win, title) {
@@ -3309,10 +3395,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                                     }
                                 }
                                 var navMethod = coreWv2.GetType().GetMethod("NavigateToString");
-                                var scriptPath = SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH");
-                                if (navMethod && scriptPath && SystemRef.IO.File.Exists(scriptPath)) {
-                                    var htmlText = self.applyContentPolicy(self.extractHtmlDocument(
-                                        SystemRef.IO.File.ReadAllText(scriptPath)));
+                                if (navMethod && pendingDocument) {
                                     /*
                                      * Set before the call and not after it. The
                                      * navigation is queued here and its events
@@ -3323,7 +3406,20 @@ exit $?;:<<'//</script></head><body></body>' #-->
                                      * from inside the engine.
                                      */
                                     NeutrinoNavSink.navIssued = true;
-                                    navMethod.Invoke(coreWv2, [htmlText]);
+                                    navMethod.Invoke(coreWv2, [pendingDocument]);
+                                } else {
+                                    // The other half of the same finding, and
+                                    // the quieter one. When the second read
+                                    // found no file the condition above was
+                                    // simply false: no navigation, the view
+                                    // left on the about:blank it was created
+                                    // with, and the page script never reached
+                                    // an API to report through. Measured twice
+                                    // as a window with no title, no error and
+                                    // no log line at all. There is no read to
+                                    // fail any more, and if this is ever
+                                    // reached it says so.
+                                    self.note("the view was given no document; the window will stay blank");
                                 }
                             }
                             if (coreWv2) {
@@ -3399,12 +3495,26 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     }
                 },
                 handleError: function (ex) {
-                    var detail = "Failed to initialize WebView2 package/download.";
+                    var message = "";
                     try {
-                        if (ex && ex.message) {
-                            detail = detail + "\n\n" + String(ex.message);
-                        }
+                        if (ex && ex.message) { message = String(ex.message); }
                     } catch (_) {}
+                    /*
+                     * The heading used to be "Failed to initialize WebView2
+                     * package/download." whatever had gone wrong. That was true
+                     * of the one failure that could reach here and it is not
+                     * true of the ones that can now: a file this launcher
+                     * cannot split, and a document the offline tier cannot make
+                     * offline, both refuse before any download starts. An error
+                     * this file raises says so in its own words and keeps them.
+                     */
+                    var detail;
+                    if (message.indexOf("neutrino:") === 0) {
+                        detail = message;
+                    } else {
+                        detail = "Failed to initialize WebView2 package/download.";
+                        if (message) { detail = detail + "\n\n" + message; }
+                    }
                     self.showWindowsError(SystemRef, "neutrino", detail);
                     SystemRef.Environment.Exit(1);
                 }
