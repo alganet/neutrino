@@ -291,30 +291,140 @@ for (var mi = 0; mi < N.webView2Members.length; mi++) {
     seenMember[mem.path] = true;
 }
 
-// The unpack command, built by the object that ships rather than described.
-var psCaptured = null;
-var psSystem = {
-    Convert: { ToBase64String: function (b) { return b; } },
-    Text: { Encoding: { Unicode: { GetBytes: function (x) { return x; } } } },
-    Diagnostics: {
-        ProcessStartInfo: function () {},
-        Process: { Start: function (si) { psCaptured = si.Arguments; return { WaitForExit: function () {}, ExitCode: 0 }; } }
-    }
-};
-N.extractArchiveWithPowerShell(psSystem, "C:\\tmp\\p.zip", "C:\\app\\Microsoft.Web.WebView2");
-// The whole of the zip-slip fix: the name that becomes a path comes from the
-// list above and never from the archive. A command that reads FullName is one
-// that joins an attacker-supplied string onto a destination again.
-eq("the unpack never builds a path from an archive-supplied name",
-   psCaptured.indexOf("FullName") < 0, true);
-eq("the unpack asks the archive for names it already holds",
-   psCaptured.indexOf("$zip.GetEntry($name)") >= 0, true);
-eq("a member the package does not have is fatal",
-   psCaptured.indexOf("package is missing") >= 0, true);
-for (var pi = 0; pi < N.webView2Members.length; pi++) {
-    eq("the unpack asks for " + N.webView2Members[pi].path,
-       psCaptured.indexOf("'" + N.webView2Members[pi].path + "'") >= 0, true);
+// The unpack, driven rather than described. This used to build a PowerShell
+// command and the assertions read the string; it now takes the archive apart
+// itself, so the fake is System.IO.Compression and what is asserted is what it
+// did with it.
+var zipOpened = null;
+var zipDisposed = false;
+var zipAsked = [];
+var zipWrote = [];
+var zipMadeDirs = [];
+var zipEntries = {};
+for (var zi = 0; zi < N.webView2Members.length; zi++) {
+    zipEntries[N.webView2Members[zi].path] = { tag: N.webView2Members[zi].path };
 }
+function zipSystem(entries) {
+    return {
+        Convert: { ToInt32: function (x) { return x; } },
+        IO: {
+            Path: {
+                Combine: function (a, b) { return a + "\\" + b; },
+                GetDirectoryName: function (p) { return p.substring(0, p.lastIndexOf("\\")); }
+            },
+            Directory: {
+                Exists: function (_d) { return false; },
+                CreateDirectory: function (d) { zipMadeDirs.push(d); }
+            },
+            Compression: {
+                ZipFile: {
+                    OpenRead: function (path) {
+                        zipOpened = path;
+                        return {
+                            GetEntry: function (name) {
+                                zipAsked.push(name);
+                                return Object.prototype.hasOwnProperty.call(entries, name)
+                                    ? entries[name] : null;
+                            },
+                            Dispose: function () { zipDisposed = true; }
+                        };
+                    }
+                },
+                ZipFileExtensions: {
+                    ExtractToFile: function (entry, out, overwrite) {
+                        zipWrote.push({ tag: entry.tag, out: out, overwrite: overwrite });
+                    }
+                }
+            }
+        }
+    };
+}
+
+N.extractWebView2Members(zipSystem(zipEntries), "C:\\tmp\\p.zip", "C:\\app\\Microsoft.Web.WebView2");
+eq("the unpack opens the archive it was handed", zipOpened, "C:\\tmp\\p.zip");
+eq("the unpack closes it", zipDisposed, true);
+eq("the unpack asks for every pinned member and nothing else",
+   zipAsked.join("|"), (function () {
+       var names = [];
+       for (var k = 0; k < N.webView2Members.length; k++) { names.push(N.webView2Members[k].path); }
+       return names.join("|");
+   })());
+// The whole of the zip-slip fix, and it survived the move out of PowerShell:
+// the name that becomes a path comes from the list above and never from the
+// archive. An unpack that read the entry's own name would join an
+// attacker-supplied string onto a destination again.
+eq("every destination is built from the pinned name", (function () {
+    for (var w = 0; w < zipWrote.length; w++) {
+        var want = "C:\\app\\Microsoft.Web.WebView2\\" +
+            N.webView2Members[w].path.replace(/\//g, "\\");
+        if (zipWrote[w].out !== want || zipWrote[w].tag !== N.webView2Members[w].path) {
+            return zipWrote[w].out;
+        }
+    }
+    return zipWrote.length === N.webView2Members.length ? true : "wrote " + zipWrote.length;
+})(), true);
+eq("an existing file is overwritten rather than left",
+   zipWrote.length > 0 && zipWrote[0].overwrite === true, true);
+eq("the parent directory is created before the write", zipMadeDirs.length, zipWrote.length);
+
+// A member the package does not have is fatal, and the archive is still closed.
+zipDisposed = false;
+zipWrote = [];
+var partial = {};
+for (var pi = 1; pi < N.webView2Members.length; pi++) {
+    partial[N.webView2Members[pi].path] = { tag: N.webView2Members[pi].path };
+}
+var missingThrew = false;
+try {
+    N.extractWebView2Members(zipSystem(partial), "C:\\tmp\\p.zip", "C:\\app\\Microsoft.Web.WebView2");
+} catch (missingErr) {
+    missingThrew = String(missingErr.message || missingErr).indexOf("is missing") >= 0;
+}
+eq("a member the package does not have is fatal", missingThrew, true);
+eq("and the archive is closed anyway", zipDisposed, true);
+eq("and nothing was written", zipWrote.length, 0);
+
+console.log("the package directory is emptied without following what is in it");
+// Not a boundary -- measured, a recursive Directory.Delete unlinks a junction
+// rather than walking through it. What it also does is throw afterwards, which
+// is a launch refusing for a reason nobody can act on. This is the walk that
+// replaced it, and what is asserted here is that it does not descend into a
+// reparse point; test/winexec.ps1 asserts the platform fact underneath.
+var delRemoved = [];
+var delListed = [];
+// The driver walks CLR String[] and asks for `.Length`, the way every other
+// array in that region does. A JavaScript array has `length` and not `Length`,
+// so a fake that forgets this reports an empty directory and every assertion
+// below passes for the wrong reason -- it did, once.
+function clr(a) { a.Length = a.length; return a; }
+function treeSystem(tree, attrs) {
+    return {
+        Convert: { ToInt32: function (x) { return x; } },
+        IO: {
+            Directory: {
+                GetFiles: function (d) { delListed.push(d); return clr(tree[d] ? tree[d].files : []); },
+                GetDirectories: function (d) { return clr(tree[d] ? tree[d].dirs : []); },
+                Delete: function (d, recursive) { delRemoved.push(d + (recursive ? "!" : "")); }
+            },
+            File: {
+                Delete: function (f) { delRemoved.push(f); },
+                GetAttributes: function (d) { return attrs[d] || 0; }
+            }
+        }
+    };
+}
+var tree = {
+    "R": { files: ["R\\a.dll"], dirs: ["R\\real", "R\\link"] },
+    "R\\real": { files: ["R\\real\\b.dll"], dirs: [] },
+    "R\\link": { files: ["R\\link\\SHOULD-NOT-BE-TOUCHED"], dirs: [] }
+};
+N.deleteTree(treeSystem(tree, { "R\\link": 1024 }), "R");
+eq("a reparse point is unlinked and not descended into",
+   delListed.join("|"), "R|R\\real");
+eq("nothing under the reparse point is touched",
+   delRemoved.join("|").indexOf("SHOULD-NOT-BE-TOUCHED") < 0, true);
+eq("everything else goes",
+   delRemoved.join("|"), "R\\a.dll|R\\real\\b.dll|R\\real|R\\link|R");
 
 console.log("an extracted package is checked against the pin, not its filenames");
 function hexBytes(hex) {

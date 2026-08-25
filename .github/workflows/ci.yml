@@ -418,6 +418,22 @@ jobs:
           cat ~/assemble.log
           bash test/annotate.sh windows-assemble ~/assemble.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
+      # The Windows driver's own file and process I/O. Beside assemble.sh for
+      # the same reason: it reads webview.cmd and compiles small programs, needs
+      # no display and no artifact, and what it asserts is a spelling plus two
+      # platform facts -- how CreateProcess resolves a bare program name, and
+      # what this framework does to a junction. It launches no app and no
+      # window, so nothing it starts can outlive the step.
+      #
+      # Windows only, because the mechanisms are.
+      - timeout-minutes: 10
+        shell: pwsh
+        run: |
+          & .\test\winexec.ps1 webview.cmd *>&1 | Tee-Object -FilePath "$HOME\winexec.log"
+          exit $LASTEXITCODE
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-winexec ~/winexec.log 'report:|FAIL:'
       # The exe the batch region runs, which is now the one it just compiled.
       # Same finding as kde-appdir in a different mechanism: there the launcher
       # wrote the program every launch into a directory anyone could rewrite,
