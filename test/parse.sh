@@ -89,6 +89,13 @@ var N = require("./obj.js");
 var S = String.fromCharCode(31);
 var failures = 0;
 
+// The splitter's own assertions are about the splitter, so they are taken at a
+// known tier rather than at whichever one the artifact under test was stamped
+// with. Without this an offline build fails the openExternal cases below by
+// behaving exactly as it is supposed to, and the tier's behaviour is asserted
+// on its own terms further down.
+N.tiers = "default";
+
 function eq(name, got, want) {
     var ok = JSON.stringify(got) === JSON.stringify(want);
     if (!ok) {
@@ -386,6 +393,36 @@ N.tiers = "default,offline";
 eq("offline tier gets the offline policy", policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
 N.tiers = "default";
 eq("default tier leaves the document alone", policyOf(N.applyContentPolicy(html)), N.defaultContentPolicy);
+
+// The half of the offline tier a content policy cannot express. `openExternal`
+// hands a url to the machine's browser, which is the page reaching the network
+// in another program; it was measured going out that way on all four engines
+// before this, by the API call and by a navigation gjs and Qt refuse and then
+// forward. Asserted here as well as end to end because this runs on every push
+// with no display behind it, and because both halves matter: the tier has to
+// close it, and the default tier has to still open a link.
+console.log("");
+console.log("the offline tier closes the route a content policy cannot see");
+// Asked before it is called, because a build without it makes every line below
+// a TypeError -- which is a failure, and an unreadable one. Run against the
+// commit before this PR it reads exactly this way and nothing else breaks.
+eq("the build has a mayOpenExternal at all", typeof N.mayOpenExternal, "function");
+function may(url) {
+    if (typeof N.mayOpenExternal !== "function") return "<no mayOpenExternal>";
+    return N.mayOpenExternal(url);
+}
+eq("the default tier opens an external url", may("https://example.com/x"), true);
+N.tiers = "default,offline";
+eq("the offline tier does not", may("https://example.com/x"), false);
+eq("and the message never becomes an action",
+   N.parseMessage("openExternal" + S + "https://example.com/x"), null);
+eq("the scheme allowlist is unchanged by the tier",
+   N.isExternalUrl("https://example.com/x"), true);
+eq("a scheme outside the allowlist is refused in the offline tier",
+   may("file:///etc/passwd"), false);
+N.tiers = "default";
+eq("and in the default tier, which is the half that was already true",
+   may("file:///etc/passwd"), false);
 
 if (failures > 0) {
     console.log("");

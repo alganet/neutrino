@@ -16,7 +16,17 @@
 #
 #   default   the confinement every build gets. Always present, never optional.
 #   tight     self-applied process confinement, where the platform has any.
-#   offline   deny the page network access.
+#   offline   deny the page the network, at the document. Measured, on all four
+#             engines: the app's own page script cannot fetch, XHR, load an
+#             image, a stylesheet, a script or an iframe, or reach for
+#             sendBeacon, EventSource or a WebSocket. It also stops the page
+#             handing a url to the machine's browser, which no content policy
+#             can see. What it does not stop is the request a top-level
+#             navigation makes on its way to being refused: gjs and Qt refuse
+#             before the request, macOS and Windows after it, so on those two an
+#             offline build leaks one GET per navigation attempt. This is a
+#             document-level tier and not a process-level one -- netinstall's
+#             -DNEUTRINO_CONFINE_OFFLINE is the second, and they compose.
 #   testing   re-enable test scaffolding. Never in a release build.
 
 set -euo pipefail

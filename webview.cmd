@@ -443,7 +443,11 @@ Window {
             } else {
                 request.action = WebEngineNavigationRequest.IgnoreRequest
             }
-            if (root.nt.isExternalUrl(String(request.url))) {
+            // mayOpenExternal and not isExternalUrl: refusing a navigation
+            // and then handing the same url to the desktop's browser is the
+            // page reaching the network without having asked, which is the one
+            // thing the offline tier exists to stop.
+            if (root.nt.mayOpenExternal(String(request.url))) {
                 Qt.openUrlExternally(request.url)
             }
         }
@@ -1402,7 +1406,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     win.performClose(null);
                 },
                 openExternal: function (url) {
-                    if (!self.isExternalUrl(url)) {
+                    if (!self.mayOpenExternal(url)) {
                         return;
                     }
                     dollar.NSWorkspace.sharedWorkspace.openURL(
@@ -1659,8 +1663,10 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     // Checked here as well as in the splitter: this is the end
                     // of the line, and it hands a string to the desktop's URI
                     // handler, which will happily act on file: or on a .desktop
-                    // entry if it is given one.
-                    if (!self.isExternalUrl(url)) {
+                    // entry if it is given one. It is also where the navigation
+                    // refusal above arrives, so the tier half of the check
+                    // closes that route as well as this one.
+                    if (!self.mayOpenExternal(url)) {
                         return;
                     }
                     try {
@@ -1757,6 +1763,38 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 return false;
             }
             return /^https?:\/\/[^\/?#]/i.test(url) || /^mailto:[^@\s]+@[^@\s]+$/i.test(url);
+        },
+
+        /*
+         * Whether this build may hand a url to the machine's browser at all.
+         *
+         * isExternalUrl answers a question about the string. This answers one
+         * about the build, and the two are separate on purpose: the allowlist
+         * above is about schemes and stays true whatever tier is stamped.
+         *
+         * The offline tier says the page has no network. A url handed to the
+         * desktop's handler is the page reaching the network in another
+         * program, and it was measured going out that way on all four engines,
+         * by both routes -- `neutrino.shell.openExternal`, which any page
+         * script may call, and a navigation this file refuses and then forwards
+         * on gjs and Qt without the page having to ask twice. Neither is
+         * something a content policy can see: CSP governs subresources, and
+         * this is not a load.
+         *
+         * So the tier closes it, and every place that was asking isExternalUrl
+         * before opening asks this instead -- including the four drivers' own
+         * end-of-the-line checks, which exist because that is where a string
+         * becomes ShellExecute, NSWorkspace or the desktop's URI handler.
+         *
+         * The cost is real and is the tier's whole point: an offline app cannot
+         * open a link in the user's browser. An app that wants to do that wants
+         * the default tier.
+         */
+        mayOpenExternal: function (value) {
+            if (!this.isExternalUrl(value)) {
+                return false;
+            }
+            return !this.hasTier("offline");
         },
 
         /*
@@ -2029,6 +2067,13 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 if (rest === null || !this.isExternalUrl(rest)) {
                     return null;
                 }
+                // Said rather than dropped, because a page whose link does
+                // nothing and whose host says nothing is a build that looks
+                // broken instead of a build that is offline.
+                if (!this.mayOpenExternal(rest)) {
+                    this.note("refused openExternal: this build is offline");
+                    return null;
+                }
                 return { action: "openExternal", url: rest };
             }
 
@@ -2120,6 +2165,41 @@ exit $?;:<<'//</script></head><body></body>' #-->
         defaultContentPolicy: "script-src 'unsafe-eval'; object-src 'none'; " +
             "base-uri 'none'; form-action 'none'; frame-src 'none'",
 
+        /*
+         * The offline tier's policy, and what it is measured to be worth.
+         *
+         * It holds where it applies: an app's own page script, injected by the
+         * engine, was measured reaching for the network nine ways -- fetch,
+         * XMLHttpRequest, img, a stylesheet link, a script src, an iframe,
+         * sendBeacon, EventSource, WebSocket -- and under this policy not one
+         * of the nine reached the host on any of the four engines, while all
+         * nine reached it under the policy above. So the exemption the comment
+         * above describes stops at *executing*: what the exempt script then
+         * loads is governed. WebView2 honours it too, from a document handed
+         * over by NavigateToString.
+         *
+         * Two things it cannot see, because neither is a subresource load.
+         *
+         * The first is a url handed to the machine's browser, and that one is
+         * closed -- see mayOpenExternal.
+         *
+         * The second is the request a top-level navigation makes on its way to
+         * being refused, and that one is a **ceiling and not a fix**. Measured
+         * against a loopback target that logs every request: on gjs and Qt the
+         * refusal happens before the request, and nothing arrives. On macOS
+         * nothing refuses at all -- PR 6 measured that implementing the policy
+         * selector ships a window that never loads, so the guard is
+         * -stopLoading after the document has committed -- and on the runner
+         * image this was measured on, not even that: the bridge has no such
+         * selector and the refusal raises, which PR 22 found in the job log
+         * and filed on its own. On Windows NavigationStarting
+         * cancels, the target document never runs, and the GET still reaches
+         * the host. So on two of four engines an offline build leaks one
+         * request per navigation attempt, with whatever the page put in the
+         * url. Denying the process the network is netinstall's
+         * -DNEUTRINO_CONFINE_OFFLINE, which is a different mechanism at a lower
+         * layer, and the two compose.
+         */
         offlineContentPolicy: "default-src 'none'; script-src 'unsafe-eval'; " +
             "style-src 'unsafe-inline'; img-src data:; font-src data:; " +
             "object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'",
@@ -3025,7 +3105,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     // open a document, a .desktop-equivalent, or a registered
                     // protocol handler just as happily as a web page. The
                     // allowlist is what keeps it to web pages.
-                    if (!self.isExternalUrl(url)) {
+                    if (!self.mayOpenExternal(url)) {
                         return;
                     }
                     var info = new SystemRef.Diagnostics.ProcessStartInfo(String(url));

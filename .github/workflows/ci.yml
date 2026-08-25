@@ -114,6 +114,38 @@ jobs:
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
           bash netinstall/test/run.sh
+      # The offline tier, which nothing in this repository has ever built.
+      # `build.sh --tier=offline` says it denies the page network access, and
+      # the whole mechanism is one meta tag applyContentPolicy swaps into the
+      # extracted document. Its only assertion is parse.sh comparing two
+      # strings; no engine has ever loaded a document carrying it. This step is
+      # the measurement, and it asserts what three probing rounds read: nine
+      # ways of reaching the network, none of which arrive under the tier and
+      # all of which arrive under the one that permits them; and the route no
+      # content policy can see, which is a url handed to the machine's browser
+      # and which this PR closes.
+      #
+      # Two builds, one tier apart: the control carries `testing` and the app
+      # under test carries `testing,offline`, so the only thing that differs
+      # between the two readings is the policy in the document. The testing tier
+      # is on both because macOS has no window a shell can query and writes its
+      # title to a file only there.
+      #
+      # Last in the lane on purpose. A probing round is the round most likely to
+      # be red, and a red probe should cost its own reading and nothing else.
+      - timeout-minutes: 20
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
+          bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
+          TEST_EXIT=0
+          bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
+            > ~/offline.log 2>&1 || TEST_EXIT=$?
+          cat ~/offline.log
+          bash test/annotate.sh gjs-offline ~/offline.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -274,6 +306,42 @@ jobs:
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
           export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
           dbus-run-session -- bash netinstall/test/run.sh
+      # The offline tier, which nothing in this repository has ever built.
+      # `build.sh --tier=offline` says it denies the page network access, and
+      # the whole mechanism is one meta tag applyContentPolicy swaps into the
+      # extracted document. Its only assertion is parse.sh comparing two
+      # strings; no engine has ever loaded a document carrying it. This step is
+      # the measurement, and it asserts what three probing rounds read: nine
+      # ways of reaching the network, none of which arrive under the tier and
+      # all of which arrive under the one that permits them; and the route no
+      # content policy can see, which is a url handed to the machine's browser
+      # and which this PR closes.
+      #
+      # Two builds, one tier apart: the control carries `testing` and the app
+      # under test carries `testing,offline`, so the only thing that differs
+      # between the two readings is the policy in the document. The testing tier
+      # is on both because macOS has no window a shell can query and writes its
+      # title to a file only there.
+      #
+      # Last in the lane on purpose. A probing round is the round most likely to
+      # be red, and a red probe should cost its own reading and nothing else.
+      - timeout-minutes: 20
+        run: |
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
+          bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
+          TEST_EXIT=0
+          bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
+            > ~/offline.log 2>&1 || TEST_EXIT=$?
+          cat ~/offline.log
+          bash test/annotate.sh kde-offline ~/offline.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -311,10 +379,17 @@ jobs:
         shell: pwsh
         run: |
           .\test\neutrinotest.cmd
-          & .\test\verify-windows.ps1
+          & .\test\verify-windows.ps1 *>&1 | Tee-Object -FilePath "$HOME\windows-verify.log"
           $testExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -ne "" } | Where-Object { $_.MainWindowTitle -like "*neutrino*" -or $_.MainWindowTitle -like "*STEP*" -or $_.MainWindowTitle -like "*TESTS DONE*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
+      # The oldest step in this lane and the last one with no way to be read.
+      # It went red on the candidate round and said only that it was red: the
+      # steps after it were skipped, so their annotate calls reported missing
+      # logs and nothing reported this one. Same treatment as the other four.
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-test ~/windows-verify.log "PASS:|FAIL:|^=== "
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
@@ -405,6 +480,41 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-nav ~/navlogs/nav.log 'report:|FAIL:'
+      # The offline tier, which nothing in this repository has ever built.
+      # `build.sh --tier=offline` says it denies the page network access, and
+      # the whole mechanism is one meta tag applyContentPolicy swaps into the
+      # extracted document. Its only assertion is parse.sh comparing two
+      # strings; no engine has ever loaded a document carrying it. This step is
+      # the measurement, and it asserts what three probing rounds read: nine
+      # ways of reaching the network, none of which arrive under the tier and
+      # all of which arrive under the one that permits them; and the route no
+      # content policy can see, which is a url handed to the machine's browser
+      # and which this PR closes.
+      #
+      # Two builds, one tier apart: the control carries `testing` and the app
+      # under test carries `testing,offline`, so the only thing that differs
+      # between the two readings is the policy in the document. The testing tier
+      # is on both because macOS has no window a shell can query and writes its
+      # title to a file only there.
+      #
+      # Last in the lane on purpose. A probing round is the round most likely to
+      # be red, and a red probe should cost its own reading and nothing else.
+      - shell: bash
+        run: |
+          bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
+          bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
+      - timeout-minutes: 30
+        shell: pwsh
+        run: |
+          & .\test\verify-offline.ps1 .\test\neutrinooffline-default.cmd .\test\neutrinooffline.cmd "$HOME\offlinelogs" *>&1 |
+            Tee-Object -FilePath "$HOME\offlinelogs-full.log"
+          $offExit = $LASTEXITCODE
+          Get-Process | Where-Object { $_.MainWindowTitle -like "OFFLINE-*" } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $offExit
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-offline ~/offlinelogs/offline.log 'report:|FAIL:'
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -512,6 +622,35 @@ jobs:
         run: |
           export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
           bash netinstall/test/run.sh
+      # The offline tier, which nothing in this repository has ever built.
+      # `build.sh --tier=offline` says it denies the page network access, and
+      # the whole mechanism is one meta tag applyContentPolicy swaps into the
+      # extracted document. Its only assertion is parse.sh comparing two
+      # strings; no engine has ever loaded a document carrying it. This step is
+      # the measurement, and it asserts what three probing rounds read: nine
+      # ways of reaching the network, none of which arrive under the tier and
+      # all of which arrive under the one that permits them; and the route no
+      # content policy can see, which is a url handed to the machine's browser
+      # and which this PR closes.
+      #
+      # Two builds, one tier apart: the control carries `testing` and the app
+      # under test carries `testing,offline`, so the only thing that differs
+      # between the two readings is the policy in the document. The testing tier
+      # is on both because macOS has no window a shell can query and writes its
+      # title to a file only there.
+      #
+      # Last in the lane on purpose. A probing round is the round most likely to
+      # be red, and a red probe should cost its own reading and nothing else.
+      - timeout-minutes: 20
+        run: |
+          bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
+          bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
+          TEST_EXIT=0
+          bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
+            > ~/offline.log 2>&1 || TEST_EXIT=$?
+          cat ~/offline.log
+          bash test/annotate.sh macos-offline ~/offline.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
         with:
