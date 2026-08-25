@@ -592,6 +592,39 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-offline ~/offlinelogs/offline.log 'report:|FAIL:'
+      # PR 26, and the only lane it applies to. `boot` extracts the document,
+      # applies the content policy and hands the result to `driver.loadHTML`;
+      # this driver used to drop that argument, navigate to about:blank, and
+      # read the file off NEUTRINO_SCRIPT_PATH a second time inside the event
+      # loop to make another one. Measured: the gap between the two reads is
+      # open from roughly half a second to under a second after the exe starts,
+      # a file replaced inside it was the one that rendered, and a file removed
+      # inside it left a window with no document and no account of why.
+      #
+      # The suite derives its own three builds from this one artifact -- two
+      # markers apart, and one carrying the spelling this PR replaced -- so
+      # "it would have failed before" runs on every push.
+      #
+      # `if: always()`: it is last in a lane of seven suites, and when the
+      # oldest of them went red on an unrelated flake this step was skipped and
+      # the round produced nothing. A lane failure ahead of it should not also
+      # hide whether this one passes.
+      - if: always()
+        shell: bash
+        run: bash build.sh --tier=testing test/neutrinodoc.js test/neutrinodoc.cmd
+      - if: always()
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          & .\test\docswap.ps1 .\test\neutrinodoc.cmd "$HOME\docswaplogs" *>&1 |
+            Tee-Object -FilePath "$HOME\docswap-full.log"
+          $swapExit = $LASTEXITCODE
+          Get-Process | Where-Object { $_.MainWindowTitle -like "DOCSWAP*" } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $swapExit
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-docswap ~/docswaplogs/docswap.log 'report:|FAIL:'
       - uses: actions/upload-artifact@v7
         if: always()
         with:
