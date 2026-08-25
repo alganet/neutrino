@@ -55,6 +55,16 @@ DEL /Q "%APP_FOLDER%\%SCRIPT_NAME%.new*.exe" >NUL 2>&1
 DEL /Q "%APP_FOLDER%\%SCRIPT_NAME%.old*.exe" >NUL 2>&1
 DEL /Q "%APP_FOLDER%\%SCRIPT_NAME%.stamp" >NUL 2>&1
 
+REM The last two references are what lets the driver take the WebView2 package
+REM apart itself instead of asking powershell.exe to do it. Nothing here fails
+REM if they are dropped: every call to them is late-bound through eval("System"),
+REM so the build succeeds and the extraction throws "Function expected" at run
+REM time, where the caller reports it as a failed download. Measured, and it is
+REM why test/winexec.ps1 builds an extraction with this line's own /r list.
+REM Both files sit in the framework directory on every runner measured, and the
+REM PowerShell command they replace asked for the same assembly by name, so the
+REM floor this launcher needs has not moved.
+
 REM Only on a genuinely first run. A cold .NET start makes that compile seconds
 REM rather than the third of one every launch after it costs.
 IF NOT DEFINED FIRST_RUN GOTO :COMPILE
@@ -83,6 +93,8 @@ CLS
     /r:"%FX_DIR%\Accessibility.dll" ^
     /r:"%FX_DIR%\System.Drawing.dll" ^
     /r:"%FX_DIR%\System.Windows.Forms.dll" ^
+    /r:"%FX_DIR%\System.IO.Compression.dll" ^
+    /r:"%FX_DIR%\System.IO.Compression.FileSystem.dll" ^
     "%~f0"
     SET "JSC_EXIT=%ERRORLEVEL%"
     IF NOT "%JSC_EXIT%"=="0" EXIT /B %JSC_EXIT%
@@ -2415,12 +2427,6 @@ exit $?;:<<'//</script></head><body></body>' #-->
             }
         },
 
-        escapeForSingleQuotedPowerShell: function (value) {
-            if (!value) {
-                return "";
-            }
-            return String(value).replace(/'/g, "''");
-        },
 
         /*
          * The package this build was made against, named by version and by the
@@ -2523,41 +2529,108 @@ exit $?;:<<'//</script></head><body></body>' #-->
             return null;
         },
 
-        extractArchiveWithPowerShell: function (SystemRef, archivePath, destinationPath) {
-            var wanted = [];
-            for (var i = 0; i < this.webView2Members.length; i++) {
-                wanted.push("'" + this.escapeForSingleQuotedPowerShell(this.webView2Members[i].path) + "'");
+        /*
+         * In process, and that is the whole of the fix. This used to build a
+         * PowerShell command, base64 it, and hand `powershell.exe` to
+         * ProcessStartInfo with UseShellExecute false -- so .NET gave
+         * CreateProcess a null lpApplicationName and the name went through the
+         * CreateProcess search order, whose first two entries are the directory
+         * the calling exe was loaded from and the current directory. Both of
+         * those are the app folder: the exe lives there, and the batch region
+         * STARTs it with /D "%APP_FOLDER%". Measured on a runner, both entries
+         * independently: a program named powershell.exe planted beside the exe
+         * ran, one planted in the current directory ran, and the real one runs
+         * only when neither is there.
+         *
+         * That folder is one everything running as this user can write -- the
+         * sentence test/appcache.ps1 already carries -- and under netinstall
+         * that includes the confined app. So this is PR 3's finding in Windows
+         * spelling: write xor execute stops an app running what it wrote, and
+         * does not stop it asking someone else to run it.
+         *
+         * An absolute path under Environment.SystemDirectory, with a working
+         * directory beside it, was measured to refuse both plants and is not
+         * what shipped. The command being sent was two calls out of
+         * System.IO.Compression, so the answer available here is to name no
+         * program at all, which is also the one that cannot be got wrong again
+         * by a later edit. The assemblies come from the batch region's jsc
+         * line; every call below is late-bound, so dropping them builds and
+         * fails at run time -- see the comment there.
+         *
+         * The member names are literals from webView2Members, which is what
+         * keeps Path.Combine from being handed an archive-supplied string. That
+         * was PR 8's decision and it is unchanged: this iterates the pinned
+         * list and asks the archive for each name.
+         */
+        extractWebView2Members: function (SystemRef, archivePath, destinationPath) {
+            var archive = null;
+            try {
+                archive = SystemRef.IO.Compression.ZipFile.OpenRead(String(archivePath));
+                for (var i = 0; i < this.webView2Members.length; i++) {
+                    var name = this.webView2Members[i].path;
+                    var entry = archive.GetEntry(name);
+                    if (entry == null) {
+                        throw new Error("WebView2 package is missing " + name + ".");
+                    }
+                    var out = SystemRef.IO.Path.Combine(
+                        String(destinationPath),
+                        name.replace(/\//g, "\\")
+                    );
+                    var dir = SystemRef.IO.Path.GetDirectoryName(out);
+                    if (!SystemRef.IO.Directory.Exists(dir)) {
+                        SystemRef.IO.Directory.CreateDirectory(dir);
+                    }
+                    SystemRef.IO.Compression.ZipFileExtensions.ExtractToFile(entry, out, true);
+                }
+            } finally {
+                if (archive) {
+                    archive.Dispose();
+                }
             }
+        },
 
-            var psCommand = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; " +
-                "Add-Type -AssemblyName System.IO.Compression.FileSystem; " +
-                "$src='" + this.escapeForSingleQuotedPowerShell(String(archivePath)) + "'; " +
-                "$dst='" + this.escapeForSingleQuotedPowerShell(String(destinationPath)) + "'; " +
-                "$want=@(" + wanted.join(",") + "); " +
-                "$zip=[System.IO.Compression.ZipFile]::OpenRead($src); " +
-                "try { foreach ($name in $want) { " +
-                "$e=$zip.GetEntry($name); " +
-                "if ($e -eq $null) { throw ('package is missing ' + $name) }; " +
-                "$out=Join-Path $dst ($name.Replace([char]47,[char]92)); " +
-                "$dir=Split-Path -Parent $out; " +
-                "if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }; " +
-                "[System.IO.Compression.ZipFileExtensions]::ExtractToFile($e,$out,$true) } } " +
-                "finally { $zip.Dispose() }";
-
-            var encodedCommand = SystemRef.Convert.ToBase64String(SystemRef.Text.Encoding.Unicode.GetBytes(psCommand));
-
-            var startInfo = new SystemRef.Diagnostics.ProcessStartInfo();
-            startInfo.FileName = "powershell.exe";
-            startInfo.Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encodedCommand;
-            startInfo.UseShellExecute = false;
-            startInfo.CreateNoWindow = true;
-
-            var process = SystemRef.Diagnostics.Process.Start(startInfo);
-            process.WaitForExit();
-
-            if (process.ExitCode !== 0) {
-                throw new Error("WebView2 package extraction failed with exit code " + process.ExitCode + ".");
+        /*
+         * A recursive Directory.Delete and a directory junction: measured, and
+         * not what it was expected to be. The framework does not walk through
+         * the junction -- the target directory and its file were untouched --
+         * it unlinks it, deletes everything else, and then throws
+         * System.IO.IOException "The parameter is incorrect." having left the
+         * directory itself behind, empty. So there is no delete of somewhere
+         * else here, and this is not a boundary fix.
+         *
+         * What it is: that call sits inside the download's try, so a junction
+         * planted anywhere under the package directory turns the next launch
+         * into "Download/extract failed" for a reason nobody can act on, and
+         * the launch after that succeeds because the directory is now empty.
+         * A failure that repairs itself is a failure nothing ever reports,
+         * which is why four PRs of CI never saw it.
+         *
+         * The walk below does what the framework was already doing about
+         * reparse points and does not depend on the half that threw. 1024 is
+         * FILE_ATTRIBUTE_REPARSE_POINT.
+         *
+         * test/winexec.ps1 asserts that no call in this file passes a recursive
+         * flag, by reading the file -- so this paragraph deliberately does not
+         * spell the call it is about. That is the third kind of hazard this
+         * polyglot has where prose is structure, after PR 19's two sequences
+         * and PR 24's sentinel; as there, the check is what catches it, on the
+         * first run after somebody writes it.
+         */
+        deleteTree: function (SystemRef, dir) {
+            var files = SystemRef.IO.Directory.GetFiles(dir);
+            for (var i = 0; i < files.Length; i++) {
+                SystemRef.IO.File.Delete(files[i]);
             }
+            var subs = SystemRef.IO.Directory.GetDirectories(dir);
+            for (var j = 0; j < subs.Length; j++) {
+                var attrs = SystemRef.Convert.ToInt32(SystemRef.IO.File.GetAttributes(subs[j]));
+                if ((attrs & 1024) !== 0) {
+                    SystemRef.IO.Directory.Delete(subs[j], false);
+                } else {
+                    this.deleteTree(SystemRef, subs[j]);
+                }
+            }
+            SystemRef.IO.Directory.Delete(dir, false);
         },
 
         /*
@@ -2734,7 +2807,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
 
             try {
                 if (SystemRef.IO.Directory.Exists(packageRoot)) {
-                    SystemRef.IO.Directory.Delete(packageRoot, true);
+                    this.deleteTree(SystemRef, packageRoot);
                 }
 
                 /*
@@ -2816,7 +2889,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 progressLabel.Text = "Extracting package...";
                 SystemRef.Windows.Forms.Application.DoEvents();
 
-                this.extractArchiveWithPowerShell(SystemRef, tempPackagePath, packageRoot);
+                this.extractWebView2Members(SystemRef, tempPackagePath, packageRoot);
             } catch (exDownload) {
                 var message = "Download/extract failed.";
                 try {
