@@ -434,20 +434,6 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-winexec ~/winexec.log 'report:|FAIL:'
-      # The exe the batch region runs, which is now the one it just compiled.
-      # Same finding as kde-appdir in a different mechanism: there the launcher
-      # wrote the program every launch into a directory anyone could rewrite,
-      # here it wrote it once and trusted a stamp beside it afterwards.
-      - shell: bash
-        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinocache.cmd
-      - timeout-minutes: 30
-        shell: pwsh
-        run: |
-          & .\test\appcache.ps1 .\test\neutrinocache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
-          exit $LASTEXITCODE
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-appcache ~/appcache.log 'report:|FAIL:'
       # The netinstall step below has had a timeout all along and this one has
       # not, so anything that fails to exit here stops the whole run rather
       # than the step. The app not exiting is exactly what a missing close
@@ -483,16 +469,52 @@ jobs:
           }
           Get-Process | Where-Object { $_.MainWindowTitle -ne "" } | Where-Object { $_.MainWindowTitle -like "*neutrino*" -or $_.MainWindowTitle -like "*STEP*" -or $_.MainWindowTitle -like "*TESTS DONE*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
-      # The oldest step in this lane and the last one with no way to be read.
-      # It went red on the candidate round and said only that it was red: the
-      # steps after it were skipped, so their annotate calls reported missing
-      # logs and nothing reported this one. Same treatment as the other four.
+      # Carries the verifier's result out where a token cannot read the job
+      # log. It once went red saying only that -- for four PRs it had no
+      # annotate at all, and when it failed the suites that used to follow it in
+      # the old single windows lane were skipped and reported missing logs. It
+      # is its own job now, but the reading still has to leave by annotation.
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-test ~/windows-verify.log "PASS:|FAIL:|report:|^=== |^neutrino:"
-      - uses: mlugg/setup-zig@v2
+      - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          version: 0.14.1
+          name: windows-screenshots
+          path: |
+            C:\Users\runneradmin\*.png
+            C:\Users\runneradmin\netinstall-screenshots\
+
+  windows-appcache:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The exe the batch region runs, which is now the one it just compiled.
+      # Same finding as kde-appdir in a different mechanism: there the launcher
+      # wrote the program every launch into a directory anyone could rewrite,
+      # here it wrote it once and trusted a stamp beside it afterwards.
+      - shell: bash
+        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinocache.cmd
+      - timeout-minutes: 30
+        shell: pwsh
+        run: |
+          & .\test\appcache.ps1 .\test\neutrinocache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
+          exit $LASTEXITCODE
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-appcache ~/appcache.log 'report:|FAIL:'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-appcache-screenshots
+          path: |
+            C:\Users\runneradmin\*.png
+            C:\Users\runneradmin\netinstall-screenshots\
+
+  windows-attack:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
       - shell: bash
         run: bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
       - timeout-minutes: 15
@@ -521,6 +543,35 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-attack ~/attack-verify.log 'report:|FAIL:'
+      # The navigation lane. The Windows driver subscribes to NavigationStarting
+      # and NewWindowRequested now, and this is the suite that says so: against
+      # a target that answers, the driver without a guard reported
+      # nav_arrived=YES and popup_arrived=YES opened=HANDLE, with the injected
+      # API and the app author's own page script both present in the remote
+      # document. test/neutrinoattack.js could never see this -- it aims at a
+      # host that never resolves, which test/early-target.html's own comment
+      # calls not a test, because the load fails on its own and a driver with a
+      # guard reports the same "held" as one without.
+      #
+      # This suite, the attack suite and winerr now share the windows-attack
+      # job rather than the whole windows lane: when they sat mid-lane a build
+      # ahead of them failing skipped the assertion steps behind it, so pulling
+      # the navigation and message surface into their own job is what keeps an
+      # unrelated red from hiding whether these passed.
+      - shell: bash
+        run: bash build.sh test/neutrinonav.js test/neutrinonav.cmd
+      - timeout-minutes: 15
+        shell: pwsh
+        run: |
+          & .\test\verify-nav.ps1 .\test\neutrinonav.cmd "$HOME\navlogs" *>&1 |
+            Tee-Object -FilePath "$HOME\navlogs-full.log"
+          $navExit = $LASTEXITCODE
+          Get-Process | Where-Object { $_.MainWindowTitle -like "NAV-*" } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $navExit
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-nav ~/navlogs/nav.log 'report:|FAIL:'
       # A failed initialisation has to end, and has to leave a record. Both
       # halves were measured absent before this: the driver sat holding a modal
       # box ninety seconds after the download threw, and its app folder held
@@ -544,60 +595,18 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-winerr ~/winerr-verify.log 'report:|PASS:|FAIL:|failure\(s\)'
-      - name: netinstall suite
-        timeout-minutes: 20
-        shell: bash
-        env:
-          NETINSTALL_CC: zig cc
-        run: |
-          export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
-          # Redirected, and that is the whole of this comment. The batch region
-          # STARTs a detached exe which inherits the standard handles, so with
-          # the step's own pipe on the other end it stays open for as long as
-          # the app lives -- and these apps are written never to close. Every
-          # suite inside run.sh is bounded by nt_timeout, so the suite is reaped
-          # and the orphan holding the pipe is not: the step then runs on past
-          # its own timeout-minutes, measured at 37 minutes against a bound of
-          # 20, and the rest of the lane never starts. A file has no reader to
-          # wait on. The log is echoed afterwards by a process that does exit,
-          # which is also what puts nt_result's ::warning lines back in front of
-          # the runner -- redirecting without that would take the annotations
-          # away with the hang.
-          #
-          # PR 20 wrote this lesson down for a probe that piped the launcher.
-          # This is the step on this lane that never got it.
-          NT_EXIT=0
-          bash netinstall/test/run.sh > ~/netinstall.log 2>&1 || NT_EXIT=$?
-          cat ~/netinstall.log
-          exit $NT_EXIT
-      # The navigation lane. The Windows driver subscribes to NavigationStarting
-      # and NewWindowRequested now, and this is the suite that says so: against
-      # a target that answers, the driver without a guard reported
-      # nav_arrived=YES and popup_arrived=YES opened=HANDLE, with the injected
-      # API and the app author's own page script both present in the remote
-      # document. test/neutrinoattack.js could never see this -- it aims at a
-      # host that never resolves, which test/early-target.html's own comment
-      # calls not a test, because the load fails on its own and a driver with a
-      # guard reports the same "held" as one without.
-      #
-      # Last in the lane, and that is not tidiness. When these steps sat in the
-      # middle and the build ahead of them failed, the winerr and netinstall
-      # steps were skipped with them -- a lane that takes assertion coverage
-      # down with it costs a whole run to find out something unrelated.
-      - shell: bash
-        run: bash build.sh test/neutrinonav.js test/neutrinonav.cmd
-      - timeout-minutes: 15
-        shell: pwsh
-        run: |
-          & .\test\verify-nav.ps1 .\test\neutrinonav.cmd "$HOME\navlogs" *>&1 |
-            Tee-Object -FilePath "$HOME\navlogs-full.log"
-          $navExit = $LASTEXITCODE
-          Get-Process | Where-Object { $_.MainWindowTitle -like "NAV-*" } |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $navExit
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-nav ~/navlogs/nav.log 'report:|FAIL:'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-attack-screenshots
+          path: |
+            C:\Users\runneradmin\*.png
+            C:\Users\runneradmin\netinstall-screenshots\
+
+  windows-content:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
       # The offline tier, which nothing in this repository has ever built.
       # `build.sh --tier=offline` says it denies the page network access, and
       # the whole mechanism is one meta tag applyContentPolicy swaps into the
@@ -615,8 +624,8 @@ jobs:
       # is on both because macOS has no window a shell can query and writes its
       # title to a file only there.
       #
-      # Last in the lane on purpose. A probing round is the round most likely to
-      # be red, and a red probe should cost its own reading and nothing else.
+      # In the windows-content job with docswap and nothing else, so a red
+      # reading here costs only its own job and not the rest of the suites.
       - shell: bash
         run: |
           bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
@@ -646,10 +655,10 @@ jobs:
       # markers apart, and one carrying the spelling this PR replaced -- so
       # "it would have failed before" runs on every push.
       #
-      # `if: always()`: it is last in a lane of seven suites, and when the
-      # oldest of them went red on an unrelated flake this step was skipped and
-      # the round produced nothing. A lane failure ahead of it should not also
-      # hide whether this one passes.
+      # `if: always()`: it shares the windows-content job with the offline
+      # suite ahead of it, and a red there should not skip this build and hide
+      # whether docswap passes -- the failure that once cost a whole round when
+      # both sat in one long lane.
       - if: always()
         shell: bash
         run: bash build.sh --tier=testing test/neutrinodoc.js test/neutrinodoc.cmd
@@ -669,10 +678,52 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: windows-screenshots
+          name: windows-content-screenshots
           path: |
             C:\Users\runneradmin\*.png
             C:\Users\runneradmin\netinstall-screenshots\
+
+  windows-netinstall:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - name: netinstall suite
+        timeout-minutes: 20
+        shell: bash
+        env:
+          NETINSTALL_CC: zig cc
+        run: |
+          export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
+          # Redirected, and that is the whole of this comment. The batch region
+          # STARTs a detached exe which inherits the standard handles, so with
+          # the step's own pipe on the other end it stays open for as long as
+          # the app lives -- and these apps are written never to close. Every
+          # suite inside run.sh is bounded by nt_timeout, so the suite is reaped
+          # and the orphan holding the pipe is not: the step then runs on past
+          # its own timeout-minutes, measured at 37 minutes against a bound of
+          # 20, and the rest of the lane never starts. A file has no reader to
+          # wait on. The log is echoed afterwards by a process that does exit,
+          # which is also what puts nt_result's ::warning lines back in front of
+          # the runner -- redirecting without that would take the annotations
+          # away with the hang.
+          #
+          # PR 20 wrote this lesson down for a probe that piped the launcher.
+          # This is the step on this lane that never got it.
+          NT_EXIT=0
+          bash netinstall/test/run.sh > ~/netinstall.log 2>&1 || NT_EXIT=$?
+          cat ~/netinstall.log
+          exit $NT_EXIT
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-netinstall-screenshots
+          path: |
+            C:\Users\runneradmin\*.png
+            C:\Users\runneradmin\netinstall-screenshots\
+
   windows-exerace:
     runs-on: windows-latest
     steps:
@@ -741,24 +792,6 @@ jobs:
           cat ~/assemble.log
           bash test/annotate.sh macos-assemble ~/assemble.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
-      # The loader environment the standalone launch path hands its engine.
-      # Every check here is against the same build with the fix cut out of it,
-      # so "it would have failed before" is measured in this run rather than
-      # claimed. Two builds go in: the testing tier, because the suite has to
-      # know the app came up and on two lanes that is scaffolding -- the macOS
-      # driver writes its title to a file only there, and Qt's Chromium needs
-      # the no-sandbox flag this container cannot do without -- and the default
-      # tier, which is the only build the sandbox section can ask its question
-      # of, since the testing tier is what puts --no-sandbox on the command
-      # line. Neither tier touches the environment.
-      - timeout-minutes: 25
-        run: |
-          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
-          TEST_EXIT=0
-          bash test/loaders.sh test/neutrinoloaders.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
-          cat ~/loaders.log
-          bash test/annotate.sh macos-loaders ~/loaders.log 'report:|FAIL:'
-          exit $TEST_EXIT
       # The last step in any lane with no way to be read, and it cost a merge.
       # It went red publishing nothing at all: verify-macos.sh exits before its
       # first screenshot when the window does not appear, so the artifact upload
@@ -818,6 +851,46 @@ jobs:
           cat ~/tight.log
           bash test/annotate.sh macos-tight ~/tight.log 'PASS:|FAIL:|failure\(s\)'
           exit $TIGHT_EXIT
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: macos-screenshots
+          path: |
+            ~/screenshots/
+
+  macos-loaders:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The loader environment the standalone launch path hands its engine.
+      # Every check here is against the same build with the fix cut out of it,
+      # so "it would have failed before" is measured in this run rather than
+      # claimed. Two builds go in: the testing tier, because the suite has to
+      # know the app came up and on two lanes that is scaffolding -- the macOS
+      # driver writes its title to a file only there, and Qt's Chromium needs
+      # the no-sandbox flag this container cannot do without -- and the default
+      # tier, which is the only build the sandbox section can ask its question
+      # of, since the testing tier is what puts --no-sandbox on the command
+      # line. Neither tier touches the environment.
+      - timeout-minutes: 25
+        run: |
+          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          TEST_EXIT=0
+          bash test/loaders.sh test/neutrinoloaders.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
+          cat ~/loaders.log
+          bash test/annotate.sh macos-loaders ~/loaders.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: macos-loaders-screenshots
+          path: |
+            ~/screenshots/
+
+  macos-behavior:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
       - run: |
           bash build.sh --tier=testing test/neutrinoattack.js test/neutrinoattack.cmd
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
@@ -855,6 +928,39 @@ jobs:
           cat ~/early.log || true
           bash test/annotate.sh macos-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # The navigation guard PR 6 built, and the account it gives of itself.
+      #
+      # It shipped spelled `webViewRef.stopLoading()`, and JXA runs a
+      # zero-argument selector when the property is read -- so the read stopped
+      # the load and the `()` after it threw, and for four PRs the guard refused
+      # every navigation and logged that it could not. Nothing here could catch
+      # that: verify-attack.sh aims at a host that never resolves, so its `nav`
+      # field is free whatever the guard does, and verify-early.sh asserts
+      # `at=held` with no control -- and `held` was the reading before the fix
+      # and after it, because the guard was working the whole time.
+      #
+      # So this asserts the effect and the account separately, against a control
+      # that is this artifact with the refusal deleted and against the spelling
+      # the fix replaced. Three launches of the same build, one line apart.
+      - timeout-minutes: 20
+        run: |
+          bash build.sh --tier=testing test/neutrinoearly.js test/neutrinonavrefuse.cmd
+          TEST_EXIT=0
+          bash test/navrefuse.sh test/neutrinonavrefuse.cmd > ~/navrefuse.log 2>&1 || TEST_EXIT=$?
+          cat ~/navrefuse.log
+          bash test/annotate.sh macos-navrefuse ~/navrefuse.log 'report:|FAIL:|PASS:|NOTE:'
+          exit $TEST_EXIT
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: macos-behavior-screenshots
+          path: |
+            ~/screenshots/
+
+  macos-net:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
       - name: netinstall suite
         timeout-minutes: 20
         run: |
@@ -889,41 +995,14 @@ jobs:
           cat ~/offline.log
           bash test/annotate.sh macos-offline ~/offline.log 'report:|FAIL:'
           exit $TEST_EXIT
-      # The navigation guard PR 6 built, and the account it gives of itself.
-      #
-      # It shipped spelled `webViewRef.stopLoading()`, and JXA runs a
-      # zero-argument selector when the property is read -- so the read stopped
-      # the load and the `()` after it threw, and for four PRs the guard refused
-      # every navigation and logged that it could not. Nothing here could catch
-      # that: verify-attack.sh aims at a host that never resolves, so its `nav`
-      # field is free whatever the guard does, and verify-early.sh asserts
-      # `at=held` with no control -- and `held` was the reading before the fix
-      # and after it, because the guard was working the whole time.
-      #
-      # So this asserts the effect and the account separately, against a control
-      # that is this artifact with the refusal deleted and against the spelling
-      # the fix replaced. Three launches of the same build, one line apart.
-      - timeout-minutes: 20
-        run: |
-          bash build.sh --tier=testing test/neutrinoearly.js test/neutrinonavrefuse.cmd
-          TEST_EXIT=0
-          bash test/navrefuse.sh test/neutrinonavrefuse.cmd > ~/navrefuse.log 2>&1 || TEST_EXIT=$?
-          cat ~/navrefuse.log
-          bash test/annotate.sh macos-navrefuse ~/navrefuse.log 'report:|FAIL:|PASS:|NOTE:'
-          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: macos-screenshots
+          name: macos-net-screenshots
           path: |
             ~/screenshots/
             ~/netinstall-screenshots/
-  # netinstall/sandbox_bsd.c describes a confinement that, until this lane, had
-  # never been compiled by anything in this repository -- build.sh cross-compiles
-  # six targets and none of them is a BSD, and no runner GitHub offers is one
-  # either. Four of its rules were wrong, including one that made every shell
-  # script it launched fail on `2>/dev/null`. A VM is the only way to ask, so
-  # this asks on every push, with the same suite the other four lanes answer to.
+
   openbsd:
     runs-on: ubuntu-latest
     timeout-minutes: 45
