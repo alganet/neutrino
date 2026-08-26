@@ -110,6 +110,11 @@ nt_timeout() {
     if command -v timeout >/dev/null 2>&1; then
         timeout "$secs" "$@"
     else
+        # A bound that silently is not there is worse than no bound: run.sh
+        # reads as though every suite in the list is capped, and on a platform
+        # without timeout(1) none of them are. Say it once rather than let the
+        # list be believed.
+        echo "  nt_timeout: no timeout(1) on this platform; running unbounded: $*" >&2
         "$@"
     fi
 }

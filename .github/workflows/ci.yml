@@ -551,7 +551,25 @@ jobs:
           NETINSTALL_CC: zig cc
         run: |
           export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
-          bash netinstall/test/run.sh
+          # Redirected, and that is the whole of this comment. The batch region
+          # STARTs a detached exe which inherits the standard handles, so with
+          # the step's own pipe on the other end it stays open for as long as
+          # the app lives -- and these apps are written never to close. Every
+          # suite inside run.sh is bounded by nt_timeout, so the suite is reaped
+          # and the orphan holding the pipe is not: the step then runs on past
+          # its own timeout-minutes, measured at 37 minutes against a bound of
+          # 20, and the rest of the lane never starts. A file has no reader to
+          # wait on. The log is echoed afterwards by a process that does exit,
+          # which is also what puts nt_result's ::warning lines back in front of
+          # the runner -- redirecting without that would take the annotations
+          # away with the hang.
+          #
+          # PR 20 wrote this lesson down for a probe that piped the launcher.
+          # This is the step on this lane that never got it.
+          NT_EXIT=0
+          bash netinstall/test/run.sh > ~/netinstall.log 2>&1 || NT_EXIT=$?
+          cat ~/netinstall.log
+          exit $NT_EXIT
       # The navigation lane. The Windows driver subscribes to NavigationStarting
       # and NewWindowRequested now, and this is the suite that says so: against
       # a target that answers, the driver without a guard reported
