@@ -87,13 +87,29 @@ if [ "$NT_WINDOWS" = "1" ]; then
     # PowerShell cannot read an MSYS path, so hand it a native one.
     PS1="$(cygpath -w "$ROOT/test/verify-windows.ps1")"
     SHOTS_WIN="$(cygpath -w "$SHOTS")"
-    if command -v pwsh >/dev/null 2>&1; then
-        pwsh -NoProfile -ExecutionPolicy Bypass -File "$PS1" -ScreenshotDir "$SHOTS_WIN"
-    else
-        powershell -NoProfile -ExecutionPolicy Bypass -File "$PS1" -ScreenshotDir "$SHOTS_WIN"
-    fi
+    PSEXE=powershell
+    command -v pwsh >/dev/null 2>&1 && PSEXE=pwsh
+    # `-Command ... *>&1`, not `-File`: verify-windows.ps1 speaks in Write-Host,
+    # which is the information stream, and a plain `> log 2>&1` catches stdout
+    # and stderr and not that -- so the log would be empty of every PASS and
+    # FAIL. The webview lanes merge with `*>&1` for the same reason; this is the
+    # same merge, one level out, so the exit code still carries the count.
+    "$PSEXE" -NoProfile -ExecutionPolicy Bypass \
+        -Command "& '$PS1' -ScreenshotDir '$SHOTS_WIN' *>&1" \
+        > "$WORK/verify-windows.log" 2>&1
     RC=$?
-    [ "$RC" -eq 0 ] || nt_fail "verify-windows.ps1 reported $RC failure(s)"
+    cat "$WORK/verify-windows.log"
+    if [ "$RC" -ne 0 ]; then
+        # The verifier's own account, out where annotate can read it. e2e used
+        # to surface only the count, so a red here named nothing and the detail
+        # -- which half stalled, the WebView2 package or the window -- sat in
+        # the job log a token is needed to read. Its FAIL and report lines carry
+        # that; a handful, well inside the per-step notice cap.
+        grep -aE '^[[:space:]]*(FAIL:|report:)' "$WORK/verify-windows.log" \
+            | tr -d '\r' | sed 's/^[[:space:]]*//' | head -8 \
+            | while IFS= read -r line; do nt_result "verify-windows: $line"; done
+        nt_fail "verify-windows.ps1 reported $RC failure(s)"
+    fi
     FAILURES=$((FAILURES + RC))
     nt_kill_tree $APP_PID
 elif command -v osascript >/dev/null 2>&1 && [ "$(uname -s)" = "Darwin" ]; then
