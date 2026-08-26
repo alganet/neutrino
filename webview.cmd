@@ -39,10 +39,21 @@ REM pins covers the .cmd and not the artifact compiled out of it.
 REM
 REM So it compiles every launch. 340 ms measured against the 86 ms the reuse
 REM cost, which is the price of the thing that runs being the thing just built
-REM from the source that was verified. What is left is the gap between the
-REM compile and the START at the end -- cmd cannot hand CreateProcess a handle
-REM the way the Qt path hands qml a descriptor -- and that is a race rather
-REM than an implant that outlives every launch.
+REM from the source that was verified. What is left is the gap between the MOVE
+REM that gives %APP_EXE% its final content and the START that runs it: cmd
+REM cannot hand CreateProcess a handle the way the Qt path hands qml a
+REM descriptor, so the name is exposed rather than the descriptor.
+REM
+REM Measured, and the gap turns out to have no accessible window. From the
+REM instant the file has its new content until the process exists is about
+REM 150 ms, and across it the name is held open deny-write the whole time --
+REM the platform's real-time scan of a freshly written executable, then the
+REM loader's own image section. test/exerace.ps1 hammers a same-uid replacement
+REM onto the name for that entire span, both as a rename and as an in-place
+REM overwrite: some three hundred attempts a launch, every one refused, the
+REM rename ERROR_ACCESS_DENIED and the overwrite ERROR_SHARING_VIOLATION. It
+REM asserts that none lands before the process starts, so the day a Windows
+REM change opens that window the suite goes red. A race in time, not in access.
 REM
 REM Compiled under another name and rotated into place, because a running
 REM instance holds its own exe open: Windows refuses to overwrite that file but
