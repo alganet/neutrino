@@ -20,11 +20,50 @@ public class WinAPI {
 }
 "@
 
-$Timeout = 120
+# Two budgets, because the first window on this lane is not like the others.
+# This app folder is cold: the Windows driver downloads and unpacks the pinned
+# WebView2 package before CoreWebView2 exists, and all of that happens *after*
+# the Form is on screen and before the page can set a title. The two suites
+# beside this one already budget for it -- appcache.ps1 waits 180 seconds on its
+# first launch and says why, verify-offline.ps1 waits 240 -- and this one waited
+# 120 for the whole thing and went red three times in a row on exactly that
+# stretch, saying `=== Step 0: Ready ===` and no more.
+$FirstTimeout = 240
+$Timeout = 60
 $PollInterval = 500
 $Failures = 0
 
 New-Item -ItemType Directory -Force -Path $ScreenshotDir | Out-Null
+
+# A verifier that speaks in PASS and FAIL should not leave by exception. The
+# waits below used to `throw` on a timeout; with $ErrorActionPreference = Stop
+# that propagates out of the script, past the step's own log assembly, and the
+# annotations get whatever had been printed before it -- two section headers,
+# three runs running. Ending here instead means the log always finishes with a
+# Results line and the exit code is always the failure count.
+function Fail-Now($message) {
+    Write-Host "FAIL: $message"
+    $script:Failures++
+    Write-Host ""
+    Write-Host "=== Results: $script:Failures failure(s) ==="
+    exit $script:Failures
+}
+
+# What the driver had managed to fetch when a wait gave up. Every failure so far
+# has been a wait ending at its bound with nothing else said, and the two
+# explanations want opposite fixes: the package download never finished, or it
+# finished and the page never ran. One line separates them.
+function Report-PackageState {
+    $root = Join-Path $PSScriptRoot "neutrinotest\Microsoft.Web.WebView2"
+    if (-not (Test-Path -LiteralPath $root)) {
+        Write-Host "report: no WebView2 package directory at $root"
+        return
+    }
+    $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue)
+    $bytes = ($files | Measure-Object -Property Length -Sum).Sum
+    if (-not $bytes) { $bytes = 0 }
+    Write-Host "report: WebView2 package: $($files.Count) file(s), $bytes byte(s)"
+}
 
 function Take-Screenshot($name) {
     try {
@@ -37,8 +76,9 @@ function Take-Screenshot($name) {
     } catch {}
 }
 
-function Wait-ForTitle($pattern) {
-    $deadline = (Get-Date).AddSeconds($Timeout)
+function Wait-ForTitle($pattern, $seconds) {
+    if (-not $seconds) { $seconds = $Timeout }
+    $deadline = (Get-Date).AddSeconds($seconds)
     do {
         $procs = Get-Process | Where-Object { $_.MainWindowTitle -like "*$pattern*" -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
         if ($procs) { return $procs }
@@ -47,25 +87,31 @@ function Wait-ForTitle($pattern) {
     # A bare timeout cannot tell an app that died from two apps where the wrong
     # one was picked, and those want opposite fixes. Say what was actually on
     # screen before giving up.
-    Write-Host "  windows with a title when the wait gave up:"
+    # `report:` and not two spaces: this dump is the reason the wait says
+    # anything at all when it gives up, and the annotate pattern this lane uses
+    # did not match it -- so the one thing written to explain a timeout was the
+    # one thing that never left the job log.
+    Report-PackageState
+    Write-Host "report: windows with a title when the wait gave up:"
     foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) {
         try {
             if ($proc.MainWindowHandle -eq 0 -or -not $proc.MainWindowTitle) { continue }
-            Write-Host "    $($proc.ProcessName) [$($proc.Id)] '$($proc.MainWindowTitle)'"
+            Write-Host "report:   $($proc.ProcessName) [$($proc.Id)] '$($proc.MainWindowTitle)'"
         } catch { continue }
     }
-    throw "TIMEOUT waiting for title: $pattern"
+    Fail-Now "TIMEOUT after ${seconds}s waiting for title: $pattern"
 }
 
 function Wait-ForApp() {
-    $deadline = (Get-Date).AddSeconds($Timeout)
+    $deadline = (Get-Date).AddSeconds($FirstTimeout)
     do {
         $p = Get-Process -Name neutrinotest -ErrorAction SilentlyContinue |
              Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
         if ($p) { return $p }
         Start-Sleep -Milliseconds $PollInterval
     } while ((Get-Date) -lt $deadline)
-    throw "TIMEOUT waiting for the app to show a window"
+    Report-PackageState
+    Fail-Now "TIMEOUT after ${FirstTimeout}s waiting for the app to show a window"
 }
 
 function Assert-Title($proc, $expected) {
@@ -205,7 +251,11 @@ function Assert-WebView2Package($artifact, $packageRoot) {
 }
 
 Write-Host "=== Step 0: Ready ==="
-$proc = Wait-ForTitle "STEP0"
+# The long budget again, and this is the wait that needed it: the Form is on
+# screen from Wait-ForApp, and everything between that and this title is the
+# WebView2 package being fetched and unpacked. Every wait after this one is a
+# scripted step a second apart and gets the short budget.
+$proc = Wait-ForTitle "STEP0" $FirstTimeout
 Assert-Title $proc "STEP0"
 Take-Screenshot "01-step0"
 

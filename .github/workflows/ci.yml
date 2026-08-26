@@ -452,12 +452,35 @@ jobs:
       # not, so anything that fails to exit here stops the whole run rather
       # than the step. The app not exiting is exactly what a missing close
       # handler produced.
-      - timeout-minutes: 15
+      - timeout-minutes: 20
         shell: pwsh
         run: |
           .\test\neutrinotest.cmd
-          & .\test\verify-windows.ps1 *>&1 | Tee-Object -FilePath "$HOME\windows-verify.log"
-          $testExit = $LASTEXITCODE
+          # Wrapped, because a verifier that leaves by exception takes the log
+          # assembly below with it -- which is how three red runs published two
+          # section headers and nothing else. The verifier no longer throws on a
+          # timeout; this is here for the ones nobody has thought of.
+          $testExit = 0
+          try {
+              & .\test\verify-windows.ps1 *>&1 | Tee-Object -FilePath "$HOME\windows-verify.log"
+              $testExit = $LASTEXITCODE
+          } catch {
+              "FAIL: verify-windows.ps1 ended by exception: $($_.Exception.Message)" |
+                  Tee-Object -FilePath "$HOME\windows-verify.log" -Append
+              $testExit = 1
+          }
+          # The launcher's own account, appended to the verifier's so one
+          # annotate carries both. This step went red twice saying only that it
+          # had reached "Step 0" -- which is a section header and not a pass --
+          # and the app's side of it was in a file nothing read. A refusal
+          # writes `neutrino: ...` here before any window exists.
+          $errLog = "test\neutrinotest\neutrino-error.log"
+          if (Test-Path $errLog) {
+              Add-Content "$HOME\windows-verify.log" "=== the app's own account ==="
+              Add-Content "$HOME\windows-verify.log" (Get-Content $errLog)
+          } else {
+              Add-Content "$HOME\windows-verify.log" "=== the app recorded no failure of its own ==="
+          }
           Get-Process | Where-Object { $_.MainWindowTitle -ne "" } | Where-Object { $_.MainWindowTitle -like "*neutrino*" -or $_.MainWindowTitle -like "*STEP*" -or $_.MainWindowTitle -like "*TESTS DONE*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
       # The oldest step in this lane and the last one with no way to be read.
@@ -466,7 +489,7 @@ jobs:
       # logs and nothing reported this one. Same treatment as the other four.
       - if: always()
         shell: bash
-        run: bash test/annotate.sh windows-test ~/windows-verify.log "PASS:|FAIL:|^=== "
+        run: bash test/annotate.sh windows-test ~/windows-verify.log "PASS:|FAIL:|report:|^=== |^neutrino:"
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
@@ -676,8 +699,26 @@ jobs:
           cat ~/loaders.log
           bash test/annotate.sh macos-loaders ~/loaders.log 'report:|FAIL:'
           exit $TEST_EXIT
-      - run: |
+      # The last step in any lane with no way to be read, and it cost a merge.
+      # It went red publishing nothing at all: verify-macos.sh exits before its
+      # first screenshot when the window does not appear, so the artifact upload
+      # found nothing either, and the app's own account went to a log that was
+      # catted into the job log and carried no further. Same treatment as the
+      # other five, and the timeout the netinstall step has had all along.
+      #
+      # One annotate for both halves. The app's output is appended rather than
+      # dumped into a step of its own, and matched on the `neutrino:` prefix the
+      # launcher speaks in -- a raw dump is unbounded by construction and this
+      # is not one.
+      - timeout-minutes: 20
+        run: |
           echo "=== Launching app ==="
+          # The status file is one fixed path and every testing-tier build on
+          # this lane writes it, the loaders step included. Cleared before the
+          # launch and not inside the verifier, which would race the app it is
+          # waiting for: a title left by the previous step is a reading
+          # attributed to this one, and it looks exactly like a real one.
+          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/neutrinotest.cmd > ~/neutrino-stdout.log 2>&1 &
           APP_PID=$!
           # Steps run under bash -e, so a failing verifier aborts this block
@@ -685,10 +726,17 @@ jobs:
           # unreachable on exactly the runs that need it, which is why the last
           # one reported a window and nothing else.
           TEST_EXIT=0
-          APP_PID=$APP_PID bash test/verify-macos.sh ~/screenshots || TEST_EXIT=$?
+          APP_PID=$APP_PID bash test/verify-macos.sh ~/screenshots \
+            > ~/macos-verify.log 2>&1 || TEST_EXIT=$?
           kill "$APP_PID" 2>/dev/null || true
+          cat ~/macos-verify.log
           echo "=== app output ==="
           cat ~/neutrino-stdout.log || true
+          {
+            echo "=== the app's own account ==="
+            cat ~/neutrino-stdout.log 2>/dev/null || true
+          } >> ~/macos-verify.log
+          bash test/annotate.sh macos-test ~/macos-verify.log 'PASS:|FAIL:|report:|^=== |^neutrino:'
           exit $TEST_EXIT
       # The tight tier: webview.cmd confining its own process, whether or not
       # netinstall launched it. Asserted from both sides -- the webview has to

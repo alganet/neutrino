@@ -9,6 +9,14 @@
 
 set -euo pipefail
 
+# Two budgets, because the first window is not like the ones after it. This is
+# the app's first launch on the runner: osascript starting, the bridge coming
+# up, WKWebView creating its content process, all of it before the first title
+# is written. Every wait after that is a scripted step a second behind the last.
+# 60 seconds covered both, and the merge run of PR 26 went red here having
+# produced no screenshot at all -- while verify-offline.sh, on this same
+# platform, already allows 90 for its first title and 60 for the settled one.
+FIRST_TIMEOUT=180
 TIMEOUT=60
 POLL_INTERVAL=0.2
 SCREENSHOT_DIR="${1:-.}"
@@ -22,19 +30,37 @@ screenshot() {
 }
 
 read_status_title() { sed -n '1p' "$STATUS_FILE" 2>/dev/null || echo ""; }
+
+# Whether anything is still running when a wait gives up. Every failure so far
+# has been a wait ending at its bound and saying nothing else, and an app that
+# died and an app that stalled want opposite fixes.
+report_launcher() {
+    if [ -n "${APP_PID:-}" ] && kill -0 "$APP_PID" 2>/dev/null; then
+        echo "report: the launcher process $APP_PID is still alive"
+    else
+        echo "report: the launcher process ${APP_PID:-<unset>} is gone"
+    fi
+    echo "report: osascript running: $(pgrep -x osascript 2>/dev/null | tr '\n' ' ' || true)"
+}
 read_status_geometry() { sed -n '2p' "$STATUS_FILE" 2>/dev/null || echo ""; }
 read_status_position() { sed -n '3p' "$STATUS_FILE" 2>/dev/null || echo ""; }
 
 wait_for_title() {
     local expected="$1"
-    local deadline=$((SECONDS + TIMEOUT))
+    local budget="${2:-$TIMEOUT}"
+    local deadline=$((SECONDS + budget))
     while [ $SECONDS -lt $deadline ]; do
         local found
         found=$(read_status_title)
         if [ "$found" = "$expected" ]; then return 0; fi
         sleep $POLL_INTERVAL
     done
-    echo "TIMEOUT waiting for title: $expected" >&2
+    echo "TIMEOUT after ${budget}s waiting for title: $expected" >&2
+    # What the app was actually saying when the wait gave up. A bare timeout
+    # cannot tell an app that stalled from an app that is one step ahead, and
+    # those want opposite fixes.
+    echo "report: the status file held: '$(read_status_title)'"
+    report_launcher
     return 1
 }
 
@@ -99,7 +125,7 @@ rm -f "$STATUS_FILE"
 # resize/move also write geometry+position to the status file.
 
 echo "=== Waiting for window ==="
-deadline=$((SECONDS + TIMEOUT))
+deadline=$((SECONDS + FIRST_TIMEOUT))
 while [ $SECONDS -lt $deadline ] && [ -z "$(read_status_title)" ]; do sleep $POLL_INTERVAL; done
 if [ -z "$(read_status_title)" ]; then
     # This verifier cannot see a window. It sees a status file that the macOS
@@ -114,13 +140,17 @@ if [ -z "$(read_status_title)" ]; then
     else
         echo "FAIL: window never appeared"
     fi
+    report_launcher
     exit 1
 fi
 echo "Window found"
 screenshot "00-initial"
 
 echo "=== Step 0: Ready ==="
-wait_for_title "STEP0" || { echo "FAIL: STEP0 never reached"; exit 1; }
+# The long budget once more. The window exists from the wait above, but the
+# document and the page script behind it may not, and that stretch is the one
+# that has been slow.
+wait_for_title "STEP0" "$FIRST_TIMEOUT" || { echo "FAIL: STEP0 never reached"; exit 1; }
 assert_title "STEP0"
 screenshot "01-step0"
 
