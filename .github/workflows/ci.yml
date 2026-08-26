@@ -434,6 +434,33 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-winexec ~/winexec.log 'report:|FAIL:'
+      # The monolith launched a webview (appcache) before the neutrinotest
+      # verify, so the WebView2 runtime's one-time cold init was already done.
+      # Split into its own job, this is the cold launch, and the documented
+      # Windows first-window stall lands on it far more often -- measured here,
+      # netinstall 3/3 and core 1/2 against a historical 3/10. This restores the
+      # precondition: launch a LOADERS webview -- the one appcache shows comes
+      # up reliably cold -- wait for its window, and move on.
+      - shell: bash
+        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinowarm.cmd
+      - name: warm the WebView2 runtime
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          # Best-effort: if the warm-up itself stalls it still triggered the
+          # runtime init, and the real verify keeps its own 240s bound, so this
+          # never fails the job. No pipe on the launcher -- the batch STARTs a
+          # detached exe and exits, and a pipe would outlive it (PR 20/28).
+          $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", ".\test\neutrinowarm.cmd" -PassThru -WindowStyle Hidden
+          $i = 0
+          for (; $i -lt 180; $i++) {
+            if (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like "LOADERS*" }) { break }
+            Start-Sleep -Seconds 1
+          }
+          Write-Output "warm: window=$(if ($i -lt 180) { 'UP' } else { 'DOWN' }) after ${i}s"
+          Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process -Name "neutrinowarm" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          exit 0
       # The netinstall step below has had a timeout all along and this one has
       # not, so anything that fails to exit here stops the whole run rather
       # than the step. The app not exiting is exactly what a missing close
@@ -690,6 +717,33 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
+      # The monolith launched a webview (appcache) before the neutrinotest
+      # verify, so the WebView2 runtime's one-time cold init was already done.
+      # Split into its own job, this is the cold launch, and the documented
+      # Windows first-window stall lands on it far more often -- measured here,
+      # netinstall 3/3 and core 1/2 against a historical 3/10. This restores the
+      # precondition: launch a LOADERS webview -- the one appcache shows comes
+      # up reliably cold -- wait for its window, and move on.
+      - shell: bash
+        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinowarm.cmd
+      - name: warm the WebView2 runtime
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          # Best-effort: if the warm-up itself stalls it still triggered the
+          # runtime init, and the real verify keeps its own 240s bound, so this
+          # never fails the job. No pipe on the launcher -- the batch STARTs a
+          # detached exe and exits, and a pipe would outlive it (PR 20/28).
+          $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", ".\test\neutrinowarm.cmd" -PassThru -WindowStyle Hidden
+          $i = 0
+          for (; $i -lt 180; $i++) {
+            if (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like "LOADERS*" }) { break }
+            Start-Sleep -Seconds 1
+          }
+          Write-Output "warm: window=$(if ($i -lt 180) { 'UP' } else { 'DOWN' }) after ${i}s"
+          Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process -Name "neutrinowarm" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          exit 0
       - name: netinstall suite
         timeout-minutes: 20
         shell: bash
