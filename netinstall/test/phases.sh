@@ -80,7 +80,8 @@ nt_downloader() {
         done
         return 1
     fi
-    for p in /usr/bin/curl /bin/curl /usr/local/bin/curl /opt/homebrew/bin/curl; do
+    for p in /usr/bin/curl /bin/curl /usr/local/bin/curl /usr/pkg/bin/curl \
+             /opt/homebrew/bin/curl; do
         [ -x "$p" ] && { echo "$p"; return 0; }
     done
     return 1
@@ -234,6 +235,20 @@ if [ "$NT_WINDOWS" = "1" ]; then
     WANT_HOME=ESCAPED
     WANT_TMP=ESCAPED
 fi
+# And where the fetch phase confines nothing at all -- FreeBSD and NetBSD,
+# whose nt_confine returns -1 -- both targets escape in both tiers, because
+# there are no tiers. Read off the sentence and not off a list of platforms:
+# that is what --info is for, and windows above is the same fact spelled by
+# hand before there was a second platform with it.
+SAYS_FETCH="$("$APP" --info 2>/dev/null | grep '^fetch' | sed 's/^fetch *//')"
+case "$SAYS_FETCH" in
+    none*)
+        WANT_HOME=ESCAPED
+        WANT_TMP=ESCAPED
+        WANT_TIGHT_HOME=ESCAPED
+        WANT_TIGHT_TMP=ESCAPED
+        nt_note "the fetch phase confines nothing here ($SAYS_FETCH); both targets are asserted to escape" ;;
+esac
 
 echo "=== Default tier: what the fetch child could write ==="
 probe_write "$APP" default "$HOMEJAR" HOMEJAR "$WANT_HOME"
@@ -302,7 +317,12 @@ INFO="$("$APP" --info 2>/dev/null | grep '^fetch' | sed 's/^fetch *//')"
 case "$(uname -s)" in
     Linux)                      WANT_INFO="landlock" ;;
     Darwin)                     WANT_INFO="seatbelt" ;;
-    OpenBSD|FreeBSD|NetBSD)     WANT_INFO="unveil" ;;
+    OpenBSD)                    WANT_INFO="unveil" ;;
+    # Not "unveil". These two were grouped with OpenBSD from the day the arm
+    # was written and neither has one: sandbox_bsd.c returns -1 for them and
+    # the line reads `none (no unprivileged confinement on this system...)`.
+    # Measured on both lanes.
+    FreeBSD|NetBSD|DragonFly)   WANT_INFO="none" ;;
     *)                          WANT_INFO="job object" ;;
 esac
 probe "--info fetch line: ${INFO:-<absent>}"
@@ -396,6 +416,12 @@ if [ -n "$FAILCLOSED" ]; then
     fi
 
     echo "=== And fetches, and runs, when both phases are confined ==="
+    # Which needs a platform where both phases can be. Where nothing confines,
+    # a strict build is *supposed* to refuse and this control has no positive
+    # to offer -- asserting it there fails the build for keeping its contract.
+    # The inverse is asserted instead, which is the contract on that platform:
+    # it refuses at the first phase, and the refusal names the fetch and not
+    # the run, because the fetch is where it stops.
     # The positive control for the refusal above, and on windows it is also the
     # nested job object question: the run phase creates a job of its own on top
     # of the one the fetch phase already put this process in. A strict binary is
@@ -406,7 +432,15 @@ if [ -n "$FAILCLOSED" ]; then
     RC=$?
     FETCHLINE="$(grep -a 'fetch confine:' "$WORK/err" | tail -1 | sed 's/.*fetch confine: //')"
     probe "strict, both phases: fetch got '${FETCHLINE:-<nothing printed>}', exit=$RC"
-    if grep -q PAYLOAD_RAN <<<"$OUT"; then
+    if [ "${SAYS_FETCH#none}" != "$SAYS_FETCH" ]; then
+        if [ "$RC" -ne 0 ] && ! grep -q PAYLOAD_RAN <<<"$OUT" &&
+           grep -qa "refusing to fetch unconfined" "$WORK/err"; then
+            echo "  PASS: nothing confines here, so it refused at the fetch and said so (exit $RC)"
+        else
+            nt_fail "strict build with nothing to confine it expected=refuse at the fetch actual=exit $RC $(tr '\n' ' ' < "$WORK/err" | cut -c1-160)"
+            FAILURES=$((FAILURES + 1))
+        fi
+    elif grep -q PAYLOAD_RAN <<<"$OUT"; then
         echo "  PASS: BOTH_PHASES_CONFINED -- fetched and ran"
     else
         nt_fail "strict build expected=fetch and run actual=exit $RC err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"

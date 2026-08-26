@@ -73,6 +73,7 @@ static const char *nt_curl_paths[] = {
     "/usr/bin/curl",
     "/bin/curl",
     "/usr/local/bin/curl",
+    "/usr/pkg/bin/curl",
     "/opt/homebrew/bin/curl",
 #endif
     NULL
@@ -87,11 +88,18 @@ static const char *nt_curl_paths[] = {
  * a wget this never finds. Harmless in practice, because macOS ships curl in
  * /usr/bin and the fallback is never reached; visible immediately once
  * something tried to reach it on purpose, which is how it was found.
+ *
+ * /usr/pkg/bin is the same mistake with a whole operating system behind it.
+ * pkgsrc installs everything there and NetBSD's base carries neither
+ * downloader, so until the netbsd lane there was no prefix on either list that
+ * a NetBSD box could ever satisfy: `netinstall: no curl or wget found`,
+ * measured on a machine with /usr/pkg/bin/curl on it.
  */
 static const char *nt_wget_paths[] = {
     "/usr/bin/wget",
     "/bin/wget",
     "/usr/local/bin/wget",
+    "/usr/pkg/bin/wget",
     "/opt/homebrew/bin/wget",
     NULL
 };

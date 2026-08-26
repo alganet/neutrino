@@ -913,9 +913,19 @@ jobs:
           # The log comes back rather than going to the job log: reading a job
           # log needs a token and reading annotations does not, which is the
           # same reason annotate.sh exists for the webview lanes.
+          #
+          # `&& rc=0 || rc=$?` and not a bare `$?`: vmactions pipes this script
+          # to `sh` behind a literal `set -eu` (index.js, `const fullCmd`), and
+          # run.sh exits with its failure count -- so the first red suite would
+          # abort the script before the rc file is written, and the action skips
+          # copyback entirely when the ssh command returns non-zero. This lane
+          # has only ever been green, which is the only reason it has not
+          # already lost a log to it. The `exit 0` is what keeps the ssh command
+          # successful; the outcome step below is what fails the lane.
           run: |
-            bash netinstall/test/run.sh > openbsd-suite.log 2>&1
-            echo "$?" > openbsd-suite.rc
+            bash netinstall/test/run.sh > openbsd-suite.log 2>&1 && rc=0 || rc=$?
+            echo "$rc" > openbsd-suite.rc
+            exit 0
       # `report:` is in the pattern because a suite's nt_result never leaves this
       # lane on its own: the `::warning` it writes is written inside the VM,
       # where GitHub is not listening, and arrives here as a line in a log file.
@@ -930,6 +940,214 @@ jobs:
           [ "${{ steps.vm.outcome }}" = "success" ] ||
             echo "::error title=openbsd::the vm step itself did not complete"
           exit "$(cat openbsd-suite.rc 2>/dev/null || echo 1)"
+  # PR 11 put the __OpenBSD__ half of netinstall/sandbox_bsd.c under a lane and
+  # found four of its rules wrong. The other half -- FreeBSD, NetBSD -- has
+  # still never been compiled by anything in this repository: build.sh
+  # cross-compiles six targets and none of them is a BSD, and the lane above
+  # compiles the branch this one does not. Meanwhile the suites grew
+  # FreeBSD|NetBSD arms written from the OpenBSD reading -- phases.sh wants
+  # "unveil" on the --info fetch line, fetchconf.sh wants it in the config line
+  # -- on two platforms whose nt_confine returns -1 and says "none". PR 11
+  # parked these with "a lane written blind is worse", and the blind arms are
+  # already in the tree. These two lanes ask.
+  #
+  # bsdfloor.sh runs first and gets an annotate step of its own. It asserts
+  # nothing and always exits 0, which is what lets it go in front of a suite
+  # whose whole question is whether anything downstream of it can build at all;
+  # the cap is per step, so its readings do not compete with the suite's.
+  freebsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      # Pinned to the commit v1.5.5 points at, on the same terms as the openbsd
+      # lane beside it: a tag is a name its owner can move.
+      - name: netinstall suite
+        id: vm
+        continue-on-error: true
+        uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1
+        with:
+          usesh: true
+          copyback: true
+          # The packages are installed in `run` and not in `prepare`, because
+          # `prepare` goes over the same `set -eu` ssh channel and its output
+          # lands only in the job log, which needs a token to read. Round 2's
+          # netbsd lane installed nothing and the only way anyone found out was
+          # that bsdfloor listed curl among the missing. A log that comes back
+          # is the difference between that and a sentence.
+          prepare: |
+            true
+          # See the openbsd lane above for why the rc is captured this way and
+          # why the script ends at 0: round 1 lost both logs and every reading
+          # to exactly that, on both lanes.
+          run: |
+            {
+              pkg install -y bash curl wget || true
+              pkg install -y python3 || true
+              echo "--- after ---"
+              for t in bash cc curl wget python3; do
+                printf 'tool %s ' "$t"; command -v "$t" || echo missing
+              done
+              printf 'tool python3 says '; python3 -V 2>&1 || echo missing
+            } > bsd-pkg.log 2>&1 || true
+            bash netinstall/test/bsdfloor.sh > bsd-probe.log 2>&1 && rc=0 || rc=$?
+            echo "$rc" > bsd-probe.rc
+            bash netinstall/test/run.sh > bsd-suite.log 2>&1 && rc=0 || rc=$?
+            echo "$rc" > bsd-suite.rc
+            exit 0
+      - name: probe results
+        if: always()
+        run: bash test/annotate.sh freebsd-probe bsd-probe.log '^ +report:|^ +FAIL:|SKIP:'
+      - name: packages
+        if: always()
+        run: bash test/annotate.sh freebsd-pkg bsd-pkg.log 'missing|not found|rror|^tool '
+      # Three steps over the suite log, because the cap is per step and round 2
+      # dropped four chunks from the middle of the failures alone. Anchored to
+      # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
+      # sentence twice, once for a reader and once as an ::error, and matching
+      # both halved the number of distinct failures that fit.
+      - name: results
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh freebsd bsd-suite.log '^ +FAIL:'
+      - name: readings
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh freebsd-readings bsd-suite.log 'SKIP|^ +report:'
+      # Most of what this lane counts as failures are suites exiting 2 without
+      # printing a FAIL line at all -- a setup that did not come up, not an
+      # assertion that did not hold. Those two are different problems and the
+      # results step above cannot see the first one.
+      - name: errors
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh freebsd-errors bsd-suite.log 'not found|No such file|Traceback|Permission denied|never came up|cannot create|^### |^ +(interpreter|still running|poller|it said)'
+      - name: totals
+        if: always()
+        run: bash test/annotate.sh freebsd-totals bsd-suite.log '^### Total|[.]sh. [0-9]+ failure'
+      # bsdfloor gates three answers of its own now -- that the branch compiles,
+      # which sysctl spelling this kernel answers, and whether the no-new-privs
+      # floor is one -- so its rc counts. `absent` when it never got as far as
+      # writing the file, which is a different failure from a red assertion and
+      # is left saying so rather than folded into a number.
+      - name: outcome
+        if: always()
+        run: |
+          [ "${{ steps.vm.outcome }}" = "success" ] ||
+            echo "::error title=freebsd::the vm step itself did not complete"
+          probe="$(cat bsd-probe.rc 2>/dev/null || echo absent)"
+          echo "::warning title=freebsd::probe rc=$probe"
+          [ "$probe" = "0" ] ||
+            echo "::error title=freebsd::bsdfloor reported $probe failure(s)"
+          suite="$(cat bsd-suite.rc 2>/dev/null || echo 1)"
+          [ "$suite" = "0" ] && [ "$probe" = "0" ] || exit 1
+          exit 0
+  netbsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      # Pinned to the commit v1.4.7 points at.
+      - name: netinstall suite
+        id: vm
+        continue-on-error: true
+        uses: vmactions/netbsd-vm@6334c835de4c04a59fe59f0f8f071e02a2f0bab3
+        with:
+          usesh: true
+          copyback: true
+          # pkgsrc installs under /usr/pkg, and its python is versioned: the
+          # package is python3NN and what lands on disk is python3.NN, which is
+          # not a name lib.sh's nt_python knows. The symlink is made here rather
+          # than taught to lib.sh, because whether this platform needs teaching
+          # is one of the things the round is asking.
+          # Nothing here: see the freebsd lane above. Round 2 installed not one
+          # package on this lane and said so nowhere.
+          prepare: |
+            true
+          run: |
+            PATH=/usr/pkg/bin:/usr/pkg/sbin:$PATH
+            export PATH
+            {
+              command -v pkgin || echo "no pkgin"
+              command -v pkg_add || echo "no pkg_add"
+              pkgin -y update || true
+              pkgin -y install curl wget || true
+              pkgin -y install python312 || pkgin -y install python311 || true
+              pkg_add curl wget python312 || true
+              # pkgsrc's python is versioned -- the package is python3NN and
+              # what lands is python3.NN, which is not a name lib.sh knows.
+              #
+              # The glob is anchored on purpose. `python3.*` also matches
+              # python3.12-config, which is what this linked in round 6, and
+              # nt_serve then started it eleven times and read
+              # `Usage: /usr/pkg/bin/python3 --prefix` -- reported as eleven
+              # suites whose fixture never came up. And the interpreter is asked
+              # to interpret before it is believed, because a name that exists
+              # and a program that runs are different claims.
+              for p in /usr/pkg/bin/python3.[0-9] /usr/pkg/bin/python3.[0-9][0-9]; do
+                if [ -x "$p" ] && "$p" -c "import http.server" >/dev/null 2>&1; then
+                  ln -sf "$p" /usr/pkg/bin/python3
+                fi
+              done
+              echo "--- after ---"
+              for t in bash cc curl wget python3; do
+                printf 'tool %s ' "$t"; command -v "$t" || echo missing
+              done
+              printf 'tool python3 says '; python3 -V 2>&1 || echo missing
+            } > bsd-pkg.log 2>&1 || true
+            bash netinstall/test/bsdfloor.sh > bsd-probe.log 2>&1 && rc=0 || rc=$?
+            echo "$rc" > bsd-probe.rc
+            bash netinstall/test/run.sh > bsd-suite.log 2>&1 && rc=0 || rc=$?
+            echo "$rc" > bsd-suite.rc
+            exit 0
+      - name: probe results
+        if: always()
+        run: bash test/annotate.sh netbsd-probe bsd-probe.log '^ +report:|^ +FAIL:|SKIP:'
+      - name: packages
+        if: always()
+        run: bash test/annotate.sh netbsd-pkg bsd-pkg.log 'missing|not found|rror|^tool '
+      # Three steps over the suite log, because the cap is per step and round 2
+      # dropped four chunks from the middle of the failures alone. Anchored to
+      # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
+      # sentence twice, once for a reader and once as an ::error, and matching
+      # both halved the number of distinct failures that fit.
+      - name: results
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh netbsd bsd-suite.log '^ +FAIL:'
+      - name: readings
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh netbsd-readings bsd-suite.log 'SKIP|^ +report:'
+      # Most of what this lane counts as failures are suites exiting 2 without
+      # printing a FAIL line at all -- a setup that did not come up, not an
+      # assertion that did not hold. Those two are different problems and the
+      # results step above cannot see the first one.
+      - name: errors
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh netbsd-errors bsd-suite.log 'not found|No such file|Traceback|Permission denied|never came up|cannot create|^### |^ +(interpreter|still running|poller|it said)'
+      - name: totals
+        if: always()
+        run: bash test/annotate.sh netbsd-totals bsd-suite.log '^### Total|[.]sh. [0-9]+ failure'
+      - name: outcome
+        if: always()
+        run: |
+          [ "${{ steps.vm.outcome }}" = "success" ] ||
+            echo "::error title=netbsd::the vm step itself did not complete"
+          probe="$(cat bsd-probe.rc 2>/dev/null || echo absent)"
+          echo "::warning title=netbsd::probe rc=$probe"
+          [ "$probe" = "0" ] ||
+            echo "::error title=netbsd::bsdfloor reported $probe failure(s)"
+          suite="$(cat bsd-suite.rc 2>/dev/null || echo 1)"
+          [ "$suite" = "0" ] && [ "$probe" = "0" ] || exit 1
+          exit 0
   netinstall-cross:
     runs-on: ubuntu-latest
     steps:

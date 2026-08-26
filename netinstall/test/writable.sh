@@ -224,7 +224,8 @@ echo "tag=${NEUTRINO_TEST_TAG:-none}"
 echo "tmpdir=${TMPDIR:-<unset>}"
 echo "runtime=${XDG_RUNTIME_DIR:-<unset>}"
 nt_py=""
-for c in /usr/bin/python3 /usr/local/bin/python3 /opt/homebrew/bin/python3 /usr/bin/python; do
+for c in /usr/bin/python3 /usr/local/bin/python3 /usr/pkg/bin/python3 \
+         /opt/homebrew/bin/python3 /usr/bin/python; do
     [ -x "$c" ] && { nt_py="$c"; break; }
 done
 echo "py=${nt_py:-none}"
@@ -242,6 +243,13 @@ for t in $NEUTRINO_TEST_TARGETS; do
     # The one operation no shell can express: O_RDWR without O_CREAT, on a file
     # that is already there. It is the whole question for a WRITE_FILE grant
     # that carries no MAKE_REG with it.
+    #
+    # Which makes the interpreter part of the apparatus: with no python the O is
+    # a dash on every target at every tier, and that is a full set of denials
+    # this suite never made. Measured on the netbsd lane, where pkgsrc puts
+    # python under /usr/pkg and the list above did not have it: eleven failures,
+    # `py=none`, and the unconfined control refusing to certify any of it --
+    # which is the control doing exactly its job.
     if [ -n "$nt_py" ] && "$nt_py" -c 'import sys
 f = open(sys.argv[1], "r+")
 f.write("o")
@@ -511,7 +519,7 @@ case "$(uname -s)" in
         WANT_TIGHT="$WANT_DEFAULT"
         SAY_DEFAULT="/private/var/folders"
         SAY_TIGHT="/private/var/folders" ;;
-    OpenBSD|FreeBSD|NetBSD|DragonFly)
+    OpenBSD)
         # tmp=--O is unveil "rw" without a "c", measured for the first time in
         # round 1 and matching what this tree has claimed since PR 11: an
         # existing file written, and neither created nor truncated, because
@@ -520,6 +528,28 @@ case "$(uname -s)" in
         WANT_TIGHT="$WANT_DEFAULT"
         SAY_DEFAULT="plus files that already exist under /tmp"
         SAY_TIGHT="plus files that already exist under /tmp" ;;
+    FreeBSD|NetBSD|DragonFly)
+        # These are not OpenBSD and they were grouped with it for as long as
+        # this arm has existed -- written from unveil's answer, on two platforms
+        # that have no unveil. sandbox_bsd.c returns -1 here and says so, and
+        # every letter below is the unconfined set read a second time. Measured
+        # on the freebsd lane: default, tight and unconfined are the same five
+        # letters, `dropped=[]`.
+        #
+        # That is not a gap being papered over -- it is ground rule 6. The day
+        # one of these grows something unprivileged, this goes red and names
+        # which letter moved, which is the whole reason to assert a platform's
+        # ceiling rather than skip it.
+        #
+        # DragonFly has never run: it is here because sandbox_bsd.c does not
+        # compile for it at all -- the file's own #if names three systems and
+        # DragonFly is not one, so it links sandbox_none.c, whose sentence has
+        # this shape. Reasoned from the source, and said so rather than left to
+        # look measured.
+        WANT_DEFAULT="appdir=CTO home=CTO tmp=CTO runtime=CTO tmpdir=CTO"
+        WANT_TIGHT="$WANT_DEFAULT"
+        SAY_DEFAULT="none (no unprivileged confinement"
+        SAY_TIGHT="none (no unprivileged confinement" ;;
     *)
         # The default tier here confines no writes and says so, which makes it
         # the one sentence in the matrix that was true before this PR. The
@@ -615,9 +645,20 @@ says_names default "$SAYS_DEFAULT" "$SAY_DEFAULT"
 # none. Asserted on every lane, because the defect was a description written
 # somewhere other than where the confinement is applied and that shape can
 # come back anywhere.
-if [ "$NT_WINDOWS" != "1" ]; then
+#
+# Except where the fetch phase confines nothing, which is windows and now
+# FreeBSD and NetBSD: there is no directory to name, and a sentence that named
+# one would be the lie this assertion exists to catch. Keyed on the sentence
+# rather than on a list of platforms, for the same reason check_tier above is.
+case "$SAYS_FETCH_DEFAULT" in
+    none*|"no filesystem confinement"*) NT_FETCH_NAMES_A_DIR=0 ;;
+    *)                                  NT_FETCH_NAMES_A_DIR=1 ;;
+esac
+if [ "$NT_WINDOWS" != "1" ] && [ "$NT_FETCH_NAMES_A_DIR" = "1" ]; then
     says_names "fetch default" "$SAYS_FETCH_DEFAULT" "blobs"
     [ -n "$APP_TIGHT" ] && says_names "fetch tight" "$SAYS_FETCH_TIGHT" "blobs"
+elif [ "$NT_WINDOWS" != "1" ]; then
+    nt_note "the fetch phase confines nothing here ($SAYS_FETCH_DEFAULT); there is no directory for it to name"
 fi
 for pair in "fetch default:$SAYS_FETCH_DEFAULT" "fetch tight:$SAYS_FETCH_TIGHT"; do
     case "${pair#*:}" in
