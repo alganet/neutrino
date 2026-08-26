@@ -223,10 +223,28 @@ count_gone() {
     done
     printf '%d/%d' "$gone" "$total"
 }
+# String equality, line by line, and no pattern anywhere. These names are up to
+# 259 characters of data and they were being handed to grep as *regexes*: the
+# netbsd lane read own259=UNREPORTED for a name its own payload had reported
+# SEEN -- proved by the namelens line below, which is byte-identical to
+# FreeBSD's. Whatever that grep does with a pattern that long is not worth
+# knowing, because a name is data and comparing it as a pattern was the bug.
+# -F would have been enough; this needs no external program at all.
 seen_state() {
-    if grep -qx "env $2 SEEN" <<<"$1"; then printf SEEN
-    elif grep -qx "env $2 GONE" <<<"$1"; then printf GONE
-    else printf UNREPORTED; fi
+    local line
+    while IFS= read -r line; do
+        # The windows payload is cmd.exe and its echo writes CRLF. grep is an
+        # MSYS program and strips that on the way in; `read` is a bash builtin
+        # and does not -- so swapping one for the other changed what the
+        # comparison was looking at, and seven readings on that lane went
+        # UNREPORTED for a payload that had reported every one of them. The
+        # translation was never this suite's to rely on; strip it here, where
+        # it can be seen.
+        line="${line%$'\r'}"
+        if [ "$line" = "env $2 SEEN" ]; then printf SEEN; return; fi
+        if [ "$line" = "env $2 GONE" ]; then printf GONE; return; fi
+    done <<<"$1"
+    printf UNREPORTED
 }
 ran() { grep -qx PROBE_END <<<"$1"; }
 
@@ -449,6 +467,16 @@ else
     D_STATE="UNREACHABLE -- this platform delivers at most $CEIL_MAX characters"
 fi
 nt_result "report: envlen truncation $D_STATE"
+# UNREPORTED means the payload said nothing about a name either way, and the two
+# ways that happens look identical from here: the name never arrived at all, or
+# it arrived under a different spelling because something truncated it -- in
+# which case two of these are the same length and one of them is a name the
+# battery never sent. NetBSD read own259=UNREPORTED where every other lane reads
+# SEEN, so say what did arrive and how long each one was.
+if [ "$D_STATE" != "not measured" ]; then
+    nt_result "report: envlen namelens $(printf '%s\n' "$D_OUT" |
+        awk '$1 == "env" { printf "%s:%s ", length($2), $3 }')"
+fi
 
 # =====================================================================
 # E -- can a fix that stops truncating hand this libc the name at all

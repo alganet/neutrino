@@ -80,7 +80,25 @@ FAILURES=0
 cat > "$SERVE/hostile.cmd" <<'SCRIPT'
 outside="$NEUTRINO_TEST_FAKEHOME/pwned"
 if echo owned > "$outside" 2>/dev/null; then echo "ESCAPED_HOME"; else echo "BLOCKED_HOME"; fi
-if echo owned > "$(dirname "$0")/hostile.cmd" 2>/dev/null; then echo "ESCAPED_LAUNCHER"; else echo "BLOCKED_LAUNCHER"; fi
+# Overwriting its own launcher is the question, and until the freebsd lane it
+# had only ever been asked where the answer was no. Where the answer is yes the
+# write lands on the file this shell is still reading, sh reads a script
+# lazily, and the next read is EOF: measured as
+# `hostile.cmd: 17: Syntax error: end of file unexpected (expecting "fi")`,
+# six markers in, with every check after it reporting a refusal the platform
+# had not made and --verify reporting a broken pin on top. So the bytes go
+# aside first and come back immediately, into the same inode at the same
+# length, which is what leaves this shell's offset pointing at what it was
+# pointing at. Where the write is refused both copies are refused with it and
+# nothing changes.
+launcher="$(dirname "$0")/hostile.cmd"
+cp "$launcher" "$XDG_DATA_HOME/.launcher.bak" 2>/dev/null
+if echo owned > "$launcher" 2>/dev/null; then echo "ESCAPED_LAUNCHER"; else echo "BLOCKED_LAUNCHER"; fi
+cat "$XDG_DATA_HOME/.launcher.bak" > "$launcher" 2>/dev/null
+# And say whether that worked, because a restore that silently did not is the
+# same empty reading as the truncation it was added to undo.
+if cmp -s "$XDG_DATA_HOME/.launcher.bak" "$launcher" 2>/dev/null
+then echo "LAUNCHER_RESTORED"; else echo "LAUNCHER_NOT_RESTORED"; fi
 if echo owned > "$XDG_DATA_HOME/ok" 2>/dev/null; then echo "OWN_DIR_WRITABLE"; else echo "OWN_DIR_BLOCKED"; fi
 if cat /etc/hosts >/dev/null 2>&1; then echo "READS_WORK"; else echo "READS_BLOCKED"; fi
 nt_true=""
@@ -504,6 +522,11 @@ fi
 if [ -n "${NETINSTALL_FAKE_TOKEN:-}" ]; then echo "SECRET_INHERITED"; else echo "SECRET_SCRUBBED"; fi
 if [ -n "${SSH_AUTH_SOCK:-}" ]; then echo "AGENT_INHERITED"; else echo "AGENT_SCRUBBED"; fi
 if [ -n "${PATH:-}" ] && [ -n "${HOME:-}" ]; then echo "BASICS_KEPT"; else echo "BASICS_LOST"; fi
+# Last line on purpose. Without it "the marker is not there" and "the payload
+# stopped before it got there" are the same reading, and on FreeBSD they were:
+# this script died six markers in and five checks after it each reported a
+# refusal the platform had not made.
+echo "PAYLOAD_END"
 SCRIPT
 
 SPEC="hostile-com-example-0$(nt_pin "$SERVE/hostile.cmd")"
@@ -619,9 +642,25 @@ PLIST
 fi
 
 # fd 3 carries a readable file in, so the payload can tell "closed" from "empty".
-OUT="$("$APP" 2>"$WORK/err" 3<"$SERVE/hostile.cmd")"
+OUT="$("$APP" 2>"$WORK/err" 3<"$SERVE/hostile.cmd")" && OUT_RC=0 || OUT_RC=$?
 CONFINE="$("$APP" --info 2>/dev/null | awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')"
 nt_note "confinement: $CONFINE"
+
+# The payload's own account of whether it finished, and the stderr this suite
+# has redirected to a file since it was written and never once read. On FreeBSD
+# the payload stopped after EXEC_OWN_DIR and every check below reported
+# `expected=X actual=<the six markers it did print>` -- which reads as five
+# separate refusals by the platform and is one death in the script.
+nt_result "report: confine payload rc=$OUT_RC lines=$(grep -c . <<<"$OUT") finished=$(grep -qx PAYLOAD_END <<<"$OUT" && echo yes || echo NO)"
+# The tail, and netinstall's own warnings filtered out of it. Round 4 reported
+# the head and spent the whole 260 characters on `warning: running unconfined`,
+# which the confinement line above already says -- while the payload's own last
+# words, which are the reading, were past the cut. Same rule annotate.sh states
+# for chunks: the answer is at the end.
+NT_PAYLOAD_ERR="$(grep -av '^netinstall:' "$WORK/err" 2>/dev/null |
+                  tail -4 | tr '\n' ' ' | tr -d '[:cntrl:]')"
+[ -n "$NT_PAYLOAD_ERR" ] || NT_PAYLOAD_ERR="<nothing the app itself said>"
+nt_result "report: confine payload stderr: $NT_PAYLOAD_ERR"
 
 # And the same question with Terminal already up, which is the ordinary state
 # of a mac and the one where LaunchServices hands the document over as an apple

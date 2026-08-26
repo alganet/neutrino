@@ -116,11 +116,59 @@ int nt_self_path(char *buf, size_t len, const char *argv0)
         int mib[4];
         size_t n = len;
 
+        /*
+         * The same question, spelled two ways. FreeBSD hangs KERN_PROC_PATHNAME
+         * off KERN_PROC with the pid last; NetBSD makes it a subcommand of
+         * KERN_PROC_ARGS with the pid at mib[2]. Both constants exist on both
+         * systems, so the #ifdef above is satisfied either way and for as long
+         * as this file has existed NetBSD was asked FreeBSD's question.
+         *
+         * Measured on the netbsd lane, one binary asking both in a row:
+         * as-shipped rc=0 len=0 '' -- a success that wrote nothing -- and the
+         * spelling below rc=0 len=46 with the real path in it. FreeBSD, asked
+         * the same pair, answers the first and returns ENOTDIR to the second.
+         */
+#if defined(__NetBSD__) && defined(KERN_PROC_ARGS)
+        mib[0] = CTL_KERN;
+        mib[1] = KERN_PROC_ARGS;
+        mib[2] = -1;
+        mib[3] = KERN_PROC_PATHNAME;
+#else
         mib[0] = CTL_KERN;
         mib[1] = KERN_PROC;
         mib[2] = KERN_PROC_PATHNAME;
         mib[3] = -1;
-        if (sysctl(mib, 4, buf, &n, NULL, 0) == 0) {
+#endif
+        /*
+         * And the length, not just the return value. That success-with-nothing
+         * is what this function used to accept: it returned 0, the caller took
+         * the basename of an empty buffer, and every name on the platform was
+         * refused with `"" is not a valid spec` -- --info printed an empty
+         * confine line for all five tiers and pinfloor.sh rejected 32, 33, 63
+         * and 64 hex alike. A sysctl that succeeds having written nothing is
+         * not an answer, on any of the three.
+         */
+        if (sysctl(mib, 4, buf, &n, NULL, 0) == 0 && n > 0 && buf[0] != '\0') {
+            /*
+             * And resolve it, the way the macOS branch above already does.
+             * The guarantee in --help is that the spec comes from the real
+             * executable and never from argv[0]; on NetBSD the kernel hands
+             * back the name the exec used, so a symlink called
+             * evil-com-example-<pin> pointing at the real binary resolved to
+             * the *link*. names.sh has asserted against exactly that since
+             * long before this platform ran it -- measured there as
+             * `symlink expected=https://example.com/real.cmd
+             * actual=https://evil.com/fake.cmd`. FreeBSD answers with the
+             * target either way, so this costs it nothing.
+             */
+            {
+                char real[NT_PATH_MAX];
+
+                if (realpath(buf, real) &&
+                    (size_t)snprintf(buf, len, "%s", real) < len) {
+                    return 0;
+                }
+            }
             return 0;
         }
     }

@@ -24,8 +24,14 @@ set -uo pipefail
 LABEL="${1:-probe}"
 FILE="${2:-}"
 PATTERN="${3:-report:|FAIL:}"
-MAX_CHUNKS=8
-PER_CHUNK=5
+# Eight chunks of five is forty lines, and GitHub keeps ten annotations of each
+# level per step -- so eight plus the "dropped" notice is the cap and the
+# chunk size is the only thing left to turn. A step whose log has more to say
+# than forty lines raises PER_CHUNK rather than losing its middle: an
+# annotation carries kilobytes and the netbsd lane was dropping suite failures
+# it had been added to report.
+MAX_CHUNKS="${NT_ANNOTATE_CHUNKS:-8}"
+PER_CHUNK="${NT_ANNOTATE_PER:-5}"
 
 emit() {
     echo "$*"

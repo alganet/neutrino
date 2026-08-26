@@ -53,6 +53,15 @@ this a confused deputy.
 the kernel what is running. There netinstall resolves `argv[0]` instead, and the guarantee that the
 name cannot be spoofed by the caller does not hold.
 
+On the other two BSDs the kernel is asked, but not with the same words: FreeBSD hangs
+`KERN_PROC_PATHNAME` off `KERN_PROC` with the pid last, and NetBSD makes it a subcommand of
+`KERN_PROC_ARGS` with the pid at `mib[2]`. Both constants exist on both systems, so for as long as
+this file had a BSD branch NetBSD was asked FreeBSD's question — and answered it with **success and
+zero bytes**, which was taken for an answer. Every name on that platform was then refused as
+`"" is not a valid spec`. The length is checked now as well as the return value, and the path the
+kernel returns is resolved before use, because NetBSD hands back the name the exec used and a
+symlink would otherwise have resolved to itself.
+
 ## Options
 
 ```
@@ -224,7 +233,11 @@ user's own curl configuration. Nothing here expires or rots, and the trust decis
 the user can see and change it. This is the same posture as `curl | sh`.
 
 `curl` is resolved from absolute paths rather than `$PATH`, so a planted `curl` cannot take over
-the fetch. Its own configuration is *not* scrubbed: that config is the trust anchor you chose,
+the fetch. That list has to carry every prefix a platform actually installs into: it did not have
+`/usr/pkg/bin`, which is where pkgsrc puts everything, on the one platform whose base ships neither
+downloader — so netinstall could not fetch anything at all on NetBSD.
+
+Its own configuration is *not* scrubbed: that config is the trust anchor you chose,
 and removing your control over it would defeat the point.
 
 That is a decision about **trust**, and a config file is not limited to trust — so `--info` prints
@@ -310,7 +323,8 @@ until it was measured: every platform grants writes somewhere else as well, deli
 a reason, and a sentence that describes one of five is the same defect as a sentence that
 describes none. The set was enumerated from inside the confinement on all six lanes —
 `netinstall/test/writable.sh` is that measurement, and it now asserts every letter of it.
-| **FreeBSD** | No confinement. `PROC_NO_NEW_PRIVS_CTL` only, which is a floor rather than a boundary. |
+| **FreeBSD** | No confinement. `PROC_NO_NEW_PRIVS_CTL` only, which is a floor rather than a boundary — measured as a floor rather than assumed to be one: with it set, a setuid-root binary executed afterwards comes back unprivileged, and the same exec without it comes back root. |
+| **NetBSD** | No confinement, and no floor either — there is no `procctl` here. The `confine` line says so. |
 
 If nothing is available the binary **runs anyway and warns on stderr**, naming what was and
 wasn't applied; confinement here is defence in depth, not the trust anchor. Building with
@@ -471,10 +485,11 @@ while these stand:
   default tier restricts writes and leaves reads alone, so `~/.curlrc` is read there and is part
   of the trust model [above](#trust-model). On OpenBSD it is not read at all. Narrower, and
   different; said here rather than discovered by someone whose proxy settings stopped applying.
-- **FreeBSD gets no confinement**, and that is unlikely to change while Capsicum needs the target's
-  cooperation, and jail, chroot and ugidfw all need root. It does get the environment allowlist, no
-  core dumps and `PROC_NO_NEW_PRIVS_CTL`, none of which is a boundary; a strict build still refuses
-  to run there.
+- **FreeBSD and NetBSD get no confinement**, and that is unlikely to change while Capsicum needs the
+  target's cooperation, and jail, chroot and ugidfw all need root. They do get the environment
+  allowlist and no core dumps, and FreeBSD gets `PROC_NO_NEW_PRIVS_CTL` on top; none of that is a
+  boundary. A strict build refuses to run on either — measured on both, where it stops at the fetch
+  phase rather than the run phase, because the fetch is the first thing it will not do unconfined.
 
 ### Write xor execute on macOS
 
@@ -980,7 +995,8 @@ experimental read-and-execute tier, `-DNEUTRINO_CONFINE_OFFLINE` denies the app 
 separate axes and compose. Pass them through `NETINSTALL_CFLAGS`.
 
 Targets: `linux-{x86_64,aarch64}` (musl, static), `macos-{x86_64,arm64}`,
-`windows-{x86_64,aarch64}`. OpenBSD and FreeBSD build natively with `./build.sh host`.
+`windows-{x86_64,aarch64}`. OpenBSD, FreeBSD and NetBSD build natively with `./build.sh host`, and
+all three run the suite in CI.
 
 ## Testing
 

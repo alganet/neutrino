@@ -67,8 +67,19 @@ case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         WANT_LOCS=" CURL_HOME=READ XDG=READ HOME_dot=READ HOME_us=READ APPDATA=READ USERPROFILE=READ INBLOBS=READ"
         WANT_OUT=landed ;;
-    OpenBSD|FreeBSD|NetBSD|DragonFly)
+    OpenBSD)
         WANT_LOCS=" CURL_HOME=no XDG=no HOME_dot=no INBLOBS=READ"
+        WANT_OUT=refused ;;
+    # Not OpenBSD's answer. Those three `no`s are unveil refusing a read, and
+    # these two platforms have no unveil to refuse with -- so every location is
+    # readable and the fetch child reads all of them. Measured on the freebsd
+    # lane, curl 8.21.0: CURL_HOME=READ XDG=READ HOME_dot=READ INBLOBS=READ.
+    # XDG is the one that moves with the curl version rather than with the
+    # confinement -- the linux arm below reads XDG=no on two older curls -- so
+    # if the netbsd lane disagrees here it is saying something about its curl
+    # and gets a line of its own.
+    FreeBSD|NetBSD|DragonFly)
+        WANT_LOCS=" CURL_HOME=READ XDG=READ HOME_dot=READ INBLOBS=READ"
         WANT_OUT=refused ;;
     *)
         WANT_LOCS=" CURL_HOME=READ XDG=no HOME_dot=READ INBLOBS=READ"
@@ -195,8 +206,12 @@ echo "  config     ${CLINE:-<none>}"
 # the fetch phase cannot read any of these, which README.md has said since
 # PR 11 and which the locations below measure.
 case "$(uname -s)" in
-    OpenBSD|FreeBSD|NetBSD|DragonFly) WANT_CFG="unveil" ;;
-    *)                                WANT_CFG="not suppressed" ;;
+    OpenBSD) WANT_CFG="unveil" ;;
+    # And the same correction: the honest sentence on a platform that confines
+    # the fetch phase with nothing is the ordinary one -- the config is read and
+    # is not suppressed -- which is what --info prints there. Measured on the
+    # freebsd lane.
+    *)       WANT_CFG="not suppressed" ;;
 esac
 case "$CLINE" in
     *"$WANT_CFG"*) ok "--info names what the downloader reads besides its argv" ;;

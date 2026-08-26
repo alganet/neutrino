@@ -40,16 +40,31 @@ nt_pin() {
 # Serves $1 on a free-ish port. Sets NT_SERVER_PID and NEUTRINO_TEST_ORIGIN in
 # the caller's shell, so it must not be run in a command substitution.
 nt_serve() {
-    local dir="$1" port i
+    local dir="$1" port i log py
     port=$((20000 + RANDOM % 20000))
-    ( cd "$dir" && exec "$(nt_python)" -m http.server "$port" --bind 127.0.0.1 ) >/dev/null 2>&1 &
+    py="$(nt_python)"
+    # The server's own output used to go to /dev/null, so a suite whose fixture
+    # never came up said "never came up" and nothing else -- eleven times in one
+    # netbsd run, which is most of that lane's failure count and none of it a
+    # statement about the confinement. Keep it: it is the only thing that knows
+    # whether the interpreter is missing, the module is absent, or the bind was
+    # refused.
+    log="${TMPDIR:-/tmp}/nt-serve-$$-$port.log"
+    ( cd "$dir" && exec "$py" -m http.server "$port" --bind 127.0.0.1 ) >"$log" 2>&1 &
     NT_SERVER_PID=$!
     export NEUTRINO_TEST_ORIGIN="http://127.0.0.1:$port"
     for i in $(seq 1 100); do
-        curl -fsS "$NEUTRINO_TEST_ORIGIN/" >/dev/null 2>&1 && return 0
+        curl -fsS "$NEUTRINO_TEST_ORIGIN/" >/dev/null 2>&1 && { rm -f "$log"; return 0; }
         sleep 0.1
     done
-    echo "nt_serve: server on port $port never came up" >&2
+    {
+        echo "nt_serve: server on port $port never came up"
+        echo "  interpreter: $py -> $(command -v "$py" 2>/dev/null || echo '<not on PATH>')"
+        echo "  still running: $(kill -0 "$NT_SERVER_PID" 2>/dev/null && echo yes || echo no)"
+        echo "  poller: curl -> $(command -v curl 2>/dev/null || echo '<not on PATH>')"
+        echo "  it said: $(tr '\n' ' ' < "$log" 2>/dev/null | tr -d '[:cntrl:]' | cut -c1-300)"
+    } >&2
+    rm -f "$log"
     return 1
 }
 
