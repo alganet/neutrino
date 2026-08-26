@@ -673,6 +673,48 @@ jobs:
           path: |
             C:\Users\runneradmin\*.png
             C:\Users\runneradmin\netinstall-screenshots\
+  windows-exerace:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Its own job, not a step at the tail of `windows`. The lane it used to
+      # sit behind runs a dozen suites serially and this one launches the app
+      # some forty times over three probing modes, so bolted on the end it was
+      # half an hour nobody could overlap. Parallel, it costs wall-clock
+      # nothing. Nothing here depends on the rest of the lane: it builds its own
+      # artifact and measures the launch path's own file I/O.
+      - shell: bash
+        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinorace.cmd
+      # The gap between the compile and the START, asserted shut. The batch
+      # region MOVEs the freshly compiled exe onto a predictable name in the app
+      # folder, writes a manifest, and only then STARTs it -- and appcache.ps1
+      # measured that folder writable by everything running as this user. Three
+      # probing rounds established the window is real in time (about 150 ms) and
+      # shut in access: the name is open deny-write across all of it, and some
+      # three hundred same-uid plant attempts a launch are refused every time,
+      # rename ERROR_ACCESS_DENIED and overwrite ERROR_SHARING_VIOLATION. This
+      # asserts none lands before the process starts, so the day a Windows
+      # change opens the window the suite goes red and names the mode and round.
+      - timeout-minutes: 30
+        shell: pwsh
+        run: |
+          & .\test\exerace.ps1 .\test\neutrinorace.cmd *>&1 | Tee-Object -FilePath "$HOME\exerace.log"
+          $raceExit = $LASTEXITCODE
+          Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process -Name "neutrinorace" -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $raceExit
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-exerace ~/exerace.log 'report:|FAIL:|failure\(s\)'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-exerace-screenshots
+          path: |
+            C:\Users\runneradmin\*.png
+
   macos:
     runs-on: macos-latest
     steps:
