@@ -144,11 +144,25 @@ Tests exercise `setTitle`, `resize`, and `move` with external scripts that poll 
 
 ---
 
+## Installing over the network
+
+[`netinstall/`](netinstall/) is a separate subproject: a small compiled binary that derives
+everything it does from its own filename. Rename it, and it fetches, pins and runs something
+else. **<https://alganet.github.io/neutrino/>** publishes a sample app and netinstall binaries
+already named for it — download one for your platform and run it, and a window opens.
+
+`neutrino` itself is unchanged by any of that and still works as a plain script; you never need
+netinstall to run one.
+
+---
+
 ## Repository
 
 - `webview.cmd`: polyglot entrypoint and runtime
 - `build.sh`: polyglot assembler (JS + template -> .cmd)
 - `test/`: test harness and platform verification scripts
+- `netinstall/`: the name-addressed launcher, and its own suite
+- `pages/`: the demo site published at alganet.github.io/neutrino/
 - `LICENSE`: ISC license
 
 ---
