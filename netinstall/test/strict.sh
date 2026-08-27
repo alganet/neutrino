@@ -25,7 +25,7 @@ trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK"' EXIT
 FAILURES=0
 
 printf 'echo PAYLOAD_RAN > "$XDG_DATA_HOME/ran"\necho PAYLOAD_RAN\n' > "$SERVE/strict.cmd"
-SPEC="strict-com-example-0$(nt_pin "$SERVE/strict.cmd")"
+SPEC="strict-example-com-1$(nt_pin "$SERVE/strict.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 RAN="$NEUTRINO_HOME/apps/$(nt_appkey "$SPEC")/strict/data/ran"
 

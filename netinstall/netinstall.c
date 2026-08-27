@@ -154,7 +154,7 @@ int nt_self_path(char *buf, size_t len, const char *argv0)
              * The guarantee in --help is that the spec comes from the real
              * executable and never from argv[0]; on NetBSD the kernel hands
              * back the name the exec used, so a symlink called
-             * evil-com-example-<pin> pointing at the real binary resolved to
+             * fake-evil-com-1<pin> pointing at the real binary resolved to
              * the *link*. names.sh has asserted against exactly that since
              * long before this platform ran it -- measured there as
              * `symlink expected=https://example.com/real.cmd
@@ -210,16 +210,40 @@ static void nt_why(char *why, size_t whylen, const char *fmt, ...)
 }
 
 /*
- * The last segment is always the token and the first is always the name, so
- * position decides and no segment ever needs to be disambiguated by shape.
- * A '_' stands for a '-' in the resolved value; DNS labels cannot contain
- * '_', so only app names give anything up.
+ * The name is the URL read inside-out: the file, then its directory, then the
+ * host's labels in the order anyone writes them, then the token. The token's
+ * first character says how many of the leading segments are path rather than
+ * host, which is the one fact the walk cannot carry by itself -- the host has
+ * no fixed label count and neither does a path, so something has to say where
+ * one stops.
  *
- * `why` is written only for the token, and the reason is the pin floor: a name
- * that parsed before this binary was built refuses now, and "not a valid spec"
- * is a true thing to say to someone whose problem is sixteen missing
- * characters. Every other refusal keeps the message it had -- a reason channel
- * for the whole grammar is a different change than this one.
+ * That character is the shape, and it is arithmetic rather than a table:
+ *
+ *     shape = 2 * directories + (1 if the file is named)
+ *
+ *     0  alganet-dev-0<pin>            https://alganet.dev/netinstall.cmd
+ *     1  calc-alganet-dev-1<pin>       https://alganet.dev/calc.cmd
+ *     2  demo-alganet-github-io-2<pin> https://alganet.github.io/demo/netinstall.cmd
+ *     3  calc-toy-alganet-dev-3<pin>   https://alganet.dev/toy/calc.cmd
+ *
+ * Odd means "I named the file"; even takes the default stem. One directory is
+ * the cap, so 4 through f are unassigned and a future digest algorithm can have
+ * a slice of them -- which is why the shape and the algorithm share one
+ * character instead of two. Both were once the same field spelled `0`, meaning
+ * sha-256; it still does, and now it also means the shape.
+ *
+ * The host labels are no longer reversed. Reversal only pays off if something
+ * groups by suffix, which needs a public suffix list this does not carry, so it
+ * cost a reading of `app-uk-co-example-www` and bought nothing.
+ *
+ * A '_' stands for a '-' in the resolved value; DNS labels cannot contain '_',
+ * so only file and directory names give anything up.
+ *
+ * `why` carries the reason wherever the refusal is about a number the reader
+ * cannot see -- the pin floor, an unassigned shape, a shape that eats the host.
+ * A miscounted shape is not otherwise catchable: it resolves to a well-formed
+ * URL that is simply not the one meant. The pin is what makes that safe. It
+ * misfetches, and cannot misrun.
  */
 int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
 {
@@ -227,6 +251,8 @@ int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
     char *seg[64];
     size_t nseg = 0;
     size_t len, i;
+    size_t lead, dirs, named;
+    int shape;
     char *p;
 
     len = strlen(base);
@@ -252,11 +278,17 @@ int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
 
     memset(out, 0, sizeof(*out));
     memcpy(out->spec, work, len + 1);
+    /*
+     * The cache key is the spec without the pin, so the shape stays in it. Two
+     * names that differ only in shape point at different URLs and must not
+     * share an app directory; two that differ only in pin are the same app at a
+     * new version and must.
+     */
     memcpy(out->app, work, len + 1);
     {
         char *lastdash = strrchr(out->app, '-');
-        if (lastdash) {
-            *lastdash = '\0';
+        if (lastdash && lastdash[1] != '\0') {
+            lastdash[2] = '\0';
         }
     }
 
@@ -270,7 +302,7 @@ int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
             seg[nseg++] = p + 1;
         }
     }
-    if (nseg < 3) {
+    if (nseg < 2) {
         return -1;
     }
 
@@ -280,19 +312,78 @@ int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
         }
     }
 
-    if (strlen(seg[0]) >= NT_NAME_MAX) {
+    if (strlen(seg[nseg - 1]) >= NT_TOKEN_MAX) {
         return -1;
     }
-    strcpy(out->name, seg[0]);
+    strcpy(out->token, seg[nseg - 1]);
+    {
+        char c = out->token[0];
+
+        if (c >= '0' && c <= '9') {
+            shape = c - '0';
+        } else if (c >= 'a' && c <= 'f') {
+            shape = c - 'a' + 10;
+        } else {
+            nt_why(why, whylen, "the shape is '%c', and a shape is one "
+                                "lowercase hex character", c);
+            return -1;
+        }
+        if (shape > 3) {
+            nt_why(why, whylen, "shape '%c' is not one this build knows; "
+                                "0 to 3 are assigned and 4 to f are not, so a "
+                                "name using one comes from a newer publisher "
+                                "than this binary", c);
+            return -1;
+        }
+    }
+    dirs = (size_t)shape / 2;
+    named = (size_t)shape % 2;
+    lead = dirs + named;
+
+    /*
+     * One label is enough for a host -- `localhost` is a host, and it is the
+     * one the suite serves from. What is refused here is a shape that leaves
+     * nothing at all, which is the miscount that would otherwise read a path
+     * segment as the entire host.
+     */
+    if (nseg < lead + 2) {
+        nt_why(why, whylen, "shape '%c' takes %lu segment%s as path and leaves "
+                            "nothing for the host; this name has %lu before the "
+                            "token and a host needs one more",
+                            out->token[0], (unsigned long)lead,
+                            lead == 1 ? "" : "s", (unsigned long)(nseg - 1));
+        return -1;
+    }
+
+    if (named) {
+        if (strlen(seg[0]) >= NT_NAME_MAX) {
+            return -1;
+        }
+        strcpy(out->name, seg[0]);
+    } else {
+        strcpy(out->name, NT_DEFAULT_STEM);
+    }
+    if (dirs) {
+        if (strlen(seg[named]) >= NT_NAME_MAX) {
+            return -1;
+        }
+        strcpy(out->dir, seg[named]);
+    }
     for (p = out->name; *p; p++) {
         if (*p == '_') {
             *p = '-';
         }
     }
+    for (p = out->dir; *p; p++) {
+        if (*p == '_') {
+            *p = '-';
+        }
+    }
 
-    for (i = nseg - 2; i >= 1; i--) {
+    for (i = lead; i + 1 < nseg; i++) {
         size_t have = strlen(out->host);
         size_t add = strlen(seg[i]);
+
         if (have + add + 2 >= NT_HOST_MAX) {
             return -1;
         }
@@ -301,9 +392,6 @@ int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
             out->host[have] = '\0';
         }
         strcpy(out->host + have, seg[i]);
-        if (i == 1) {
-            break;
-        }
     }
     for (p = out->host; *p; p++) {
         if (*p == '_') {
@@ -311,15 +399,6 @@ int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
         }
     }
 
-    if (strlen(seg[nseg - 1]) >= NT_TOKEN_MAX) {
-        return -1;
-    }
-    strcpy(out->token, seg[nseg - 1]);
-    if (out->token[0] != '0') {
-        nt_why(why, whylen, "pin version '%c' is not one this build knows; "
-                            "'0' is sha-256, lowercase hex", out->token[0]);
-        return -1;
-    }
     {
         size_t pinlen = strlen(out->token) - 1;
 
@@ -346,16 +425,27 @@ int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
 
     {
         const char *origin = NULL;
+        char base_url[NT_PATH_MAX];
 #ifdef NEUTRINO_TESTING
         origin = getenv("NEUTRINO_TEST_ORIGIN");
 #endif
         if (origin && *origin) {
-            if ((size_t)snprintf(out->url, sizeof(out->url), "%s/%s.cmd",
-                                 origin, out->name) >= sizeof(out->url)) {
+            if ((size_t)snprintf(base_url, sizeof(base_url), "%s", origin)
+                >= sizeof(base_url)) {
                 return -1;
             }
-        } else if ((size_t)snprintf(out->url, sizeof(out->url), "https://%s/%s.cmd",
-                                    out->host, out->name) >= sizeof(out->url)) {
+        } else if ((size_t)snprintf(base_url, sizeof(base_url), "https://%s",
+                                    out->host) >= sizeof(base_url)) {
+            return -1;
+        }
+        if (out->dir[0]) {
+            if ((size_t)snprintf(out->url, sizeof(out->url), "%s/%s/%s.cmd",
+                                 base_url, out->dir, out->name)
+                >= sizeof(out->url)) {
+                return -1;
+            }
+        } else if ((size_t)snprintf(out->url, sizeof(out->url), "%s/%s.cmd",
+                                    base_url, out->name) >= sizeof(out->url)) {
             return -1;
         }
     }
@@ -515,11 +605,22 @@ static void nt_usage(FILE *out, const char *self)
         "\n"
         "Rename this binary to a spec and run it:\n"
         "\n"
-        "    <name>-<host labels reversed>-<token>\n"
-        "    neutrino-io-github-alganet-0a1b2c3d4e5f60718a1b2c3d4e5f60718\n"
-        "        -> https://alganet.github.io/neutrino.cmd\n"
+        "    demo-alganet-github-io-2a1b2c3d4e5f60718a1b2c3d4e5f60718\n"
+        "        -> https://alganet.github.io/demo/%s.cmd\n"
         "        -> verified against sha256 prefix\n"
         "           \"a1b2c3d4e5f60718a1b2c3d4e5f60718\"\n"
+        "\n"
+        "The name is the URL read inside-out -- file, directory, host labels --\n"
+        "and the first character of the token says how much of it is path:\n"
+        "\n"
+        "    0  alganet-dev-0<pin>           https://alganet.dev/%s.cmd\n"
+        "    1  calc-alganet-dev-1<pin>      https://alganet.dev/calc.cmd\n"
+        "    2  demo-alganet-dev-2<pin>      https://alganet.dev/demo/%s.cmd\n"
+        "    3  calc-toy-alganet-dev-3<pin>  https://alganet.dev/toy/calc.cmd\n"
+        "\n"
+        "Odd shapes name the file, even ones take %s.cmd. One directory is\n"
+        "the cap, and 4 to f are unassigned. The pin is 32 to 64 lowercase hex\n"
+        "characters of the sha-256 the fetched file has to start with.\n"
         "\n"
         "Options:\n"
         "  --info      show what this name resolves to, then exit\n"
@@ -533,7 +634,8 @@ static void nt_usage(FILE *out, const char *self)
         "real executable path is used, never argv[0].\n"
         "\n"
         "Current name: %s\n",
-        NT_VERSION, self);
+        NT_VERSION, NT_DEFAULT_STEM, NT_DEFAULT_STEM, NT_DEFAULT_STEM,
+        NT_DEFAULT_STEM, self);
 }
 
 #ifdef _WIN32
@@ -1206,6 +1308,9 @@ int main(int argc, char **argv)
 
     if (mode == NT_INFO) {
         printf("name       %s\n", spec.name);
+        if (spec.dir[0]) {
+            printf("dir        %s\n", spec.dir);
+        }
         printf("host       %s\n", spec.host);
         printf("token      %s\n", spec.token);
         printf("app        %s\n", spec.app);

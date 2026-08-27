@@ -197,7 +197,7 @@ SH
 }
 nt_serve_payload
 nt_serve "$SERVE" || exit 2
-SPEC="envlen-com-example-0$(nt_pin "$SERVE/envlen.cmd")"
+SPEC="envlen-example-com-1$(nt_pin "$SERVE/envlen.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 
 # Ran once here so every reading below is about the scrub and not about a

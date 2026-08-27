@@ -80,7 +80,7 @@ echo "=== The floor, at every boundary that matters ==="
 ACCEPT=""
 REJECT=""
 for n in 0 1 8 15 16 17 24 31 32 33 63 64 65 80; do
-    spec="p$n-com-example-0$(pin_of "$n")"
+    spec="p$n-example-com-1$(pin_of "$n")"
     if [ "$n" -ge 32 ] && [ "$n" -le 64 ]; then
         want=accepted
     else
@@ -104,7 +104,7 @@ done
 echo "=== Controls ==="
 # Without these the table above is worthless: a parser that took everything and
 # one that took nothing both produce a tidy-looking list.
-OK="app-com-example-0$(pin_of 32)"
+OK="app-example-com-1$(pin_of 32)"
 URL="$("$(as "$OK")" --info 2>/dev/null | awk '$1 == "url" { print $2 }')"
 if [ "$URL" = "https://example.com/app.cmd" ]; then
     echo "  PASS: control name resolves (url=$URL)"
@@ -112,7 +112,7 @@ else
     nt_fail "control name expected=https://example.com/app.cmd actual=${URL:-<none>}"
     FAILURES=$((FAILURES + 1))
 fi
-if parses "app-com-example"; then
+if parses "app-example-com"; then
     nt_fail "control reject expected=rejected actual=accepted (a tokenless name parsed)"
     FAILURES=$((FAILURES + 1))
 else
@@ -123,7 +123,7 @@ echo "=== What the shipped help offers as an example ==="
 # From the binary, not from a file: the question is whether what a user is told
 # to type is something this parser will take.
 HELP="$("$(as "$OK")" --help 2>&1)"
-HELPNAME="$(printf '%s\n' "$HELP" | grep -oE '[a-z][a-z0-9_]*(-[a-z0-9_]+){2,}-0[0-9a-f]+' | head -1)"
+HELPNAME="$(printf '%s\n' "$HELP" | grep -oE '[a-z][a-z0-9_]*(-[a-z0-9_]+){1,}-[0-3][0-9a-f]{32,}' | head -1)"
 HELPTOK="${HELPNAME##*-}"
 HELPLEN=$(( ${#HELPTOK} - 1 ))
 [ -n "$HELPNAME" ] || HELPLEN=-1
@@ -201,17 +201,17 @@ echo "=== What a refusal says, and whether the cause is in it ==="
 printf 'echo hello\n' > "$SERVE/cause.cmd"
 nt_serve "$SERVE" || exit 2
 
-SHORTSPEC="cause-com-example-0$(pin_of 16)"
+SHORTSPEC="cause-example-com-1$(pin_of 16)"
 "$(as "$SHORTSPEC")" --fetch >"$WORK/short.out" 2>"$WORK/short.err"
 SHORTRC=$?
 SHORTMSG="$(first_line "$WORK/short.err")"
 
-MISMATCH="cause-com-example-0$(printf 'deadbeef%.0s' 1 2 3 4)"
+MISMATCH="cause-example-com-1$(printf 'deadbeef%.0s' 1 2 3 4)"
 "$(as "$MISMATCH")" --fetch >"$WORK/mis.out" 2>"$WORK/mis.err"
 MISRC=$?
 MISMSG="$(first_line "$WORK/mis.err")"
 
-BADNAME="cause-com-example-0$(pin_of 15)"
+BADNAME="cause-example-com-1$(pin_of 15)"
 "$(as "$BADNAME")" --fetch >"$WORK/bad.out" 2>"$WORK/bad.err"
 BADRC=$?
 BADMSG="$(first_line "$WORK/bad.err")"

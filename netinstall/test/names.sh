@@ -63,54 +63,84 @@ assert_reject() {
     fi
 }
 
-echo "=== Accepted specs ==="
-assert_url neutrino-io-github-alganet-0a1b2c3d4e5f60718a1b2c3d4e5f60718 "https://alganet.github.io/neutrino.cmd"
-assert_url app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718           "https://example.com/app.cmd"
-assert_url app-uk-co-example-www-0a1b2c3d4e5f60718a1b2c3d4e5f60718     "https://www.example.co.uk/app.cmd"
-assert_url app-localhost-0a1b2c3d4e5f60718a1b2c3d4e5f60718             "https://localhost/app.cmd"
-assert_url my_app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718        "https://example.com/my-app.cmd"
-assert_url app-com-my_site-0a1b2c3d4e5f60718a1b2c3d4e5f60718           "https://my-site.com/app.cmd"
-assert_url app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718 "https://example.com/app.cmd"
+echo "=== Accepted specs, one per shape ==="
+assert_url alganet-dev-0a1b2c3d4e5f60718a1b2c3d4e5f60718              "https://alganet.dev/netinstall.cmd"
+assert_url calc-alganet-dev-1a1b2c3d4e5f60718a1b2c3d4e5f60718         "https://alganet.dev/calc.cmd"
+assert_url demo-alganet-github-io-2a1b2c3d4e5f60718a1b2c3d4e5f60718   "https://alganet.github.io/demo/netinstall.cmd"
+assert_url calc-toy-alganet-dev-3a1b2c3d4e5f60718a1b2c3d4e5f60718     "https://alganet.dev/toy/calc.cmd"
+
+echo "=== Accepted specs, the rest of the grammar ==="
+assert_url app-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718          "https://example.com/app.cmd"
+assert_url app-www-example-co-uk-1a1b2c3d4e5f60718a1b2c3d4e5f60718    "https://www.example.co.uk/app.cmd"
+assert_url app-localhost-1a1b2c3d4e5f60718a1b2c3d4e5f60718            "https://localhost/app.cmd"
+assert_url localhost-0a1b2c3d4e5f60718a1b2c3d4e5f60718                "https://localhost/netinstall.cmd"
+assert_url my_app-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718       "https://example.com/my-app.cmd"
+assert_url app-my_site-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718          "https://my-site.com/app.cmd"
+assert_url app-my_dir-example-com-3a1b2c3d4e5f60718a1b2c3d4e5f60718   "https://example.com/my-dir/app.cmd"
+assert_url app-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718 "https://example.com/app.cmd"
 
 echo "=== Parsed fields ==="
-assert_field neutrino-io-github-alganet-0a1b2c3d4e5f60718a1b2c3d4e5f60718 name  neutrino
-assert_field neutrino-io-github-alganet-0a1b2c3d4e5f60718a1b2c3d4e5f60718 host  alganet.github.io
-assert_field neutrino-io-github-alganet-0a1b2c3d4e5f60718a1b2c3d4e5f60718 token 0a1b2c3d4e5f60718a1b2c3d4e5f60718
-assert_field app-uk-co-example-www-0a1b2c3d4e5f60718a1b2c3d4e5f60718     host  www.example.co.uk
+assert_field demo-alganet-github-io-2a1b2c3d4e5f60718a1b2c3d4e5f60718 name  netinstall
+assert_field demo-alganet-github-io-2a1b2c3d4e5f60718a1b2c3d4e5f60718 dir   demo
+assert_field demo-alganet-github-io-2a1b2c3d4e5f60718a1b2c3d4e5f60718 host  alganet.github.io
+assert_field demo-alganet-github-io-2a1b2c3d4e5f60718a1b2c3d4e5f60718 token 2a1b2c3d4e5f60718a1b2c3d4e5f60718
+assert_field calc-toy-alganet-dev-3a1b2c3d4e5f60718a1b2c3d4e5f60718   name  calc
+assert_field calc-toy-alganet-dev-3a1b2c3d4e5f60718a1b2c3d4e5f60718   dir   toy
+assert_field app-www-example-co-uk-1a1b2c3d4e5f60718a1b2c3d4e5f60718  host  www.example.co.uk
+
+echo "=== The cache key keeps the shape and drops the pin ==="
+# Two names that differ only in shape resolve to different URLs, so they must
+# not share an app directory; two that differ only in pin are one app at a new
+# version, and must.
+assert_field app-toy-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718 app app-toy-example-com-1
+assert_field app-toy-example-com-3a1b2c3d4e5f60718a1b2c3d4e5f60718 app app-toy-example-com-3
+assert_field app-toy-example-com-3ffffffffffffffffffffffffffffffff app app-toy-example-com-3
 
 echo "=== Rejected specs ==="
 # Each of these has exactly one thing wrong with it. The pins are all at or
 # above the floor unless the pin is the point, so a case written to measure the
-# version character or the case of a hex digit cannot start passing because the
+# shape character or the case of a hex digit cannot start passing because the
 # name got short.
-assert_reject app-0a1b2c3d4e5f60718a1b2c3d4e5f60718
-assert_reject app-com-example
-assert_reject App-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718
-assert_reject app-com-example-0A1B2C3D4E5F60718A1B2C3D4E5F60718
-assert_reject app.com.example.0a1b2c3d4e5f60718a1b2c3d4e5f60718
-assert_reject app-com-example-1a1b2c3d4e5f60718a1b2c3d4e5f60718
-assert_reject app-com-example-xa1b2c3d4e5f60718a1b2c3d4e5f60718
-assert_reject app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f6071g
-assert_reject app--com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718
-assert_reject -com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718
+assert_reject app-example-com
+assert_reject App-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718
+assert_reject app-example-com-1A1B2C3D4E5F60718A1B2C3D4E5F60718
+assert_reject app.example.com.1a1b2c3d4e5f60718a1b2c3d4e5f60718
+assert_reject app-example-com-xa1b2c3d4e5f60718a1b2c3d4e5f60718
+assert_reject app-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f6071g
+assert_reject app--example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718
+assert_reject -example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718
 assert_reject netinstall
+
+echo "=== Shapes 4 through f are unassigned, and every one of them refuses ==="
+# The reserved range is where a second digest algorithm goes. Until it does,
+# a name carrying one of these must refuse rather than resolve somewhere.
+for shape in 4 5 6 7 8 9 a b c d e f; do
+    assert_reject "app-toy-example-com-${shape}a1b2c3d4e5f60718a1b2c3d4e5f60718"
+done
+
+echo "=== A shape that eats the host is refused, not resolved ==="
+# The one miscount the parser can catch. The others resolve to a well-formed
+# URL that is not the one meant, and the pin is what catches those.
+assert_reject calc-2a1b2c3d4e5f60718a1b2c3d4e5f60718
+assert_reject calc-toy-3a1b2c3d4e5f60718a1b2c3d4e5f60718
+assert_url    calc-toy-2a1b2c3d4e5f60718a1b2c3d4e5f60718 "https://toy/calc/netinstall.cmd"
 
 echo "=== The pin floor, at both ends ==="
 # Measured on all five reporting lanes before the floor moved: 16 through 64
 # was accepted and 15 and 65 were not. Asserted to the length it is now, from
 # both sides, because a floor nothing tests is a constant somebody lowers.
-assert_reject app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f6071          # 31, short on purpose
-assert_url    app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718      "https://example.com/app.cmd"  # 32
-assert_url    app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718 \
+assert_reject app-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f6071          # 31, short on purpose
+assert_url    app-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718      "https://example.com/app.cmd"  # 32
+assert_url    app-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718 \
     "https://example.com/app.cmd"                                       # 64
-assert_reject app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a                          # 65
-assert_reject app-com-example-0a1b2c3d4e5f60718   # 16, short on purpose, and it used to work
-assert_reject app-com-example-0a1b2c3d4e5f6071                          # 15, short on purpose
+assert_reject app-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a                          # 65
+assert_reject app-example-com-1a1b2c3d4e5f60718   # 16, short on purpose, and it used to work
+assert_reject app-example-com-1a1b2c3d4e5f6071                          # 15, short on purpose
 
 echo "=== A refusal by length says so ==="
 # The person most likely to see this is holding a binary that ran yesterday.
-as app-com-example-0a1b2c3d4e5f60718                                    # short on purpose
-SHORTERR="$("$WORK/bin/app-com-example-0a1b2c3d4e5f60718$NT_EXE" --info 2>&1 >/dev/null)"  # short on purpose
+as app-example-com-1a1b2c3d4e5f60718                                    # short on purpose
+SHORTERR="$("$WORK/bin/app-example-com-1a1b2c3d4e5f60718$NT_EXE" --info 2>&1 >/dev/null)"  # short on purpose
 case "$SHORTERR" in
     *"the pin is 16 hex characters and the minimum is 32"*)
         echo "  PASS: the short-pin refusal names the pin and both numbers" ;;
@@ -119,20 +149,31 @@ case "$SHORTERR" in
         FAILURES=$((FAILURES + 1)) ;;
 esac
 
+echo "=== A refusal by shape says which shape ==="
+as app-toy-example-com-7a1b2c3d4e5f60718a1b2c3d4e5f60718
+SHAPEERR="$("$WORK/bin/app-toy-example-com-7a1b2c3d4e5f60718a1b2c3d4e5f60718$NT_EXE" --info 2>&1 >/dev/null)"
+case "$SHAPEERR" in
+    *"shape '7' is not one this build knows"*)
+        echo "  PASS: the unassigned-shape refusal names the shape" ;;
+    *)
+        nt_fail "shape refusal expected=names-the-shape actual=$(printf '%s' "$SHAPEERR" | tr '\n' ' ' | cut -c1-160)"
+        FAILURES=$((FAILURES + 1)) ;;
+esac
+
 echo "=== .exe suffix is stripped ==="
 if [ "$NT_WINDOWS" = "1" ]; then
     echo "  SKIP: every binary already carries .exe here"
 else
-    assert_url app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718.exe "https://example.com/app.cmd"
+    assert_url app-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718.exe "https://example.com/app.cmd"
 fi
 
 echo "=== Symlinks resolve to the real name, never the link ==="
 if [ "$NT_WINDOWS" = "1" ]; then
     echo "  SKIP: symlinks need privilege on windows"
 else
-    as real-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718
-    ln -sf "$WORK/bin/real-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718" "$WORK/bin/fake-com-evil-0a1b2c3d4e5f60718a1b2c3d4e5f60718"
-    actual="$("$WORK/bin/fake-com-evil-0a1b2c3d4e5f60718a1b2c3d4e5f60718" --info 2>/dev/null | awk '$1 == "url" { print $2 }')"
+    as real-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718
+    ln -sf "$WORK/bin/real-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718" "$WORK/bin/fake-evil-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718"
+    actual="$("$WORK/bin/fake-evil-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718" --info 2>/dev/null | awk '$1 == "url" { print $2 }')"
     if [ "$actual" = "https://example.com/real.cmd" ]; then
         echo "  PASS: symlink resolved to real.cmd, not the link name"
     else

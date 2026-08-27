@@ -142,7 +142,7 @@ SCRIPT
     export NEUTRINO_TEST_CURL="$CURLBIN"
 fi
 
-SPEC="fetchprobe-com-example-0$(nt_pin "$SERVE/fetchprobe.cmd")"
+SPEC="fetchprobe-example-com-1$(nt_pin "$SERVE/fetchprobe.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 APP_TIGHT=""
 [ -n "$TIGHT" ] && APP_TIGHT="$(nt_as "$TIGHT" "$SPEC" "$WORK/bin-tight")"
@@ -391,7 +391,7 @@ cost_probe "$APP" default
 if [ -n "$FAILCLOSED" ]; then
     echo "=== A strict build refuses to fetch unconfined ==="
     printf 'echo PAYLOAD_RAN\n' > "$SERVE/strictprobe.cmd"
-    STRICTSPEC="strictprobe-com-example-0$(nt_pin "$SERVE/strictprobe.cmd")"
+    STRICTSPEC="strictprobe-example-com-1$(nt_pin "$SERVE/strictprobe.cmd")"
     STRICTAPP="$(nt_as "$FAILCLOSED" "$STRICTSPEC" "$WORK/bin-strict")"
     rm -rf "$NEUTRINO_HOME"
     OUT="$(NEUTRINO_TEST_NO_CONFINE=1 nt_timeout 60 "$STRICTAPP" 2>"$WORK/err")"
@@ -501,7 +501,7 @@ print('PIDS:%d' % len([d for d in os.listdir('/proc') if d.isdigit()]))
 if /bin/true; then echo "FORK_AGAIN_OK"; else echo "FORK_AGAIN_FAIL"; fi
 SCRIPT
 
-HALFSPEC="half-com-example-0$(nt_pin "$SERVE/half.cmd")"
+HALFSPEC="half-example-com-1$(nt_pin "$SERVE/half.cmd")"
 HALFAPP="$(nt_as "$SESSION" "$HALFSPEC" "$WORK/bin-session")"
 
 # A bus to lose. Asserting that an absent bus is unreachable would pass in

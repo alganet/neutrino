@@ -157,7 +157,7 @@ run_bounded() {
 clean_home() { rm -rf "$NEUTRINO_HOME"; }
 
 printf 'echo hello from a neutrino app\n' > "$SERVE/good.cmd"
-GOOD="good-com-example-0$(nt_pin "$SERVE/good.cmd")"
+GOOD="good-example-com-1$(nt_pin "$SERVE/good.cmd")"
 GOODBIN="$(as "$BIN" "$GOOD")"
 
 # ------------------------------------------------------- control: it fetches
@@ -740,7 +740,7 @@ if [ "$WSTATE" = "REACHED" ]; then
     printf 'quota = 0\ntimeout = 600\ntries = 1\n' > "$WRC_DIR"
     # Thirty-two legal hex characters matching nothing; the size refusal
     # arrives long before a digest is compared.
-    WSPEC="chunked-com-example-00a1b2c3d4e5f60718a1b2c3d4e5f6071"
+    WSPEC="chunked-example-com-10a1b2c3d4e5f60718a1b2c3d4e5f6071"
     WERR="$WORK/wbound.err"
     env "WGETRC=$WRC_DIR" "$(as "$WBIN" "$WSPEC")" --fetch >/dev/null 2>"$WERR"
     WBRC=$?

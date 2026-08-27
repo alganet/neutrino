@@ -29,7 +29,7 @@ FAILURES=0
 
 echo "=== Build the app under test ==="
 bash "$ROOT/build.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
-SPEC="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
+SPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 echo "  built and pinned as $SPEC"
 
@@ -169,7 +169,7 @@ cp "$SERVE/neutrinotest.cmd" "$WORK/v1.cmd"
 mkdir -p "$APPDIR"
 echo keep > "$APPDIR/carried-over"
 printf 'echo v2\n' > "$SERVE/neutrinotest.cmd"
-SPEC2="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
+SPEC2="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
 APP2="$(nt_as "$BIN" "$SPEC2" "$WORK/bin")"
 if [ "$SPEC" = "$SPEC2" ]; then
     nt_fail "second pin expected=different actual=same"
@@ -198,6 +198,51 @@ else
     FAILURES=$((FAILURES + 1))
 fi
 cp "$WORK/v1.cmd" "$SERVE/neutrinotest.cmd"
+
+echo "=== A shape with a directory fetches from the subdirectory ==="
+# The shapes are the only thing that knows a subdirectory exists, and a parser
+# test cannot tell a URL that was built from one that was fetched. This one is
+# served from a real subdirectory, which is what a project GitHub Pages site is.
+# It is an even shape, so nothing in the name says netinstall.cmd and that is
+# still the file the server has to be asked for.
+mkdir -p "$SERVE/demo"
+cp "$SERVE/neutrinotest.cmd" "$SERVE/demo/netinstall.cmd"
+DSPEC="demo-127_0_0_1-2$(nt_pin "$SERVE/demo/netinstall.cmd")"
+DAPP="$(nt_as "$BIN" "$DSPEC" "$WORK/bin")"
+DURL="$("$DAPP" --info 2>/dev/null | awk '$1 == "url" { print $2 }')"
+if [ "$DURL" = "$NEUTRINO_TEST_ORIGIN/demo/netinstall.cmd" ]; then
+    echo "  PASS: shape 2 resolved to $DURL"
+else
+    nt_fail "shape 2 url expected=$NEUTRINO_TEST_ORIGIN/demo/netinstall.cmd actual=${DURL:-<none>}"
+    FAILURES=$((FAILURES + 1))
+fi
+DSCRIPT="$NEUTRINO_HOME/apps/$(nt_appkey "$DSPEC")/netinstall.cmd"
+if "$DAPP" --fetch >/dev/null 2>&1 && cmp -s "$SERVE/demo/netinstall.cmd" "$DSCRIPT"; then
+    echo "  PASS: fetched and verified through the subdirectory"
+else
+    nt_fail "shape 2 fetch expected=ok actual=failed ($DSCRIPT)"
+    FAILURES=$((FAILURES + 1))
+fi
+echo "=== A shape that names both file and directory ==="
+mkdir -p "$SERVE/toy"
+cp "$SERVE/neutrinotest.cmd" "$SERVE/toy/calc.cmd"
+TSPEC="calc-toy-127_0_0_1-3$(nt_pin "$SERVE/toy/calc.cmd")"
+TAPP="$(nt_as "$BIN" "$TSPEC" "$WORK/bin")"
+TSCRIPT="$NEUTRINO_HOME/apps/$(nt_appkey "$TSPEC")/calc.cmd"
+if "$TAPP" --fetch >/dev/null 2>&1 && cmp -s "$SERVE/toy/calc.cmd" "$TSCRIPT"; then
+    echo "  PASS: shape 3 fetched $(nt_appkey "$TSPEC")/calc.cmd"
+else
+    nt_fail "shape 3 fetch expected=ok actual=failed ($TSCRIPT)"
+    FAILURES=$((FAILURES + 1))
+fi
+# Same segments, same pin, different shape: different URL, so the app dirs must
+# not be the same one. This is what keeping the shape in the cache key buys.
+if [ "$(nt_appkey "$DSPEC")" != "$(nt_appkey "$TSPEC")" ] && [ -f "$DSCRIPT" ] && [ -f "$TSCRIPT" ]; then
+    echo "  PASS: the two shapes kept separate app directories"
+else
+    nt_fail "app dirs expected=distinct actual=$(nt_appkey "$DSPEC") vs $(nt_appkey "$TSPEC")"
+    FAILURES=$((FAILURES + 1))
+fi
 
 echo "=== neutrino's own app dir landed inside the writable dir ==="
 if [ -d "$APPDIR" ]; then

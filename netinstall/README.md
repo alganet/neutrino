@@ -10,12 +10,13 @@ A name-addressed launcher. It is a small compiled binary that derives everything
 its own filename — rename it, and it fetches and runs something else.
 
 ```
-neutrino-io-github-alganet-0a1b2c3d4e5f60718a1b2c3d4e5f60718
-└─name─┘└─host reversed──┘└──────────────pin───────────────┘
+demo-neutrino-alganet-github-io-3a1b2c3d4e5f60718a1b2c3d4e5f60718
+└──┘ └──────┘ └──── host ─────┘ │└─────────────pin──────────────┘
+file  dir                       └ shape 3: one directory, and the file is named
 
-  fetch  https://alganet.github.io/neutrino.cmd
+  fetch  https://alganet.github.io/neutrino/demo.cmd
   verify sha256 starts with "a1b2c3d4e5f60718a1b2c3d4e5f60718"
-  run    sh ~/.cache/neutrino/apps/neutrino-io-github-alganet/neutrino.cmd
+  run    sh ~/.cache/neutrino/apps/demo-neutrino-alganet-github-io-3/demo.cmd
 ```
 
 No config file, no registry, no subcommand, no state that isn't derivable from the name.
@@ -23,27 +24,73 @@ No config file, no registry, no subcommand, no state that isn't derivable from t
 This is a separate subproject. `neutrino` itself is unchanged and still works as a plain script;
 you never need netinstall to run one.
 
+There is a live one at **<https://alganet.github.io/neutrino/>**, which publishes a sample app
+alongside netinstall binaries whose filenames already pin it — nothing to rename.
+[`pages/`](../pages/) is what builds it.
+
 ---
 
 ## Names
 
+The name is the URL read inside-out — the file, then its directory, then the host's labels in
+the order anyone writes them — and the token comes last.
+
 ```
-<name> "-" <label_n> "-" ... "-" <label_1> "-" <token>  [".exe" on Windows]
+[<file>] "-" [<dir>] "-" <label_1> "-" ... "-" <label_n> "-" <shape><pin>  [".exe" on Windows]
 ```
 
-- The **first** segment is the app name and the URL path stem.
-- The **last** segment is always the token. Position decides, so nothing is ambiguous.
-- The **middle** segments are the host's DNS labels, reversed. At least three segments total.
-- **`_` means `-`** in the resolved value, so `my_app-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718`
-  resolves to `https://example.com/my-app.cmd`. DNS labels cannot contain `_`, so only app names
-  give anything up.
-- The **token** is one version character plus the pin. `0` means "SHA-256, lowercase hex,
-  truncated to the length given". **Minimum thirty-two pin characters**, up to the full
-  sixty-four; longer is stronger and free. A name below the floor is refused by length, and the
-  refusal says which rather than leaving you to count.
+The host has no fixed label count and neither does a path, so something has to say where one
+stops. That is the **shape**: the token's first character, and the one fact the name cannot
+carry by itself.
+
+```
+shape = 2 × directories + (1 if the file is named)
+```
+
+| shape | example | resolves to |
+| ----- | ------- | ----------- |
+| `0` | `alganet-dev-0<pin>` | `https://alganet.dev/netinstall.cmd` |
+| `1` | `calc-alganet-dev-1<pin>` | `https://alganet.dev/calc.cmd` |
+| `2` | `demo-alganet-github-io-2<pin>` | `https://alganet.github.io/demo/netinstall.cmd` |
+| `3` | `calc-toy-alganet-dev-3<pin>` | `https://alganet.dev/toy/calc.cmd` |
+
+- **Odd shapes name the file; even ones take `netinstall.cmd`.** That default is what makes
+  `alganet-dev-0<pin>` a whole spec, and it is why shape `2` covers a project GitHub Pages site
+  — `alganet.github.io/demo/` — without writing `demo` twice.
+- **One directory is the cap.** Shapes `4` through `f` are unassigned and every one of them is
+  refused by name, which is also where a second digest algorithm goes if there is ever one. That
+  is why the shape and the algorithm share a character instead of taking two: `0` has always
+  meant SHA-256 and still does.
+- The **pin** is 32 to 64 lowercase hex characters of the SHA-256 the fetched file must start
+  with. **Minimum thirty-two**: sixteen is 64 bits, which puts a second preimage out of reach and
+  does not touch the attack that matters when you did not build what you are pinning — a
+  publisher grinding two files to one truncated digest, benign to get pinned and hostile to
+  serve, at about 2^32. Longer is stronger and free. A name below the floor is refused by length,
+  and the refusal says which rather than leaving you to count.
 - The pin is in the binary's name and in **no directory netinstall creates**: the cache is keyed
-  on the app and its host, so lengthening a pin re-verifies against a blob already there.
+  on everything *but* the pin, so lengthening a pin re-verifies against a blob already there. The
+  shape stays in the key, because two names that differ only in shape point at different URLs.
+- **`_` means `-`** in the resolved value, so `my_app-example-com-1<pin>` resolves to
+  `https://example.com/my-app.cmd`. DNS labels cannot contain `_`, so only file and directory
+  names give anything up.
 - Only `[a-z0-9_-]` is accepted. Rejecting everything else also rules out path traversal.
+
+### The host labels are not reversed
+
+They used to be — `neutrino-io-github-alganet-0<pin>`. Reversal pays for itself only if something
+groups by suffix, and that needs a public suffix list this does not carry, so it cost a reading
+of `app-uk-co-example-www` and bought nothing. Reading them forward also makes the whole name one
+uniform walk from the file outward to the TLD, which is what leaves the shape with exactly one
+thing to say.
+
+### A miscounted shape
+
+Nothing can catch it. `calc-toy-alganet-dev-0<pin>` is shape `0`, so all four leading segments are
+host, and it resolves to `https://calc.toy.alganet.dev/netinstall.cmd` — a well-formed URL that is
+simply not the one meant. The pin is what makes that safe: the wrong URL either 404s or returns
+something whose digest does not match, so a miscount **misfetches and cannot misrun**. The one
+case the parser does refuse is a shape that leaves nothing at all for the host, since that is a
+miscount with no valid reading.
 
 Copy or hardlink the binary to rename it. **Symlinks do not work**: the real executable path is
 used, never `argv[0]`, because deriving a fetch URL from a caller-controlled string would make
@@ -85,12 +132,12 @@ $NEUTRINO_HOME/                    # XDG_CACHE_HOME/neutrino
                                    # ~/Library/Caches/neutrino
                                    # %LOCALAPPDATA%\neutrino
 ├── blobs/<full-sha256>            # content-addressed, read-only, every version
-└── apps/<name>-<host reversed>/   # keyed WITHOUT the pin
-    ├── <name>.cmd                 # read-only, hardlink to the current pin
-    └── <name>/                    # the only writable directory
+└── apps/<spec without the pin>/   # shape kept, pin dropped
+    ├── <file>.cmd                 # read-only, hardlink to the current pin
+    └── <file>/                    # the only writable directory
 ```
 
-**The app directory is keyed on the app, not the pin.** A new pin of the same name and host replaces
+**The app directory is keyed on the app, not the pin.** A new pin of the same name, shape and host replaces
 the launcher in place and inherits the directory, so whatever the app keeps there survives a version
 change. That is the difference between an update and a reinstall, and it matters concretely: on
 Windows neutrino downloads the WebView2 package into that directory — 8.8 MiB fetched, 45.4 MiB on
@@ -106,7 +153,7 @@ Consequences worth knowing:
 - **Nothing is re-downloaded when switching back.** `blobs/` is content-addressed and keeps every
   version ever fetched, so re-pinning an older one is a relink. It also means `blobs/` grows until you
   delete it.
-- **Uninstall is `rm -rf apps/<name>-<host reversed>/`**, which takes the app and its state together.
+- **Uninstall is `rm -rf apps/<spec without the pin>/`**, which takes the app and its state together.
 
 The script sits one level *above* the only writable directory, so an app cannot rewrite the
 launcher it was verified from. neutrino puts its own generated files in `<name>/` because it

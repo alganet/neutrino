@@ -72,7 +72,7 @@ nt_win_kill() {
 
 echo "=== Build the app under test ==="
 bash "$ROOT/build.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
-SPEC="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
+SPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 
 APPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$SPEC")/neutrinotest"

@@ -529,7 +529,7 @@ if [ -n "${PATH:-}" ] && [ -n "${HOME:-}" ]; then echo "BASICS_KEPT"; else echo 
 echo "PAYLOAD_END"
 SCRIPT
 
-SPEC="hostile-com-example-0$(nt_pin "$SERVE/hostile.cmd")"
+SPEC="hostile-example-com-1$(nt_pin "$SERVE/hostile.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 export NEUTRINO_TEST_FAKEHOME
 # Two things a filesystem sandbox cannot reach: a token that exists only as a

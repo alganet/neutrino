@@ -252,7 +252,7 @@ mkdir -p "$NT_HOMEDIR"
 nt_serve "$SERVE" || exit 2
 trap 'kill ${NT_SERVER_PID:-} 2>/dev/null; rm -rf "$WORK" "$NT_HOMEDIR"' EXIT
 
-SPEC="envprobe-com-example-0$(nt_pin "$SERVE/envprobe.cmd")"
+SPEC="envprobe-example-com-1$(nt_pin "$SERVE/envprobe.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 APPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$SPEC")/envprobe"
 
@@ -502,7 +502,7 @@ if [ "$NT_HAVE_APP" = "1" ]; then
             nt_fail "the polyglot's loader scrub is still in the file under test; the toolkit half measures two rules"
             FAILURES=$((FAILURES + 1))
         fi
-        ASPEC="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
+        ASPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
         AAPP="$(nt_as "$BIN" "$ASPEC" "$WORK/bin")"
         AAPPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$ASPEC")/neutrinotest"
         echo "  built and pinned as $ASPEC"

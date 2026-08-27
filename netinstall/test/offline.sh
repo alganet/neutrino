@@ -83,7 +83,7 @@ elif [ "$udp_rc" -ne 0 ]; then
 fi
 SCRIPT
 
-SPEC="offline-com-example-0$(nt_pin "$SERVE/offline.cmd")"
+SPEC="offline-example-com-1$(nt_pin "$SERVE/offline.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 
 nt_confine_line() {
