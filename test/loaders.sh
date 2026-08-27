@@ -99,6 +99,12 @@ report_list() {
 # GJS_PATH decide which library gjs binds `imports.gi` to, and GIO_EXTRA_MODULES
 # is the name glib documents where the unset list has GIO_MODULE_DIR.
 #
+# The PYTHON names arrived with the PyGObject lane and they are the reason the
+# scrub grew a namespace rather than two shapes. PYTHONPATH decides what the
+# interpreter imports, PYTHONHOME moves the whole installation, and
+# PYTHONSTARTUP names a file it runs before the program -- and only the first
+# of those three is shaped like anything the rule already looked for.
+#
 # KEEPERS is the other half of any fix. A rule that dropped these would satisfy
 # every "is removed" reading here and take the display, the platform plugin,
 # the session bus and the locale with it.
@@ -130,6 +136,7 @@ QTWEBENGINE_DISABLE_SANDBOX
 LIBGL_DRIVERS_PATH MESA_LOADER_DRIVER_OVERRIDE
 VK_LAYER_PATH VK_ADD_LAYER_PATH VK_ICD_FILENAMES VK_DRIVER_FILES
 DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH DYLD_FRAMEWORK_PATH
+PYTHONPATH PYTHONHOME PYTHONSTARTUP
 "
 NT_KEEPERS="
 DISPLAY GDK_BACKEND XDG_RUNTIME_DIR XDG_DATA_DIRS DBUS_SESSION_BUS_ADDRESS
@@ -162,6 +169,13 @@ battery_value() {
     case "$1" in
         NEUTRINO_LOADER_CONTROL) printf 'control' ;;
         DYLD_INSERT_LIBRARIES)   printf '' ;;
+        # Set and inert, for dyld's reason. A PYTHONHOME pointing at a
+        # directory with no standard library in it does not mislead the
+        # interpreter, it stops it dead -- and the control build, which is this
+        # one with the fix cut out, is the run that would still be holding it.
+        # An empty value is ignored by CPython and is still a name in the
+        # environment, which is the only thing a rule of this shape reads.
+        PYTHONHOME)              printf '' ;;
         *SANDBOX*|*_IM_MODULE)   printf '1' ;;
         *) printf '%s' "$WORK/empty" ;;
     esac
@@ -181,7 +195,16 @@ done
 # before" from a claim into a line in the same run.
 UNFIXED="$WORK/unfixed.cmd"
 awk '
-    /^ *unset GTK_PATH/ { skip = 1 }
+    # A colon in place of the removed block, and not nothing. The compatibility
+    # unset used to sit inline in the gjs branch; it is a function now, shared
+    # by the three lanes that load GTK, and cutting the whole body out of a
+    # function leaves an empty pair of braces -- which is not an unfixed build,
+    # it is a shell syntax error, and every reading taken against it would say
+    # the app never came up.
+    #
+    # No apostrophes below this line: the awk program is inside a single-quoted
+    # shell word, and one in a comment ends it.
+    /^ *unset GTK_PATH/ { skip = 1; print "    :" }
     skip { if ($0 !~ /\\$/) skip = 0; next }
     /^nt_scrub_loaders$/ { next }
     { print }
@@ -283,8 +306,15 @@ engine_pid() {
     local p comm
     for p in $(descendants "$1"); do
         comm="$(ps -o comm= -p "$p" 2>/dev/null | tr -d ' ')"
+        # Every engine the launcher can choose, and it is no longer one name
+        # per toolkit: cjs is Cinnamon's fork of gjs and python3 is the
+        # PyGObject lane. An engine this cannot name reads as "no engine
+        # found", which the sections below correctly refuse to treat as a
+        # finding -- so a missing name here silently unmeasures the suite
+        # rather than failing it.
         case "${comm##*/}" in
-            gjs|gjs-console|qml|qml6|qmlscene*|osascript) echo "$p"; return 0 ;;
+            gjs|gjs-console|cjs|cjs-console|qml|qml6|qmlscene*|osascript|python3|python3.*)
+                echo "$p"; return 0 ;;
         esac
     done
     return 1
@@ -422,11 +452,28 @@ SHIPPED_WINDOW="$LAST_WINDOW"
 ENGINE_COMM="$LAST_COMM"
 report "reach engine=${SHIPPED_ENGINE:-none} comm=${ENGINE_COMM:-none} window=$SHIPPED_WINDOW"
 
+# Which rules this lane is under, decided once from the engine that actually
+# came up. The launcher's compatibility unset covers every lane that loads GTK,
+# which is three engines now rather than one, so a case matching the string
+# "gjs" would put a cjs or PyGObject launch under Qt's expectations and assert
+# the opposite of the truth about it.
+case "${ENGINE_COMM##*/}" in
+    gjs*|cjs*|python3*) NT_LANE_KIND=gtk ;;
+    qml*|qmlscene*)     NT_LANE_KIND=qt ;;
+    osascript)          NT_LANE_KIND=macos ;;
+    *)                  NT_LANE_KIND=unknown ;;
+esac
+
 CONTROL_ENV=""
 if [ "$HAVE_UNFIXED" = "1" ]; then
     run_app "$UNFIXED" "${NT_SET[@]}"
     CONTROL_ENV="$LAST_ENV"
-    report "reach control engine=${LAST_ENGINE:-none} window=$LAST_WINDOW (the same build with the fix deleted)"
+    # The size of it, and not only that a pid was found. classify() below skips
+    # its own "was this name ever delivered" question whenever CONTROL_ENV is
+    # empty, so an unreadable control and a complete one both report no
+    # unmeasured names -- the two readings that look identical and mean
+    # opposite things. Printed here so they stop looking identical.
+    report "reach control engine=${LAST_ENGINE:-none} comm=${LAST_COMM:-none} names=$(grep -c . <<<"$CONTROL_ENV") window=$LAST_WINDOW (the same build with the fix deleted)"
 fi
 
 if [ -z "$SHIPPED_ENV" ]; then
@@ -483,13 +530,13 @@ else
         fail "reach expected=every loader-shaped name stopped actual=${#LEAKED[@]} reached the engine"
     fi
     # The data names, asserted in whichever direction this lane calls for.
-    case "$ENGINE_COMM" in
-        gjs*)
+    case "$NT_LANE_KIND" in
+        gtk)
             if [ ${#ARRIVED_DATA[@]} -eq 0 ]; then
-                echo "  PASS: the gjs branch's compatibility unset still takes $NT_DATA"
+                echo "  PASS: the GTK lanes' compatibility unset still takes $NT_DATA"
             else
                 report_list "reach data names still arriving" "${ARRIVED_DATA[@]}"
-                fail "compat expected=$NT_DATA removed on the gjs branch actual=${#ARRIVED_DATA[@]} arrived"
+                fail "compat expected=$NT_DATA removed on a GTK lane actual=${#ARRIVED_DATA[@]} arrived"
             fi ;;
         *)
             if [ ${#ARRIVED_DATA[@]} -gt 0 ]; then
@@ -595,15 +642,21 @@ knob_check() {
 
 if [ "$MOD_OK" = "1" ]; then
     EFFECT_PROCS=""
-    case "$ENGINE_COMM" in
-        gjs*)
-            knob_check ldpreload gjs LD_PRELOAD="$WORK/mod/ldpreload$NT_MODEXT"
-            knob_check gtkmodule gjs GTK_MODULES="$WORK/mod/gtkmodule$NT_MODEXT"
+    case "$NT_LANE_KIND" in
+        gtk)
+            # Named from the engine that came up rather than written as "gjs".
+            # These knobs load into whichever process is driving GTK, and on
+            # this lane that may be cjs or python3 -- a check that went looking
+            # for a gjs process would pass by finding nothing, which is the
+            # exact shape of reading a wide-open door as closed.
+            eng="${ENGINE_COMM##*/}"
+            knob_check ldpreload "$eng" LD_PRELOAD="$WORK/mod/ldpreload$NT_MODEXT"
+            knob_check gtkmodule "$eng" GTK_MODULES="$WORK/mod/gtkmodule$NT_MODEXT"
             knob_check injectedbundle WebKitWebProcess WEBKIT_INJECTED_BUNDLE_PATH="$WORK/mod/bundle"
-            knob_check gioextra gjs GIO_EXTRA_MODULES="$WORK/mod/gio"
-            knob_check ldaudit gjs LD_AUDIT="$WORK/mod/ldaudit$NT_MODEXT"
+            knob_check gioextra "$eng" GIO_EXTRA_MODULES="$WORK/mod/gio"
+            knob_check ldaudit "$eng" LD_AUDIT="$WORK/mod/ldaudit$NT_MODEXT"
             ;;
-        qml*|qmlscene*)
+        qt)
             knob_check ldpreload qml LD_PRELOAD="$WORK/mod/ldpreload$NT_MODEXT"
             # Qt loads a plugin only with matching metadata, so the module would
             # be rejected before its constructor mattered -- env.sh measured
@@ -707,8 +760,8 @@ report "sandbox control procs=${SB_CONTROL_PROCS:-none} nosandbox=$SB_CONTROL_NO
 # --no-sandbox on the renderer's command line; a runner that has neither is a
 # runner where nothing can be turned off and every check below would pass for
 # the wrong reason.
-case "$ENGINE_COMM" in
-    gjs*) grep -q bwrap <<<"$SB_CONTROL_PROCS" && SB_READY=1
+case "$NT_LANE_KIND" in
+    gtk)  grep -q bwrap <<<"$SB_CONTROL_PROCS" && SB_READY=1
           [ "$SB_READY" = "1" ] ||
               report "sandbox: no bwrap under the control launch, so this lane cannot host this check" ;;
     *)    [ "$SB_CONTROL_NOSANDBOX" = "no" ] && SB_READY=1
@@ -741,8 +794,8 @@ sandbox_check() {
 
 # One reading of the last launch, in whichever way this lane can say it.
 sandbox_off() {
-    case "$ENGINE_COMM" in
-        gjs*) grep -q bwrap <<<"$LAST_PROCS" && echo no || echo yes ;;
+    case "$NT_LANE_KIND" in
+        gtk)  grep -q bwrap <<<"$LAST_PROCS" && echo no || echo yes ;;
         *)    [ "$LAST_NOSANDBOX" = "yes" ] && echo yes || echo no ;;
     esac
 }
@@ -755,7 +808,7 @@ UNFIXED_SANDBOX_APP=""
 if [ "$HAVE_UNFIXED" = "1" ]; then
     UNFIXED_SANDBOX_APP="$WORK/unfixed-sandbox.cmd"
     awk '
-        /^ *unset GTK_PATH/ { skip = 1 }
+        /^ *unset GTK_PATH/ { skip = 1; print "    :" }
         skip { if ($0 !~ /\\$/) skip = 0; next }
         /^nt_scrub_loaders$/ { next }
         { print }
@@ -764,8 +817,8 @@ if [ "$HAVE_UNFIXED" = "1" ]; then
 fi
 
 if [ "$SB_APPLIES" = "1" ] && [ "$SB_READY" = "1" ]; then
-    case "$ENGINE_COMM" in
-        gjs*) sandbox_check WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 ;;
+    case "$NT_LANE_KIND" in
+        gtk)  sandbox_check WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 ;;
         *)    sandbox_check QTWEBENGINE_DISABLE_SANDBOX=1 ;;
     esac
 fi

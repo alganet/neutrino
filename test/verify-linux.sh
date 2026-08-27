@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
 # SPDX-License-Identifier: ISC
 #
-# verify-linux.sh - External test verifier for Linux (gjs and kde)
+# verify-linux.sh - External test verifier for Linux (the GTK lanes and kde)
 
 set -euo pipefail
 

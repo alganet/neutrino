@@ -206,8 +206,15 @@ has_tier() { case ",$neutrino_tiers," in *",$1,"*) return 0 ;; *) return 1 ;; es
 # Two things bound it, and both are the reason it is safe to apply to a whole
 # environment rather than to an allowlisted one:
 #
-#   - LD_ and DYLD_ go wholesale. Every name in them is dynamic-linker
-#     machinery; there is nothing in there to keep.
+#   - LD_, DYLD_ and PYTHON go wholesale. The first two are dynamic-linker
+#     machinery and there is nothing in them to keep. PYTHON is taken whole for
+#     a different reason: the same three hazards live in it under spellings the
+#     shape list does not have. PYTHONPATH chooses what the interpreter
+#     imports, PYTHONHOME moves the entire installation somewhere else, and
+#     PYTHONSTARTUP names a file it executes before the program -- and only the
+#     first of those matches a shape below. Nothing in that namespace carries
+#     data or a mode this file needs to arrive, so the namespace goes rather
+#     than the shape list growing two entries that exist to catch one runtime.
 #   - Everything else is tested only inside a namespace a toolkit owns. XDG_ is
 #     deliberately not one of them: a session sets XDG_SESSION_PATH and
 #     XDG_SEAT_PATH, both of which match "PATH" and neither of which names code,
@@ -250,7 +257,7 @@ nt_scrub_loaders() {
     nt_names="$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*$/\1/p')"
     for nt_name in $nt_names; do
         case "$nt_name" in
-            LD_*|DYLD_*) ;;
+            LD_*|DYLD_*|PYTHON*) ;;
             GTK_*|GDK_*|GIO_*|GSETTINGS_*|GI_*|GJS_*|GST_*|QT_*|QTWEBENGINE_*|\
             QML_*|QML2_*|WEBKIT_*|LIBGL_*|MESA_*|EGL_*|VK_*)
                 case "$nt_name" in
@@ -279,9 +286,29 @@ find_qt_runtime() {
             return 0
         fi
     done
-    for path in /usr/lib/qt6/bin/qml; do
+    # Not every distribution puts the QML runtime on PATH, and the ones that do
+    # not do not agree on where it goes instead: Fedora uses lib64, Arch and
+    # openSUSE the unsuffixed directory, and Debian and Ubuntu hang it off the
+    # multiarch one. Globbing costs no process -- an unmatched pattern stays
+    # literal and fails -x like any other missing path -- so there is no reason
+    # for this list to be the narrowest part of the function.
+    for path in /usr/lib/qt6/bin/qml /usr/lib64/qt6/bin/qml; do
         if [ -x "$path" ]; then
             printf '%s\n' "$path"
+            return 0
+        fi
+    done
+    # The multiarch directory is walked rather than named with a pattern that
+    # reaches through it, and that is not a matter of taste. Everything from the
+    # top of this file down to the document is one JavaScript block comment, so
+    # a star followed by a slash anywhere in the shell region ends the comment
+    # early and every line after it is parsed as code -- the hazard the scrub
+    # above already has a paragraph about. Writing the wildcard as its own path
+    # component keeps the two characters apart; test/parse.sh is what caught it
+    # being written the other way.
+    for path in /usr/lib/*; do
+        if [ -x "$path/qt6/bin/qml" ]; then
+            printf '%s\n' "$path/qt6/bin/qml"
             return 0
         fi
     done
@@ -738,29 +765,527 @@ run_macos() {
         osascript -l JavaScript "$script_path"
 }
 
-if command -v gjs >/dev/null 2>&1
-then
-    # gjs is a system binary; a bundled caller (snap, flatpak, AppImage, ...)
-    # may export GLib/GTK loader overrides pointing at its own libraries,
-    # which then get loaded against the system glibc and crash. Clear them so
-    # gjs resolves modules from the system defaults.
-    #
-    # This is a compatibility rule and it predates the scrub above, which now
-    # covers all but two of these by shape. Kept whole rather than reduced to
-    # its remainder: the two it still adds -- GSETTINGS_SCHEMA_DIR and LOCPATH
-    # -- name data and not code, so they are not the scrub's to take, and a
-    # crash is a good enough reason to drop them on its own.
+# The lane of last resort, and the reason it is worth having is that it
+# implements nothing.
+#
+# python3 with PyGObject is on far more Linux machines than any GI-capable
+# JavaScript interpreter is -- it is what the desktop's own tooling is written
+# in -- but this file is JavaScript, and a Python driver that re-derived
+# extractHtmlDocument, applyContentPolicy, parseMessage and mayOpenExternal
+# would be a second copy of every decision the other three lanes share. Two
+# copies of a content policy is one copy that is wrong, and test/parse.sh
+# exists because this project has already paid for cross-engine divergence.
+#
+# It does not need one. JavaScriptCore ships with WebKitGTK -- the same source
+# package as the WebKit2 typelib this lane already requires, so it is present
+# wherever the lane can run at all -- and it is a JavaScript engine reachable
+# through introspection. So Python does what the QML document does: it
+# evaluates this file's own source, keeps the NeutrinoWebview object, and calls
+# into it for every decision. What is written in Python is toolkit calls and
+# nothing else.
+#
+# The document is shipped the way run_qt ships its QML, and the paragraphs
+# there are the reasons: a planted window.qml ran as an entirely different
+# program under a launch that looked normal from outside, and a planted
+# read-only one could not be overwritten and ran anyway with the failure on
+# stderr that nothing looked at. Same inode-with-no-name, same set -C, same
+# refusal if no descriptor spelling works.
+run_pygobject() {
+    script_dir="$(dirname "$script_path")"
+    script_name="$(basename "$script_path")"
+    script_name="${script_name%.*}"
+    app_dir="$script_dir/$script_name"
+    mkdir -p "$app_dir" || return 1
+
+    # The directory is what gets tested, not the name: a probe that opened the
+    # name to see whether it could be written would follow a symlink planted
+    # there and truncate whatever it points at.
+    [ -w "$app_dir" ] || {
+        echo "neutrino: cannot write $app_dir" >&2
+        return 1
+    }
+
+    py_doc="$app_dir/.window.$$.py"
+    set -C
+    exec 8>"$py_doc"
+    set +C
+    rm -f "$py_doc"
+
+    cat >&8 <<'PYGIEOF'
+# The shim. Every policy question in here is asked of the JavaScript this file
+# was cut from; nothing in it decides anything on its own.
+import os
+import sys
+
+NOENGINE = 69
+
+
+def unavailable(what):
+    # Not a traceback. This is the one failure the launcher is waiting to hear
+    # about, and it has another lane to try -- so it is one line and a status,
+    # not a page of stack that reads like a crash to whoever ran the app.
+    sys.stderr.write("neutrino: pygobject lane unavailable: %s\n" % (what,))
+    sys.exit(NOENGINE)
+
+
+try:
+    import gi
+except Exception as exc:
+    unavailable("no PyGObject (%s)" % (exc,))
+
+# 4.1 before 4.0, which is resolveLinuxWebKitVersion's order and has to stay
+# that way: a machine carrying both must land on the same one every lane does,
+# or the app is talking to a different WebKit depending on which interpreter
+# happened to be installed. JavaScriptCore is versioned alongside WebKit2 and
+# comes out of the same package, so it is asked for with the same number
+# rather than probed separately.
+WEBKIT_API = None
+for candidate in ("4.1", "4.0"):
+    try:
+        gi.require_version("WebKit2", candidate)
+        gi.require_version("JavaScriptCore", candidate)
+        WEBKIT_API = candidate
+        break
+    except Exception:
+        continue
+
+if WEBKIT_API is None:
+    unavailable("WebKit2 introspection typelibs not found")
+
+try:
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import GLib, Gio, Gtk, JavaScriptCore, WebKit2
+except Exception as exc:
+    unavailable("%s" % (exc,))
+
+script_path = os.environ.get("NEUTRINO_SCRIPT_PATH", "")
+if not script_path:
+    unavailable("NEUTRINO_SCRIPT_PATH was not set")
+
+try:
+    handle = open(script_path, "rb")
+    try:
+        source = handle.read().decode("utf-8", "replace")
+    finally:
+        handle.close()
+except Exception as exc:
+    unavailable("could not read %s (%s)" % (script_path, exc))
+
+if GLib.getenv("NEUTRINO_WEBKIT_SANDBOX") == "1":
+    try:
+        WebKit2.WebContext.get_default().set_sandbox_enabled(True)
+    except Exception as exc:
+        sys.stderr.write("neutrino: webkit sandbox unavailable: %s\n" % (exc,))
+else:
+    sys.stderr.write(
+        "neutrino: webkit sandbox off: this system refused a user namespace\n")
+
+# Without this the window's WM_CLASS is taken from argv[0], which on this lane
+# is the descriptor the document was handed on -- a window belonging to an
+# application called "9". The name is what a window manager groups, labels and
+# hangs an icon off, so it is set before the first window exists.
+
+ucm = WebKit2.UserContentManager()
+view_holder = {}
+committed = {"done": False}
+
+
+def showing():
+    view = view_holder.get("view")
+    if view is None:
+        return ""
+    try:
+        return view.get_uri() or ""
+    except Exception:
+        return ""
+
+
+def on_message(_ucm, result):
+    # The sender check. This handler hangs off the content manager rather than
+    # off a document, so it hears from whatever the view is currently showing,
+    # which is the one thing a message cannot lie about.
+    where = showing()
+    if not call("isTrustedView", js_string(where)).to_boolean():
+        sys.stderr.write("neutrino: refused a message from %s\n" % (where,))
+        return
+    try:
+        raw = result.get_js_value().to_string()
+    except Exception:
+        raw = ""
+    route(raw)
+
+
+def route(raw):
+    message = call("parseMessage", js_string(raw))
+    if message is None or not message.is_object():
+        sys.stderr.write("neutrino: refused a malformed record\n")
+        return
+    action = message.object_get_property("action").to_string()
+    if action == "setTitle":
+        window.set_title(message.object_get_property("title").to_string())
+    elif action == "resize":
+        window.resize(
+            message.object_get_property("width").to_int32(),
+            message.object_get_property("height").to_int32(),
+        )
+    elif action == "move":
+        window.move(
+            message.object_get_property("x").to_int32(),
+            message.object_get_property("y").to_int32(),
+        )
+    elif action == "close":
+        window.destroy()
+    elif action == "openExternal":
+        open_external(message.object_get_property("url").to_string())
+
+
+def open_external(url):
+    # Asked again here as well as in the splitter, because this is the end of
+    # the line and it hands a string to the desktop's URI handler, which will
+    # act on a file: url or a .desktop entry given one. It is also where the
+    # navigation refusal below arrives, so the tier half of the question closes
+    # that route as well as this one.
+    if not call("mayOpenExternal", js_string(url)).to_boolean():
+        return
+    try:
+        Gio.AppInfo.launch_default_for_uri(url, None)
+    except Exception:
+        # An argv and never a command line: a url holding a space would
+        # otherwise become two arguments and one holding a quote something
+        # else entirely.
+        try:
+            GLib.spawn_async(
+                None, ["xdg-open", url], None, GLib.SpawnFlags.SEARCH_PATH, None)
+        except Exception:
+            pass
+
+
+ucm.register_script_message_handler("neutrino")
+ucm.connect("script-message-received::neutrino", on_message)
+
+
+def inject(text, when):
+    if not text:
+        return
+    try:
+        ucm.add_script(WebKit2.UserScript.new(
+            text, WebKit2.UserContentInjectedFrames.TOP_FRAME, when, None, None))
+    except Exception as exc:
+        sys.stderr.write("neutrino: could not inject: %s\n" % (exc,))
+
+
+# The API first, at document start, then the page's own code once there is a
+# document to run it against. Both go in through the engine rather than being
+# spliced into the markup, which is what lets the document forbid script of
+# its own.
+view = WebKit2.WebView(user_content_manager=ucm)
+
+# The JavaScriptCore context is built here, after the WebView and not before it,
+# and that ordering is the whole reason this lane renders anything.
+#
+# Measured: a JSC.Context created before the first WebKit2.WebView leaves the
+# view loading forever. The window comes up, the main loop runs, the view is
+# mapped, is_loading() stays True and the progress sticks at 0.1 -- and no
+# load-changed event is ever emitted, not even STARTED, because the web process
+# is never spawned at all. Only WebKitNetworkProcess appears beside it. Every
+# reading looked like a healthy app with an empty window.
+#
+# Constructing the WebView first is what settles it; a context made after that
+# point, or after the load, or seconds later, all render normally. Bisected
+# against a bare PyGObject WebView: the same script differs only in when the
+# context is made, and that alone decides whether the page ever loads.
+#
+# So nothing above this line may touch JavaScriptCore, and the user scripts are
+# added to the content manager below rather than before the view exists -- the
+# manager applies them to loads that have not started yet, and the load is the
+# last thing this file does.
+ctx = JavaScriptCore.Context.new()
+
+
+def raised():
+    exc = ctx.get_exception()
+    if exc is None:
+        return None
+    ctx.clear_exception()
+    return exc.get_message()
+
+
+def js_string(text):
+    return JavaScriptCore.Value.new_string(ctx, text)
+
+
+def js_number(value):
+    return JavaScriptCore.Value.new_number(ctx, value)
+
+
+# The source arrives with a parameter named NeutrinoPy defined, which is how
+# run() at the bottom of it knows not to go looking for a driver of its own.
+# It is a parameter and not a global for the reason the QML document gives:
+# nothing this file defines should land in the shim's scope.
+ctx.evaluate(
+    "var NT = (function (NeutrinoPy) {\n"
+    + source
+    + "\n; return NeutrinoWebview; })(true);\n"
+    "var NTNOTES = [];\n"
+    "NT.noteSink = function (m) { NTNOTES.push(String(m)); };\n",
+    -1,
+)
+failed = raised()
+if failed is not None:
+    unavailable("could not evaluate the app source (%s)" % (failed,))
+
+nt = ctx.get_value("NT")
+notes = ctx.get_value("NTNOTES")
+if nt is None or not nt.is_object():
+    unavailable("the app source did not yield a NeutrinoWebview")
+
+
+def drain():
+    # note() has no channel of its own here: printerr is gjs's and console is
+    # the page's, and neither exists in a bare JavaScriptCore context. Without
+    # the sink installed above, every refusal the shared code reports -- an
+    # openExternal an offline build declined, a view that did not say which
+    # document it committed -- would happen silently on this lane and on no
+    # other. So they are collected there and emptied here, after every call
+    # that could have produced one.
+    count = notes.object_get_property("length").to_int32()
+    for index in range(count):
+        sys.stderr.write(notes.object_get_property_at_index(index).to_string() + "\n")
+    if count:
+        notes.object_invoke_method("splice", [js_number(0), js_number(count)])
+
+
+def call(name, *args):
+    result = nt.object_invoke_method(name, list(args))
+    failure = raised()
+    drain()
+    if failure is not None:
+        raise RuntimeError("%s: %s" % (name, failure))
+    return result
+
+
+config = nt.object_get_property("config")
+title = config.object_get_property("title").to_string()
+width = config.object_get_property("width").to_int32()
+height = config.object_get_property("height").to_int32()
+
+html = call("applyContentPolicy", call("extractHtmlDocument", js_string(source))).to_string()
+page_script = call("extractPageScript", js_string(source)).to_string()
+preload = call(
+    "buildPreloadScript",
+    js_string("window.webkit.messageHandlers.neutrino.postMessage"),
+    js_string("scriptmessage"),
+).to_string()
+
+# Asked for before a WebView exists, and taken back if it does not arrive.
+# Both halves matter and the comment in createGjsDriver's init records why:
+# WebKitGTK aborts outright if sandboxing is changed once a web process has
+# been spawned, and a sandbox that cannot start gives a window with nothing in
+# it. The value is a measurement the launcher took with bwrap itself, never a
+# switch read from the environment.
+inject(preload, WebKit2.UserScriptInjectionTime.START)
+inject(page_script, WebKit2.UserScriptInjectionTime.END)
+
+GLib.set_prgname("neutrino")
+
+window = Gtk.Window(
+    title=title + " - Linux",
+    default_width=width,
+    default_height=height,
+)
+window.set_position(Gtk.WindowPosition.CENTER)
+window.connect("destroy", lambda _w: Gtk.main_quit())
+view_holder["view"] = view
+
+
+def on_load_changed(_view, event):
+    # COMMITTED and not FINISHED, and the difference is a hole: the author's
+    # script runs at document end, which is after the commit and before the
+    # load finishes, so a navigation started from there would be decided while
+    # this was still false. A stylesheet on a socket that never answers holds
+    # the load open for as long as the page likes.
+    if event == WebKit2.LoadEvent.COMMITTED:
+        committed["done"] = True
+        try:
+            call("rememberTrustedView", js_string(view.get_uri() or ""))
+        except Exception:
+            pass
+
+
+view.connect("load-changed", on_load_changed)
+
+settings = view.get_settings()
+try:
+    settings.set_enable_developer_extras(False)
+    settings.set_allow_file_access_from_file_urls(False)
+    settings.set_allow_universal_access_from_file_urls(False)
+    settings.set_javascript_can_access_clipboard(False)
+    settings.set_enable_write_console_messages_to_stdout(False)
+except Exception:
+    pass
+
+
+def on_decide_policy(_view, decision, kind):
+    # The document is loaded once, from this file, and never navigates again.
+    # Without this a link or a location assignment could replace it with a
+    # remote origin, and that origin would then be holding the channel to the
+    # native window -- the preload is registered on the content manager, so it
+    # is reinjected into whatever document arrives next.
+    types = WebKit2.PolicyDecisionType
+    if kind != types.NAVIGATION_ACTION and kind != types.NEW_WINDOW_ACTION:
+        return False
+    try:
+        uri = decision.get_navigation_action().get_request().get_uri() or ""
+    except Exception:
+        uri = ""
+    # Until the first document is committed the only navigation in flight is
+    # the one this file started, and its decision is taken before any load
+    # event fires. Keying on that as well as on the url means an engine that
+    # spells the initial load differently cannot lock the app out of its own
+    # document.
+    if not committed["done"] or call("isOwnDocument", js_string(uri)).to_boolean():
+        return False
+    decision.ignore()
+    sys.stderr.write("neutrino: refused navigation to %s\n" % (uri,))
+    open_external(uri)
+    return True
+
+
+view.connect("decide-policy", on_decide_policy)
+
+view.load_html(html, None)
+window.add(view)
+window.show_all()
+Gtk.main()
+PYGIEOF
+
+    # Reopened read-only from the descriptor and the write handle closed before
+    # the interpreter starts: from here on nothing holds the inode open for
+    # writing and nothing can reach it by name at all.
+    py_fd=""
+    for py_fddir in /dev/fd /proc/self/fd; do
+        if [ -r "$py_fddir/8" ] && exec 9<"$py_fddir/8"; then
+            py_fd="$py_fddir/9"
+            break
+        fi
+    done
+    exec 8>&-
+    if [ -z "$py_fd" ]; then
+        echo "neutrino: cannot hand the engine a document without a name here" >&2
+        return 1
+    fi
+
+    # -I and -B, and neither is decoration. -I makes the interpreter ignore
+    # PYTHONPATH, PYTHONHOME and the user site directory, and stops sys.path[0]
+    # from becoming the descriptor's directory -- the scrub above already takes
+    # that namespace, and this is the same answer said again by the program
+    # that reads it, which is what "measured rather than remembered" means when
+    # the two mechanisms are independent. -B writes no bytecode, because under
+    # netinstall the app directory is the only writable place there is and a
+    # cache written into it is a file the next launch reads back.
+    nt_unset_gtk_loaders
+    NEUTRINO_SCRIPT_PATH="$script_path" python3 -I -B "$py_fd"
+}
+
+# The engine search, and what it costs is the thing that shaped it.
+#
+# It used to name one binary. `command -v gjs` succeeded or the file went
+# looking for Qt, and on a Cinnamon desktop -- where the interpreter is called
+# cjs, and Gtk 3.0 and WebKit2 4.1 are both installed and working -- neither
+# branch was taken and nobody got a window. The launcher was refusing a machine
+# that could run it, over a name.
+#
+# Widening a name list is free. Every test below is `command -v`, which is a
+# builtin: a desktop carrying the first candidate does exactly what it did
+# before this paragraph was written, and one carrying the fourth pays three
+# more lookups and no processes at all. What is emphatically not free is asking
+# each candidate whether it *works* before choosing it, because that is an
+# interpreter start per candidate on every launch, paid by every machine, to
+# answer a question almost none of them have.
+#
+# So the engine is not probed. It is started, and it says. 69 is EX_UNAVAILABLE
+# and it means this lane could not reach its engine -- reported by the lane
+# itself, after looking, and before it has created anything. A gjs with no
+# WebKit2 typelib exits 69 here where it used to print a traceback and take the
+# whole launch down with it; the walk moves on and finds the qml6 that was
+# sitting there the entire time.
+#
+# The status is not forgeable by an app. Nothing on the IPC surface -- setTitle,
+# resize, move, close, openExternal -- sets an exit code, so an app that fails
+# on its own says so with its own status and the walk stops. That distinction is
+# the difference between falling through to the next engine and running someone
+# else's program a second time.
+nt_ex_noengine=69
+
+# A bundled caller (snap, flatpak, AppImage, ...) may export GLib/GTK loader
+# overrides pointing at its own libraries, which then get loaded against the
+# system glibc and crash. Cleared for the lanes that load GTK, which is now
+# three of them rather than one -- PyGObject loads the same GTK a JavaScript
+# interpreter does.
+#
+# This is a compatibility rule and it predates the scrub above, which now
+# covers all but two of these by shape. Kept whole rather than reduced to its
+# remainder: the two it still adds -- GSETTINGS_SCHEMA_DIR and LOCPATH -- name
+# data and not code, so they are not the scrub's to take, and a crash is a good
+# enough reason to drop them on its own.
+nt_unset_gtk_loaders() {
     unset GTK_PATH GTK_EXE_PREFIX GTK_IM_MODULE_FILE \
           GDK_PIXBUF_MODULE_FILE GDK_PIXBUF_MODULEDIR \
           GIO_MODULE_DIR GSETTINGS_SCHEMA_DIR LOCPATH \
           LD_PRELOAD LD_LIBRARY_PATH
-    NEUTRINO_SCRIPT_PATH="$script_path" gjs "$script_path"
-elif qt_runner="$(find_qt_runtime)"
-then run_qt "$qt_runner"
-elif command -v osascript >/dev/null 2>&1
-then run_macos
-else echo "No suitable runtime found (expected gjs, Qt QML runtime, or osascript)" >&2
+}
+
+# Upstream before the fork, and the plain name before the -console spelling,
+# which is the order in which a machine that has more than one of them should
+# be read. cjs is Cinnamon's fork of gjs and needs nothing from the JavaScript
+# below: run() dispatches on imports.gi, which it has, and its programPath is
+# an absolute path when it is handed a script.
+#
+# The clearing happens inside a subshell so that the variables go to the engine
+# and not to this shell, which still has Qt and Python ahead of it.
+for nt_engine in gjs gjs-console cjs cjs-console; do
+    command -v "$nt_engine" >/dev/null 2>&1 || continue
+    ( nt_unset_gtk_loaders
+      NEUTRINO_SCRIPT_PATH="$script_path" exec "$nt_engine" "$script_path" )
+    nt_status=$?
+    # 127 as well as the reserved status: `command -v` found a name, and a name
+    # that cannot be executed -- a dangling symlink, a wrapper pointing at an
+    # interpreter that was removed -- is this lane being unavailable too, said
+    # by the kernel instead of by the engine.
+    [ "$nt_status" = "$nt_ex_noengine" ] || [ "$nt_status" = 127 ] || exit "$nt_status"
+done
+
+if qt_runner="$(find_qt_runtime)"
+then
+    run_qt "$qt_runner"
+    nt_status=$?
+    [ "$nt_status" = "$nt_ex_noengine" ] || exit "$nt_status"
 fi
+
+# Above python3 rather than below it, and that ordering is the whole reason a
+# Mac never pays for the lane after it: osascript is always present there, so
+# the walk stops here; on Linux osascript never exists, so the miss is a
+# builtin lookup and Python is reached immediately.
+if command -v osascript >/dev/null 2>&1
+then run_macos
+fi
+
+if command -v python3 >/dev/null 2>&1
+then
+    run_pygobject
+    nt_status=$?
+    [ "$nt_status" = "$nt_ex_noengine" ] || exit "$nt_status"
+fi
+
+# Non-zero, and it took a while to notice it was not. The last command in this
+# branch used to be the echo, so `exit $?` on the seam below exited 0 -- a
+# launch that opened no window at all reporting success to whoever started it.
+# Under netinstall that is worse than cosmetic: nt_exec execs /bin/sh on the
+# script it just downloaded and verified, so the whole fetch-verify-launch
+# cycle came back successful with nothing on screen and no non-zero status
+# anywhere in it to notice.
+echo "neutrino: no runtime here can open a window (looked for gjs, cjs, a Qt QML runtime, osascript, and python3 with PyGObject)" >&2
+exit 1
 exit $?;:<<'//</script></head><body></body>' #-->
 <!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-eval'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><style> html, body { background: white; color: black; font-size: 2em; }</style></head>
 <script type=text/javascript>//*/
@@ -1155,6 +1680,17 @@ exit $?;:<<'//</script></head><body></body>' #-->
             if (this.hasGlobalExpr("typeof NeutrinoQml !== 'undefined'")) {
                 return;
             }
+            /*
+             * The PyGObject lane's shim, which hosts this source in a
+             * JavaScriptCore context and drives GTK from Python. It gets a flag
+             * of its own rather than borrowing NeutrinoQml: this dispatch
+             * exists to say which engine is running, and two lanes answering to
+             * one name would make it say the wrong thing in the one place
+             * anybody reads to find out.
+             */
+            if (this.hasGlobalExpr("typeof NeutrinoPy !== 'undefined'")) {
+                return;
+            }
             if (this.hasGlobalExpr("typeof window !== 'undefined'")) {
                 this.runWeb();
                 return;
@@ -1168,6 +1704,19 @@ exit $?;:<<'//</script></head><body></body>' #-->
             var doc = eval("document");
             doc.write("Welcome to neutrino");
             //#RUNWEB_END
+        },
+
+        /*
+         * The difference between "this lane cannot start" and "this program
+         * failed", which the launcher reads as the difference between trying
+         * the next engine and stopping. Tagged rather than matched on its
+         * message, because the shell's decision must not depend on the spelling
+         * of a sentence anyone might reword.
+         */
+        engineUnavailable: function (message) {
+            var err = new Error(message);
+            err.neutrinoEngineUnavailable = true;
+            return err;
         },
 
         resolveLinuxWebKitVersion: function () {
@@ -1185,7 +1734,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
             if (versions.indexOf("4.0") !== -1) {
                 return "4.0";
             }
-            throw new Error("WebKit2 introspection typelibs not found");
+            throw this.engineUnavailable("WebKit2 introspection typelibs not found");
         },
 
         createMacDriver: function () {
@@ -1633,12 +2182,28 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 webMessageTransport: "window.webkit.messageHandlers.neutrino.postMessage",
                 transportName: "scriptmessage",
                 init: function () {
-                    importsRef["gi"]["versions"]["Gtk"] = "3.0";
-                    importsRef["gi"]["versions"]["WebKit2"] = self.resolveLinuxWebKitVersion();
-                    Gtk = importsRef["gi"]["Gtk"];
-                    WebKit2 = importsRef["gi"]["WebKit2"];
-                    GLib = importsRef["gi"]["GLib"];
-                    ByteArray = importsRef["byteArray"];
+                    /*
+                     * Only the typelib acquisition is inside this. Gtk.init
+                     * below is deliberately outside it, because a display that
+                     * will not open is not this lane being unavailable -- no
+                     * other lane would fare better, and turning it into a
+                     * fallthrough would replace "cannot open display" with a
+                     * walk that tries everything and then reports that no
+                     * runtime exists, which is both slower and untrue.
+                     */
+                    try {
+                        importsRef["gi"]["versions"]["Gtk"] = "3.0";
+                        importsRef["gi"]["versions"]["WebKit2"] = self.resolveLinuxWebKitVersion();
+                        Gtk = importsRef["gi"]["Gtk"];
+                        WebKit2 = importsRef["gi"]["WebKit2"];
+                        GLib = importsRef["gi"]["GLib"];
+                        ByteArray = importsRef["byteArray"];
+                    } catch (e) {
+                        if (e && e.neutrinoEngineUnavailable) {
+                            throw e;
+                        }
+                        throw self.engineUnavailable(String(e && e.message ? e.message : e));
+                    }
                     Gtk.init(null);
 
                     /*
@@ -2526,7 +3091,30 @@ exit $?;:<<'//</script></head><body></body>' #-->
         },
 
         runGjs: function () {
-            this.boot(this.createGjsDriver(), this.config);
+            /*
+             * An interpreter with imports.gi is not an interpreter that can
+             * reach GTK and WebKit2: the typelibs are separate packages, and a
+             * GNOME box without gir1.2-webkit2 has the first and not the
+             * second. That used to be a traceback and the end of the launch,
+             * with the shell's `elif` chain already committed -- so a machine
+             * with a working qml6 sitting next to a broken gjs got no window at
+             * all. One line and the reserved status instead, and the walk
+             * carries on to the engine that does work.
+             *
+             * Anything not tagged is the app's own failure and keeps its
+             * traceback, because that is a program to debug and not a lane to
+             * skip.
+             */
+            try {
+                this.boot(this.createGjsDriver(), this.config);
+            } catch (e) {
+                if (!e || !e.neutrinoEngineUnavailable) {
+                    throw e;
+                }
+                this.note("this interpreter cannot reach GTK and WebKit2: " +
+                    (e.message ? e.message : e));
+                eval("imports")["system"]["exit"](69);
+            }
         },
 
         hasWebView2Assemblies: function (SystemRef, libDir) {

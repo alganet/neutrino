@@ -26,6 +26,16 @@ jobs:
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
+      # The engine walk, asserted with stub interpreters: no display, no
+      # toolkit, and it is the only place the meaning of an exit status is
+      # checked rather than assumed.
+      - timeout-minutes: 5
+        run: |
+          TEST_EXIT=0
+          bash test/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
+          cat ~/lanes.log
+          bash test/annotate.sh gjs-lanes ~/lanes.log 'report:|FAIL:|failure\(s\)'
+          exit $TEST_EXIT
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
       # assembles anything -- and it has to run on all of them, because the
@@ -173,6 +183,158 @@ jobs:
           path: |
             ~/screenshots/
             ~/netinstall-screenshots/
+  # The launcher used to accept one interpreter by name, and this lane is the
+  # machine that was refused by it: cjs is Cinnamon's fork of gjs, it is what
+  # Linux Mint ships, and it needs nothing from the JavaScript -- run()
+  # dispatches on imports.gi, which it has. gjs is removed rather than merely
+  # not installed, because a runner image that happens to carry it would send
+  # this lane down the first candidate and report a cjs pass it never measured.
+  cjs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          sudo apt update
+          sudo apt remove -y gjs || true
+          sudo apt install -y xvfb cjs imagemagick x11-xserver-utils metacity \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
+            gir1.2-webkit2-4.1 \
+            || sudo apt install -y xvfb cjs imagemagick x11-xserver-utils metacity \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
+            gir1.2-webkit2-4.0
+      # The lane naming what it is, before anything is measured on it. A lane
+      # that silently ran the engine it was meant to be standing in for is the
+      # one failure this whole job cannot report on its own.
+      - run: |
+          command -v gjs >/dev/null 2>&1 &&
+            { echo "this lane is meant to have no gjs; it has one" >&2; exit 1; }
+          command -v cjs >/dev/null 2>&1 ||
+            { echo "cjs did not install; nothing below is a reading" >&2; exit 1; }
+          echo "engine: $(command -v cjs)"
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
+      - run: bash test/parse.sh test/neutrinotest.cmd
+      # The walk itself: no display, no toolkit, stub engines. It asserts what a
+      # status means, which is the contract the fallthrough rests on.
+      - timeout-minutes: 5
+        run: |
+          TEST_EXIT=0
+          bash test/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
+          cat ~/lanes.log
+          bash test/annotate.sh cjs-lanes ~/lanes.log 'report:|FAIL:|failure\(s\)'
+          exit $TEST_EXIT
+      - timeout-minutes: 25
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          Xvfb :99 -screen 0 1024x768x24 &
+          sleep 3
+          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          bash build.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
+          TEST_EXIT=0
+          bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
+          cat ~/loaders.log
+          bash test/annotate.sh cjs-loaders ~/loaders.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          Xvfb :99 -screen 0 1024x768x24 &
+          sleep 3
+          metacity &
+          sleep 2
+          bash test/neutrinotest.cmd &
+          sleep 5
+          bash test/verify-linux.sh ~/screenshots
+          TEST_EXIT=$?
+          # The renderer sandbox, read off the process table rather than off a
+          # variable. A window is not the assertion: a lane that came up with
+          # nothing around the process holding page content looks identical
+          # from outside to one that did it right.
+          if pgrep -f WebKitWebProcess >/dev/null 2>&1; then
+            pgrep -a bwrap | grep -q WebKitWebProcess ||
+              { echo "FAIL: the web process is not under bwrap on this lane" >&2; TEST_EXIT=1; }
+          fi
+          exit $TEST_EXIT
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cjs-screenshots
+          path: ~/screenshots/
+
+  # The lane of last resort, and the one that has to be forced: python3 is on
+  # every runner, so this measures nothing unless every engine above it is
+  # absent. All three are removed, and the job refuses to continue if any came
+  # back.
+  pygobject:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          sudo apt update
+          sudo apt remove -y gjs cjs qml6 qt6-declarative-dev-tools || true
+          sudo apt install -y xvfb imagemagick x11-xserver-utils metacity \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
+            python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 gir1.2-javascriptcoregtk-4.1 \
+            || sudo apt install -y xvfb imagemagick x11-xserver-utils metacity \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
+            python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.0 gir1.2-javascriptcoregtk-4.0
+      - run: |
+          for engine in gjs gjs-console cjs cjs-console qml6 qml; do
+            command -v "$engine" >/dev/null 2>&1 &&
+              { echo "this lane is meant to reach python3; $engine is in the way" >&2; exit 1; }
+          done
+          # Asked by importing what the lane needs, not by looking for a name:
+          # python3 is always here and the bindings are a separate package.
+          # 4.1 first and 4.0 second, which is resolveLinuxWebKitVersion's order
+          # and has to stay that way.
+          probe() { python3 -I -c "import gi; gi.require_version('Gtk','3.0'); gi.require_version('WebKit2','$1'); gi.require_version('JavaScriptCore','$1'); from gi.repository import Gtk, WebKit2, JavaScriptCore; print('engine: python3 with PyGObject, WebKit2 $1')"; }
+          probe 4.1 || probe 4.0 || { echo "no WebKit2 or JavaScriptCore typelib" >&2; exit 1; }
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
+      - run: bash test/parse.sh test/neutrinotest.cmd
+      - timeout-minutes: 5
+        run: |
+          TEST_EXIT=0
+          bash test/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
+          cat ~/lanes.log
+          bash test/annotate.sh pygobject-lanes ~/lanes.log 'report:|FAIL:|failure\(s\)'
+          exit $TEST_EXIT
+      - timeout-minutes: 25
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          Xvfb :99 -screen 0 1024x768x24 &
+          sleep 3
+          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          bash build.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
+          TEST_EXIT=0
+          bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
+          cat ~/loaders.log
+          bash test/annotate.sh pygobject-loaders ~/loaders.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          Xvfb :99 -screen 0 1024x768x24 &
+          sleep 3
+          metacity &
+          sleep 2
+          bash test/neutrinotest.cmd &
+          sleep 5
+          bash test/verify-linux.sh ~/screenshots
+          TEST_EXIT=$?
+          if pgrep -f WebKitWebProcess >/dev/null 2>&1; then
+            pgrep -a bwrap | grep -q WebKitWebProcess ||
+              { echo "FAIL: the web process is not under bwrap on this lane" >&2; TEST_EXIT=1; }
+          fi
+          exit $TEST_EXIT
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pygobject-screenshots
+          path: ~/screenshots/
+
   kde:
     runs-on: ubuntu-latest
     steps:
@@ -187,6 +349,16 @@ jobs:
           fi
       - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
+      # The engine walk, asserted with stub interpreters: no display, no
+      # toolkit, and it is the only place the meaning of an exit status is
+      # checked rather than assumed.
+      - timeout-minutes: 5
+        run: |
+          TEST_EXIT=0
+          bash test/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
+          cat ~/lanes.log
+          bash test/annotate.sh kde-lanes ~/lanes.log 'report:|FAIL:|failure\(s\)'
+          exit $TEST_EXIT
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
       # assembles anything -- and it has to run on all of them, because the
