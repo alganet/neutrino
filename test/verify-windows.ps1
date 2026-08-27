@@ -190,6 +190,13 @@ function Assert-WebView2Package($artifact, $packageRoot) {
         $script:Failures++
         return
     }
+    # Canonicalise to the long-name form before any Substring math below. The
+    # netinstall e2e installs under a temp path with an 8.3 component
+    # (RUNNER~1), and Get-ChildItem returns FullName expanded (runneradmin) --
+    # three characters longer -- so a Substring by the short root's length left
+    # every member spelled `ew2\lib\...`, the tail of "WebView2". The standalone
+    # lane never saw it: its checkout path has no short name to expand.
+    $packageRoot = (Get-Item -LiteralPath $packageRoot).FullName
 
     $lines = Get-Content -LiteralPath $artifact
     $start = -1; $stop = -1
