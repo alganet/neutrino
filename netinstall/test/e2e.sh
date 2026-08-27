@@ -103,11 +103,15 @@ if [ "$NT_WINDOWS" = "1" ]; then
         # The verifier's own account, out where annotate can read it. e2e used
         # to surface only the count, so a red here named nothing and the detail
         # -- which half stalled, the WebView2 package or the window -- sat in
-        # the job log a token is needed to read. Its FAIL and report lines carry
-        # that; a handful, well inside the per-step notice cap.
-        grep -aE '^[[:space:]]*(FAIL:|report:)' "$WORK/verify-windows.log" \
-            | tr -d '\r' | sed 's/^[[:space:]]*//' | head -8 \
-            | while IFS= read -r line; do nt_result "verify-windows: $line"; done
+        # the job log a token is needed to read. Emitted as errors, not notices:
+        # the whole netinstall suite shares one step, its ten-notice bucket is
+        # full of findings long before e2e runs, and these lines were dropped.
+        # The error bucket is near empty -- only actual failures reach it.
+        while IFS= read -r line; do
+            echo "  verify-windows: $line"
+            [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=netinstall::e2e verify-windows: $line"
+        done < <(grep -aE '^[[:space:]]*(FAIL:|report:)' "$WORK/verify-windows.log" \
+                    | tr -d '\r' | sed 's/^[[:space:]]*//' | head -8)
         nt_fail "verify-windows.ps1 reported $RC failure(s)"
     fi
     FAILURES=$((FAILURES + RC))

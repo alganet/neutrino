@@ -457,7 +457,9 @@ jobs:
             if (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like "LOADERS*" }) { break }
             Start-Sleep -Seconds 1
           }
-          Write-Output "warm: window=$(if ($i -lt 180) { 'UP' } else { 'DOWN' }) after ${i}s"
+          $state = if ($i -lt 180) { 'UP' } else { 'DOWN' }
+          Write-Output "warm: window=$state after ${i}s"
+          Write-Output "::warning title=warm::warm window=$state after ${i}s"
           Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           Get-Process -Name "neutrinowarm" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           exit 0
@@ -740,7 +742,9 @@ jobs:
             if (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like "LOADERS*" }) { break }
             Start-Sleep -Seconds 1
           }
-          Write-Output "warm: window=$(if ($i -lt 180) { 'UP' } else { 'DOWN' }) after ${i}s"
+          $state = if ($i -lt 180) { 'UP' } else { 'DOWN' }
+          Write-Output "warm: window=$state after ${i}s"
+          Write-Output "::warning title=warm::warm window=$state after ${i}s"
           Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           Get-Process -Name "neutrinowarm" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           exit 0
