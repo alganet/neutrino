@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+#
+# SPDX-License-Identifier: ISC
+#
+# Publishes alganet.github.io/neutrino/ -- a sample neutrino app, the netinstall
+# binaries for all six targets, and a page listing them. Everything comes out of
+# pages/build.sh, so the filenames the binaries are published under are derived
+# from the digest of the app beside them and cannot drift.
+#
+# It is a project Pages site, so everything lives under /neutrino/. That is what
+# the shape addresses, and before shapes existed this could only have been hosted
+# at the root of a domain.
+#
+# main only. It cross-compiles six targets to publish two files, which is not a
+# check worth running on every branch push -- and a push-triggered run shows up
+# as a check on any open PR from that branch, which is where this was noticed.
+# The cost is that a broken pages/build.sh lands before anything says so.
+name: Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A queued deploy is a stale deploy, but cancelling one mid-flight can leave the
+# site half-swapped. Queue, do not cancel.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The same version the netinstall artifact job pins, so the published
+      # binaries are the ones CI has been testing all along.
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - run: bash pages/build.sh "$GITHUB_WORKSPACE/_site"
+      # The published file has to be the one the published name pins, and the
+      # only way to know that is to check the digest rather than trust that two
+      # steps of the same script agree. A page that names a pin its neighbour
+      # does not have sends everyone who follows it into a verification failure.
+      - name: The name on the page pins the file beside it
+        run: |
+          SHA="$(sha256sum _site/demo.cmd | cut -d' ' -f1)"
+          NAME="$(grep -o 'demo-neutrino-alganet-github-io-3[0-9a-f]\{32\}' _site/index.html | head -1)"
+          PIN="${NAME##*-3}"
+          echo "  sha  $SHA"
+          echo "  name $NAME"
+          case "$SHA" in
+            "$PIN"*) echo "  the published name pins the published file" ;;
+            *) echo "::error::index.html names pin $PIN, demo.cmd hashes to $SHA"; exit 1 ;;
+          esac
+      # Every row in the download list has to be a file that shipped. A dead
+      # link on a downloads page is the whole page not working.
+      - name: Every download listed is a file in the artifact
+        run: |
+          MISSING=0
+          for href in $(grep -o 'href="[^"]*" download' _site/index.html | sed 's/href="//; s/" download//'); do
+            if [ -f "_site/$href" ]; then
+              echo "  ok      $href"
+            else
+              echo "::error::index.html links $href, which is not in the artifact"
+              MISSING=1
+            fi
+          done
+          exit $MISSING
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
