@@ -58,17 +58,27 @@ UP_WAIT=25
 report() { echo "report: $*"; }
 fail()   { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 
+# Mirrors find_qt_runtime, absolute paths included: the distributions that keep
+# the QML runtime off PATH do not agree on where they put it instead.
 QML_RUNNER=""
-for c in qml6 qml /usr/lib/qt6/bin/qml; do
+for c in qml6 qml; do
     if command -v "$c" >/dev/null 2>&1; then QML_RUNNER="$(command -v "$c")"; break; fi
-    [ -x "$c" ] && { QML_RUNNER="$c"; break; }
 done
+if [ -z "$QML_RUNNER" ]; then
+    for c in /usr/lib/qt6/bin/qml /usr/lib64/qt6/bin/qml /usr/lib/*/qt6/bin/qml; do
+        [ -x "$c" ] && { QML_RUNNER="$c"; break; }
+    done
+fi
 
-# The launcher takes the gjs branch wherever gjs exists, and then none of this
-# is being asked of anything. Said out loud rather than reported as a row of
-# clean readings.
-HAVE_GJS=no
-command -v gjs >/dev/null 2>&1 && HAVE_GJS=yes
+# The launcher takes the first GI-capable JavaScript interpreter it finds, and
+# then none of this is being asked of anything. Which one that is gets named
+# rather than reduced to yes or no: on a Cinnamon desktop it is cjs, and a
+# report reading "gjs=no" there would be describing a machine that does take
+# that branch, on a run where nothing below was a reading.
+GIJS_RUNNER=""
+for c in gjs gjs-console cjs cjs-console; do
+    command -v "$c" >/dev/null 2>&1 && { GIJS_RUNNER="$c"; break; }
+done
 
 # =====================================================================
 # Running a launch
@@ -190,10 +200,10 @@ PLANTED
 }
 
 echo "=== appdir: the Qt document has no name ==="
-report "lane qml=${QML_RUNNER:-none} gjs=$HAVE_GJS display=${DISPLAY:-none}"
+report "lane qml=${QML_RUNNER:-none} gijs=${GIJS_RUNNER:-none} display=${DISPLAY:-none}"
 [ -z "$QML_RUNNER" ] && fail "no qml runtime on this lane; nothing below is a reading"
-[ "$HAVE_GJS" = yes ] &&
-    report "note: gjs is present, so the launcher takes the gjs branch and run_qt never runs"
+[ -n "$GIJS_RUNNER" ] &&
+    report "note: $GIJS_RUNNER is present, so the launcher takes that branch and run_qt never runs"
 
 # The planted document, run by the engine directly. If this does not announce
 # itself the payload is dead and every refusal below means nothing.

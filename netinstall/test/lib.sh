@@ -158,14 +158,61 @@ nt_kill_tree() {
     return 0
 }
 
+# Which GI-capable JavaScript interpreter the launcher would pick, in its
+# order. Printed rather than answered yes/no: on Cinnamon the answer is cjs,
+# and a suite that only ever asked about gjs called that machine runtime-less
+# while it was busy running the app.
+nt_linux_gijs() {
+    local c
+    for c in gjs gjs-console cjs cjs-console; do
+        if command -v "$c" >/dev/null 2>&1; then
+            printf '%s\n' "$c"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Mirrors find_qt_runtime in webview.cmd: on Ubuntu the Qt runner is not on
-# PATH, it sits at an absolute path. Miss that and a "no runtime" fallback
-# launches a GUI app it expected to exit immediately.
+# PATH, it sits at an absolute path, and the distributions that do that do not
+# agree on which one. Miss it and a "no runtime" fallback launches a GUI app it
+# expected to exit immediately.
+nt_linux_qt() {
+    local c
+    for c in qml6 qml; do
+        command -v "$c" >/dev/null 2>&1 && return 0
+    done
+    for c in /usr/lib/qt6/bin/qml /usr/lib64/qt6/bin/qml /usr/lib/*/qt6/bin/qml; do
+        [ -x "$c" ] && return 0
+    done
+    return 1
+}
+
+# The one candidate whose presence on PATH says nothing at all. python3 is on
+# every desktop and PyGObject is a separate package, so this is asked by
+# importing what the lane actually needs rather than by looking for a name.
+nt_linux_pygobject() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -I -c '
+import gi, sys
+gi.require_version("Gtk", "3.0")
+for api in ("4.1", "4.0"):
+    try:
+        gi.require_version("WebKit2", api)
+        gi.require_version("JavaScriptCore", api)
+        break
+    except Exception:
+        continue
+else:
+    sys.exit(1)
+from gi.repository import Gtk, WebKit2, JavaScriptCore
+' >/dev/null 2>&1
+}
+
 nt_linux_runtime() {
-    command -v gjs >/dev/null 2>&1 && return 0
-    command -v qml6 >/dev/null 2>&1 && return 0
-    command -v qml >/dev/null 2>&1 && return 0
-    [ -x /usr/lib/qt6/bin/qml ] && return 0
+    nt_linux_gijs >/dev/null 2>&1 && return 0
+    nt_linux_qt && return 0
+    nt_linux_pygobject && return 0
     return 1
 }
 

@@ -22,14 +22,27 @@ It uses one polyglot entrypoint (`webview.cmd`) that runs on Windows, Linux, and
 
 ## Platforms
 
-| Platform        | Runtime                         | Web Engine             |
-|-----------------|---------------------------------|------------------------|
-| **Windows**     | `cmd` + JScript.NET (`jsc.exe`) | WebView2 (Chromium)    |
-| **Linux/GNOME** | `sh` + `gjs`                    | GTK WebKit2            |
-| **Linux/KDE**   | `sh` + Qt QML runtime           | QtWebEngine (Chromium) |
-| **macOS**       | `sh` + `osascript` (JXA)        | WKWebView (WebKit)     |
+| Platform            | Runtime                          | Web Engine             |
+|---------------------|----------------------------------|------------------------|
+| **Windows**         | `cmd` + JScript.NET (`jsc.exe`)  | WebView2 (Chromium)    |
+| **Linux/GNOME**     | `sh` + `gjs`                     | GTK WebKit2            |
+| **Linux/Cinnamon**  | `sh` + `cjs`                     | GTK WebKit2            |
+| **Linux/KDE**       | `sh` + Qt QML runtime            | QtWebEngine (Chromium) |
+| **Linux, anywhere** | `sh` + `python3` with PyGObject  | GTK WebKit2            |
+| **macOS**           | `sh` + `osascript` (JXA)         | WKWebView (WebKit)     |
 
-On Unix-like systems, the script tries runtimes in order: `gjs` > Qt QML > `osascript`.
+On Unix-like systems the script tries runtimes in order: `gjs` > `cjs` > Qt QML > `osascript` >
+`python3` with PyGObject.
+
+Nothing is probed before an engine is chosen — every candidate test is a shell builtin, so a machine
+that has the first one does no extra work. A lane that turns out not to be able to reach its engine
+says so with a reserved exit status and the search moves on, which is how a `gjs` installed without
+its WebKit2 typelibs stops taking the whole launch down with it. When no lane can open a window the
+launcher **fails**, rather than reporting success with nothing on screen.
+
+The PyGObject lane reimplements nothing. JavaScriptCore ships with WebKitGTK, so Python hosts this
+file's own JavaScript and calls back into it for every decision the other lanes make — the content
+policy, the message parser, the navigation rules and the external-URL check all stay in one copy.
 
 ---
 
@@ -43,7 +56,7 @@ When the webview loads the HTML, the script runs again in the browser context an
 
 ### The environment an app is launched with
 
-Before any engine starts, neutrino removes the environment variables a toolkit reads as *open this file*, *run this program* or *do not sandbox yourself* — `GTK_MODULES`, `WEBKIT_INJECTED_BUNDLE_PATH`, `QT_PLUGIN_PATH`, `QTWEBENGINE_CHROMIUM_FLAGS`, everything under `LD_` and `DYLD_`, and anything else matching those shapes inside a namespace a toolkit owns. Each of them can otherwise load code of the caller's choosing into the process that renders your page, and two of them switch off the renderer sandbox neutrino turns on for you.
+Before any engine starts, neutrino removes the environment variables a toolkit reads as *open this file*, *run this program* or *do not sandbox yourself* — `GTK_MODULES`, `WEBKIT_INJECTED_BUNDLE_PATH`, `QT_PLUGIN_PATH`, `QTWEBENGINE_CHROMIUM_FLAGS`, everything under `LD_`, `DYLD_` and `PYTHON`, and anything else matching those shapes inside a namespace a toolkit owns. Each of them can otherwise load code of the caller's choosing into the process that renders your page, and two of them switch off the renderer sandbox neutrino turns on for you.
 
 Variables that carry data or a mode rather than a file are untouched: `DISPLAY`, `GDK_BACKEND`, `QT_QPA_PLATFORM`, `XDG_RUNTIME_DIR`, the locale, and your `PATH`. If your app needs a plugin path or a module directory, set it from inside the app rather than expecting it to be inherited.
 
@@ -106,7 +119,14 @@ All coordinates use top-left origin on every platform (macOS coordinates are nor
 ### Linux
 
 - **GNOME:** `gjs` + GTK/WebKit2 bindings, available on all major GNOME distros.
+- **Cinnamon:** `cjs`, the fork Linux Mint ships, against the same GTK/WebKit2 bindings.
 - **KDE:** Qt QML runtime + QtWebEngine, available on all major KDE distros.
+- **Anything else:** `python3` with PyGObject and the same GTK/WebKit2 bindings, which is what the
+  desktop's own tooling is written against.
+
+A lane that cannot reach its typelibs steps aside for the next one instead of failing the launch,
+so a machine only ends up without a window when none of them can open one — and then it says so
+and exits non-zero.
 
 ### macOS
 

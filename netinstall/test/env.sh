@@ -521,7 +521,10 @@ fi
 NT_KNOBS=()
 NT_KNOB_TAGS=""
 if [ "$NT_HAVE_APP" = "1" ] && [ "$NT_MOD_BUILT" = "1" ]; then
-    if command -v gjs >/dev/null 2>&1; then
+    # Any lane that loads GTK, which is no longer only the gjs one: the fork is
+    # the same toolkit, and so is PyGObject. Qt is excluded because these two
+    # knobs are GTK's and WebKitGTK's, and it gets its own further down.
+    if nt_linux_gijs >/dev/null 2>&1 || { ! nt_linux_qt && nt_linux_pygobject; }; then
         if nt_build_module gtkmodule && nt_build_module injectedbundle; then
             mkdir -p "$WORK/mod/bundle"
             cp "$WORK/mod/injectedbundle$NT_MODEXT" \
@@ -703,9 +706,16 @@ fi
 # =====================================================================
 # Results
 # =====================================================================
+# Named after the engine that would actually be chosen, in the launcher's own
+# order, because a result line that says "Linux" and nothing else cannot be
+# compared against the run before it on a different desktop.
 NT_LANE="$UNAME"
-command -v gjs >/dev/null 2>&1 && NT_LANE="$NT_LANE/gjs"
-[ "$UNAME" = "Linux" ] && ! command -v gjs >/dev/null 2>&1 && nt_linux_runtime && NT_LANE="$NT_LANE/qt"
+NT_GIJS="$(nt_linux_gijs)" && NT_LANE="$NT_LANE/$NT_GIJS"
+if [ "$UNAME" = "Linux" ] && [ -z "$NT_GIJS" ]; then
+    if nt_linux_qt; then NT_LANE="$NT_LANE/qt"
+    elif nt_linux_pygobject; then NT_LANE="$NT_LANE/pygobject"
+    fi
+fi
 
 nt_result "env reach [$NT_LANE]: reached:$NT_REACHED | stopped:$NT_STOPPED | \
 never arrived even bare:$NT_NEVERSET | absent before the scrub:$NT_PREEMPTED | \

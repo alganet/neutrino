@@ -216,17 +216,53 @@ report "section: output-as-app"
 echo "=== the output may not be the app ==="
 T="$(tree oldself)"
 cp "$WORK/app-tiers.js" "$T/a.js"
-bash "$T/oldbuild.sh" --tier=tight "$T/a.js" "$T/a.js" > /dev/null 2>&1
+# Bounded by the kernel and by a clock, and this is the one invocation in the
+# suite that needs both.
+#
+# The old assembler builds `{ sed template; cat "$APP_JS"; sed template; }` into
+# a pipeline whose last stage redirects over $OUTPUT -- and here $APP_JS and
+# $OUTPUT are the same file. So `cat` reads the bytes the final `sed` is still
+# writing, hands them back, and they are written again. Whether that ever
+# reaches EOF is a scheduling race between two processes and not a property of
+# any input, which is what the note about 213225 against 164073 was already
+# saying without naming the mechanism.
+#
+# The race was winnable while the template was small and stopped being winnable
+# when it grew: measured on this machine, 3713 lines of template terminated with
+# a 240 KB file and 4281 lines did not terminate at all, having written 2.1 GB in
+# twenty-five seconds and still going. That is the suite's own rule being broken
+# -- a program whose exit it does not control -- so the exit is controlled here
+# rather than hoped for. RLIMIT_FSIZE is the same instrument netinstall uses on
+# a downloader that cannot express a bound of its own.
+#
+# What is asserted does not change, because the runaway was never the finding.
+# The finding is that the old assembler destroyed the app it was handed and
+# said nothing, and both halves of that are true the instant the redirection
+# truncates -- long before the loop this now stops.
+#
+# The clock is optional and the file bound is not. `timeout` is coreutils, and
+# macOS ships neither it nor gtimeout -- there this read rc=127, the assembler
+# never ran at all, and the app was therefore still intact, so the before-state
+# asserted the exact opposite of the thing it exists to measure. RLIMIT_FSIZE
+# needs no such program and is the bound that actually stops this anyway, since
+# what runs away here is a file that grows without end.
+OS_LOG="$WORK/oldself.log"
+OS_CLOCK=""
+command -v timeout >/dev/null 2>&1 && OS_CLOCK="timeout 20"
+( ulimit -f 8192 2>/dev/null
+  exec $OS_CLOCK bash "$T/oldbuild.sh" --tier=tight "$T/a.js" "$T/a.js" ) \
+    > "$OS_LOG" 2>&1
 OS_RC=$?
 OS_SIZE="$(size "$T/a.js")"
 report "before: rc=$OS_RC app=$OS_SIZE was=$APP_TIERS_BYTES"
-# Asserted as "not the app any more" and never to a length. What comes out is the
-# assembler reading back its own output while it writes it, and the length is not
-# a property of the inputs: 213225 on three lanes against 164073 on the Windows
-# one, and it moved by exactly the bytes the template grew between two rounds.
-# Whatever decides it, it is not this suite's to predict.
+# Asserted as "not the app any more" and never to a length: what the file holds
+# is however far the loop above got before it was stopped.
 eq "before, the app was overwritten" "$([ "$OS_SIZE" = "$APP_TIERS_BYTES" ] && echo intact || echo overwritten)" "overwritten"
-eq "before, it said nothing about it" "$OS_RC" "0"
+# Read off what it printed rather than off its status. The status is downstream
+# of the race -- 0 where cat won, a signal where the bound stopped it -- while
+# the refusal it never printed is the thing the after-state adds and is the
+# same reading on every lane.
+eq "before, it said nothing about it" "$(grep -c '^Error:' "$OS_LOG")" "0"
 
 T="$(tree newself)"
 cp "$WORK/app-tiers.js" "$T/a.js"
@@ -305,7 +341,13 @@ eq "the stamp reads back between the sentinels" \
    "$(sed -n '/\/\/#TIER_START/,/\/\/#TIER_END/s/^ *tiers: "\([a-z,]*\)",.*$/\1/p' "$T/out.cmd" | head -1)" \
    "default,tight,offline"
 
-SEARCH='if command -v gjs >/dev/null 2>&1'
+# The anchor is the reserved-status assignment rather than a `command -v` line,
+# because there is no longer one line that names the engine. The search is a
+# walk over four interpreter names and three more lanes, and the first thing it
+# does is declare the status a lane uses to say it could not start -- so this is
+# both unique and the earliest point that is unambiguously "about to choose an
+# engine". Inserting the halt above it still stops before anything is launched.
+SEARCH='nt_ex_noengine=69'
 HITS="$(grep -cF "$SEARCH" "$T/out.cmd" | head -1)"
 STAMP_LINE='        tiers: "default,tight,offline",'
 STAMP_HITS="$(grep -cF "$STAMP_LINE" "$T/out.cmd" | head -1)"
