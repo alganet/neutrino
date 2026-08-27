@@ -183,13 +183,32 @@ jobs:
           path: |
             ~/screenshots/
             ~/netinstall-screenshots/
-  # The launcher used to accept one interpreter by name, and this lane is the
-  # machine that was refused by it: cjs is Cinnamon's fork of gjs, it is what
-  # Linux Mint ships, and it needs nothing from the JavaScript -- run()
-  # dispatches on imports.gi, which it has. gjs is removed rather than merely
-  # not installed, because a runner image that happens to carry it would send
-  # this lane down the first candidate and report a cjs pass it never measured.
-  cjs:
+
+  # The rest of the engine walk, on one machine descending it.
+  #
+  # The launcher used to accept one interpreter by name, and the first half of
+  # this lane is the machine that was refused by it: cjs is Cinnamon's fork of
+  # gjs, it is what Linux Mint ships, and it needs nothing from the JavaScript
+  # -- run() dispatches on imports.gi, which it has. gjs is removed rather than
+  # merely not installed, because a runner image that happens to carry it would
+  # send this half down the first candidate and report a cjs pass it never
+  # measured.
+  #
+  # The second half is the lane of last resort, and the one that has to be
+  # forced: python3 is on every runner, so it measures nothing unless every
+  # engine above it is absent. All three are removed, and it refuses to
+  # continue if any came back.
+  #
+  # They used to be two jobs, and two jobs is how the walk stops being a walk:
+  # each installed its own toolchain, removed the engines above it, and spent
+  # more of its runtime on `apt update` than on anything it measured. Here the
+  # removals are the walk -- cjs runs with gjs gone, then cjs goes too and
+  # python3 is what is left -- and the second half is gated
+  # `if: always()`, so a red cjs still leaves a python3 reading behind it.
+  #
+  # The two halves write into the same ~/screenshots, so cjs's upload sits
+  # between them rather than at the end.
+  linux-engines:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -261,16 +280,14 @@ jobs:
         with:
           name: cjs-screenshots
           path: ~/screenshots/
-
-  # The lane of last resort, and the one that has to be forced: python3 is on
-  # every runner, so this measures nothing unless every engine above it is
-  # absent. All three are removed, and the job refuses to continue if any came
-  # back.
-  pygobject:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - run: |
+      # Cleared between the two halves. Both verifiers write into the same
+      # directory, and on two runners that did not matter; on one, the second
+      # artifact would carry the first lane's frames and there would be no way
+      # to tell from the artifact which engine drew them.
+      - if: always()
+        run: rm -rf ~/screenshots
+      - if: always()
+        run: |
           sudo apt update
           sudo apt remove -y gjs cjs qml6 qt6-declarative-dev-tools || true
           sudo apt install -y xvfb imagemagick x11-xserver-utils metacity \
@@ -279,7 +296,8 @@ jobs:
             || sudo apt install -y xvfb imagemagick x11-xserver-utils metacity \
             xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
             python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.0 gir1.2-javascriptcoregtk-4.0
-      - run: |
+      - if: always()
+        run: |
           for engine in gjs gjs-console cjs cjs-console qml6 qml; do
             command -v "$engine" >/dev/null 2>&1 &&
               { echo "this lane is meant to reach python3; $engine is in the way" >&2; exit 1; }
@@ -290,17 +308,22 @@ jobs:
           # and has to stay that way.
           probe() { python3 -I -c "import gi; gi.require_version('Gtk','3.0'); gi.require_version('WebKit2','$1'); gi.require_version('JavaScriptCore','$1'); from gi.repository import Gtk, WebKit2, JavaScriptCore; print('engine: python3 with PyGObject, WebKit2 $1')"; }
           probe 4.1 || probe 4.0 || { echo "no WebKit2 or JavaScriptCore typelib" >&2; exit 1; }
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-      - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
-      - run: bash test/parse.sh test/neutrinotest.cmd
-      - timeout-minutes: 5
+      - if: always()
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - if: always()
+        run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
+      - if: always()
+        run: bash test/parse.sh test/neutrinotest.cmd
+      - if: always()
+        timeout-minutes: 5
         run: |
           TEST_EXIT=0
           bash test/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
           cat ~/lanes.log
           bash test/annotate.sh pygobject-lanes ~/lanes.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
-      - timeout-minutes: 25
+      - if: always()
+        timeout-minutes: 25
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -313,7 +336,8 @@ jobs:
           cat ~/loaders.log
           bash test/annotate.sh pygobject-loaders ~/loaders.log 'report:|FAIL:'
           exit $TEST_EXIT
-      - run: |
+      - if: always()
+        run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
           Xvfb :99 -screen 0 1024x768x24 &
@@ -561,7 +585,316 @@ jobs:
           path: |
             ~/screenshots/
             ~/netinstall-screenshots/
-  windows:
+
+  # netinstall away from the desktop lanes: cross-compiled for six targets, and
+
+  # then run on the three BSDs, in that order on one runner.
+  #
+  # Four jobs before this, and every one of them was mostly waiting -- the
+  # cross build is 45 seconds of zig behind a minute of action setup, and each
+  # VM lane spent its runner booting a guest to run a shell suite. Serialised
+  # they are one job of about fifteen minutes, which is the same band the
+  # macOS and Windows jobs land in.
+  #
+  # `mem: 3072` on each guest is not cosmetic: the default is 6144, the post
+  # step that halts a vmactions VM does not run until the job ends, so all
+  # three are alive at once, and three times the default does not fit on this
+  # runner. The suites here are shell, curl and a small C compile; 3G is ample.
+  #
+  # The freebsd and netbsd lanes both used to copy back `bsd-suite.log` and
+  # `bsd-probe.log`. In one job those are the same file, so each guest now
+  # names its own. Every step is gated `if: always()` -- the whole point of
+  # three separate lanes was that a dead guest cost only its own reading, and
+  # that has to survive the merge.
+  bsd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - run: bash netinstall/build.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: netinstall-binaries
+          path: netinstall/dist/
+      # Pinned to the commit v1.4.6 points at, on the same terms as everything
+      # else this branch pinned: a tag is a name its owner can move.
+      - if: always()
+        name: netinstall suite
+        id: openbsd_vm
+        continue-on-error: true
+        uses: vmactions/openbsd-vm@e6c68b637a12e83519688d115d57d5b0b53923cd
+        with:
+          usesh: true
+          mem: "3072"
+          copyback: true
+          # bash and curl are what the suite runs on; python3 is what serves the
+          # payloads and drives the network probes. The image carries the rest --
+          # seq, timeout, perl and sha256(1), which lib.sh now knows about
+          # because this platform ships neither sha256sum nor shasum.
+          #
+          # wget is here for fetchbound.sh alone. It is the branch whose two
+          # bounds come from the kernel rather than from the downloader, and
+          # without it installed this lane skips every assertion about them --
+          # on the one platform in the matrix with a different libc and a
+          # different kernel, which is exactly where setrlimit and sigaction
+          # are worth asking twice.
+          prepare: |
+            pkg_add -I bash curl wget || true
+            pkg_add -I python3 || pkg_add -I python%3 || true
+          # The log comes back rather than going to the job log: reading a job
+          # log needs a token and reading annotations does not, which is the
+          # same reason annotate.sh exists for the webview lanes.
+          #
+          # `&& rc=0 || rc=$?` and not a bare `$?`: vmactions pipes this script
+          # to `sh` behind a literal `set -eu` (index.js, `const fullCmd`), and
+          # run.sh exits with its failure count -- so the first red suite would
+          # abort the script before the rc file is written, and the action skips
+          # copyback entirely when the ssh command returns non-zero. This lane
+          # has only ever been green, which is the only reason it has not
+          # already lost a log to it. The `exit 0` is what keeps the ssh command
+          # successful; the outcome step below is what fails the lane.
+          run: |
+            bash netinstall/test/run.sh > openbsd-suite.log 2>&1 && rc=0 || rc=$?
+            echo "$rc" > openbsd-suite.rc
+            exit 0
+      # `report:` is in the pattern because a suite's nt_result never leaves this
+      # lane on its own: the `::warning` it writes is written inside the VM,
+      # where GitHub is not listening, and arrives here as a line in a log file.
+      # Anchored to the plain echo so the smuggled `::warning` copy of the same
+      # line is not annotated twice.
+      - name: results
+        if: always()
+        run: bash test/annotate.sh openbsd openbsd-suite.log 'FAIL:|failure\(s\)|SKIP|^ +report:'
+      - name: outcome
+        if: always()
+        run: |
+          [ "${{ steps.openbsd_vm.outcome }}" = "success" ] ||
+            echo "::error title=openbsd::the vm step itself did not complete"
+          exit "$(cat openbsd-suite.rc 2>/dev/null || echo 1)"
+      # Pinned to the commit v1.5.5 points at, on the same terms as the openbsd
+      # lane beside it: a tag is a name its owner can move.
+      # PR 11 put the __OpenBSD__ half of netinstall/sandbox_bsd.c under a lane
+      # and found four of its rules wrong. The other half -- FreeBSD, NetBSD --
+      # has still never been compiled by anything in this repository: build.sh
+      # cross-compiles six targets and none of them is a BSD, and the lane
+      # above compiles the branch this one does not. Meanwhile the suites grew
+      # FreeBSD|NetBSD arms written from the OpenBSD reading -- phases.sh wants
+      # "unveil" on the --info fetch line, fetchconf.sh wants it in the config
+      # line -- on two platforms whose nt_confine returns -1 and says "none".
+      # PR 11 parked these with "a lane written blind is worse", and the blind
+      # arms are already in the tree. These two lanes ask.
+      #
+      # bsdfloor.sh runs first and gets an annotate step of its own. It asserts
+      # nothing and always exits 0, which is what lets it go in front of a
+      # suite whose whole question is whether anything downstream of it can
+      # build at all; the cap is per step, so its readings do not compete with
+      # the suite's.
+      - if: always()
+        name: netinstall suite
+        id: freebsd_vm
+        continue-on-error: true
+        uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1
+        with:
+          usesh: true
+          mem: "3072"
+          copyback: true
+          # The packages are installed in `run` and not in `prepare`, because
+          # `prepare` goes over the same `set -eu` ssh channel and its output
+          # lands only in the job log, which needs a token to read. Round 2's
+          # netbsd lane installed nothing and the only way anyone found out was
+          # that bsdfloor listed curl among the missing. A log that comes back
+          # is the difference between that and a sentence.
+          prepare: |
+            true
+          # See the openbsd lane above for why the rc is captured this way and
+          # why the script ends at 0: round 1 lost both logs and every reading
+          # to exactly that, on both lanes.
+          run: |
+            {
+              pkg install -y bash curl wget || true
+              pkg install -y python3 || true
+              echo "--- after ---"
+              for t in bash cc curl wget python3; do
+                printf 'tool %s ' "$t"; command -v "$t" || echo missing
+              done
+              printf 'tool python3 says '; python3 -V 2>&1 || echo missing
+            } > freebsd-pkg.log 2>&1 || true
+            bash netinstall/test/bsdfloor.sh > freebsd-probe.log 2>&1 && rc=0 || rc=$?
+            echo "$rc" > freebsd-probe.rc
+            bash netinstall/test/run.sh > freebsd-suite.log 2>&1 && rc=0 || rc=$?
+            echo "$rc" > freebsd-suite.rc
+            exit 0
+      - name: probe results
+        if: always()
+        run: bash test/annotate.sh freebsd-probe freebsd-probe.log '^ +report:|^ +FAIL:|SKIP:'
+      - name: packages
+        if: always()
+        run: bash test/annotate.sh freebsd-pkg freebsd-pkg.log 'missing|not found|rror|^tool '
+      # Three steps over the suite log, because the cap is per step and round 2
+      # dropped four chunks from the middle of the failures alone. Anchored to
+      # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
+      # sentence twice, once for a reader and once as an ::error, and matching
+      # both halved the number of distinct failures that fit.
+      - name: results
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh freebsd freebsd-suite.log '^ +FAIL:'
+      - name: readings
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh freebsd-readings freebsd-suite.log 'SKIP|^ +report:'
+      # Most of what this lane counts as failures are suites exiting 2 without
+      # printing a FAIL line at all -- a setup that did not come up, not an
+      # assertion that did not hold. Those two are different problems and the
+      # results step above cannot see the first one.
+      - name: errors
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh freebsd-errors freebsd-suite.log 'not found|No such file|Traceback|Permission denied|never came up|cannot create|^### |^ +(interpreter|still running|poller|it said)'
+      - name: totals
+        if: always()
+        run: bash test/annotate.sh freebsd-totals freebsd-suite.log '^### Total|[.]sh. [0-9]+ failure'
+      # bsdfloor gates three answers of its own now -- that the branch compiles,
+      # which sysctl spelling this kernel answers, and whether the no-new-privs
+      # floor is one -- so its rc counts. `absent` when it never got as far as
+      # writing the file, which is a different failure from a red assertion and
+      # is left saying so rather than folded into a number.
+      - name: outcome
+        if: always()
+        run: |
+          [ "${{ steps.freebsd_vm.outcome }}" = "success" ] ||
+            echo "::error title=freebsd::the vm step itself did not complete"
+          probe="$(cat freebsd-probe.rc 2>/dev/null || echo absent)"
+          echo "::warning title=freebsd::probe rc=$probe"
+          [ "$probe" = "0" ] ||
+            echo "::error title=freebsd::bsdfloor reported $probe failure(s)"
+          suite="$(cat freebsd-suite.rc 2>/dev/null || echo 1)"
+          [ "$suite" = "0" ] && [ "$probe" = "0" ] || exit 1
+          exit 0
+      # Pinned to the commit v1.4.7 points at.
+      - if: always()
+        name: netinstall suite
+        id: netbsd_vm
+        continue-on-error: true
+        uses: vmactions/netbsd-vm@6334c835de4c04a59fe59f0f8f071e02a2f0bab3
+        with:
+          usesh: true
+          mem: "3072"
+          copyback: true
+          # pkgsrc installs under /usr/pkg, and its python is versioned: the
+          # package is python3NN and what lands on disk is python3.NN, which is
+          # not a name lib.sh's nt_python knows. The symlink is made here rather
+          # than taught to lib.sh, because whether this platform needs teaching
+          # is one of the things the round is asking.
+          # Nothing here: see the freebsd lane above. Round 2 installed not one
+          # package on this lane and said so nowhere.
+          prepare: |
+            true
+          run: |
+            PATH=/usr/pkg/bin:/usr/pkg/sbin:$PATH
+            export PATH
+            {
+              command -v pkgin || echo "no pkgin"
+              command -v pkg_add || echo "no pkg_add"
+              pkgin -y update || true
+              pkgin -y install curl wget || true
+              pkgin -y install python312 || pkgin -y install python311 || true
+              pkg_add curl wget python312 || true
+              # pkgsrc's python is versioned -- the package is python3NN and
+              # what lands is python3.NN, which is not a name lib.sh knows.
+              #
+              # The glob is anchored on purpose. `python3.*` also matches
+              # python3.12-config, which is what this linked in round 6, and
+              # nt_serve then started it eleven times and read
+              # `Usage: /usr/pkg/bin/python3 --prefix` -- reported as eleven
+              # suites whose fixture never came up. And the interpreter is asked
+              # to interpret before it is believed, because a name that exists
+              # and a program that runs are different claims.
+              for p in /usr/pkg/bin/python3.[0-9] /usr/pkg/bin/python3.[0-9][0-9]; do
+                if [ -x "$p" ] && "$p" -c "import http.server" >/dev/null 2>&1; then
+                  ln -sf "$p" /usr/pkg/bin/python3
+                fi
+              done
+              echo "--- after ---"
+              for t in bash cc curl wget python3; do
+                printf 'tool %s ' "$t"; command -v "$t" || echo missing
+              done
+              printf 'tool python3 says '; python3 -V 2>&1 || echo missing
+            } > netbsd-pkg.log 2>&1 || true
+            bash netinstall/test/bsdfloor.sh > netbsd-probe.log 2>&1 && rc=0 || rc=$?
+            echo "$rc" > netbsd-probe.rc
+            bash netinstall/test/run.sh > netbsd-suite.log 2>&1 && rc=0 || rc=$?
+            echo "$rc" > netbsd-suite.rc
+            exit 0
+      - name: probe results
+        if: always()
+        run: bash test/annotate.sh netbsd-probe netbsd-probe.log '^ +report:|^ +FAIL:|SKIP:'
+      - name: packages
+        if: always()
+        run: bash test/annotate.sh netbsd-pkg netbsd-pkg.log 'missing|not found|rror|^tool '
+      # Three steps over the suite log, because the cap is per step and round 2
+      # dropped four chunks from the middle of the failures alone. Anchored to
+      # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
+      # sentence twice, once for a reader and once as an ::error, and matching
+      # both halved the number of distinct failures that fit.
+      - name: results
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh netbsd netbsd-suite.log '^ +FAIL:'
+      - name: readings
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh netbsd-readings netbsd-suite.log 'SKIP|^ +report:'
+      # Most of what this lane counts as failures are suites exiting 2 without
+      # printing a FAIL line at all -- a setup that did not come up, not an
+      # assertion that did not hold. Those two are different problems and the
+      # results step above cannot see the first one.
+      - name: errors
+        if: always()
+        env:
+          NT_ANNOTATE_PER: "12"
+        run: bash test/annotate.sh netbsd-errors netbsd-suite.log 'not found|No such file|Traceback|Permission denied|never came up|cannot create|^### |^ +(interpreter|still running|poller|it said)'
+      - name: totals
+        if: always()
+        run: bash test/annotate.sh netbsd-totals netbsd-suite.log '^### Total|[.]sh. [0-9]+ failure'
+      - name: outcome
+        if: always()
+        run: |
+          [ "${{ steps.netbsd_vm.outcome }}" = "success" ] ||
+            echo "::error title=netbsd::the vm step itself did not complete"
+          probe="$(cat netbsd-probe.rc 2>/dev/null || echo absent)"
+          echo "::warning title=netbsd::probe rc=$probe"
+          [ "$probe" = "0" ] ||
+            echo "::error title=netbsd::bsdfloor reported $probe failure(s)"
+          suite="$(cat netbsd-suite.rc 2>/dev/null || echo 1)"
+          [ "$suite" = "0" ] && [ "$probe" = "0" ] || exit 1
+          exit 0
+
+  # How the exe gets onto disk and comes up: the core launch, the driver's own
+
+  # file and process I/O, the app cache, the gap between the compile and the
+  # START, an initialisation that fails, the netinstall suite, and the same
+  # launch watched on a runner that is busy.
+  #
+  # Five jobs before this and part of a sixth, four of them under two minutes
+  # and each paying a runner's setup for it. They are one lane now, in cost
+  # order, with every group after the first gated `if: always()` -- which is
+  # the property the split was bought for, and the reason this is not simply
+  # the old monolith back: a red suite here costs its own reading and nothing
+  # behind it.
+  #
+  # The load probe goes last on purpose. It starts cpus*3 spinners, and
+  # nothing else in the lane should be measured against them.
+  windows-launch:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -608,11 +941,14 @@ jobs:
         run: bash test/annotate.sh windows-winexec ~/winexec.log 'report:|FAIL:'
       # The monolith launched a webview (appcache) before the neutrinotest
       # verify, so the WebView2 runtime's one-time cold init was already done.
-      # Split into its own job, this is the cold launch, and the documented
-      # Windows first-window stall lands on it far more often -- measured here,
-      # netinstall 3/3 and core 1/2 against a historical 3/10. This restores the
-      # precondition: launch a LOADERS webview -- the one appcache shows comes
-      # up reliably cold -- wait for its window, and move on.
+      # The verify below is first in this lane, so it is the cold launch, and
+      # the documented Windows first-window stall lands on it far more often --
+      # measured here, netinstall 3/3 and core 1/2 against a historical 3/10.
+      # This restores the precondition: launch a LOADERS webview -- the one
+      # appcache shows comes up reliably cold -- wait for its window, and move
+      # on. Everything behind it in the lane inherits the warm runtime, which
+      # is the state each of those suites was measured in when it had a runner
+      # to itself and appcache to warm it.
       - shell: bash
         run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinowarm.cmd
       - name: warm the WebView2 runtime
@@ -676,8 +1012,10 @@ jobs:
       # Carries the verifier's result out where a token cannot read the job
       # log. It once went red saying only that -- for four PRs it had no
       # annotate at all, and when it failed the suites that used to follow it in
-      # the old single windows lane were skipped and reported missing logs. It
-      # is its own job now, but the reading still has to leave by annotation.
+      # the old single windows lane were skipped and reported missing logs. The
+      # suites behind it are gated `if: always()` now, so a red verify no
+      # longer takes them with it -- and the reading still has to leave by
+      # annotation, because nothing here can read a job log without a token.
       - if: always()
         shell: bash
         env:
@@ -687,25 +1025,15 @@ jobs:
           # middle, which is exactly where the title census sits.
           NT_ANNOTATE_PER: "8"
         run: bash test/annotate.sh windows-test ~/windows-verify.log "PASS:|FAIL:|report:|^=== |^neutrino:"
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: windows-screenshots
-          path: |
-            C:\Users\runneradmin\*.png
-            C:\Users\runneradmin\netinstall-screenshots\
-
-  windows-appcache:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
       # The exe the batch region runs, which is now the one it just compiled.
       # Same finding as kde-appdir in a different mechanism: there the launcher
       # wrote the program every launch into a directory anyone could rewrite,
       # here it wrote it once and trusted a stamp beside it afterwards.
-      - shell: bash
+      - if: always()
+        shell: bash
         run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinocache.cmd
-      - timeout-minutes: 30
+      - if: always()
+        timeout-minutes: 30
         shell: pwsh
         run: |
           & .\test\appcache.ps1 .\test\neutrinocache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
@@ -713,15 +1041,225 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-appcache ~/appcache.log 'report:|FAIL:'
+      # It launches the app some forty times over three probing modes, and the
+      # first version of it was half an hour that nobody could overlap. Ninety
+      # seconds now, which is what makes it a step again rather than a job.
+      # Nothing here depends on what ran before it: it builds its own artifact
+      # and measures the launch path's own file I/O, and it is gated
+      # `if: always()` so it is measured whether or not appcache was.
+      - if: always()
+        shell: bash
+        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinorace.cmd
+      # The gap between the compile and the START, asserted shut. The batch
+      # region MOVEs the freshly compiled exe onto a predictable name in the app
+      # folder, writes a manifest, and only then STARTs it -- and appcache.ps1
+      # measured that folder writable by everything running as this user. Three
+      # probing rounds established the window is real in time (about 150 ms) and
+      # shut in access: the name is open deny-write across all of it, and some
+      # three hundred same-uid plant attempts a launch are refused every time,
+      # rename ERROR_ACCESS_DENIED and overwrite ERROR_SHARING_VIOLATION. This
+      # asserts none lands before the process starts, so the day a Windows
+      # change opens the window the suite goes red and names the mode and round.
+      - if: always()
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          & .\test\exerace.ps1 .\test\neutrinorace.cmd *>&1 | Tee-Object -FilePath "$HOME\exerace.log"
+          $raceExit = $LASTEXITCODE
+          Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process -Name "neutrinorace" -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $raceExit
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-exerace ~/exerace.log 'report:|FAIL:|failure\(s\)'
+      # A failed initialisation has to end, and has to leave a record. Both
+      # halves were measured absent before this: the driver sat holding a modal
+      # box ninety seconds after the download threw, and its app folder held
+      # `neutrinoerr.exe`, its manifest and the build stamp and nothing that
+      # named the failure. Provoked by pinning a version that does not exist, so
+      # the package URL 404s and the download throws the way a digest mismatch
+      # would -- the real path into handleError, with nothing about the driver
+      # modified for the test.
+      - if: always()
+        shell: bash
+        run: |
+          bash build.sh test/neutrinotest.js test/neutrinoerr.cmd
+          sed -i 's/webView2PinnedVersion: "[^"]*"/webView2PinnedVersion: "0.0.0-neutrino-does-not-exist"/' test/neutrinoerr.cmd
+          grep -q 'webView2PinnedVersion: "0.0.0-neutrino-does-not-exist"' test/neutrinoerr.cmd
+      - if: always()
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          & .\test\verify-winerr.ps1 .\test\neutrinoerr.cmd *>&1 | Tee-Object -FilePath "$HOME\winerr-verify.log"
+          $testExit = $LASTEXITCODE
+          Get-Process -Name "neutrinoerr" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $testExit
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-winerr ~/winerr-verify.log 'report:|PASS:|FAIL:|failure\(s\)'
+      - if: always()
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+      - if: always()
+        name: netinstall suite
+        timeout-minutes: 20
+        shell: bash
+        env:
+          NETINSTALL_CC: zig cc
+        run: |
+          export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
+          # Redirected, and that is the whole of this comment. The batch region
+          # STARTs a detached exe which inherits the standard handles, so with
+          # the step's own pipe on the other end it stays open for as long as
+          # the app lives -- and these apps are written never to close. Every
+          # suite inside run.sh is bounded by nt_timeout, so the suite is reaped
+          # and the orphan holding the pipe is not: the step then runs on past
+          # its own timeout-minutes, measured at 37 minutes against a bound of
+          # 20, and the rest of the lane never starts. A file has no reader to
+          # wait on. The log is echoed afterwards by a process that does exit,
+          # which is also what puts nt_result's ::warning lines back in front of
+          # the runner -- redirecting without that would take the annotations
+          # away with the hang.
+          #
+          # PR 20 wrote this lesson down for a probe that piped the launcher.
+          # This is the step on this lane that never got it.
+          NT_EXIT=0
+          bash netinstall/test/run.sh > ~/netinstall.log 2>&1 || NT_EXIT=$?
+          cat ~/netinstall.log
+          exit $NT_EXIT
+      # The suite watched closely enough, on a runner that is busy.
+      #
+      # verify-windows used to wait for each of the app's titles in turn, and
+      # between one wait returning and the next beginning it asserted, reported
+      # and encoded a full-screen PNG. Measured here under load: that gap ran
+      # to about three seconds against a state the app holds for one second, so
+      # the next title was set and gone before anything looked for it, and the
+      # wait after it spent its whole bound against a process that had finished
+      # and exited. Every recorded symptom of the "Windows first-window stall"
+      # is that.
+      #
+      # This is the measurement kept. On an idle runner the old design and the
+      # new one both pass, so a green windows lane never had anything to say
+      # about it; under cpus*3 spinners the old one lost a state 3/3 while a
+      # 20-second dwell passed 3/3 under the same load
+      # (https://github.com/alganet/neutrino/actions/runs/33033844619). The
+      # suite now samples one process ten times a second and asserts its own
+      # slowest turn against the dwell it reads out of the artifact -- so what
+      # used to be a timeout with no account is a number, and this is where
+      # that number is taken under pressure.
+      #
+      # Two replicas, because one run of one job is not a rate -- and that is
+      # what they were a two-runner matrix for. Sequential here, on one
+      # machine: what the matrix sampled and this does not is runner-to-runner
+      # variance. What it keeps is two independent readings, and it keeps them
+      # further apart than the matrix did -- separate artifacts and separate
+      # app directories, so replica 2 cannot read a trace replica 1 left. It
+      # asserts, so it can fail the run; the load is stopped whatever happens.
+      - if: always()
+        shell: bash
+        run: |
+          bash build.sh --tier=testing test/neutrinotest.js test/neutrinoload1.cmd
+          bash build.sh --tier=testing test/neutrinotest.js test/neutrinoload2.cmd
+      - name: launch under load
+        if: always()
+        timeout-minutes: 25
+        shell: pwsh
+        run: |
+          $env:NEUTRINO_WEBVIEW2_LIB_DIR = $null
+          $rc = 0
+          foreach ($replica in "1", "2") {
+            $artifact = "test\neutrinoload$replica.cmd"
+            $appdir   = "test\neutrinoload$replica"
+            $log      = "$HOME\load-verify-$replica.log"
+            # Its own frames. verify-windows.ps1 names a screenshot after the
+            # state it caught, and the core launch above runs the same script:
+            # left in $HOME every one of these would land on a name something
+            # else had already written.
+            $shots    = "$HOME\load-shots-$replica"
+            New-Item -ItemType Directory -Force -Path $shots | Out-Null
+            Write-Output "report: replica $replica"
+            $cpus = [Environment]::ProcessorCount
+            $spinners = @()
+            for ($i = 0; $i -lt $cpus * 3; $i++) {
+              $spinners += Start-Process -FilePath "cmd.exe" -PassThru -WindowStyle Hidden `
+                -ArgumentList "/c", "for /L %i in (1,0,2) do @rem"
+            }
+            Write-Output "report: load cpus=$cpus spinners=$($spinners.Count)"
+            # Start-Process, not the launcher inline: the batch region STARTs a
+            # detached exe which inherits the standard handles, and this step's
+            # stdout is the runner's pipe -- which is how a netinstall step once
+            # ran 37 minutes against a bound of 20 (PR 28). -WorkingDirectory
+            # explicitly, because Start-Process takes the child's directory from
+            # [Environment]::CurrentDirectory and not from $PWD.
+            Start-Process -FilePath "cmd.exe" -WorkingDirectory $PWD `
+              -ArgumentList "/c", $artifact -WindowStyle Hidden | Out-Null
+            $r = 0
+            try {
+                & .\test\verify-windows.ps1 -Artifact $artifact -AppDir $appdir `
+                    -ScreenshotDir $shots *>&1 |
+                    Tee-Object -FilePath $log
+                $r = $LASTEXITCODE
+            } catch {
+                "FAIL: verify-windows.ps1 ended by exception: $($_.Exception.Message)" |
+                    Tee-Object -FilePath $log -Append
+                $r = 1
+            }
+            foreach ($s in $spinners) {
+              Stop-Process -Id $s.Id -Force -ErrorAction SilentlyContinue
+            }
+            # The app's own clock. note() had no channel on this platform at all
+            # before this -- a detached winexe process gets NullStream for
+            # Console.Error and both console spellings -- so a launch that lost a
+            # state said nothing, for want of anywhere to say it.
+            $traceLog = "$appdir\neutrino-trace.log"
+            if (Test-Path $traceLog) {
+                Add-Content $log "report: the app's own trace:"
+                Get-Content $traceLog | Select-Object -Last 16 |
+                    ForEach-Object { Add-Content $log "report:   $_" }
+            } else {
+                Add-Content $log "report: the app wrote no trace at all"
+            }
+            Get-Process -Name "neutrinoload$replica" -ErrorAction SilentlyContinue |
+                Stop-Process -Force -ErrorAction SilentlyContinue
+            if ($r -ne 0) { $rc = $r }
+          }
+          exit $rc
+      - if: always()
+        shell: bash
+        env:
+          NT_ANNOTATE_PER: "8"
+        run: |
+          for replica in 1 2; do
+            bash test/annotate.sh "windows-load-$replica" \
+              ~/load-verify-"$replica".log 'report:|PASS:|FAIL:|failure\(s\)'
+          done
+      # One upload for the lane. Six jobs meant six artifacts over the same
+      # two globs in the same home directory, so every suite after the first
+      # published the ones before it under its own name.
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: windows-appcache-screenshots
+          name: windows-launch-screenshots
           path: |
             C:\Users\runneradmin\*.png
+            C:\Users\runneradmin\*.log
+            C:\Users\runneradmin\load-shots-*\
             C:\Users\runneradmin\netinstall-screenshots\
 
-  windows-attack:
+  # What the page is allowed to do, and what the driver does with a document
+  # that is not the one it was handed: hostile page content, the navigation
+  # surface, the offline tier, and the swap between `boot`'s read of the
+  # document and the driver's.
+  #
+  # The offline suite and docswap were already sharing a job for this reason;
+  # the attack and navigation suites join them because they ask the same
+  # question of the same driver. Every group is gated `if: always()`, so a red
+  # offline tier does not hide whether docswap passed -- the failure that cost
+  # a whole round when all of this sat in one long lane.
+  windows-content:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -763,14 +1301,17 @@ jobs:
       # calls not a test, because the load fails on its own and a driver with a
       # guard reports the same "held" as one without.
       #
-      # This suite, the attack suite and winerr now share the windows-attack
-      # job rather than the whole windows lane: when they sat mid-lane a build
-      # ahead of them failing skipped the assertion steps behind it, so pulling
-      # the navigation and message surface into their own job is what keeps an
-      # unrelated red from hiding whether these passed.
-      - shell: bash
+      # This suite and the attack suite above it share the windows-content lane
+      # with the offline tier and docswap, and every group in it is gated
+      # `if: always()`: when they sat mid-lane ungated, a build ahead of them
+      # failing skipped the assertion steps behind it. The gate is what keeps
+      # an unrelated red from hiding whether these passed -- it is the property
+      # the four-job split was bought for, kept without the four jobs.
+      - if: always()
+        shell: bash
         run: bash build.sh test/neutrinonav.js test/neutrinonav.cmd
-      - timeout-minutes: 15
+      - if: always()
+        timeout-minutes: 15
         shell: pwsh
         run: |
           & .\test\verify-nav.ps1 .\test\neutrinonav.cmd "$HOME\navlogs" *>&1 |
@@ -782,41 +1323,6 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-nav ~/navlogs/nav.log 'report:|FAIL:'
-      # A failed initialisation has to end, and has to leave a record. Both
-      # halves were measured absent before this: the driver sat holding a modal
-      # box ninety seconds after the download threw, and its app folder held
-      # `neutrinoerr.exe`, its manifest and the build stamp and nothing that
-      # named the failure. Provoked by pinning a version that does not exist, so
-      # the package URL 404s and the download throws the way a digest mismatch
-      # would -- the real path into handleError, with nothing about the driver
-      # modified for the test.
-      - shell: bash
-        run: |
-          bash build.sh test/neutrinotest.js test/neutrinoerr.cmd
-          sed -i 's/webView2PinnedVersion: "[^"]*"/webView2PinnedVersion: "0.0.0-neutrino-does-not-exist"/' test/neutrinoerr.cmd
-          grep -q 'webView2PinnedVersion: "0.0.0-neutrino-does-not-exist"' test/neutrinoerr.cmd
-      - timeout-minutes: 10
-        shell: pwsh
-        run: |
-          & .\test\verify-winerr.ps1 .\test\neutrinoerr.cmd *>&1 | Tee-Object -FilePath "$HOME\winerr-verify.log"
-          $testExit = $LASTEXITCODE
-          Get-Process -Name "neutrinoerr" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $testExit
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-winerr ~/winerr-verify.log 'report:|PASS:|FAIL:|failure\(s\)'
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: windows-attack-screenshots
-          path: |
-            C:\Users\runneradmin\*.png
-            C:\Users\runneradmin\netinstall-screenshots\
-
-  windows-content:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
       # The offline tier, which nothing in this repository has ever built.
       # `build.sh --tier=offline` says it denies the page network access, and
       # the whole mechanism is one meta tag applyContentPolicy swaps into the
@@ -834,13 +1340,16 @@ jobs:
       # is on both because macOS has no window a shell can query and writes its
       # title to a file only there.
       #
-      # In the windows-content job with docswap and nothing else, so a red
-      # reading here costs only its own job and not the rest of the suites.
-      - shell: bash
+      # In the windows-content lane behind the attack and navigation suites and
+      # in front of docswap, every group gated `if: always()`, so a red reading
+      # here costs its own reading and nothing else in the lane.
+      - if: always()
+        shell: bash
         run: |
           bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
           bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
-      - timeout-minutes: 30
+      - if: always()
+        timeout-minutes: 30
         shell: pwsh
         run: |
           & .\test\verify-offline.ps1 .\test\neutrinooffline-default.cmd .\test\neutrinooffline.cmd "$HOME\offlinelogs" *>&1 |
@@ -891,91 +1400,22 @@ jobs:
           name: windows-content-screenshots
           path: |
             C:\Users\runneradmin\*.png
-            C:\Users\runneradmin\netinstall-screenshots\
+            C:\Users\runneradmin\*.log
 
-  windows-netinstall:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.14.1
-      - name: netinstall suite
-        timeout-minutes: 20
-        shell: bash
-        env:
-          NETINSTALL_CC: zig cc
-        run: |
-          export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
-          # Redirected, and that is the whole of this comment. The batch region
-          # STARTs a detached exe which inherits the standard handles, so with
-          # the step's own pipe on the other end it stays open for as long as
-          # the app lives -- and these apps are written never to close. Every
-          # suite inside run.sh is bounded by nt_timeout, so the suite is reaped
-          # and the orphan holding the pipe is not: the step then runs on past
-          # its own timeout-minutes, measured at 37 minutes against a bound of
-          # 20, and the rest of the lane never starts. A file has no reader to
-          # wait on. The log is echoed afterwards by a process that does exit,
-          # which is also what puts nt_result's ::warning lines back in front of
-          # the runner -- redirecting without that would take the annotations
-          # away with the hang.
-          #
-          # PR 20 wrote this lesson down for a probe that piped the launcher.
-          # This is the step on this lane that never got it.
-          NT_EXIT=0
-          bash netinstall/test/run.sh > ~/netinstall.log 2>&1 || NT_EXIT=$?
-          cat ~/netinstall.log
-          exit $NT_EXIT
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: windows-netinstall-screenshots
-          path: |
-            C:\Users\runneradmin\*.png
-            C:\Users\runneradmin\netinstall-screenshots\
+  # Everything this platform has to say about a running app: the core launch
 
-  windows-exerace:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      # Its own job, not a step at the tail of `windows`. The lane it used to
-      # sit behind runs a dozen suites serially and this one launches the app
-      # some forty times over three probing modes, so bolted on the end it was
-      # half an hour nobody could overlap. Parallel, it costs wall-clock
-      # nothing. Nothing here depends on the rest of the lane: it builds its own
-      # artifact and measures the launch path's own file I/O.
-      - shell: bash
-        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinorace.cmd
-      # The gap between the compile and the START, asserted shut. The batch
-      # region MOVEs the freshly compiled exe onto a predictable name in the app
-      # folder, writes a manifest, and only then STARTs it -- and appcache.ps1
-      # measured that folder writable by everything running as this user. Three
-      # probing rounds established the window is real in time (about 150 ms) and
-      # shut in access: the name is open deny-write across all of it, and some
-      # three hundred same-uid plant attempts a launch are refused every time,
-      # rename ERROR_ACCESS_DENIED and overwrite ERROR_SHARING_VIOLATION. This
-      # asserts none lands before the process starts, so the day a Windows
-      # change opens the window the suite goes red and names the mode and round.
-      - timeout-minutes: 30
-        shell: pwsh
-        run: |
-          & .\test\exerace.ps1 .\test\neutrinorace.cmd *>&1 | Tee-Object -FilePath "$HOME\exerace.log"
-          $raceExit = $LASTEXITCODE
-          Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          Get-Process -Name "neutrinorace" -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $raceExit
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-exerace ~/exerace.log 'report:|FAIL:|failure\(s\)'
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: windows-exerace-screenshots
-          path: |
-            C:\Users\runneradmin\*.png
-
+  # and the tight tier, the loader environment, hostile content, a page that
+  # navigates before its own load finished, the navigation guard's account of
+  # itself, and the offline tier.
+  #
+  # Four macOS jobs before this, and three of them came to five minutes
+  # between them.
+  # The offline tier comes over from the netinstall lane, which is where the
+  # Windows split already puts it -- it is a content policy, not an installer.
+  # Everything after the core launch is gated `if: always()`.
+  #
+  # One upload at the end: all four jobs pointed at ~/screenshots, so the
+  # separate artifacts were separate names over the same directory.
   macos:
     runs-on: macos-latest
     steps:
@@ -1061,17 +1501,6 @@ jobs:
           cat ~/tight.log
           bash test/annotate.sh macos-tight ~/tight.log 'PASS:|FAIL:|failure\(s\)'
           exit $TIGHT_EXIT
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: macos-screenshots
-          path: |
-            ~/screenshots/
-
-  macos-loaders:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
       # The loader environment the standalone launch path hands its engine.
       # Every check here is against the same build with the fix cut out of it,
       # so "it would have failed before" is measured in this run rather than
@@ -1082,7 +1511,8 @@ jobs:
       # tier, which is the only build the sandbox section can ask its question
       # of, since the testing tier is what puts --no-sandbox on the command
       # line. Neither tier touches the environment.
-      - timeout-minutes: 25
+      - if: always()
+        timeout-minutes: 25
         run: |
           bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
           TEST_EXIT=0
@@ -1090,18 +1520,8 @@ jobs:
           cat ~/loaders.log
           bash test/annotate.sh macos-loaders ~/loaders.log 'report:|FAIL:'
           exit $TEST_EXIT
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: macos-loaders-screenshots
-          path: |
-            ~/screenshots/
-
-  macos-behavior:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-      - run: |
+      - if: always()
+        run: |
           bash build.sh --tier=testing test/neutrinoattack.js test/neutrinoattack.cmd
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/neutrinoattack.cmd > ~/neutrino-attack.log 2>&1 &
@@ -1116,7 +1536,8 @@ jobs:
       # Recorded here rather than asserted: this driver has no navigation
       # delegate to arm at all, which is PR 6's business. The testing tier is
       # what writes the status file the verifier reads.
-      - run: |
+      - if: always()
+        run: |
           python3 test/stall.py 8099 > ~/stall.log 2>&1 &
           STALL_PID=$!
           # Where the page under test navigates to. It has to answer: with a
@@ -1152,7 +1573,8 @@ jobs:
       # So this asserts the effect and the account separately, against a control
       # that is this artifact with the refusal deleted and against the spelling
       # the fix replaced. Three launches of the same build, one line apart.
-      - timeout-minutes: 20
+      - if: always()
+        timeout-minutes: 20
         run: |
           bash build.sh --tier=testing test/neutrinoearly.js test/neutrinonavrefuse.cmd
           TEST_EXIT=0
@@ -1160,22 +1582,6 @@ jobs:
           cat ~/navrefuse.log
           bash test/annotate.sh macos-navrefuse ~/navrefuse.log 'report:|FAIL:|PASS:|NOTE:'
           exit $TEST_EXIT
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: macos-behavior-screenshots
-          path: |
-            ~/screenshots/
-
-  macos-net:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: netinstall suite
-        timeout-minutes: 20
-        run: |
-          export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
-          bash netinstall/test/run.sh
       # The offline tier, which nothing in this repository has ever built.
       # `build.sh --tier=offline` says it denies the page network access, and
       # the whole mechanism is one meta tag applyContentPolicy swaps into the
@@ -1195,7 +1601,8 @@ jobs:
       #
       # Last in the lane on purpose. A probing round is the round most likely to
       # be red, and a red probe should cost its own reading and nothing else.
-      - timeout-minutes: 20
+      - if: always()
+        timeout-minutes: 20
         run: |
           bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
           bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
@@ -1208,390 +1615,27 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: macos-net-screenshots
+          name: macos-screenshots
+          path: |
+            ~/screenshots/
+
+  # The netinstall suite, alone. It is the longest single reading in the whole
+  # matrix -- about thirteen minutes of run.sh that nothing here can split --
+  # so it is what every other job is balanced against, and it carries nothing
+  # else that a runner would have to wait behind.
+  macos-netinstall:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: netinstall suite
+        timeout-minutes: 20
+        run: |
+          export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
+          bash netinstall/test/run.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: macos-netinstall-screenshots
           path: |
             ~/screenshots/
             ~/netinstall-screenshots/
-
-  openbsd:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      # Pinned to the commit v1.4.6 points at, on the same terms as everything
-      # else this branch pinned: a tag is a name its owner can move.
-      - name: netinstall suite
-        id: vm
-        continue-on-error: true
-        uses: vmactions/openbsd-vm@e6c68b637a12e83519688d115d57d5b0b53923cd
-        with:
-          usesh: true
-          copyback: true
-          # bash and curl are what the suite runs on; python3 is what serves the
-          # payloads and drives the network probes. The image carries the rest --
-          # seq, timeout, perl and sha256(1), which lib.sh now knows about
-          # because this platform ships neither sha256sum nor shasum.
-          #
-          # wget is here for fetchbound.sh alone. It is the branch whose two
-          # bounds come from the kernel rather than from the downloader, and
-          # without it installed this lane skips every assertion about them --
-          # on the one platform in the matrix with a different libc and a
-          # different kernel, which is exactly where setrlimit and sigaction
-          # are worth asking twice.
-          prepare: |
-            pkg_add -I bash curl wget || true
-            pkg_add -I python3 || pkg_add -I python%3 || true
-          # The log comes back rather than going to the job log: reading a job
-          # log needs a token and reading annotations does not, which is the
-          # same reason annotate.sh exists for the webview lanes.
-          #
-          # `&& rc=0 || rc=$?` and not a bare `$?`: vmactions pipes this script
-          # to `sh` behind a literal `set -eu` (index.js, `const fullCmd`), and
-          # run.sh exits with its failure count -- so the first red suite would
-          # abort the script before the rc file is written, and the action skips
-          # copyback entirely when the ssh command returns non-zero. This lane
-          # has only ever been green, which is the only reason it has not
-          # already lost a log to it. The `exit 0` is what keeps the ssh command
-          # successful; the outcome step below is what fails the lane.
-          run: |
-            bash netinstall/test/run.sh > openbsd-suite.log 2>&1 && rc=0 || rc=$?
-            echo "$rc" > openbsd-suite.rc
-            exit 0
-      # `report:` is in the pattern because a suite's nt_result never leaves this
-      # lane on its own: the `::warning` it writes is written inside the VM,
-      # where GitHub is not listening, and arrives here as a line in a log file.
-      # Anchored to the plain echo so the smuggled `::warning` copy of the same
-      # line is not annotated twice.
-      - name: results
-        if: always()
-        run: bash test/annotate.sh openbsd openbsd-suite.log 'FAIL:|failure\(s\)|SKIP|^ +report:'
-      - name: outcome
-        if: always()
-        run: |
-          [ "${{ steps.vm.outcome }}" = "success" ] ||
-            echo "::error title=openbsd::the vm step itself did not complete"
-          exit "$(cat openbsd-suite.rc 2>/dev/null || echo 1)"
-  # PR 11 put the __OpenBSD__ half of netinstall/sandbox_bsd.c under a lane and
-  # found four of its rules wrong. The other half -- FreeBSD, NetBSD -- has
-  # still never been compiled by anything in this repository: build.sh
-  # cross-compiles six targets and none of them is a BSD, and the lane above
-  # compiles the branch this one does not. Meanwhile the suites grew
-  # FreeBSD|NetBSD arms written from the OpenBSD reading -- phases.sh wants
-  # "unveil" on the --info fetch line, fetchconf.sh wants it in the config line
-  # -- on two platforms whose nt_confine returns -1 and says "none". PR 11
-  # parked these with "a lane written blind is worse", and the blind arms are
-  # already in the tree. These two lanes ask.
-  #
-  # bsdfloor.sh runs first and gets an annotate step of its own. It asserts
-  # nothing and always exits 0, which is what lets it go in front of a suite
-  # whose whole question is whether anything downstream of it can build at all;
-  # the cap is per step, so its readings do not compete with the suite's.
-  freebsd:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      # Pinned to the commit v1.5.5 points at, on the same terms as the openbsd
-      # lane beside it: a tag is a name its owner can move.
-      - name: netinstall suite
-        id: vm
-        continue-on-error: true
-        uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1
-        with:
-          usesh: true
-          copyback: true
-          # The packages are installed in `run` and not in `prepare`, because
-          # `prepare` goes over the same `set -eu` ssh channel and its output
-          # lands only in the job log, which needs a token to read. Round 2's
-          # netbsd lane installed nothing and the only way anyone found out was
-          # that bsdfloor listed curl among the missing. A log that comes back
-          # is the difference between that and a sentence.
-          prepare: |
-            true
-          # See the openbsd lane above for why the rc is captured this way and
-          # why the script ends at 0: round 1 lost both logs and every reading
-          # to exactly that, on both lanes.
-          run: |
-            {
-              pkg install -y bash curl wget || true
-              pkg install -y python3 || true
-              echo "--- after ---"
-              for t in bash cc curl wget python3; do
-                printf 'tool %s ' "$t"; command -v "$t" || echo missing
-              done
-              printf 'tool python3 says '; python3 -V 2>&1 || echo missing
-            } > bsd-pkg.log 2>&1 || true
-            bash netinstall/test/bsdfloor.sh > bsd-probe.log 2>&1 && rc=0 || rc=$?
-            echo "$rc" > bsd-probe.rc
-            bash netinstall/test/run.sh > bsd-suite.log 2>&1 && rc=0 || rc=$?
-            echo "$rc" > bsd-suite.rc
-            exit 0
-      - name: probe results
-        if: always()
-        run: bash test/annotate.sh freebsd-probe bsd-probe.log '^ +report:|^ +FAIL:|SKIP:'
-      - name: packages
-        if: always()
-        run: bash test/annotate.sh freebsd-pkg bsd-pkg.log 'missing|not found|rror|^tool '
-      # Three steps over the suite log, because the cap is per step and round 2
-      # dropped four chunks from the middle of the failures alone. Anchored to
-      # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
-      # sentence twice, once for a reader and once as an ::error, and matching
-      # both halved the number of distinct failures that fit.
-      - name: results
-        if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh freebsd bsd-suite.log '^ +FAIL:'
-      - name: readings
-        if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh freebsd-readings bsd-suite.log 'SKIP|^ +report:'
-      # Most of what this lane counts as failures are suites exiting 2 without
-      # printing a FAIL line at all -- a setup that did not come up, not an
-      # assertion that did not hold. Those two are different problems and the
-      # results step above cannot see the first one.
-      - name: errors
-        if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh freebsd-errors bsd-suite.log 'not found|No such file|Traceback|Permission denied|never came up|cannot create|^### |^ +(interpreter|still running|poller|it said)'
-      - name: totals
-        if: always()
-        run: bash test/annotate.sh freebsd-totals bsd-suite.log '^### Total|[.]sh. [0-9]+ failure'
-      # bsdfloor gates three answers of its own now -- that the branch compiles,
-      # which sysctl spelling this kernel answers, and whether the no-new-privs
-      # floor is one -- so its rc counts. `absent` when it never got as far as
-      # writing the file, which is a different failure from a red assertion and
-      # is left saying so rather than folded into a number.
-      - name: outcome
-        if: always()
-        run: |
-          [ "${{ steps.vm.outcome }}" = "success" ] ||
-            echo "::error title=freebsd::the vm step itself did not complete"
-          probe="$(cat bsd-probe.rc 2>/dev/null || echo absent)"
-          echo "::warning title=freebsd::probe rc=$probe"
-          [ "$probe" = "0" ] ||
-            echo "::error title=freebsd::bsdfloor reported $probe failure(s)"
-          suite="$(cat bsd-suite.rc 2>/dev/null || echo 1)"
-          [ "$suite" = "0" ] && [ "$probe" = "0" ] || exit 1
-          exit 0
-  netbsd:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      # Pinned to the commit v1.4.7 points at.
-      - name: netinstall suite
-        id: vm
-        continue-on-error: true
-        uses: vmactions/netbsd-vm@6334c835de4c04a59fe59f0f8f071e02a2f0bab3
-        with:
-          usesh: true
-          copyback: true
-          # pkgsrc installs under /usr/pkg, and its python is versioned: the
-          # package is python3NN and what lands on disk is python3.NN, which is
-          # not a name lib.sh's nt_python knows. The symlink is made here rather
-          # than taught to lib.sh, because whether this platform needs teaching
-          # is one of the things the round is asking.
-          # Nothing here: see the freebsd lane above. Round 2 installed not one
-          # package on this lane and said so nowhere.
-          prepare: |
-            true
-          run: |
-            PATH=/usr/pkg/bin:/usr/pkg/sbin:$PATH
-            export PATH
-            {
-              command -v pkgin || echo "no pkgin"
-              command -v pkg_add || echo "no pkg_add"
-              pkgin -y update || true
-              pkgin -y install curl wget || true
-              pkgin -y install python312 || pkgin -y install python311 || true
-              pkg_add curl wget python312 || true
-              # pkgsrc's python is versioned -- the package is python3NN and
-              # what lands is python3.NN, which is not a name lib.sh knows.
-              #
-              # The glob is anchored on purpose. `python3.*` also matches
-              # python3.12-config, which is what this linked in round 6, and
-              # nt_serve then started it eleven times and read
-              # `Usage: /usr/pkg/bin/python3 --prefix` -- reported as eleven
-              # suites whose fixture never came up. And the interpreter is asked
-              # to interpret before it is believed, because a name that exists
-              # and a program that runs are different claims.
-              for p in /usr/pkg/bin/python3.[0-9] /usr/pkg/bin/python3.[0-9][0-9]; do
-                if [ -x "$p" ] && "$p" -c "import http.server" >/dev/null 2>&1; then
-                  ln -sf "$p" /usr/pkg/bin/python3
-                fi
-              done
-              echo "--- after ---"
-              for t in bash cc curl wget python3; do
-                printf 'tool %s ' "$t"; command -v "$t" || echo missing
-              done
-              printf 'tool python3 says '; python3 -V 2>&1 || echo missing
-            } > bsd-pkg.log 2>&1 || true
-            bash netinstall/test/bsdfloor.sh > bsd-probe.log 2>&1 && rc=0 || rc=$?
-            echo "$rc" > bsd-probe.rc
-            bash netinstall/test/run.sh > bsd-suite.log 2>&1 && rc=0 || rc=$?
-            echo "$rc" > bsd-suite.rc
-            exit 0
-      - name: probe results
-        if: always()
-        run: bash test/annotate.sh netbsd-probe bsd-probe.log '^ +report:|^ +FAIL:|SKIP:'
-      - name: packages
-        if: always()
-        run: bash test/annotate.sh netbsd-pkg bsd-pkg.log 'missing|not found|rror|^tool '
-      # Three steps over the suite log, because the cap is per step and round 2
-      # dropped four chunks from the middle of the failures alone. Anchored to
-      # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
-      # sentence twice, once for a reader and once as an ::error, and matching
-      # both halved the number of distinct failures that fit.
-      - name: results
-        if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh netbsd bsd-suite.log '^ +FAIL:'
-      - name: readings
-        if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh netbsd-readings bsd-suite.log 'SKIP|^ +report:'
-      # Most of what this lane counts as failures are suites exiting 2 without
-      # printing a FAIL line at all -- a setup that did not come up, not an
-      # assertion that did not hold. Those two are different problems and the
-      # results step above cannot see the first one.
-      - name: errors
-        if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh netbsd-errors bsd-suite.log 'not found|No such file|Traceback|Permission denied|never came up|cannot create|^### |^ +(interpreter|still running|poller|it said)'
-      - name: totals
-        if: always()
-        run: bash test/annotate.sh netbsd-totals bsd-suite.log '^### Total|[.]sh. [0-9]+ failure'
-      - name: outcome
-        if: always()
-        run: |
-          [ "${{ steps.vm.outcome }}" = "success" ] ||
-            echo "::error title=netbsd::the vm step itself did not complete"
-          probe="$(cat bsd-probe.rc 2>/dev/null || echo absent)"
-          echo "::warning title=netbsd::probe rc=$probe"
-          [ "$probe" = "0" ] ||
-            echo "::error title=netbsd::bsdfloor reported $probe failure(s)"
-          suite="$(cat bsd-suite.rc 2>/dev/null || echo 1)"
-          [ "$suite" = "0" ] && [ "$probe" = "0" ] || exit 1
-          exit 0
-
-  # The suite watched closely enough, on a runner that is busy.
-  #
-  # verify-windows used to wait for each of the app's titles in turn, and
-  # between one wait returning and the next beginning it asserted, reported and
-  # encoded a full-screen PNG. Measured here under load: that gap ran to about
-  # three seconds against a state the app holds for one second, so the next
-  # title was set and gone before anything looked for it, and the wait after it
-  # spent its whole bound against a process that had finished and exited. Every
-  # recorded symptom of the "Windows first-window stall" is that.
-  #
-  # This lane is the measurement kept. On an idle runner the old design and the
-  # new one both pass, so a green windows lane never had anything to say about
-  # it; under cpus*3 spinners the old one lost a state 3/3 while a 20-second
-  # dwell passed 3/3 under the same load
-  # (https://github.com/alganet/neutrino/actions/runs/33033844619). The suite now
-  # samples one process ten times a second and asserts its own slowest turn
-  # against the dwell it reads out of the artifact -- so what used to be a
-  # timeout with no account is a number, and this lane is where that number is
-  # taken under pressure.
-  #
-  # Two replicas, because one run of one job is not a rate. It asserts, so it
-  # can fail the run; the load is stopped whatever happens.
-  windows-load:
-    strategy:
-      fail-fast: false
-      matrix:
-        replica: ["1", "2"]
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      # --tier=testing for the driver's own trace file, which is what says
-      # whether a lost state was the app's fault or the suite's. It is also the
-      # tier windows-netinstall builds with. The one thing the tier changes on
-      # this platform is that ensureWebView2Package will read
-      # NEUTRINO_WEBVIEW2_LIB_DIR, so the launch step clears it (PR 19: a probe
-      # has to clear what it is about to depend on).
-      - shell: bash
-        run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinoload.cmd
-      - name: "launch under load, replica ${{ matrix.replica }}"
-        timeout-minutes: 20
-        shell: pwsh
-        run: |
-          $env:NEUTRINO_WEBVIEW2_LIB_DIR = $null
-          $cpus = [Environment]::ProcessorCount
-          $spinners = @()
-          for ($i = 0; $i -lt $cpus * 3; $i++) {
-            $spinners += Start-Process -FilePath "cmd.exe" -PassThru -WindowStyle Hidden `
-              -ArgumentList "/c", "for /L %i in (1,0,2) do @rem"
-          }
-          Write-Output "report: load cpus=$cpus spinners=$($spinners.Count)"
-          # Start-Process, not the launcher inline: the batch region STARTs a
-          # detached exe which inherits the standard handles, and this step's
-          # stdout is the runner's pipe -- which is how a netinstall step once
-          # ran 37 minutes against a bound of 20 (PR 28). -WorkingDirectory
-          # explicitly, because Start-Process takes the child's directory from
-          # [Environment]::CurrentDirectory and not from $PWD.
-          Start-Process -FilePath "cmd.exe" -WorkingDirectory $PWD `
-            -ArgumentList "/c", "test\neutrinoload.cmd" -WindowStyle Hidden | Out-Null
-          $rc = 0
-          try {
-              & .\test\verify-windows.ps1 -Artifact "test\neutrinoload.cmd" `
-                  -AppDir "test\neutrinoload" *>&1 |
-                  Tee-Object -FilePath "$HOME\load-verify.log"
-              $rc = $LASTEXITCODE
-          } catch {
-              "FAIL: verify-windows.ps1 ended by exception: $($_.Exception.Message)" |
-                  Tee-Object -FilePath "$HOME\load-verify.log" -Append
-              $rc = 1
-          }
-          foreach ($s in $spinners) {
-            Stop-Process -Id $s.Id -Force -ErrorAction SilentlyContinue
-          }
-          # The app's own clock. note() had no channel on this platform at all
-          # before this -- a detached winexe process gets NullStream for
-          # Console.Error and both console spellings -- so a launch that lost a
-          # state said nothing, for want of anywhere to say it.
-          $traceLog = "test\neutrinoload\neutrino-trace.log"
-          if (Test-Path $traceLog) {
-              Add-Content "$HOME\load-verify.log" "report: the app's own trace:"
-              Get-Content $traceLog | Select-Object -Last 16 |
-                  ForEach-Object { Add-Content "$HOME\load-verify.log" "report:   $_" }
-          } else {
-              Add-Content "$HOME\load-verify.log" "report: the app wrote no trace at all"
-          }
-          Get-Process -Name "neutrinoload" -ErrorAction SilentlyContinue |
-              Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $rc
-      - if: always()
-        shell: bash
-        env:
-          NT_ANNOTATE_PER: "8"
-        run: |
-          bash test/annotate.sh windows-load-${{ matrix.replica }} \
-            ~/load-verify.log 'report:|PASS:|FAIL:|failure\(s\)'
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: windows-load-${{ matrix.replica }}
-          path: |
-            C:\Users\runneradmin\load-verify.log
-            C:\Users\runneradmin\*.png
-
-  netinstall-cross:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.14.1
-      - run: bash netinstall/build.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: netinstall-binaries
-          path: netinstall/dist/
