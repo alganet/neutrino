@@ -1488,14 +1488,39 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 injectPageScript: function (js) {
                     pendingPageScript = js;
                 },
-                screenHeight: function () {
+                /*
+                 * The one height the flip below is allowed to measure against,
+                 * and it is the primary display's -- the screen whose frame
+                 * origin is 0,0. Cocoa's global coordinate space grows upward
+                 * from that screen's bottom-left corner and the top-left space
+                 * every caller here speaks grows downward from its top-left, so
+                 * the two differ by that one screen's height and by nothing
+                 * else, whichever display a window is actually on.
+                 *
+                 * This was NSScreen.mainScreen, which is not the primary
+                 * display: it is the screen holding the window with keyboard
+                 * focus, so on a second monitor of a different height it
+                 * answered a number that has no part in this conversion, and
+                 * answered a different one as focus moved. Every window on this
+                 * machine is on the only screen there is, which is why both
+                 * spellings measure 1024 here and why nothing caught it.
+                 *
+                 * screens is documented never to be empty, and mainScreen is
+                 * kept as the fallback rather than letting the arithmetic go on
+                 * with undefined if it ever is.
+                 */
+                primaryScreenHeight: function () {
+                    var screens = dollar.NSScreen.screens;
+                    if (screens && screens.count > 0) {
+                        return screens.objectAtIndex(0).frame.size.height;
+                    }
                     return dollar.NSScreen.mainScreen.frame.size.height;
                 },
                 toMacY: function (y, winHeight) {
-                    return this.screenHeight() - y - winHeight;
+                    return this.primaryScreenHeight() - y - winHeight;
                 },
                 toTopLeftY: function (macY, winHeight) {
-                    return this.screenHeight() - macY - winHeight;
+                    return this.primaryScreenHeight() - macY - winHeight;
                 },
                 writeStatus: function (title, win) {
                     // Scaffolding for verify-macos.sh, which has no other way to
@@ -1521,7 +1546,34 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 },
                 resize: function (win, w, h) {
                     var frame = win.frame;
-                    win.setFrameDisplay(dollar.NSMakeRect(frame.origin.x, frame.origin.y, w, h), true);
+                    /*
+                     * The top edge is held, not the origin, and it is held
+                     * through the same two converters move and writeStatus use
+                     * rather than by arithmetic of its own. AppKit measures a
+                     * frame from its bottom-left corner, so reusing origin.y
+                     * across a size change pins the bottom and lets the title
+                     * bar fall by the difference -- which is a move, and the one
+                     * move here nobody asked for.
+                     *
+                     * Measured on the published demo, which opens at the 900x600
+                     * default and resizes itself to 520x300 once its page is
+                     * ready: the window arrived at top-left 368,98 and 380 ms
+                     * later a smaller window sat at 368,430. Same NSWindow, same
+                     * window number -- but 332 px down the screen, retitled, and
+                     * now carrying content it had none of before. It reads as
+                     * the first window closing and a second one opening
+                     * somewhere else, which is exactly what it was reported as.
+                     *
+                     * The other three drivers already hold the top-left, none of
+                     * them by choosing to: Forms.ClientSize leaves Location
+                     * alone, Gtk.resize leaves the position to the window
+                     * manager, and a QML Window's x and y are its top-left.
+                     * Cocoa's corner was the only one that leaked, and this
+                     * driver had already decided not to speak it.
+                     */
+                    var top = this.toTopLeftY(frame.origin.y, frame.size.height);
+                    win.setFrameDisplay(
+                        dollar.NSMakeRect(frame.origin.x, this.toMacY(top, h), w, h), true);
                     this.writeStatus(String(win.title), win);
                 },
                 move: function (win, x, y) {
