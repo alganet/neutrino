@@ -289,7 +289,22 @@ jobs:
       - if: always()
         run: |
           sudo apt update
-          sudo apt remove -y gjs cjs qml6 qt6-declarative-dev-tools || true
+          # One at a time, and this is the merge's own finding. As one command
+          # -- `apt remove -y gjs cjs qml6 qt6-declarative-dev-tools` -- apt
+          # resolves every name before it removes anything, `qml6` is not a
+          # package name in Ubuntu, and the whole transaction aborts with
+          # "Unable to locate package qml6" having removed nothing at all. The
+          # `|| true` then swallowed the status.
+          #
+          # On its own runner that was invisible: none of the four were
+          # installed there, so a no-op remove and a real one look the same.
+          # Behind the cjs half they are not the same, and the guard below is
+          # what said so -- cjs was still on the machine and this lane is meant
+          # to reach python3. The guard is the only thing in the job that could
+          # have caught it, which is why it is there.
+          for pkg in gjs cjs qml6 qt6-declarative-dev-tools; do
+            sudo apt remove -y "$pkg" || true
+          done
           sudo apt install -y xvfb imagemagick x11-xserver-utils metacity \
             xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
             python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 gir1.2-javascriptcoregtk-4.1 \
