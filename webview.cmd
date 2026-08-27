@@ -1945,7 +1945,30 @@ exit $?;:<<'//</script></head><body></body>' #-->
          * JScript.NET resolves globals at compile time and has neither of these
          * -- the same reason the README gives for eval("window").
          */
+        /*
+         * Set by a driver that has somewhere durable to write. Null everywhere
+         * else, and null in every release build: the one installer is gated on
+         * the testing tier, which is stamped into the artifact by build.sh and
+         * cannot be reached from the environment.
+         */
+        noteSink: null,
+
         note: function (message) {
+            /*
+             * A driver may install a sink, and on Windows one has to. A
+             * /t:winexe process launched detached gets NullStream for
+             * Console.Error and for both console spellings, so every line below
+             * reaches nobody there -- which is why an app that stalled has
+             * always "said nothing", rather than having had nothing to say.
+             * recordWindowsError covers the one path that throws; a refusal,
+             * and everything trace() reports, had no channel at all.
+             *
+             * Best effort, and deliberately not a `return`: where a caller did
+             * hand this process handles, the stderr line is still worth having.
+             */
+            try {
+                if (this.noteSink) { this.noteSink("neutrino: " + message); }
+            } catch (_) {}
             try {
                 eval("printerr")("neutrino: " + message);
                 return;
@@ -1957,6 +1980,37 @@ exit $?;:<<'//</script></head><body></body>' #-->
             try {
                 eval("console").log("neutrino: " + message);
             } catch (_) {}
+        },
+
+        /*
+         * The Windows driver's own account, on disk, under the testing tier.
+         *
+         * Everything this file has ever learned about the Windows first-window
+         * stall was read from outside, because from inside the app said nothing
+         * -- not for want of lines, but because note() had no channel on this
+         * platform at all. This gives it one, timestamped from the moment the
+         * driver started, so "the title was set and not seen" and "the title
+         * was never set" stop being the same reading.
+         *
+         * The file is truncated at install: a stale trace from an earlier
+         * launch answering questions about this one is the same defect PR 7
+         * fixed for the seatbelt profile.
+         */
+        installWindowsTrace: function (SystemRef, appFolder) {
+            var path = SystemRef.IO.Path.Combine(appFolder, "neutrino-trace.log");
+            var started = SystemRef.DateTime.UtcNow;
+            try {
+                SystemRef.IO.File.WriteAllText(path, "");
+            } catch (_) {
+                return;
+            }
+            this.noteSink = function (message) {
+                try {
+                    var ms = Math.round(
+                        SystemRef.DateTime.UtcNow.Subtract(started).TotalMilliseconds);
+                    SystemRef.IO.File.AppendAllText(path, ms + "ms " + message + "\r\n");
+                } catch (_) {}
+            };
         },
 
         /*
@@ -3235,6 +3289,13 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     appFolder = SystemRef.Windows.Forms.Application.StartupPath;
                     userDataDir = SystemRef.IO.Path.Combine(appFolder, "data");
 
+                    // Before the package, because the package phase is one of
+                    // the two halves a stalled launch has to be split into.
+                    if (self.hasTier("testing")) {
+                        self.installWindowsTrace(SystemRef, appFolder);
+                    }
+                    self.trace("init: app folder " + appFolder);
+
                     var webView2LibDir = self.ensureWebView2Package(SystemRef, appFolder);
                     if (!webView2LibDir) {
                         SystemRef.Environment.Exit(1);
@@ -3251,6 +3312,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     if (!webViewType) {
                         throw new Error("Could not load Microsoft.Web.WebView2.WinForms.WebView2 type.");
                     }
+                    self.trace("init: assemblies loaded from " + webView2LibDir);
                 },
                 readFile: function (path) {
                     return SystemRef.IO.File.ReadAllText(path);
@@ -3314,6 +3376,11 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 },
                 setTitle: function (win, title) {
                     win.Text = title;
+                    // The app's own clock on the one thing the verifier watches
+                    // for. A title the suite never saw and a title never set
+                    // are the same reading from outside and different ones
+                    // here.
+                    self.trace("title -> " + title);
                 },
                 resize: function (win, w, h) {
                     win.ClientSize = new SystemRef.Drawing.Size(parseInt(w), parseInt(h));
@@ -3351,10 +3418,18 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 },
                 runEventLoop: function (win, wv) {
                     win.Show();
+                    self.trace("loop: window shown");
                     var coreWv2 = null;
                     var titleProp = null;
                     var sourceProp = null;
                     var preloadInjected = false;
+                    // Heartbeat and first-exception state. The loop body below
+                    // is one big try/catch that discards what it catches, so a
+                    // build whose every iteration threw would spin in silence
+                    // and look exactly like one waiting patiently.
+                    var spins = 0;
+                    var beats = 0;
+                    var loopExNoted = false;
                     while (win.Visible) {
                         SystemRef.Windows.Forms.Application.DoEvents();
                         SystemRef.Threading.Thread.Sleep(16);
@@ -3367,6 +3442,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                             }
                             if (coreWv2 && !settingsApplied) {
                                 settingsApplied = true;
+                                self.trace("loop: CoreWebView2 available after " + spins + " turns");
                                 self.hardenWebView2(coreWv2);
 
                                 // Before the preload is built, because what the
@@ -3417,6 +3493,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                                      * from inside the engine.
                                      */
                                     NeutrinoNavSink.navIssued = true;
+                                    self.trace("loop: navigating to the app document");
                                     navMethod.Invoke(coreWv2, [pendingDocument]);
                                 } else {
                                     // The other half of the same finding, and
@@ -3502,7 +3579,44 @@ exit $?;:<<'//</script></head><body></body>' #-->
                                     }
                                 }
                             }
-                        } catch (_) {}
+                        } catch (loopEx) {
+                            /*
+                             * Still swallowed -- this loop has always been
+                             * allowed to outlive a bad turn -- but no longer in
+                             * silence. Once, and only under the testing tier.
+                             *
+                             * String() and not a typed catch: `catch (ex :
+                             * Exception)` is the spelling that reaches the CLR
+                             * exception (PR 25) and it is JScript.NET syntax,
+                             * which the three engines that also parse this file
+                             * would refuse. So this names that something threw
+                             * and roughly what; the type may arrive wrapped.
+                             */
+                            if (!loopExNoted) {
+                                loopExNoted = true;
+                                // Guarded, like everything else on this path:
+                                // an instrument that can end the loop it is
+                                // watching is worse than no instrument.
+                                try {
+                                    self.trace("loop: raised " + String(loopEx));
+                                } catch (_) {}
+                            }
+                        }
+                        /*
+                         * A heartbeat while the engine has not arrived. Sixteen
+                         * milliseconds a turn, so this is about every five
+                         * seconds, and it stops after forty -- long enough to
+                         * cover a 240s wait, bounded so a wedged launch cannot
+                         * write an unbounded file.
+                         */
+                        spins++;
+                        if (!coreWv2 && beats < 40 && spins % 300 === 0) {
+                            beats++;
+                            try {
+                                self.trace("loop: still no CoreWebView2 after " +
+                                    spins + " turns");
+                            } catch (_) {}
+                        }
                     }
                 },
                 handleError: function (ex) {

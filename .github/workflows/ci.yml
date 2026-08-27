@@ -508,6 +508,12 @@ jobs:
       # is its own job now, but the reading still has to leave by annotation.
       - if: always()
         shell: bash
+        env:
+          # The verifier's watch adds about a dozen `report:` lines to a log
+          # that already fills the default forty, and the watch is the reading
+          # this round exists for -- at the default this step would drop its
+          # middle, which is exactly where the title census sits.
+          NT_ANNOTATE_PER: "8"
         run: bash test/annotate.sh windows-test ~/windows-verify.log "PASS:|FAIL:|report:|^=== |^neutrino:"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -1301,6 +1307,109 @@ jobs:
           suite="$(cat bsd-suite.rc 2>/dev/null || echo 1)"
           [ "$suite" = "0" ] && [ "$probe" = "0" ] || exit 1
           exit 0
+
+  # The suite watched closely enough, on a runner that is busy.
+  #
+  # verify-windows used to wait for each of the app's titles in turn, and
+  # between one wait returning and the next beginning it asserted, reported and
+  # encoded a full-screen PNG. Measured here under load: that gap ran to about
+  # three seconds against a state the app holds for one second, so the next
+  # title was set and gone before anything looked for it, and the wait after it
+  # spent its whole bound against a process that had finished and exited. Every
+  # recorded symptom of the "Windows first-window stall" is that.
+  #
+  # This lane is the measurement kept. On an idle runner the old design and the
+  # new one both pass, so a green windows lane never had anything to say about
+  # it; under cpus*3 spinners the old one lost a state 3/3 while a 20-second
+  # dwell passed 3/3 under the same load
+  # (https://github.com/alganet/neutrino/actions/runs/33033844619). The suite now
+  # samples one process ten times a second and asserts its own slowest turn
+  # against the dwell it reads out of the artifact -- so what used to be a
+  # timeout with no account is a number, and this lane is where that number is
+  # taken under pressure.
+  #
+  # Two replicas, because one run of one job is not a rate. It asserts, so it
+  # can fail the run; the load is stopped whatever happens.
+  windows-load:
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: ["1", "2"]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      # --tier=testing for the driver's own trace file, which is what says
+      # whether a lost state was the app's fault or the suite's. It is also the
+      # tier windows-netinstall builds with. The one thing the tier changes on
+      # this platform is that ensureWebView2Package will read
+      # NEUTRINO_WEBVIEW2_LIB_DIR, so the launch step clears it (PR 19: a probe
+      # has to clear what it is about to depend on).
+      - shell: bash
+        run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinoload.cmd
+      - name: "launch under load, replica ${{ matrix.replica }}"
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          $env:NEUTRINO_WEBVIEW2_LIB_DIR = $null
+          $cpus = [Environment]::ProcessorCount
+          $spinners = @()
+          for ($i = 0; $i -lt $cpus * 3; $i++) {
+            $spinners += Start-Process -FilePath "cmd.exe" -PassThru -WindowStyle Hidden `
+              -ArgumentList "/c", "for /L %i in (1,0,2) do @rem"
+          }
+          Write-Output "report: load cpus=$cpus spinners=$($spinners.Count)"
+          # Start-Process, not the launcher inline: the batch region STARTs a
+          # detached exe which inherits the standard handles, and this step's
+          # stdout is the runner's pipe -- which is how a netinstall step once
+          # ran 37 minutes against a bound of 20 (PR 28). -WorkingDirectory
+          # explicitly, because Start-Process takes the child's directory from
+          # [Environment]::CurrentDirectory and not from $PWD.
+          Start-Process -FilePath "cmd.exe" -WorkingDirectory $PWD `
+            -ArgumentList "/c", "test\neutrinoload.cmd" -WindowStyle Hidden | Out-Null
+          $rc = 0
+          try {
+              & .\test\verify-windows.ps1 -Artifact "test\neutrinoload.cmd" `
+                  -AppDir "test\neutrinoload" *>&1 |
+                  Tee-Object -FilePath "$HOME\load-verify.log"
+              $rc = $LASTEXITCODE
+          } catch {
+              "FAIL: verify-windows.ps1 ended by exception: $($_.Exception.Message)" |
+                  Tee-Object -FilePath "$HOME\load-verify.log" -Append
+              $rc = 1
+          }
+          foreach ($s in $spinners) {
+            Stop-Process -Id $s.Id -Force -ErrorAction SilentlyContinue
+          }
+          # The app's own clock. note() had no channel on this platform at all
+          # before this -- a detached winexe process gets NullStream for
+          # Console.Error and both console spellings -- so a launch that lost a
+          # state said nothing, for want of anywhere to say it.
+          $traceLog = "test\neutrinoload\neutrino-trace.log"
+          if (Test-Path $traceLog) {
+              Add-Content "$HOME\load-verify.log" "report: the app's own trace:"
+              Get-Content $traceLog | Select-Object -Last 16 |
+                  ForEach-Object { Add-Content "$HOME\load-verify.log" "report:   $_" }
+          } else {
+              Add-Content "$HOME\load-verify.log" "report: the app wrote no trace at all"
+          }
+          Get-Process -Name "neutrinoload" -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $rc
+      - if: always()
+        shell: bash
+        env:
+          NT_ANNOTATE_PER: "8"
+        run: |
+          bash test/annotate.sh windows-load-${{ matrix.replica }} \
+            ~/load-verify.log 'report:|PASS:|FAIL:|failure\(s\)'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-load-${{ matrix.replica }}
+          path: |
+            C:\Users\runneradmin\load-verify.log
+            C:\Users\runneradmin\*.png
+
   netinstall-cross:
     runs-on: ubuntu-latest
     steps:

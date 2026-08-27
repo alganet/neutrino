@@ -11,7 +11,13 @@ param(
     # the same app into a temp HOME and runs it from there, so it passes those
     # in: the WebView2 package sits beside the exe, wherever the exe is.
     [string]$Artifact = (Join-Path $PSScriptRoot "neutrinotest.cmd"),
-    [string]$AppDir = (Join-Path $PSScriptRoot "neutrinotest")
+    [string]$AppDir = (Join-Path $PSScriptRoot "neutrinotest"),
+    # The process to watch. Derived from the artifact, because the wait below
+    # used to name `neutrinotest` outright and the probe lanes launch the same
+    # verifier against a build with a different name. Both callers that exist
+    # today install an app called neutrinotest, so this is the value they were
+    # already getting.
+    [string]$AppName = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,20 +35,76 @@ public class WinAPI {
 }
 "@
 
-# Two budgets, because the first window on this lane is not like the others.
-# This app folder is cold: the Windows driver downloads and unpacks the pinned
-# WebView2 package before CoreWebView2 exists, and all of that happens *after*
-# the Form is on screen and before the page can set a title. The two suites
-# beside this one already budget for it -- appcache.ps1 waits 180 seconds on its
-# first launch and says why, verify-offline.ps1 waits 240 -- and this one waited
-# 120 for the whole thing and went red three times in a row on exactly that
-# stretch, saying `=== Step 0: Ready ===` and no more.
+# One budget, covering the window and everything the app does in it. This app
+# folder is cold: the Windows driver downloads and unpacks the pinned WebView2
+# package before CoreWebView2 exists, and all of that happens *after* the Form
+# is on screen and before the page can set a title. The two suites beside this
+# one already budget for it -- appcache.ps1 waits 180 seconds on its first
+# launch and says why, verify-offline.ps1 waits 240.
+#
+# It used to be two, a long one for the first title and 60 seconds for each
+# scripted step after it. That shape is gone with the waits it belonged to:
+# there is one sampling loop now, so there is one deadline, and a step that is
+# never reached is a missing sample rather than a wait that expires. Which also
+# means this number stopped being interesting -- raising it was the wrong fix
+# twice, at 120 and again at 240, because nothing that was waiting was ever
+# going to arrive.
 $FirstTimeout = 240
-$Timeout = 60
 $PollInterval = 500
+# The sampler's turn. Ten looks a second against a state the app holds for one,
+# so a state has to be missed ten times over before it is lost -- and the suite
+# asserts the slowest turn it actually managed rather than trusting this number.
+$SampleInterval = 100
 $Failures = 0
 
 New-Item -ItemType Directory -Force -Path $ScreenshotDir | Out-Null
+
+# --- The watch -------------------------------------------------------------
+#
+# Diagnostics, not assertions: every line here is a `report:`.
+#
+# What a failure of this suite needs to say, and could not before: how closely
+# the app was actually being watched, whether it was still there, and whether
+# the engine ever came up. A wait that ended at its bound used to be the whole
+# account, and four different things produce it -- the view never got a
+# document, the page's timers were throttled, the app died, or it did
+# everything right and nobody was looking. The last of those is what this suite
+# was measured doing.
+$script:WatchPid = 0
+$script:WatchStart = $null
+$script:WatchPolls = New-Object System.Collections.ArrayList
+$script:WatchGoneAt = $null
+$script:WatchCpu = -1
+
+function Watch-Elapsed {
+    if (-not $script:WatchStart) { return 0 }
+    return [int]((Get-Date) - $script:WatchStart).TotalMilliseconds
+}
+
+function Report-Watch($what) {
+    $n = $script:WatchPolls.Count
+    if ($n -gt 0) {
+        $sorted = @($script:WatchPolls | Sort-Object)
+        $sum = ($script:WatchPolls | Measure-Object -Sum).Sum
+        Write-Host ("report: watch[$what] turns={0} turn_ms min={1} med={2} max={3} sum={4}" -f `
+            $n, $sorted[0], $sorted[[int]($n / 2)], $sorted[$n - 1], $sum)
+    } else {
+        Write-Host "report: watch[$what] no turns recorded"
+    }
+    $alive = $false
+    if ($script:WatchPid) {
+        $alive = [bool](Get-Process -Id $script:WatchPid -ErrorAction SilentlyContinue)
+    }
+    $gone = "-"
+    if ($script:WatchGoneAt) { $gone = "$($script:WatchGoneAt)ms" }
+    # cpu_s separates a process sitting in the driver's DoEvents loop from one
+    # that is merely present: that loop never sleeps longer than 16ms, so a
+    # stalled-but-running app accumulates seconds and a wedged one does not.
+    Write-Host ("report: watch[$what] pid={0} alive={1} gone_at={2} cpu_s={3} t={4}ms" -f `
+        $script:WatchPid, $alive, $gone, $script:WatchCpu, (Watch-Elapsed))
+    $edge = @(Get-Process -Name msedgewebview2 -ErrorAction SilentlyContinue).Count
+    Write-Host "report: watch[$what] msedgewebview2 processes now=$edge"
+}
 
 # A verifier that speaks in PASS and FAIL should not leave by exception. The
 # waits below used to `throw` on a timeout; with $ErrorActionPreference = Stop
@@ -85,93 +147,37 @@ function Take-Screenshot($name) {
     } catch {}
 }
 
-function Wait-ForTitle($pattern, $seconds) {
-    if (-not $seconds) { $seconds = $Timeout }
-    $deadline = (Get-Date).AddSeconds($seconds)
-    do {
-        $procs = Get-Process | Where-Object { $_.MainWindowTitle -like "*$pattern*" -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-        if ($procs) { return $procs }
-        Start-Sleep -Milliseconds $PollInterval
-    } while ((Get-Date) -lt $deadline)
-    # A bare timeout cannot tell an app that died from two apps where the wrong
-    # one was picked, and those want opposite fixes. Say what was actually on
-    # screen before giving up.
-    # `report:` and not two spaces: this dump is the reason the wait says
-    # anything at all when it gives up, and the annotate pattern this lane uses
-    # did not match it -- so the one thing written to explain a timeout was the
-    # one thing that never left the job log.
-    Report-PackageState
-    Write-Host "report: windows with a title when the wait gave up:"
-    foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) {
-        try {
-            if ($proc.MainWindowHandle -eq 0 -or -not $proc.MainWindowTitle) { continue }
-            Write-Host "report:   $($proc.ProcessName) [$($proc.Id)] '$($proc.MainWindowTitle)'"
-        } catch { continue }
-    }
-    Fail-Now "TIMEOUT after ${seconds}s waiting for title: $pattern"
-}
-
 function Wait-ForApp() {
+    $script:WatchStart = Get-Date
+    $script:WatchPolls = New-Object System.Collections.ArrayList
     $deadline = (Get-Date).AddSeconds($FirstTimeout)
     do {
-        $p = Get-Process -Name neutrinotest -ErrorAction SilentlyContinue |
+        $t0 = Get-Date
+        $p = Get-Process -Name $AppName -ErrorAction SilentlyContinue |
              Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-        if ($p) { return $p }
+        [void]$script:WatchPolls.Add([int]((Get-Date) - $t0).TotalMilliseconds)
+        if ($p) {
+            # From here the watch has something to follow. The pid is taken
+            # once: a second process of the same name arriving later is a
+            # different question, and re-reading the name every poll would
+            # silently start reporting about it.
+            $script:WatchPid = $p.Id
+            Write-Host "report: watch[window] pid=$($p.Id) window at $(Watch-Elapsed)ms"
+            return $p
+        }
         Start-Sleep -Milliseconds $PollInterval
     } while ((Get-Date) -lt $deadline)
     Report-PackageState
+    Report-Watch "window"
+    Write-Host "report: windows with a title when the wait gave up:"
+    foreach ($other in @(Get-Process -ErrorAction SilentlyContinue)) {
+        try {
+            if ($other.MainWindowHandle -eq 0 -or -not $other.MainWindowTitle) { continue }
+            Write-Host "report:   $($other.ProcessName) [$($other.Id)] '$($other.MainWindowTitle)'"
+        } catch { continue }
+    }
     Fail-Now "TIMEOUT after ${FirstTimeout}s waiting for the app to show a window"
 }
-
-function Assert-Title($proc, $expected) {
-    $proc.Refresh()
-    $actual = $proc.MainWindowTitle
-    if ($actual -eq $expected) {
-        Write-Host "  PASS: title = '$expected'"
-    } else {
-        Write-Host "  FAIL: title expected='$expected' actual='$actual'"
-        $script:Failures++
-    }
-}
-
-function Assert-Geometry($hwnd, $expectedW, $expectedH, $tolerance) {
-    if (-not $tolerance) { $tolerance = 80 }
-    $rect = New-Object WinAPI+RECT
-    [WinAPI]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
-    $actualW = $rect.Right - $rect.Left
-    $actualH = $rect.Bottom - $rect.Top
-    $dw = [Math]::Abs($actualW - $expectedW)
-    $dh = [Math]::Abs($actualH - $expectedH)
-    if ($dw -le $tolerance -and $dh -le $tolerance) {
-        Write-Host "  PASS: geometry ~= ${expectedW}x${expectedH} (actual: ${actualW}x${actualH})"
-    } else {
-        Write-Host "  FAIL: geometry expected ~= ${expectedW}x${expectedH} actual=${actualW}x${actualH}"
-        $script:Failures++
-    }
-}
-
-function Assert-Position($hwnd, $expectedX, $expectedY, $tolerance) {
-    if (-not $tolerance) { $tolerance = 10 }
-    $rect = New-Object WinAPI+RECT
-    [WinAPI]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
-    $dx = [Math]::Abs($rect.Left - $expectedX)
-    $dy = [Math]::Abs($rect.Top - $expectedY)
-    if ($dx -le $tolerance -and $dy -le $tolerance) {
-        Write-Host "  PASS: position ~= ${expectedX},${expectedY} (actual: $($rect.Left),$($rect.Top))"
-    } else {
-        Write-Host "  FAIL: position expected ~= ${expectedX},${expectedY} actual=$($rect.Left),$($rect.Top)"
-        $script:Failures++
-    }
-}
-
-# --- Test steps ---
-
-Write-Host "=== Waiting for window ==="
-# By process, not by title: whether a window appeared has nothing to do with
-# which scripted step the app happens to be on, and matching the initial title
-# made this fail whenever the app got ahead of the verifier.
-$proc = Wait-ForApp
-Take-Screenshot "00-initial"
 
 # The Windows driver downloads its engine assemblies and calls Assembly.LoadFrom
 # on them, so what landed in the package directory is code this app runs and is
@@ -266,35 +272,189 @@ function Assert-WebView2Package($artifact, $packageRoot) {
     Write-Host "  PASS: the package directory holds the $($expected.Count) pinned members and nothing else"
 }
 
-Write-Host "=== Step 0: Ready ==="
-# The long budget again, and this is the wait that needed it: the Form is on
-# screen from Wait-ForApp, and everything between that and this title is the
-# WebView2 package being fetched and unpacked. Every wait after this one is a
-# scripted step a second apart and gets the short budget.
-$proc = Wait-ForTitle "STEP0" $FirstTimeout
-Assert-Title $proc "STEP0"
-Take-Screenshot "01-step0"
+# --- The sequence ----------------------------------------------------------
+#
+# One loop, and nothing slow inside it.
+#
+# This suite used to wait for each title in turn -- and between one wait
+# returning and the next beginning it asserted, reported and encoded a
+# full-screen PNG. Measured under load: that gap ran to about three seconds
+# against a state the app holds for one, so the next title was set and gone
+# before anything looked for it, and the wait after it then spent its entire
+# bound against a process that had finished and exited. Every recorded symptom
+# of the "first-window stall" is that, including the ones a larger bound could
+# not fix.
+#
+# So the app's states are recorded as they happen and asserted afterwards. Two
+# things follow from that and both matter.
+#
+# Geometry is sampled *with* the title, in the same turn, because resize and
+# move are only observable while the step that made them is current -- reading
+# them later would be reading a window that has moved on, or closed.
+#
+# And the sampler asks one process for one property. The old poll called
+# Get-Process with no arguments and touched MainWindowTitle on every process on
+# the machine, which is what made a turn expensive enough to lose a state in.
+function Watch-Sequence($proc, $seconds) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    $samples = New-Object System.Collections.ArrayList
+    $last = $null
+    $maxGap = 0
+    $turns = 0
+    $prevTurn = Get-Date
+    while ((Get-Date) -lt $deadline) {
+        $turns++
+        $now = Get-Date
+        $gap = [int]($now - $prevTurn).TotalMilliseconds
+        if ($gap -gt $maxGap) { $maxGap = $gap }
+        $prevTurn = $now
+        [void]$script:WatchPolls.Add($gap)
+        try { $proc.Refresh() } catch { break }
+        try { $script:WatchCpu = [math]::Round($proc.TotalProcessorTime.TotalSeconds, 2) } catch {}
+        if ($proc.HasExited) {
+            if (-not $script:WatchGoneAt) { $script:WatchGoneAt = Watch-Elapsed }
+            Write-Host "report: seq $(Watch-Elapsed)ms <the process is gone>"
+            break
+        }
+        $title = ""
+        try { $title = [string]$proc.MainWindowTitle } catch { $title = "" }
+        if ($title -ne $last) {
+            $last = $title
+            $rect = New-Object WinAPI+RECT
+            [WinAPI]::GetWindowRect($proc.MainWindowHandle, [ref]$rect) | Out-Null
+            [void]$samples.Add([pscustomobject]@{
+                At     = [int]((Get-Date) - $script:WatchStart).TotalMilliseconds
+                Title  = $title
+                Width  = $rect.Right - $rect.Left
+                Height = $rect.Bottom - $rect.Top
+                Left   = $rect.Left
+                Top    = $rect.Top
+            })
+            Write-Host "report: seq $($samples[$samples.Count - 1].At)ms '$title' $($rect.Right - $rect.Left)x$($rect.Bottom - $rect.Top) at $($rect.Left),$($rect.Top)"
+            if ($title -like "*TESTS DONE*") { break }
+        }
+        Start-Sleep -Milliseconds $SampleInterval
+    }
+    return [pscustomobject]@{
+        Samples = $samples
+        MaxGap  = $maxGap
+        Turns   = $turns
+    }
+}
 
-Write-Host "=== Step 1: setTitle ==="
-$proc = Wait-ForTitle "STEP1-Test Title"
-Assert-Title $proc "STEP1-Test Title"
-Take-Screenshot "02-step1"
+function Find-Sample($record, $title) {
+    foreach ($s in $record.Samples) {
+        if ($s.Title -eq $title) { return $s }
+    }
+    return $null
+}
+
+function Assert-Reached($record, $title) {
+    $s = Find-Sample $record $title
+    if ($s) {
+        Write-Host "  PASS: reached '$title' at $($s.At)ms"
+    } else {
+        Write-Host "  FAIL: never observed the title '$title'"
+        Write-Host "::warning title=windows-sequence::never observed the title '$title'"
+        $script:Failures++
+    }
+    return $s
+}
+
+function Assert-GeometryAt($sample, $title, $expectedW, $expectedH, $tolerance) {
+    if (-not $sample) { return }
+    if (-not $tolerance) { $tolerance = 80 }
+    $dw = [Math]::Abs($sample.Width - $expectedW)
+    $dh = [Math]::Abs($sample.Height - $expectedH)
+    if ($dw -le $tolerance -and $dh -le $tolerance) {
+        Write-Host "  PASS: geometry at '$title' ~= ${expectedW}x${expectedH} (actual: $($sample.Width)x$($sample.Height))"
+    } else {
+        Write-Host "  FAIL: geometry at '$title' expected ~= ${expectedW}x${expectedH} actual=$($sample.Width)x$($sample.Height)"
+        $script:Failures++
+    }
+}
+
+function Assert-PositionAt($sample, $title, $expectedX, $expectedY, $tolerance) {
+    if (-not $sample) { return }
+    if (-not $tolerance) { $tolerance = 10 }
+    $dx = [Math]::Abs($sample.Left - $expectedX)
+    $dy = [Math]::Abs($sample.Top - $expectedY)
+    if ($dx -le $tolerance -and $dy -le $tolerance) {
+        Write-Host "  PASS: position at '$title' ~= ${expectedX},${expectedY} (actual: $($sample.Left),$($sample.Top))"
+    } else {
+        Write-Host "  FAIL: position at '$title' expected ~= ${expectedX},${expectedY} actual=$($sample.Left),$($sample.Top)"
+        $script:Failures++
+    }
+}
+
+# --- Test steps ---
+
+Write-Host "=== Waiting for window ==="
+# By process, not by title: whether a window appeared has nothing to do with
+# which scripted step the app happens to be on, and matching the initial title
+# made this fail whenever the app got ahead of the verifier.
+$proc = Wait-ForApp
+Take-Screenshot "00-initial"
+
+Write-Host "=== Recording the app's sequence ==="
+# One loop over both halves. Everything between the Form appearing and the first
+# title is the WebView2 package being fetched and unpacked, which is why the
+# budget is what it is; from the first title on, the app walks its steps a
+# second apart. Nothing slow happens in here, and the sample gap asserted below
+# is what says so.
+$record = Watch-Sequence $proc $FirstTimeout
+Take-Screenshot "05-done"
+Report-Watch "sequence"
+
+# The property the old design violated, asserted directly rather than left to
+# luck: a sampler whose slowest turn is not comfortably inside the dwell can
+# miss a state, and then nothing downstream means anything. Measured at about
+# three seconds against a one-second dwell, which is what this suite spent four
+# PRs calling a stall.
+#
+# The dwell is lifted out of the artifact under test, for the same reason
+# Assert-WebView2Package lifts the pinned member list: a copy of a number that
+# lives in another file goes stale and still passes. Not being able to read it
+# is a failure and not a default -- a fallback would quietly assert against a
+# dwell the app does not have. And the smallest of the matches, not the first:
+# the app arms runNext twice, once to wait for its audience and once between
+# steps, and which one the file spells first is not something this suite should
+# depend on.
+$dwell = 0
+foreach ($line in (Get-Content -LiteralPath $Artifact)) {
+    if ($line -match 'setTimeout\(runNext,\s*(\d+)\)') {
+        $found = [int]$Matches[1]
+        if ($dwell -eq 0 -or $found -lt $dwell) { $dwell = $found }
+    }
+}
+Write-Host "=== The sampler kept up with the app ==="
+if ($dwell -le 0) {
+    Write-Host "  FAIL: could not read the step dwell out of $Artifact"
+    Write-Host "::warning title=windows-sequence::could not read the step dwell out of the artifact"
+    $script:Failures++
+    $dwell = 1000
+}
+Write-Host "report: sampler turns=$($record.Turns) max_gap_ms=$($record.MaxGap) dwell_ms=$dwell"
+if ($record.MaxGap -lt $dwell) {
+    Write-Host "  PASS: the slowest turn ($($record.MaxGap)ms) is inside the ${dwell}ms dwell"
+} else {
+    Write-Host "  FAIL: the slowest turn ($($record.MaxGap)ms) is not inside the ${dwell}ms dwell -- a state could have been missed"
+    Write-Host "::warning title=windows-sequence::sampler max gap $($record.MaxGap)ms against a ${dwell}ms dwell"
+    $script:Failures++
+}
+
+Write-Host "=== Every step the app reported ==="
+$null = Assert-Reached $record "STEP0"
+$null = Assert-Reached $record "STEP1-Test Title"
+$step2 = Assert-Reached $record "STEP2"
+$step3 = Assert-Reached $record "STEP3"
+$null = Assert-Reached $record "TESTS DONE"
 
 Write-Host "=== Step 2: resize ==="
-$proc = Wait-ForTitle "STEP2"
-$hwnd = $proc.MainWindowHandle
-Assert-Geometry $hwnd 500 400
-Take-Screenshot "03-step2"
+Assert-GeometryAt $step2 "STEP2" 500 400
 
 Write-Host "=== Step 3: move ==="
-$proc = Wait-ForTitle "STEP3"
-$hwnd = $proc.MainWindowHandle
-Assert-Position $hwnd 0 0
-Take-Screenshot "04-step3"
-
-Write-Host "=== Waiting for TESTS DONE ==="
-$proc = Wait-ForTitle "TESTS DONE"
-Take-Screenshot "05-done"
+Assert-PositionAt $step3 "STEP3" 0 0
 
 Write-Host "=== WebView2 package: pinned, and nothing else unpacked ==="
 Assert-WebView2Package $Artifact (Join-Path $AppDir "Microsoft.Web.WebView2")
