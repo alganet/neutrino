@@ -87,6 +87,14 @@ if [ "$NT_WINDOWS" = "1" ]; then
     # PowerShell cannot read an MSYS path, so hand it a native one.
     PS1="$(cygpath -w "$ROOT/test/verify-windows.ps1")"
     SHOTS_WIN="$(cygpath -w "$SHOTS")"
+    # verify-windows defaults its app dir to its own test/ tree, where the
+    # standalone lane runs neutrinotest.cmd. Here the app is installed and run
+    # from the netinstall HOME, so the WebView2 package sits beside *that* exe
+    # -- point the verifier at it, or it checks an empty repo path and fails
+    # "no package directory". The single windows lane masked this: its earlier
+    # standalone neutrinotest step had populated test/neutrinotest first.
+    APPDIR_WIN="$(cygpath -w "$APPDIR")"
+    SCRIPT_WIN="$(cygpath -w "$SCRIPT")"
     PSEXE=powershell
     command -v pwsh >/dev/null 2>&1 && PSEXE=pwsh
     # `-Command ... *>&1`, not `-File`: verify-windows.ps1 speaks in Write-Host,
@@ -95,7 +103,7 @@ if [ "$NT_WINDOWS" = "1" ]; then
     # FAIL. The webview lanes merge with `*>&1` for the same reason; this is the
     # same merge, one level out, so the exit code still carries the count.
     "$PSEXE" -NoProfile -ExecutionPolicy Bypass \
-        -Command "& '$PS1' -ScreenshotDir '$SHOTS_WIN' *>&1" \
+        -Command "& '$PS1' -ScreenshotDir '$SHOTS_WIN' -AppDir '$APPDIR_WIN' -Artifact '$SCRIPT_WIN' *>&1" \
         > "$WORK/verify-windows.log" 2>&1
     RC=$?
     cat "$WORK/verify-windows.log"

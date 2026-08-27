@@ -3,7 +3,16 @@
 #
 # verify-windows.ps1 - External test verifier for Windows
 
-param([string]$ScreenshotDir = $env:USERPROFILE)
+param(
+    [string]$ScreenshotDir = $env:USERPROFILE,
+    # The neutrinotest artifact and the folder it compiles and unpacks into.
+    # Default to this script's own dir, which is where the standalone windows
+    # lane builds and runs `test\neutrinotest.cmd`. The netinstall e2e installs
+    # the same app into a temp HOME and runs it from there, so it passes those
+    # in: the WebView2 package sits beside the exe, wherever the exe is.
+    [string]$Artifact = (Join-Path $PSScriptRoot "neutrinotest.cmd"),
+    [string]$AppDir = (Join-Path $PSScriptRoot "neutrinotest")
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -54,7 +63,7 @@ function Fail-Now($message) {
 # explanations want opposite fixes: the package download never finished, or it
 # finished and the page never ran. One line separates them.
 function Report-PackageState {
-    $root = Join-Path $PSScriptRoot "neutrinotest\Microsoft.Web.WebView2"
+    $root = Join-Path $AppDir "Microsoft.Web.WebView2"
     if (-not (Test-Path -LiteralPath $root)) {
         Write-Host "report: no WebView2 package directory at $root"
         return
@@ -281,7 +290,7 @@ $proc = Wait-ForTitle "TESTS DONE"
 Take-Screenshot "05-done"
 
 Write-Host "=== WebView2 package: pinned, and nothing else unpacked ==="
-Assert-WebView2Package (Join-Path $PSScriptRoot "neutrinotest.cmd") (Join-Path $PSScriptRoot "neutrinotest\Microsoft.Web.WebView2")
+Assert-WebView2Package $Artifact (Join-Path $AppDir "Microsoft.Web.WebView2")
 
 Write-Host ""
 Write-Host "=== Results: $Failures failure(s) ==="
