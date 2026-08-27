@@ -182,7 +182,7 @@ echo PROBE_END
 BATCH
 
 nt_serve "$SERVE" || exit 2
-SPEC="privs-com-example-0$(nt_pin "$SERVE/privs.cmd")"
+SPEC="privs-example-com-1$(nt_pin "$SERVE/privs.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 
 # =====================================================================

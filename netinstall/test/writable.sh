@@ -113,7 +113,7 @@ if [ "$NT_WINDOWS" = "1" ]; then
     # -- has never been asked anything.
     # =================================================================
     printf '@echo off\r\necho placeholder\r\n' > "$SERVE/writable.cmd"
-    SPEC="writable-com-example-0$(nt_pin "$SERVE/writable.cmd")"
+    SPEC="writable-example-com-1$(nt_pin "$SERVE/writable.cmd")"
     APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
     APPDIR="$("$APP" --info 2>/dev/null | tr -d '\r' | awk '$1 == "appdir" { print $2 }')"
 
@@ -264,7 +264,7 @@ done
 if echo x > /dev/null 2>/dev/null; then echo "devnull=OK"; else echo "devnull=BLOCKED"; fi
 echo "PROBE_END"
 SCRIPT
-    SPEC="writable-com-example-0$(nt_pin "$SERVE/writable.cmd")"
+    SPEC="writable-example-com-1$(nt_pin "$SERVE/writable.cmd")"
     APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
     APPDIR="$("$APP" --info 2>/dev/null | awk '$1 == "appdir" { print $2 }')"
 
@@ -309,7 +309,7 @@ SCRIPT
 fi
 
 nt_serve "$SERVE" || exit 2
-SPEC="writable-com-example-0$(nt_pin "$SERVE/writable.cmd")"
+SPEC="writable-example-com-1$(nt_pin "$SERVE/writable.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 APP_TIGHT=""
 [ -n "$TIGHT" ] && [ -x "$TIGHT" ] && APP_TIGHT="$(nt_as "$TIGHT" "$SPEC" "$WORK/tbin")"

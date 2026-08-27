@@ -91,7 +91,7 @@ else
 fi
 SCRIPT
 
-SPEC="session-com-example-0$(nt_pin "$SERVE/session.cmd")"
+SPEC="session-example-com-1$(nt_pin "$SERVE/session.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 
 confine_line() {
@@ -143,7 +143,7 @@ check() {
 # Without this the assertions below could all be passing because the bus was
 # never there. The control is a binary with no session tier, on the same clock.
 if [ -n "$CONTROL" ]; then
-    CSPEC="session-com-example-0$(nt_pin "$SERVE/session.cmd")"
+    CSPEC="session-example-com-1$(nt_pin "$SERVE/session.cmd")"
     CAPP="$(nt_as "$CONTROL" "$CSPEC" "$WORK/bin-control")"
     COUT="$("$CAPP" 2>/dev/null)"
     if grep -qx BUS_OK <<<"$COUT"; then
@@ -201,7 +201,7 @@ case "$CONFINE" in
             *)  echo "  PASS: the trusted cookie is unreadable in this build" ;;
         esac
         if [ -n "$TIGHT" ]; then
-            TSPEC="session-com-example-0$(nt_pin "$SERVE/session.cmd")"
+            TSPEC="session-example-com-1$(nt_pin "$SERVE/session.cmd")"
             TAPP="$(nt_as "$TIGHT" "$TSPEC" "$WORK/bin-tight")"
             TOUT="$(NEUTRINO_HOME="$WORK/home-tight" "$TAPP" 2>/dev/null)"
             if grep -qx TRUSTED_COOKIE_DENIED <<<"$TOUT"; then
@@ -224,7 +224,7 @@ esac
 echo "=== Can a real webview still start under it? ==="
 if [ -n "${DISPLAY:-}" ] && nt_linux_runtime; then
     bash "$ROOT/build.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
-    GSPEC="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
+    GSPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
     GAPP="$(nt_as "$BIN" "$GSPEC" "$WORK/bin")"
     "$GAPP" > "$WORK/app.log" 2>&1 &
     GPID=$!

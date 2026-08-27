@@ -276,8 +276,10 @@ nt_native() {
     fi
 }
 
-# The app directory is keyed on the spec without its pin, so versions of the
-# same app share it.
+# The app directory is keyed on the spec without its pin -- so versions of the
+# same app share it -- but *with* its shape, because two names that differ only
+# in shape resolve to different URLs and must not.
 nt_appkey() {
-    echo "${1%-*}"
+    local head="${1%-*}" token="${1##*-}"
+    echo "$head-${token%"${token#?}"}"
 }

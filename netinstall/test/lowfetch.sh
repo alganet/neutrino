@@ -150,7 +150,7 @@ echo "=== A: the parent token, and what each mode hands the child ==="
 # invoked under its build name never reaches --info at all. Round one read this
 # as an empty line and that was the probe, not the platform.
 printf 'echo INFO_ONLY\n' > "$SERVE/info.cmd"
-INFOAPP="$(nt_as "$BIN" "info-com-example-0$(nt_pin "$SERVE/info.cmd")" "$WORK/bin")"
+INFOAPP="$(nt_as "$BIN" "info-example-com-1$(nt_pin "$SERVE/info.cmd")" "$WORK/bin")"
 probe "A tight --info fetch: $("$INFOAPP" --info 2>/dev/null | grep '^fetch' | sed 's/^fetch *//' | cut -c1-160)"
 probe "parent: $(run report | tr '\n' ' ')"
 

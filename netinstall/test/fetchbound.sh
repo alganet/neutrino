@@ -106,7 +106,7 @@ run_bounded() {
 
 echo "=== Control: a benign payload from the same server ==="
 printf 'echo hello from a neutrino app\n' > "$SERVE/good.cmd"
-GOOD="good-com-example-0$(nt_pin "$SERVE/good.cmd")"
+GOOD="good-example-com-1$(nt_pin "$SERVE/good.cmd")"
 if "$(as "$BIN" "$GOOD")" --fetch >/dev/null 2>&1 && [ -f "$(cached_path "$GOOD")" ]; then
     ok "the server serves, the fetch verifies, the blob is cached"
 else
@@ -212,7 +212,7 @@ fi
 echo "=== The same four shapes through --fetch ==="
 VERDICTS=""
 for shape in declared chunked lying eof; do
-    SPEC="$shape-com-example-0$NOMATCH"
+    SPEC="$shape-example-com-1$NOMATCH"
     run_bounded 150 "$(as "$BIN" "$SPEC")" --fetch
     CACHED=no; [ -f "$(cached_path "$SPEC")" ] && CACHED=YES
     VERDICTS="$VERDICTS $shape=$RUN_RC/$CACHED"
@@ -248,7 +248,7 @@ echo "  $WSTATE"
 if [ "$WSTATE" = "REACHED" ]; then
     # Control first: the branch has to work before its refusals mean anything.
     cp "$SERVE/good.cmd" "$SERVE/wgood.cmd"
-    WGOOD="wgood-com-example-0$(nt_pin "$SERVE/wgood.cmd")"
+    WGOOD="wgood-example-com-1$(nt_pin "$SERVE/wgood.cmd")"
     if "$(as "$WBIN" "$WGOOD")" --fetch >/dev/null 2>&1 && [ -f "$(cached_path "$WGOOD")" ]; then
         ok "the fallback branch fetches and caches a benign payload"
     else
@@ -257,7 +257,7 @@ if [ "$WSTATE" = "REACHED" ]; then
 
     # Size. Before this PR wget wrote every byte offered and netinstall said
     # "fetch failed: <url>"; now the kernel stops it and the message says which.
-    WSPEC="chunked-com-example-0$NOMATCH"
+    WSPEC="chunked-example-com-1$NOMATCH"
     WERR="$WORK/wchunked.err"
     "$(as "$WBIN" "$WSPEC")" --fetch >/dev/null 2>"$WERR"
     WRC=$?
@@ -272,7 +272,7 @@ if [ "$WSTATE" = "REACHED" ]; then
     # Clock. wget's --timeout is per read, so a byte a second satisfies it
     # forever; the alarm is the only total. This waits out a real deadline on
     # purpose -- a shorter one would be a different number than the one shipped.
-    WSPEC2="dribble-com-example-0$NOMATCH"
+    WSPEC2="dribble-example-com-1$NOMATCH"
     WERR2="$WORK/wdribble.err"
     T0=$(date +%s)
     RUN_ERR="$WERR2"
@@ -301,7 +301,7 @@ if [ "$WSTATE" = "REACHED" ]; then
     BIGERR="$WORK/bigerr.log"
     dd if=/dev/zero of="$BIGERR" bs=1048576 count=17 2>/dev/null
     cp "$SERVE/good.cmd" "$SERVE/wbig.cmd"
-    WGOOD2="wbig-com-example-0$(nt_pin "$SERVE/wbig.cmd")"
+    WGOOD2="wbig-example-com-1$(nt_pin "$SERVE/wbig.cmd")"
     "$(as "$WBIN" "$WGOOD2")" --fetch >/dev/null 2>>"$BIGERR"
     if [ -f "$(cached_path "$WGOOD2")" ]; then
         ok "a fetch whose stderr is already past the limit still succeeds"

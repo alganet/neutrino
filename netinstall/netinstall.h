@@ -25,12 +25,21 @@
  * the safe length was advice and the floor was the length it argued against.
  */
 #define NT_TOKEN_MIN 32
+
+/*
+ * The stem an even shape takes when the name does not carry one. It is what
+ * makes `alganet-dev-0<pin>` a whole spec, and it is the launcher's own name
+ * rather than the toolkit's: the file being fetched is the thing netinstall
+ * knows how to run.
+ */
+#define NT_DEFAULT_STEM "netinstall"
 #define NT_MAX_PAYLOAD (16 * 1024 * 1024)
 
 typedef struct {
     char spec[NT_SPEC_MAX];
     char app[NT_SPEC_MAX];
     char name[NT_NAME_MAX];
+    char dir[NT_NAME_MAX];
     char host[NT_HOST_MAX];
     char token[NT_TOKEN_MAX];
     char url[NT_PATH_MAX];

@@ -29,7 +29,7 @@ spec_for() {
     local name="$1" file="$2" pin="${3:-}"
     cp "$file" "$SERVE/$name.cmd"
     [ -n "$pin" ] || pin="$(nt_pin "$file")"
-    echo "$name-com-example-0$pin"
+    echo "$name-example-com-1$pin"
 }
 
 run() {
@@ -98,7 +98,7 @@ assert_reject "pin mismatch"      "$MISMATCH"
 assert_reject "binary payload"    "$(spec_for elf "$WORK/elf.bin")"
 assert_reject "embedded nul"      "$(spec_for nul "$WORK/nul.cmd")"
 assert_reject "oversized payload" "$(spec_for huge "$WORK/huge.cmd")"
-assert_reject "missing file"      "absent-com-example-0a1b2c3d4e5f60718a1b2c3d4e5f60718"
+assert_reject "missing file"      "absent-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718"
 
 echo "=== The mismatch is refused for being a mismatch ==="
 # Both literals above used to be sixteen characters, which the parser now

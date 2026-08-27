@@ -58,7 +58,7 @@ fi
 SCRIPT
 fi
 
-SPEC="nosy-com-example-0$(nt_pin "$SERVE/nosy.cmd")"
+SPEC="nosy-example-com-1$(nt_pin "$SERVE/nosy.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 
 OUT="$(nt_timeout 60 "$APP" 2>"$WORK/err" | tr -d "\r")"
@@ -99,7 +99,7 @@ fi
 # webview alive, or it is not worth having.
 echo "=== Can a real webview still start under it? ==="
 bash "$ROOT/build.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
-GSPEC="neutrinotest-com-example-0$(nt_pin "$SERVE/neutrinotest.cmd")"
+GSPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
 GAPP="$(nt_as "$BIN" "$GSPEC" "$WORK/bin")"
 GAPPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$GSPEC")/neutrinotest"
 RC=0
