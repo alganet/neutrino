@@ -459,7 +459,10 @@ jobs:
           }
           $state = if ($i -lt 180) { 'UP' } else { 'DOWN' }
           Write-Output "warm: window=$state after ${i}s"
-          Write-Output "::warning title=warm::warm window=$state after ${i}s"
+          # Annotate only the miss: a warm-up that came up is the quiet case and
+          # a warning every green run is noise. A DOWN means the runtime did not
+          # warm and the real verify is about to run cold -- worth surfacing.
+          if ($state -eq 'DOWN') { Write-Output "::warning title=warm::warm-up window never came up in ${i}s" }
           Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           Get-Process -Name "neutrinowarm" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           exit 0
@@ -719,35 +722,6 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
-      # The monolith launched a webview (appcache) before the neutrinotest
-      # verify, so the WebView2 runtime's one-time cold init was already done.
-      # Split into its own job, this is the cold launch, and the documented
-      # Windows first-window stall lands on it far more often -- measured here,
-      # netinstall 3/3 and core 1/2 against a historical 3/10. This restores the
-      # precondition: launch a LOADERS webview -- the one appcache shows comes
-      # up reliably cold -- wait for its window, and move on.
-      - shell: bash
-        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinowarm.cmd
-      - name: warm the WebView2 runtime
-        timeout-minutes: 5
-        shell: pwsh
-        run: |
-          # Best-effort: if the warm-up itself stalls it still triggered the
-          # runtime init, and the real verify keeps its own 240s bound, so this
-          # never fails the job. No pipe on the launcher -- the batch STARTs a
-          # detached exe and exits, and a pipe would outlive it (PR 20/28).
-          $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", ".\test\neutrinowarm.cmd" -PassThru -WindowStyle Hidden
-          $i = 0
-          for (; $i -lt 180; $i++) {
-            if (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like "LOADERS*" }) { break }
-            Start-Sleep -Seconds 1
-          }
-          $state = if ($i -lt 180) { 'UP' } else { 'DOWN' }
-          Write-Output "warm: window=$state after ${i}s"
-          Write-Output "::warning title=warm::warm window=$state after ${i}s"
-          Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } | Stop-Process -Force -ErrorAction SilentlyContinue
-          Get-Process -Name "neutrinowarm" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          exit 0
       - name: netinstall suite
         timeout-minutes: 20
         shell: bash
