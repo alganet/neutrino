@@ -4,12 +4,13 @@
 #
 # build.sh - Neutrino polyglot assembler
 # Usage: ./build.sh [--tier=<list>] [--title=<str>] [--size=<WxH>]
-#                   [--style=<file>] [--body=<file>] <app.js> <output.cmd>
+#                   [--background=<#rrggbb|auto>] [--style=<file>] [--body=<file>]
+#                   <app.js> <output.cmd>
 #
 # Takes a JS file and embeds it into the runWeb() slot of webview.cmd,
 # producing a new polyglot .cmd file.
 #
-# The early shell -- --title, --size, --style and --body.
+# The early shell -- --title, --size, --background, --style and --body.
 #
 # What an app looks like before a line of its JavaScript has run. The style and
 # the body are markup on the template's document line, so they are in the first
@@ -65,7 +66,7 @@ NT_BODY_FILE=""; NT_BODY_SET=""
 
 nt_usage() {
     echo "Usage: $0 [--tier=<list>] [--title=<str>] [--size=<WxH>]" >&2
-    echo "          [--background=<#rrggbb>] [--style=<file>] [--body=<file>]" >&2
+    echo "          [--background=<#rrggbb|auto>] [--style=<file>] [--body=<file>]" >&2
     echo "          <app.js> <output.cmd>" >&2
 }
 
@@ -267,10 +268,19 @@ if [ -n "$NT_BG_SET" ]; then
     # lane would independently decline to paint and the window would come up in
     # the theme colour -- which is the bug this flag exists to close, arrived at
     # by a different route and with nothing said.
+    #
+    # `auto` is the one value that is not a colour, and it is what the template
+    # already carries -- so passing it is the same build as leaving the flag
+    # out. It is accepted anyway, because a script that means "follow the
+    # desktop" should be able to say so rather than say nothing and be right by
+    # omission. Everything else is still refused: `system`, `theme` and `none`
+    # are all things somebody will try, and a build that took one and painted
+    # white would be this flag failing quietly again.
     case "$NT_BG" in
+        auto) ;;
         '#'[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
         '#'[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
-        *) echo "Error: --background wants #rgb or #rrggbb, got '$NT_BG'" >&2; exit 1 ;;
+        *) echo "Error: --background wants #rgb, #rrggbb or auto, got '$NT_BG'" >&2; exit 1 ;;
     esac
 fi
 

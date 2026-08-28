@@ -111,9 +111,18 @@ colour instead of out of the desktop's.
 | macOS | `NSWindow.backgroundColor` | `underPageBackgroundColor`, then `drawsBackground` |
 | Windows | `Form.BackColor` | `WebView2.DefaultBackgroundColor` |
 
-`#rgb` or `#rrggbb`; anything else is refused at build time. It is deliberately
-separate from your stylesheet — this is the colour of the frame your app has not
-arrived in yet, not a rule in your CSS.
+`#rgb` or `#rrggbb`, or `auto`; anything else is refused at build time. It is
+deliberately separate from your stylesheet — this is the colour of the frame your
+app has not arrived in yet, not a rule in your CSS.
+
+**Leave it out and the colour comes from the desktop.** `auto` is what a build
+that names no background carries, and it means the launcher reads the palette off
+the running toolkit and paints both surfaces the desktop's own content colour.
+Measured on the same two GTK lanes: Adwaita gives `#ffffff`, Adwaita-dark gives
+`#2d2d2d`, Mint-L-Dark gives `#404040`. So an app that follows the OS gets no
+flash on either kind of desktop without naming a colour at all — and an app that
+wants one fixed colour everywhere still says `--background "#12141a"` and gets
+exactly that, on every machine, through every theme change.
 
 **The one-line constraint, and the choice it gives you.** Both files are folded
 to a single line and spliced into a line that is simultaneously inside a
@@ -158,6 +167,63 @@ win.neutrino.send("actionName", { key: "value" });
 ```
 
 All coordinates use top-left origin on every platform (macOS coordinates are normalized internally).
+
+### Following the desktop
+
+`window.neutrino.theme` is the palette the launcher read off the running toolkit,
+and it is there at document start — not pushed after load — so your first paint
+can use it.
+
+```javascript
+var theme = win.neutrino.theme;   // null if this lane could not read one
+
+theme.scheme;              // "dark" | "light"
+theme.source;              // "gtk" | "qt" | "macos" | "windows"
+theme.colors.background;   // window chrome      e.g. "#f6f5f4"
+theme.colors.foreground;   //                         "#2e3436"
+theme.colors.base;         // content surface         "#ffffff"
+theme.colors.text;         //                         "#000000"
+theme.colors.accent;       //                         "#3584e4"
+theme.colors.accentText;   //                         "#ffffff"
+theme.colors.border;       //                         "#cdc7c2"
+```
+
+Every value is `#rrggbb`. `scheme` is derived from the luminance of
+`background` rather than read from a settings flag — measured on a Mint desktop,
+`gtk-application-prefer-dark-theme` reads false while the theme is `Mint-L-Dark`,
+so the flag says light and the window is dark grey. The palette is what is on
+screen, so the palette is what decides.
+
+When the desktop changes, the object is **replaced** and an event fires:
+
+```javascript
+win.addEventListener("neutrino:themechange", function (e) {
+    e.detail.scheme;   // the new scheme
+    e.detail.colors;   // the new palette
+});
+```
+
+`win.neutrino.theme` is already the new palette when the handler runs, so a
+handler may read either. A reference you captured earlier keeps the palette it
+had. If your build left `--background` out, the two native surfaces are repainted
+to match at the same time; if you named a colour, they are never repainted.
+
+| Lane | Palette | Change signal |
+|---|---|---|
+| gjs / cjs / PyGObject | `GtkStyleContext.lookup_color` | `style-updated` on the window |
+| Qt | `SystemPalette` | the binding re-evaluates itself |
+| macOS | `NSColor`, resolved under the current `NSAppearance` | `AppleInterfaceThemeChangedNotification` |
+| Windows | `SystemColors`, plus the app-theme registry value | re-read on the event loop |
+
+**Only the live scheme, not both.** There is no `theme.light` and `theme.dark`:
+of the four toolkits only macOS can resolve a palette under an appearance it is
+not currently using, and inventing the other half by inverting luminance would
+be a colour nobody's desktop is running. If you need both, define them in CSS and
+switch on `theme.scheme`.
+
+**`theme` is `null` on a lane that could not read its toolkit.** Said out loud
+rather than filled in with white, so you can tell the difference between a light
+desktop and no answer.
 
 ---
 

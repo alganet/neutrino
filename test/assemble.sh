@@ -523,7 +523,11 @@ for nt_ok in '#12141a' '#FFF' '#000000' '#AbCdEf'; do
     bash "$T/build.sh" --background "$nt_ok" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
     eq "--background $nt_ok reaches the config" "$(conf "$T/out.cmd" background)" "$nt_ok"
 done
-for nt_bad in 'white' 'rgb(1,2,3)' '#12' '#1234' '#12345' '#1234567' '12141a' '#12141g' ''; do
+# `system`, `theme` and `none` are in here because they are what somebody
+# reaches for when `auto` is the word they half-remember, and a build that took
+# one and painted white would be this flag failing silently all over again.
+for nt_bad in 'white' 'rgb(1,2,3)' '#12' '#1234' '#12345' '#1234567' '12141a' '#12141g' \
+              'system' 'theme' 'none' 'Auto' 'AUTO' ''; do
     rm -f "$T/out.cmd"
     bash "$T/build.sh" --background "$nt_bad" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
     [ "$?" = "0" ] && fail "--background [$nt_bad] was accepted" \
@@ -533,6 +537,21 @@ done
 bash "$T/build.sh" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
 eq "a build that names no background keeps the template's" \
    "$(conf "$T/out.cmd" background)" "$(conf "$T/webview.cmd" background)"
+
+# And what the template's is, asserted here rather than inferred from the line
+# above -- which passes just as well when both sides are wrong together. `auto`
+# is what makes an unflagged build follow the desktop it is launched on, so a
+# template that quietly went back to carrying a colour would turn the whole
+# feature off and every assertion in this file would still pass.
+eq "and the template's is auto, so that build follows the desktop" \
+   "$(conf "$T/webview.cmd" background)" "auto"
+
+# `auto` is accepted from the flag as well as by omission, so a script can say
+# what it means instead of meaning it by silence. Refusing it would also be a
+# build.sh that cannot reproduce its own default.
+rm -f "$T/out.cmd"
+bash "$T/build.sh" --background auto "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+eq "--background auto reaches the config" "$(conf "$T/out.cmd" background)" "auto"
 
 # The punctuation, asserted directly, because the way it went wrong produced a
 # file no engine could parse from an assembler that exited 0. `height` was the

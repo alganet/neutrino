@@ -499,17 +499,84 @@ Window {
     // unchanged.
     readonly property string ntPreload: nt.buildPreloadScript(
         'function(m){console.log("__NEUTRINO__"+encodeURIComponent(m));}',
-        "console")
+        "console",
+        // In the preload rather than pushed after it, so the page has the
+        // palette at document start. This is a binding like everything else
+        // here, so a desktop that changes its colours between this document
+        // loading and the view injecting still hands over the current one.
+        nt.themeLiteral(root.ntTheme))
+
+    // The desktop's palette. On this lane the watcher is the binding:
+    // SystemPalette re-evaluates when the system palette changes, so
+    // everything downstream of it -- the window colour, the view colour, the
+    // push below -- follows without a signal being connected anywhere.
+    SystemPalette {
+        id: sysPalette
+        colorGroup: SystemPalette.Active
+    }
+
+    // A QML colour carries its components as reals, so it goes to the
+    // launcher's own toHex and flattenColor rather than being formatted here.
+    // Four other lanes read a palette and all five have to agree about what a
+    // colour is.
+    function ntHex(c, over) {
+        return root.nt.flattenColor(
+            root.nt.toHex({ red: c.r, green: c.g, blue: c.b }), c.a, over)
+    }
+
+    // Read at the binding site rather than inside, so the dependency on each
+    // palette entry is captured here and cannot be lost to a refactor of the
+    // function below.
+    readonly property var ntTheme: root.ntReadTheme(
+        sysPalette.window, sysPalette.windowText, sysPalette.base, sysPalette.text,
+        sysPalette.highlight, sysPalette.highlightedText, sysPalette.mid)
+
+    // The parameters are named for the palette entries they carry rather than
+    // for the SystemPalette properties they came from -- `window` is a name
+    // with meaning in a QML document and this is not that window.
+    function ntReadTheme(bgColor, fgColor, baseColor, textColor,
+                         accentColor, accentTextColor, borderColor) {
+        // The background first, because the rest are flattened over it.
+        var bg = root.nt.toHex({ red: bgColor.r, green: bgColor.g, blue: bgColor.b })
+        return root.nt.normalizeTheme({
+            source: "qt",
+            background: root.ntHex(bgColor, bg),
+            foreground: root.ntHex(fgColor, bg),
+            base: root.ntHex(baseColor, bg),
+            text: root.ntHex(textColor, bg),
+            accent: root.ntHex(accentColor, bg),
+            accentText: root.ntHex(accentTextColor, bg),
+            border: root.ntHex(borderColor, bg)
+        })
+    }
+
+    // Only the push needs saying out loud. There is no diff here and none is
+    // needed: a binding does not re-evaluate unless something it reads has
+    // changed, which is the check the other lanes have to make for themselves.
+    onNtThemeChanged: {
+        if (!view.documentLoaded) {
+            // Before the commit there is no document of ours to evaluate into,
+            // and nothing is lost -- the preload above carries the snapshot.
+            return
+        }
+        var js = root.nt.buildThemeScript(root.ntTheme)
+        if (js) {
+            view.runJavaScript(js)
+        }
+    }
 
     visible: true
     title: cfg.title
 
     // The two surfaces that are up before the document, the same pair every
     // other lane paints. A QML colour property reads `#rrggbb` itself, so this
-    // is the string as the config carries it -- and an unreadable one leaves
-    // both at their defaults rather than painting them black, which is what
-    // the launcher's own parseColor is asked here.
-    color: root.nt.parseColor(cfg.background) ? cfg.background : "white"
+    // is the string the launcher resolves -- the config's, when the build named
+    // one, and the desktop's `base` when it did not.
+    //
+    // A binding and not an assignment, which is the whole of this lane's
+    // repaint: when the palette changes the window colour changes with it, and
+    // the view below follows the window.
+    color: root.nt.resolveBackground(root.ntTheme)
 
     function ntRead() {
         var xhr = new XMLHttpRequest()
@@ -907,6 +974,7 @@ run_pygobject() {
     cat >&8 <<'PYGIEOF'
 # The shim. Every policy question in here is asked of the JavaScript this file
 # was cut from; nothing in it decides anything on its own.
+import json
 import os
 import sys
 
@@ -1115,6 +1183,19 @@ def js_number(value):
     return JavaScriptCore.Value.new_number(ctx, value)
 
 
+def js_null():
+    return JavaScriptCore.Value.new_null(ctx)
+
+
+# The palette is the one thing this lane hands over as an object rather than as
+# a string or a number, and it goes through JSON rather than through
+# Value.new_object and a walk of set_property calls. Not for brevity: the walk
+# is a second place where a key can be spelled differently from the way
+# normalizeTheme reads it, and json.dumps is the only quoting rule involved.
+def js_json(value):
+    return JavaScriptCore.Value.new_from_json(ctx, json.dumps(value))
+
+
 # The source arrives with a parameter named NeutrinoPy defined, which is how
 # run() at the bottom of it knows not to go looking for a driver of its own.
 # It is a parameter and not a global for the reason the QML document gives:
@@ -1167,16 +1248,89 @@ width = config.object_get_property("width").to_int32()
 height = config.object_get_property("height").to_int32()
 
 
+# The desktop's palette, and the one thing this lane does reimplement: the walk
+# over a Gtk style context, because a Gtk widget cannot be handed to
+# JavaScriptCore and the launcher's own reader takes one.
+#
+# Nothing that decides anything is written twice. The names come out of the
+# launcher's gtkColorNames, in its order; each colour goes back through its
+# toHex and its flattenColor; and the result is judged by its normalizeTheme.
+# What is duplicated is the loop, and a loop cannot disagree about a colour.
+#
+# A Gtk.Box for the reason createGjsDriver's readTheme gives: these are
+# theme-level names, measured identical on Box, Label and Window, and building a
+# toplevel to read a colour would be a second window in a launcher whose whole
+# job is the first one.
+def read_theme():
+    try:
+        style = Gtk.Box().get_style_context()
+    except Exception as exc:
+        sys.stderr.write("neutrino: could not read the desktop theme: %s\n" % (exc,))
+        return None
+    names = nt.object_get_property("gtkColorNames").to_string().split(",")
+    keys = nt.object_get_property("themeKeys").to_string().split(",")
+    if len(names) != len(keys):
+        sys.stderr.write("neutrino: the palette and its GTK names are different lengths\n")
+        return None
+    hexes = []
+    alphas = []
+    for name in names:
+        found = style.lookup_color(name)
+        if not found[0]:
+            sys.stderr.write("neutrino: this theme defines no %s\n" % (name,))
+            return None
+        rgba = found[1]
+        hexes.append(call("toHex", js_json({
+            "red": rgba.red, "green": rgba.green, "blue": rgba.blue,
+        })).to_string())
+        alphas.append(rgba.alpha)
+    # Flattened against the background, which is why it is read first. A
+    # translucent border over white is a light border on a dark desktop.
+    raw = {"source": "gtk"}
+    for index in range(len(keys)):
+        raw[keys[index]] = call(
+            "flattenColor", js_string(hexes[index]),
+            js_number(alphas[index]), js_string(hexes[0]),
+        ).to_string()
+    return raw
+
+
+# Held as the JavaScript value the launcher returned rather than as anything of
+# this lane's own, so that themesDiffer is comparing what it built to what it
+# built. `theme` on the launcher object is set alongside it for the same reason
+# every other value here is read back out of that object: one truth.
+theme_state = {"value": js_null()}
+
+
+def take_theme():
+    raw = read_theme()
+    if raw is None:
+        return False
+    taken = call("normalizeTheme", js_json(raw))
+    if taken.is_null() or taken.is_undefined():
+        return False
+    if not call("themesDiffer", theme_state["value"], taken).to_boolean():
+        return False
+    theme_state["value"] = taken
+    nt.object_set_property("theme", taken)
+    return True
+
+
+if not take_theme():
+    sys.stderr.write("neutrino: could not read the desktop palette; using %s\n" % (
+        call("resolveBackground", theme_state["value"]).to_string(),))
+
+
 # The two surfaces GTK puts up before the document, and the colour comes out of
-# the launcher's own parseColor rather than being read again here. This lane
-# reimplements nothing on purpose, and a second reading of the same value is a
-# second thing that can disagree with the other four.
+# the launcher's own resolveBackground rather than being decided again here.
+# This lane reimplements nothing on purpose, and a second reading of the same
+# value is a second thing that can disagree with the other four.
 #
 # Both calls are allowed to fail. A background that will not paint is a window
 # in the theme colour, which is where this started -- worth a line on stderr,
 # not worth refusing to launch over.
-def paint(widget_window, web_view):
-    rgb = call("parseColor", config.object_get_property("background"))
+def paint(widget_window, web_view, background):
+    rgb = call("parseColor", js_string(background))
     if rgb.is_null() or rgb.is_undefined():
         return
     red = rgb.object_get_property("red").to_double()
@@ -1207,6 +1361,9 @@ preload = call(
     "buildPreloadScript",
     js_string("window.webkit.messageHandlers.neutrino.postMessage"),
     js_string("scriptmessage"),
+    # In the preload rather than pushed after it, so the page has the palette
+    # at document start and never paints once in the wrong colours first.
+    call("themeLiteral", theme_state["value"]),
 ).to_string()
 
 # Asked for before a WebView exists, and taken back if it does not arrive.
@@ -1227,8 +1384,38 @@ window = Gtk.Window(
 )
 window.set_position(Gtk.WindowPosition.CENTER)
 window.connect("destroy", lambda _w: Gtk.main_quit())
-paint(window, view)
+paint(window, view, call("resolveBackground", theme_state["value"]).to_string())
 view_holder["view"] = view
+
+
+# The watcher, and the same signal the gjs lane uses: `style-updated` is what
+# GTK emits when the style behind a widget changes for any reason, rather than
+# one of the several settings that can cause it.
+#
+# take_theme's diff is what makes this safe to connect at all. Painting the
+# window adds a CssProvider to it, which emits this signal -- so without the
+# diff the first theme change would be the last thing this process did.
+def on_style_updated(_widget):
+    if not take_theme():
+        return
+    if call("followsTheme").to_boolean():
+        paint(window, view, call("resolveBackground", theme_state["value"]).to_string())
+    # Before the commit there is no document of ours to evaluate into. Nothing
+    # is lost: the page starts from the preload's snapshot either way.
+    if not committed["done"]:
+        return
+    js = call("buildThemeScript", theme_state["value"])
+    if js.is_null() or js.is_undefined():
+        return
+    try:
+        # run_javascript and not evaluate_javascript, because this lane resolves
+        # WebKit2 to 4.1 or 4.0 and only the first carries the newer spelling.
+        view.run_javascript(js.to_string(), None, None, None)
+    except Exception as exc:
+        sys.stderr.write("neutrino: could not deliver the theme: %s\n" % (exc,))
+
+
+window.connect("style-updated", on_style_updated)
 
 
 def on_load_changed(_view, event):
@@ -1656,6 +1843,14 @@ exit $?;:<<'//</script></body></html>' #-->
          * colour of the frame the app has not arrived in yet, not a rule in
          * anybody's stylesheet.
          *
+         * `auto` is the value that is not a colour, and it is what a build that
+         * names no background carries. It means the colour is not known at
+         * assembly because it is not a property of the app: it is a property of
+         * the desktop the app is launched on, and resolveBackground reads it
+         * there, from the palette readTheme took off the running toolkit. An
+         * author who wants one fixed colour on every machine says so with
+         * --background and gets exactly that, on every machine, forever.
+         *
          * Stamped by build.sh between the sentinels, the way the tier list is,
          * and for the same reason: one value, read by five lanes, with nothing
          * in the environment able to talk any of them out of it.
@@ -1665,7 +1860,7 @@ exit $?;:<<'//</script></body></html>' #-->
             title: "neutrino",
             width: 900,
             height: 600,
-            background: "#ffffff"
+            background: "auto"
         },
         //#CONFIG_END
 
@@ -1700,6 +1895,409 @@ exit $?;:<<'//</script></body></html>' #-->
                 green: parseInt(hex.substring(2, 4), 16) / 255,
                 blue: parseInt(hex.substring(4, 6), 16) / 255
             };
+        },
+        // The palette the desktop is using, as normalizeTheme returns it, or
+        // null on a lane that could not read one. Written once at boot and
+        // again by applyTheme, and read by everything that paints.
+        theme: null,
+
+        /*
+         * A note that is worth making once and not once a second.
+         *
+         * Everything the theme watchers report is on a path that repeats: the
+         * Windows lane re-reads the palette on a clock, and the GTK lanes read
+         * it on every style-updated, which is emitted rather more often than
+         * the theme actually changes. A toolkit that cannot be read is a
+         * standing condition, so saying so on every attempt would bury the rest
+         * of this file's stderr under one sentence -- and stderr is the app's,
+         * not this file's, on four of the five lanes.
+         *
+         * Once per distinct message for the life of the process, which means a
+         * condition that clears and returns is reported only the first time.
+         * That is the trade, and it is the right way round: the first one is
+         * the one that says what happened.
+         */
+        notedOnce: null,
+
+        noteOnce: function (message) {
+            if (!this.notedOnce) {
+                this.notedOnce = {};
+            }
+            // Prefixed, so a message that happens to read like a name on
+            // Object.prototype -- "constructor" is the one that bites -- is a
+            // key of this set and not a truthy thing it inherited.
+            var key = " " + String(message);
+            if (this.notedOnce[key]) {
+                return;
+            }
+            this.notedOnce[key] = true;
+            this.note(message);
+        },
+
+        /*
+         * The other direction: components back to the spelling every lane and
+         * the page both read. parseColor takes `#rgb` and `#rrggbb` and hands
+         * back components; this hands back `#rrggbb`, lower case, always six
+         * digits. One spelling out means themesDiffer can compare strings and
+         * that the payload check below is a real check rather than a formality.
+         */
+        toHex: function (rgb) {
+            var pair = function (value) {
+                var n = Math.round(value * 255);
+                n = (n < 0) ? 0 : ((n > 255) ? 255 : n);
+                return (n < 16 ? "0" : "") + n.toString(16);
+            };
+            return "#" + pair(rgb.red) + pair(rgb.green) + pair(rgb.blue);
+        },
+
+        /*
+         * A colour with alpha, over the surface behind it.
+         *
+         * The palette below is `#rrggbb` throughout, and some of what the
+         * toolkits hand over is not: GTK's `insensitive_fg_color` came back
+         * `rgba(218,218,218,0.5)` on the desk this was written at, and macOS
+         * spells `separatorColor` the same way. Every reader has the alpha its
+         * own toolkit gave it, so the readers pass it here rather than each
+         * flattening it their own way -- the rule is one rule for the same
+         * reason parseColor is one parser.
+         *
+         * Over the surface behind it and not over white: a translucent border
+         * flattened against white is a light border on a dark desktop, which is
+         * the one thing this whole file is trying not to do.
+         */
+        flattenColor: function (hex, alpha, overHex) {
+            var top = this.parseColor(hex);
+            if (!top) {
+                return null;
+            }
+            var a = Number(alpha);
+            if (!(a >= 0 && a <= 1)) {
+                a = 1;
+            }
+            var under = this.parseColor(overHex);
+            if (a >= 1 || !under) {
+                return this.toHex(top);
+            }
+            return this.toHex({
+                red: top.red * a + under.red * (1 - a),
+                green: top.green * a + under.green * (1 - a),
+                blue: top.blue * a + under.blue * (1 - a)
+            });
+        },
+
+        /*
+         * sRGB relative luminance, the standard curve. What it is for is the
+         * one question every lane has to answer the same way: is the desktop
+         * dark?
+         *
+         * Not the toolkit's own flag, and that is a measurement rather than a
+         * preference. On the desk this was written at
+         * `gtk-application-prefer-dark-theme` reads False while the theme is
+         * `Mint-L-Dark` -- the flag says light and the window is dark grey. The
+         * XDG portal gets it right and `gsettings ... color-scheme` returns
+         * `default`, so there is no one flag to read even on one desktop.
+         *
+         * The palette is what is on screen, so the luminance of the palette is
+         * the truth about it. That makes this the definition rather than a
+         * fallback, and it means five lanes answer with one rule instead of
+         * five APIs that can each drift.
+         */
+        relativeLuminance: function (rgb) {
+            var linear = function (u) {
+                return (u <= 0.03928) ? (u / 12.92) : Math.pow((u + 0.055) / 1.055, 2.4);
+            };
+            return 0.2126 * linear(rgb.red) +
+                0.7152 * linear(rgb.green) +
+                0.0722 * linear(rgb.blue);
+        },
+
+        /*
+         * And the threshold, which is not a number written down here.
+         *
+         * A surface is dark when it takes light text better than dark text, so
+         * the two contrast ratios are computed and compared. That puts the
+         * crossing at a luminance of about 0.179 -- mid grey `#808080` is 0.216
+         * and comes out light, which is right, and a fixed 0.5 would have
+         * called it dark. The rule says what it means and there is no constant
+         * to get wrong.
+         */
+        isDarkSurface: function (rgb) {
+            var lum = this.relativeLuminance(rgb);
+            var againstWhite = 1.05 / (lum + 0.05);
+            var againstBlack = (lum + 0.05) / 0.05;
+            return againstWhite > againstBlack;
+        },
+
+        // The palette, in one place, because five readers and one normalizer
+        // and one payload check all have to agree on it. A string rather than
+        // an array literal walk: JScript.NET is the engine that has to compile
+        // this file, and hasTier already reads a set this way.
+        themeKeys: "background,foreground,base,text,accent,accentText,border",
+        themeSources: "gtk,qt,macos,windows",
+
+        inSet: function (set, name) {
+            return ("," + set + ",").indexOf("," + String(name) + ",") >= 0;
+        },
+
+        themeKeyList: function () {
+            return String(this.themeKeys).split(",");
+        },
+
+        /*
+         * What a lane hands over, checked, and what every consumer sees.
+         *
+         * A reader returns a flat object -- seven colours and the name of the
+         * lane that read them -- and nothing else in this file trusts it. Each
+         * colour goes through parseColor, which is the same reading the
+         * background has always had, and comes back out through toHex so the
+         * palette is one spelling however the toolkit spelled it. The scheme is
+         * derived here rather than reported by the lane, for the reason
+         * relativeLuminance gives.
+         *
+         * A raw object with a colour nobody can parse returns null, whole. Not
+         * a palette with a hole in it and not one with white where a value
+         * should be: a half-read palette is worse than no palette, because an
+         * app would style itself from it and have no way to tell. The caller
+         * keeps whatever it had, which at launch is nothing and afterwards is
+         * the last palette that did parse.
+         */
+        normalizeTheme: function (raw) {
+            if (!raw || typeof raw !== "object") {
+                return null;
+            }
+            var source = String(raw.source || "");
+            if (!this.inSet(this.themeSources, source)) {
+                return null;
+            }
+            var keys = this.themeKeyList();
+            var colors = {};
+            for (var i = 0; i < keys.length; i++) {
+                var rgb = this.parseColor(raw[keys[i]]);
+                if (!rgb) {
+                    return null;
+                }
+                colors[keys[i]] = this.toHex(rgb);
+            }
+            return {
+                scheme: this.isDarkSurface(this.parseColor(colors.background)) ? "dark" : "light",
+                source: source,
+                colors: colors
+            };
+        },
+
+        /*
+         * The colour the two pre-document surfaces are painted, once the
+         * desktop has been read.
+         *
+         * `base` and not `background`, and it is the one judgement call in
+         * here. The view is very nearly the whole window, and an app that
+         * follows the desktop paints its body like a content surface -- white
+         * under GNOME light, where the window chrome is #F6F5F4. Borrowing the
+         * chrome colour would put the app's own body colour a shade away from
+         * the frame it arrives in, which is a seam rather than a flash but
+         * still something to look at. The chrome colour is in the palette for
+         * an app that wants it.
+         *
+         * A build that named a colour is answered from the config and never
+         * from the desktop -- that is what naming one means. The white at the
+         * end is not a default anybody chooses; it is what is left when a lane
+         * could not read its toolkit at all, and it is the colour this file
+         * shipped before any of it existed.
+         */
+        followsTheme: function () {
+            return !this.parseColor(this.config.background);
+        },
+
+        resolveBackground: function (theme) {
+            if (!this.followsTheme()) {
+                return this.config.background;
+            }
+            if (theme && theme.colors && this.parseColor(theme.colors.base)) {
+                return theme.colors.base;
+            }
+            return "#ffffff";
+        },
+
+        /*
+         * Whether anything actually changed, and it is load-bearing rather than
+         * tidy. The GTK watcher is `style-updated` on the window, and painting
+         * the window is adding a CssProvider to it, which emits `style-updated`
+         * -- so a watcher that pushed whatever it was handed would feed itself
+         * for as long as the app was open. Every lane goes through here for
+         * that reason, and the Windows lane can re-read on a timer at all
+         * because of it.
+         */
+        themesDiffer: function (a, b) {
+            if (!a || !b) {
+                return a !== b;
+            }
+            if (a.scheme !== b.scheme || a.source !== b.source) {
+                return true;
+            }
+            var keys = this.themeKeyList();
+            for (var i = 0; i < keys.length; i++) {
+                if (a.colors[keys[i]] !== b.colors[keys[i]]) {
+                    return true;
+                }
+            }
+            return false;
+        },
+
+        /*
+         * The palette as a JavaScript object literal, for the two places that
+         * need one: the preload, where it is the snapshot the page starts with,
+         * and the push below, where it is an update.
+         *
+         * Everything in it is checked again here even though normalizeTheme
+         * built it, and that is the point rather than belt and braces. This is
+         * the only string this file ever evaluates *into* a page -- every other
+         * direction is the page talking to the host -- so the rule parseMessage
+         * holds coming in is held going out: a fixed shape, a known key set, and
+         * values that match one anchored pattern or the whole update is dropped.
+         * There is no escaping scheme here for the same reason there is none
+         * there, and nothing that fails this can reach a page as text.
+         */
+        themeLiteral: function (theme) {
+            if (!theme || !theme.colors) {
+                return null;
+            }
+            if (theme.scheme !== "dark" && theme.scheme !== "light") {
+                return null;
+            }
+            if (!this.inSet(this.themeSources, theme.source)) {
+                return null;
+            }
+            var keys = this.themeKeyList();
+            var parts = [];
+            for (var i = 0; i < keys.length; i++) {
+                var value = String(theme.colors[keys[i]]);
+                if (!/^#[0-9a-f]{6}$/.test(value)) {
+                    return null;
+                }
+                parts[parts.length] = keys[i] + ':"' + value + '"';
+            }
+            return '{scheme:"' + theme.scheme + '",source:"' + theme.source +
+                '",colors:{' + parts.join(",") + '}}';
+        },
+
+        buildThemeScript: function (theme) {
+            var literal = this.themeLiteral(theme);
+            if (!literal) {
+                return null;
+            }
+            return "window.neutrino&&window.neutrino._theme&&window.neutrino._theme(" +
+                literal + ");";
+        },
+
+        /*
+         * One place every lane's watcher ends up, so the order is the same on
+         * all five: check what was read, drop it if it is not different,
+         * repaint the native surfaces if this build follows the desktop, then
+         * tell the page.
+         *
+         * The native repaint is first because it is the surface the page is
+         * about to be drawn over, and it is skipped entirely for a build that
+         * named its own colour -- an author who said #12141a means it through a
+         * theme change as much as through a launch.
+         *
+         * The push is allowed to fail. A page that did not get an update still
+         * has the palette it started with, which is a window one theme change
+         * out of date rather than a window that is gone.
+         */
+        applyTheme: function (driver, win, wv, raw) {
+            var next = this.normalizeTheme(raw);
+            if (!next) {
+                this.noteOnce("could not read the desktop palette");
+                return false;
+            }
+            if (!this.themesDiffer(this.theme, next)) {
+                return false;
+            }
+            this.theme = next;
+            if (this.followsTheme() && driver.repaint) {
+                try {
+                    driver.repaint(win, wv, this.resolveBackground(next));
+                } catch (e) {
+                    this.noteOnce("could not repaint for the new theme: " + e);
+                }
+            }
+            var js = this.buildThemeScript(next);
+            if (js && driver.evaluate) {
+                try {
+                    driver.evaluate(wv, js);
+                } catch (e2) {
+                    this.noteOnce("could not deliver the theme: " + e2);
+                }
+            }
+            return true;
+        },
+
+        /*
+         * The GTK named colours, in themeKeys order.
+         *
+         * One list, walked by the two lanes that drive GTK -- this file's gjs
+         * driver and the PyGObject shim, which reads the string back out of
+         * here rather than carrying a second copy of it. A palette that
+         * disagreed between the two would be a desktop that looked different
+         * depending on which interpreter the launcher happened to find.
+         *
+         * The GTK3 spellings, because they are the ones measured present. Under
+         * Mint-L-Dark every name below answered, while libadwaita's newer
+         * `accent_bg_color`, `window_bg_color` and `view_bg_color` all came back
+         * not found. Those are an upgrade for a later round and never the only
+         * read: a lane that asked for them alone would report nothing on a
+         * desktop that is working perfectly well.
+         */
+        gtkColorNames: "theme_bg_color,theme_fg_color,theme_base_color,theme_text_color," +
+            "theme_selected_bg_color,theme_selected_fg_color,borders",
+
+        /*
+         * The palette, off any realized-or-not widget's style context.
+         *
+         * A style context and not a window, because the read happens before
+         * there is a window: boot asks for the theme ahead of createWindow, so
+         * the caller hands in a throwaway widget. Measured on Gtk.Box, Gtk.Label
+         * and Gtk.Window -- all three answer identically, because these are
+         * theme-level names and not widget-level ones -- so the cheapest of the
+         * three is what the driver builds.
+         *
+         * `borders` is the one that comes back translucent on some themes and
+         * `insensitive_fg_color` always does, which is why the alpha travels
+         * with each colour to flattenColor rather than being dropped here. The
+         * background is read first so there is something to flatten against.
+         *
+         * One name failing means null, not a palette with six colours in it:
+         * normalizeTheme would refuse it anyway, and refusing here says which
+         * name was missing.
+         */
+        readGtkTheme: function (styleContext) {
+            if (!styleContext) {
+                return null;
+            }
+            var keys = this.themeKeyList();
+            var names = String(this.gtkColorNames).split(",");
+            var hex = [];
+            var alpha = [];
+            for (var i = 0; i < names.length; i++) {
+                var found = null;
+                try {
+                    found = styleContext.lookup_color(names[i]);
+                } catch (e) {
+                    this.noteOnce("could not look up " + names[i] + ": " + e);
+                    return null;
+                }
+                if (!found || !found[0] || !found[1]) {
+                    this.noteOnce("this theme defines no " + names[i]);
+                    return null;
+                }
+                hex[i] = this.toHex(found[1]);
+                alpha[i] = found[1].alpha;
+            }
+            var raw = { source: "gtk" };
+            for (var j = 0; j < keys.length; j++) {
+                raw[keys[j]] = this.flattenColor(hex[j], alpha[j], hex[0]);
+            }
+            return raw;
         },
 
         /*
@@ -1757,6 +2355,105 @@ exit $?;:<<'//</script></body></html>' #-->
         },
 
         /*
+         * The macOS palette, in themeKeys order, with the fallbacks each entry
+         * needs spelled after a `|`.
+         *
+         * The fallbacks are versions and not preferences. `controlAccentColor`
+         * and `separatorColor` are 10.14, `labelColor` is 10.10, and a lane that
+         * asked for the newest spelling alone would report nothing at all on a
+         * Mac where everything else works. First one the runtime answers to
+         * wins.
+         */
+        macColorNames: "windowBackgroundColor," +
+            "labelColor|controlTextColor," +
+            "textBackgroundColor," +
+            "textColor," +
+            "controlAccentColor|selectedContentBackgroundColor|alternateSelectedControlColor," +
+            "alternateSelectedControlTextColor|selectedMenuItemTextColor," +
+            "separatorColor|gridColor",
+
+        readMacColor: function (dollar, names) {
+            var list = String(names).split("|");
+            for (var i = 0; i < list.length; i++) {
+                try {
+                    var color = dollar.NSColor[list[i]];
+                    if (!color) {
+                        continue;
+                    }
+                    // Through sRGB rather than off the colour as it stands: a
+                    // catalog colour has no components at all until it is
+                    // converted, and asking one for redComponent raises.
+                    var srgb = color.colorUsingColorSpace(dollar.NSColorSpace.sRGBColorSpace);
+                    if (!srgb) {
+                        continue;
+                    }
+                    return {
+                        hex: this.toHex({
+                            red: srgb.redComponent,
+                            green: srgb.greenComponent,
+                            blue: srgb.blueComponent
+                        }),
+                        alpha: srgb.alphaComponent
+                    };
+                } catch (_) {}
+            }
+            return null;
+        },
+
+        /*
+         * And the read, which is also a correctness fix rather than a feature.
+         *
+         * NSColor's system colours are *dynamic*: they resolve against
+         * NSAppearance.currentAppearance at the moment they are asked. A JXA
+         * script has no drawing context, so currentAppearance is nil, and nil
+         * resolves to Aqua -- which means reading windowBackgroundColor without
+         * doing anything about it reports **light colours on a dark Mac**. Not
+         * an error, not empty, just wrong, and wrong in exactly the direction
+         * that would make an app paint white on a dark desktop.
+         *
+         * So the appearance is set here, from AppleInterfaceStyle, before a
+         * single colour is read. That default is the plainest reading macOS
+         * offers -- the string "Dark", or nothing at all for light -- and it is
+         * used to *choose the appearance to resolve under*, never to report the
+         * scheme: the scheme still comes from the luminance of what came back,
+         * on this lane as on every other.
+         */
+        readMacTheme: function (ObjCRef, dollar) {
+            try {
+                var style = dollar.NSUserDefaults.standardUserDefaults
+                    .stringForKey("AppleInterfaceStyle");
+                var wantsDark = String(ObjCRef.unwrap(style) || "").indexOf("Dark") === 0;
+                // The constants are these strings. Written out rather than
+                // taken from $.NSAppearanceNameDarkAqua, which is a global the
+                // bridge does not always carry, and a nil name here would give
+                // a nil appearance and put the read straight back where it
+                // started.
+                var appearance = dollar.NSAppearance.appearanceNamed(
+                    wantsDark ? "NSAppearanceNameDarkAqua" : "NSAppearanceNameAqua");
+                if (appearance) {
+                    dollar.NSAppearance.currentAppearance = appearance;
+                }
+            } catch (e) {
+                this.noteOnce("could not set the drawing appearance: " + e);
+            }
+            var keys = this.themeKeyList();
+            var names = String(this.macColorNames).split(",");
+            var found = [];
+            for (var i = 0; i < names.length; i++) {
+                found[i] = this.readMacColor(dollar, names[i]);
+                if (!found[i]) {
+                    this.noteOnce("no NSColor answered to " + names[i]);
+                    return null;
+                }
+            }
+            var raw = { source: "macos" };
+            for (var j = 0; j < keys.length; j++) {
+                raw[keys[j]] = this.flattenColor(found[j].hex, found[j].alpha, found[0].hex);
+            }
+            return raw;
+        },
+
+        /*
          * The same pair on macOS, where the colour has to be taken apart
          * because NSColor is built from components and reads no string.
          * parseColor is where that happens, so this lane and the four that hand
@@ -1786,9 +2483,9 @@ exit $?;:<<'//</script></body></html>' #-->
             }
         },
 
-        paintMacView: function (wv) {
+        paintMacView: function (wv, background) {
             var dollar = eval("$");
-            var rgb = this.parseColor(this.config.background);
+            var rgb = this.parseColor(background);
             if (!rgb) {
                 return false;
             }
@@ -1809,6 +2506,91 @@ exit $?;:<<'//</script></body></html>' #-->
                 this.note("could not paint the view; it will show its own background");
             }
             return painted;
+        },
+
+        /*
+         * The Windows palette, and the one lane where half of it is this file's
+         * choice rather than the system's answer.
+         *
+         * System.Drawing.SystemColors is the obvious read and it is only half
+         * right: on Windows 10 and 11 those are still the **classic light**
+         * values whatever the app theme is set to. Reading them alone reports a
+         * light desktop on a dark one -- the same failure the macOS lane has,
+         * arrived at from the other direction and with no appearance to set to
+         * fix it.
+         *
+         * So the scheme comes from the registry, which is where Windows keeps
+         * the answer, and a dark reading takes the four surface colours from
+         * the constants below. Those are this file's, not the system's: there
+         * is no API that reports them, and inventing them by inverting the
+         * light ones would be worse -- a desktop nobody is running. They are
+         * the values Explorer and WinUI use, so an app that follows them
+         * matches what is next to it on screen.
+         *
+         * The accent pair is read from SystemColors in both schemes, because
+         * COLOR_HIGHLIGHT does track the user's accent colour on Windows 10 and
+         * later. That is the part the system will actually tell you.
+         */
+        windowsDarkSurfaces: "background:#202020,foreground:#ffffff," +
+            "base:#2b2b2b,text:#ffffff,border:#3d3d3d",
+
+        windowsAppsUseLightTheme: function () {
+            try {
+                var registry = eval("Microsoft").Win32.Registry;
+                var value = registry.GetValue(
+                    "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\" +
+                        "CurrentVersion\\Themes\\Personalize",
+                    "AppsUseLightTheme", null);
+                // Absent is light, and that is Windows' own default rather than
+                // a guess: the value is written when the setting is changed, so
+                // a machine that has never been switched to dark does not carry
+                // it at all.
+                if (value === null || value === undefined) {
+                    return true;
+                }
+                return Number(value) !== 0;
+            } catch (e) {
+                this.noteOnce("could not read the app theme setting: " + e);
+                return true;
+            }
+        },
+
+        readWindowsTheme: function (SystemRef) {
+            var nt = this;
+            // Through Convert rather than off the Byte directly, for the reason
+            // makeWindowsColor gives about the other direction: JScript.NET
+            // picks an overload from the types it is handed.
+            var hexOf = function (color) {
+                return nt.toHex({
+                    red: SystemRef.Convert.ToInt32(color.R) / 255,
+                    green: SystemRef.Convert.ToInt32(color.G) / 255,
+                    blue: SystemRef.Convert.ToInt32(color.B) / 255
+                });
+            };
+            try {
+                var system = SystemRef.Drawing.SystemColors;
+                var raw = {
+                    source: "windows",
+                    background: hexOf(system.Control),
+                    foreground: hexOf(system.ControlText),
+                    base: hexOf(system.Window),
+                    text: hexOf(system.WindowText),
+                    accent: hexOf(system.Highlight),
+                    accentText: hexOf(system.HighlightText),
+                    border: hexOf(system.ControlDark)
+                };
+                if (!this.windowsAppsUseLightTheme()) {
+                    var overrides = String(this.windowsDarkSurfaces).split(",");
+                    for (var i = 0; i < overrides.length; i++) {
+                        var cut = overrides[i].indexOf(":");
+                        raw[overrides[i].substring(0, cut)] = overrides[i].substring(cut + 1);
+                    }
+                }
+                return raw;
+            } catch (e) {
+                this.noteOnce("could not read the desktop palette: " + e);
+                return null;
+            }
         },
 
         /*
@@ -2126,6 +2908,13 @@ exit $?;:<<'//</script></body></html>' #-->
             var pendingPreload = null;
             var pendingPageScript = null;
             var documentLoaded = false;
+            // The theme observer is an ObjC object with no arguments to its
+            // selector, so what it needs to reach has to be here rather than
+            // passed in. Both are null until the launch has got that far, and
+            // the observer is not attached until it has.
+            var driverRef = null;
+            var windowRef = null;
+            var observerRef = null;
 
             // What the view is showing, as the view answers rather than as
             // anything that called in claims. Empty is an answer too: a view
@@ -2158,6 +2947,40 @@ exit $?;:<<'//</script></body></html>' #-->
                             }
                         }
                     });
+
+                    /*
+                     * The theme watcher, and on this lane it has to be a real
+                     * object: -run never returns, so there is no loop to
+                     * re-read from the way the Windows driver has. A subclass
+                     * with a selector is the same shape the two delegates
+                     * either side of this use, and for the same reason -- the
+                     * block-taking spellings of these APIs are the ones JXA
+                     * cannot supply.
+                     *
+                     * Registered here and attached in runEventLoop, because
+                     * what it reaches -- the driver, the window, the view --
+                     * does not exist yet.
+                     */
+                    try {
+                        ObjCRef.registerSubclass({
+                            name: "NeutrinoAppearanceObserver",
+                            superclass: "NSObject",
+                            methods: {
+                                "desktopThemeChanged:": {
+                                    types: ["void", ["id"]],
+                                    implementation: function () {
+                                        if (!driverRef) {
+                                            return;
+                                        }
+                                        self.applyTheme(driverRef, windowRef, webViewRef,
+                                            driverRef.readTheme());
+                                    }
+                                }
+                            }
+                        });
+                    } catch (e) {
+                        self.note("no theme watcher on this lane: " + e);
+                    }
 
                     /*
                      * A navigation guard, and deliberately not the one this
@@ -2324,6 +3147,28 @@ exit $?;:<<'//</script></body></html>' #-->
                 getScriptPath: function () {
                     return self.getMacScriptPath(ObjCRef, dollar);
                 },
+                readTheme: function () {
+                    return self.readMacTheme(ObjCRef, dollar);
+                },
+                repaint: function (win, wv, background) {
+                    self.paintMacWindow(win, background);
+                    if (wv) {
+                        self.paintMacView(wv, background);
+                    }
+                },
+                evaluate: function (wv, js) {
+                    // Before the commit there is no document of ours to
+                    // evaluate into, and the preload already carries the
+                    // snapshot, so nothing is lost by dropping this.
+                    if (!documentLoaded) {
+                        return;
+                    }
+                    // A nil completion handler, which is the one thing JXA can
+                    // do with a block parameter: it cannot call one, and the
+                    // navigation delegate above records what happens when a
+                    // selector requires it. Nothing here needs the result.
+                    wv.evaluateJavaScriptCompletionHandler(js, null);
+                },
                 createWindow: function (config) {
                     var frame = dollar.NSMakeRect(0, 0, config.width, config.height);
                     var win = dollar.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
@@ -2333,7 +3178,8 @@ exit $?;:<<'//</script></body></html>' #-->
                         false
                     );
                     win.title = config.title;
-                    self.paintMacWindow(win, config.background);
+                    self.paintMacWindow(win, self.resolveBackground(self.theme));
+                    windowRef = win;
                     // Read and not called, by the rule the navigation
                     // guard's comment sets out. This was win.center(), which
                     // centred the window and then threw into this catch on
@@ -2396,7 +3242,7 @@ exit $?;:<<'//</script></body></html>' #-->
 
                     var wv = dollar.WKWebView.alloc.initWithFrameConfiguration(frame, wkConfig);
                     try { wv.allowsLinkPreview = false; } catch (_) {}
-                    self.paintMacView(wv);
+                    self.paintMacView(wv, self.resolveBackground(self.theme));
                     webViewRef = wv;
                     // Bracket notation for the same reason createWindow uses it
                     // on a window's delegate.
@@ -2536,6 +3382,33 @@ exit $?;:<<'//</script></body></html>' #-->
                     try { app.activateIgnoringOtherApps(true); } catch (_) {}
                 },
                 runEventLoop: function () {
+                    /*
+                     * Two notifications, and the second is not redundancy.
+                     *
+                     * AppleInterfaceThemeChangedNotification is the one that
+                     * says the desktop switched, and it is known to arrive
+                     * before NSColor has finished resolving to the new
+                     * appearance -- so the palette read from it can be the old
+                     * one. NSSystemColorsDidChangeNotification arrives when the
+                     * colours themselves have changed, which is the event this
+                     * actually cares about. Whichever is right, applyTheme's
+                     * diff means the other one costs nothing: a second read
+                     * returning the same palette is not an update.
+                     */
+                    driverRef = this;
+                    try {
+                        observerRef = dollar.NeutrinoAppearanceObserver.alloc.init;
+                        dollar.NSDistributedNotificationCenter.defaultCenter
+                            .addObserverSelectorNameObject(
+                                observerRef, "desktopThemeChanged:",
+                                "AppleInterfaceThemeChangedNotification", null);
+                        dollar.NSNotificationCenter.defaultCenter
+                            .addObserverSelectorNameObject(
+                                observerRef, "desktopThemeChanged:",
+                                "NSSystemColorsDidChangeNotification", null);
+                    } catch (e) {
+                        self.note("no theme watcher on this lane: " + e);
+                    }
                     dollar.NSApp.setActivationPolicy(0);
                     // Left as a call on purpose. By the same rule, reading
                     // `run` is what enters the event loop, and that does not
@@ -2650,6 +3523,22 @@ exit $?;:<<'//</script></body></html>' #-->
                 getScriptPath: function () {
                     return self.getLinuxScriptPath(importsRef);
                 },
+                /*
+                 * Off a Gtk.Box, which is a widget and not a window: this is
+                 * asked before createWindow, and the names being looked up are
+                 * the theme's rather than any widget's -- measured identical on
+                 * Box, Label and Window. Building a toplevel just to read a
+                 * colour would be a second window in a launcher whose whole
+                 * point is the first one.
+                 */
+                readTheme: function () {
+                    try {
+                        return self.readGtkTheme(new Gtk.Box().get_style_context());
+                    } catch (e) {
+                        self.noteOnce("could not read the desktop theme: " + e);
+                        return null;
+                    }
+                },
                 createWindow: function (config) {
                     var win = new Gtk.Window({
                         title: config.title,
@@ -2658,8 +3547,33 @@ exit $?;:<<'//</script></body></html>' #-->
                     });
                     win.set_position(Gtk.WindowPosition.CENTER);
                     win.connect("destroy", function () { Gtk.main_quit(); });
-                    self.paintGtkWindow(Gtk, Gdk, win, config.background);
+                    self.paintGtkWindow(Gtk, Gdk, win, self.resolveBackground(self.theme));
                     return win;
+                },
+                // Both surfaces again, from the colour the new palette resolves
+                // to. Only ever reached for a build that named no background --
+                // applyTheme holds that gate, not this.
+                repaint: function (win, wv, background) {
+                    self.paintGtkWindow(Gtk, Gdk, win, background);
+                    if (wv) {
+                        self.paintWebKitView(Gdk, wv, background);
+                    }
+                },
+                evaluate: function (wv, js) {
+                    // The same gate the navigation guard arms at, and for a
+                    // near reason: before the commit there is no document of
+                    // ours to evaluate into, and a theme change during the
+                    // launch would otherwise be delivered to about:blank and
+                    // lost. The palette is in the preload, so nothing is
+                    // missing -- the page starts with whatever this would have
+                    // told it.
+                    if (!documentLoaded) {
+                        return;
+                    }
+                    // run_javascript and not evaluate_javascript: this lane
+                    // resolves WebKit2 to 4.1 or 4.0 and only the first has the
+                    // newer spelling. Deprecated in 4.1, present in both.
+                    wv.run_javascript(js, null, null, null);
                 },
                 createWebView: function () {
                     var ucm = new WebKit2.UserContentManager();
@@ -2709,7 +3623,7 @@ exit $?;:<<'//</script></body></html>' #-->
                     inject(pendingPageScript, WebKit2.UserScriptInjectionTime.END);
 
                     var wv = new WebKit2.WebView({ user_content_manager: ucm });
-                    self.paintWebKitView(Gdk, wv, self.config.background);
+                    self.paintWebKitView(Gdk, wv, self.resolveBackground(self.theme));
                     /*
                      * COMMITTED, not FINISHED, and the difference is a hole.
                      *
@@ -2847,7 +3761,32 @@ exit $?;:<<'//</script></body></html>' #-->
                 showWindow: function (win) {
                     win.show_all();
                 },
-                runEventLoop: function () {
+                runEventLoop: function (win, wv) {
+                    // `this` is the driver: boot calls every one of these as
+                    // driver.runEventLoop(...), which is also how applyTheme
+                    // gets back to repaint and evaluate below.
+                    var driver = this;
+                    /*
+                     * `style-updated` on the window, which is what GTK emits
+                     * when the style context behind a widget changes for any
+                     * reason -- a new theme name, a dark-preference flip, a
+                     * provider added. It is the signal for the thing being
+                     * reported rather than for one of the settings that can
+                     * cause it, so a desktop that changes its colours some way
+                     * nobody here anticipated still arrives.
+                     *
+                     * Which is also why applyTheme's diff is not optional:
+                     * repainting the window adds a CssProvider to it, and that
+                     * emits this. Without the diff the first theme change would
+                     * be the last thing this process ever did.
+                     */
+                    try {
+                        win.connect("style-updated", function () {
+                            self.applyTheme(driver, win, wv, driver.readTheme());
+                        });
+                    } catch (e) {
+                        self.note("no theme watcher on this lane: " + e);
+                    }
                     Gtk.main();
                 }
             };
@@ -3295,7 +4234,7 @@ exit $?;:<<'//</script></body></html>' #-->
             return null;
         },
 
-        buildPreloadScript: function (transport, name) {
+        buildPreloadScript: function (transport, name, themeLiteral) {
             return '(function(){' +
                 'var S=String.fromCharCode(31);' +
                 'var _send=function(m){try{(' + transport + ')(m);}catch(_){}};' +
@@ -3305,6 +4244,33 @@ exit $?;:<<'//</script></body></html>' #-->
                 // work this out by feature detection anyway, so naming it costs
                 // nothing and lets a test report it instead of inferring it.
                 'transport:"' + String(name || "unknown") + '",' +
+                /*
+                 * The desktop's palette, in the preload rather than pushed
+                 * after it. An app that has to wait for an event to learn the
+                 * colours it launched into would paint once in the wrong ones
+                 * first, which is the flash this whole thing exists to close,
+                 * arrived at from the other side.
+                 *
+                 * `null` on a lane whose toolkit could not be read. Said out
+                 * loud rather than filled in with white, so an app finds out by
+                 * asking instead of by styling itself from a palette nobody's
+                 * desktop is using.
+                 */
+                'theme:' + (themeLiteral || "null") + ',' +
+                /*
+                 * Where an update lands. Replaced and not mutated: an app that
+                 * captured the object keeps a stable snapshot of the palette it
+                 * had, and one that reads window.neutrino.theme gets the
+                 * current one. The property is current before the event fires,
+                 * so a handler may read either.
+                 *
+                 * Nothing else in this file evaluates into a page, and nothing
+                 * reaches here that themeLiteral did not build.
+                 */
+                '_theme:function(t){' +
+                'window.neutrino.theme=t;' +
+                'try{window.dispatchEvent(new CustomEvent("neutrino:themechange",{detail:t}));}catch(_){}' +
+                '},' +
                 'send:function(action,data){' +
                 'var d=data||{};' +
                 'if(action==="setTitle")_send("setTitle"+S+_n(d.title));' +
@@ -3420,6 +4386,27 @@ exit $?;:<<'//</script></body></html>' #-->
 
         boot: function (driver, config) {
             driver.init();
+
+            /*
+             * Before the window, because the window is painted from it and
+             * there is exactly one chance to get that right -- a window
+             * repainted after it is on screen is the flash, in a different
+             * colour.
+             *
+             * A lane with no reader, or a reader that could not reach its
+             * toolkit, leaves this null. That is a build that paints white and
+             * hands the page `neutrino.theme === null`, which is what this file
+             * did before any of this existed: no worse than it was, and the
+             * page can tell.
+             */
+            if (driver.readTheme) {
+                this.theme = this.normalizeTheme(driver.readTheme());
+                if (!this.theme) {
+                    this.note("could not read the desktop palette; using " +
+                        this.resolveBackground(null));
+                }
+            }
+
             var scriptPath = driver.getScriptPath();
             var source = driver.readFile(scriptPath);
             var html = this.applyContentPolicy(this.extractHtmlDocument(source));
@@ -3451,7 +4438,8 @@ exit $?;:<<'//</script></body></html>' #-->
              */
             if (driver.webMessageTransport) {
                 driver.injectPreload(null, this.buildPreloadScript(
-                    driver.webMessageTransport, driver.transportName));
+                    driver.webMessageTransport, driver.transportName,
+                    this.themeLiteral(this.theme)));
             }
 
             if (driver.injectPageScript) {
@@ -4390,6 +5378,10 @@ exit $?;:<<'//</script></body></html>' #-->
             var pendingDocument = null;
             var settingsApplied = false;
             var webMessagesWired = false;
+            // Kept because evaluate needs it and the loop is the only place it
+            // can be got: CoreWebView2 does not exist until the runtime has
+            // finished starting, which is well after the window is on screen.
+            var coreWebView2 = null;
 
             return {
                 /*
@@ -4485,12 +5477,42 @@ exit $?;:<<'//</script></body></html>' #-->
                     }
                     return self.windowsLayout(SystemRef).script;
                 },
+                readTheme: function () {
+                    return self.readWindowsTheme(SystemRef);
+                },
+                repaint: function (win, wv, background) {
+                    var color = self.makeWindowsColor(SystemRef, background);
+                    if (!color) {
+                        return;
+                    }
+                    try {
+                        win.BackColor = color;
+                    } catch (e) {
+                        self.note("could not repaint the window: " + e);
+                    }
+                    if (wv) {
+                        self.paintWindowsView(wv, color);
+                    }
+                },
+                evaluate: function (wv, js) {
+                    // The gate every lane holds, spelled the way this one keeps
+                    // it: `armed` is set from inside the engine at the commit of
+                    // the document this file navigated to.
+                    if (!coreWebView2 || !NeutrinoNavSink.armed) {
+                        return;
+                    }
+                    var run = coreWebView2.GetType().GetMethod("ExecuteScriptAsync");
+                    if (!run) {
+                        return;
+                    }
+                    run.Invoke(coreWebView2, [js]);
+                },
                 createWindow: function (config) {
                     var win = new SystemRef.Windows.Forms.Form();
                     win.Text = config.title;
                     win.ClientSize = new SystemRef.Drawing.Size(config.width, config.height);
                     win.StartPosition = SystemRef.Windows.Forms.FormStartPosition.CenterScreen;
-                    var winColor = self.makeWindowsColor(SystemRef, config.background);
+                    var winColor = self.makeWindowsColor(SystemRef, self.resolveBackground(self.theme));
                     if (winColor) {
                         try { win.BackColor = winColor; } catch (e) { self.note("could not paint the window: " + e); }
                     }
@@ -4498,7 +5520,8 @@ exit $?;:<<'//</script></body></html>' #-->
                 },
                 createWebView: function () {
                     var wv = SystemRef.Activator.CreateInstance(webViewType);
-                    self.paintWindowsView(wv, self.makeWindowsColor(SystemRef, self.config.background));
+                    self.paintWindowsView(wv,
+                        self.makeWindowsColor(SystemRef, self.resolveBackground(self.theme)));
                     if (userDataDir) {
                         try {
                             var cpType = webViewWinFormsAssembly.GetType("Microsoft.Web.WebView2.WinForms.CoreWebView2CreationProperties");
@@ -4582,6 +5605,7 @@ exit $?;:<<'//</script></body></html>' #-->
                 runEventLoop: function (win, wv) {
                     win.Show();
                     self.trace("loop: window shown");
+                    var driver = this;
                     var coreWv2 = null;
                     var titleProp = null;
                     var sourceProp = null;
@@ -4601,6 +5625,9 @@ exit $?;:<<'//</script></body></html>' #-->
                                 var coreWv2Prop = wv.GetType().GetProperty("CoreWebView2");
                                 if (coreWv2Prop) {
                                     coreWv2 = coreWv2Prop.GetValue(wv, null);
+                                    // Kept where evaluate can reach it. This
+                                    // is the only place it can be got.
+                                    coreWebView2 = coreWv2;
                                 }
                             }
                             if (coreWv2 && !settingsApplied) {
@@ -4621,7 +5648,15 @@ exit $?;:<<'//</script></body></html>' #-->
                                     webMessagesWired
                                         ? "function(m){window.chrome.webview.postMessage(m);}"
                                         : "function(m){document.title='__NEUTRINO__'+encodeURIComponent(m);}",
-                                    webMessagesWired ? "webmessage" : "title"
+                                    webMessagesWired ? "webmessage" : "title",
+                                    // This lane builds its preload here rather
+                                    // than in boot, so the palette has to be
+                                    // put in here too. Left out, every Windows
+                                    // app would read neutrino.theme as null
+                                    // while the window it is sitting in was
+                                    // painted from a palette that was read
+                                    // perfectly well.
+                                    self.themeLiteral(self.theme)
                                 );
                             }
                             if (coreWv2 && pendingPreload && !preloadInjected) {
@@ -4675,6 +5710,29 @@ exit $?;:<<'//</script></body></html>' #-->
                             }
                             if (coreWv2) {
                                 self.drainNavRefusals();
+                            }
+                            /*
+                             * The theme watcher, and on this lane it is a
+                             * re-read rather than a subscription.
+                             *
+                             * This loop already spins at 16 ms doing reflection
+                             * on every turn, so reading two SystemColors and
+                             * one registry value once a second is nothing next
+                             * to what it is already paying -- and it needs no
+                             * delegate bound to an event whose handler type
+                             * would be one more thing to discover at run time.
+                             * applyTheme's diff is what makes a re-read safe to
+                             * do on a clock: a palette that has not changed is
+                             * not an update, so the page hears nothing until
+                             * something actually happens.
+                             *
+                             * SystemEvents.UserPreferenceChanged is the real
+                             * mechanism if this ever measures badly. It was not
+                             * taken first because it is strictly more moving
+                             * parts for an answer this loop can already reach.
+                             */
+                            if (spins % 60 === 0) {
+                                self.applyTheme(driver, win, wv, driver.readTheme());
                             }
                             if (coreWv2 && messageCallback && webMessagesWired) {
                                 // Drained here rather than handled in the event
