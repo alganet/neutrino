@@ -502,7 +502,14 @@ Window {
         "console")
 
     visible: true
-    title: cfg.title + " - Qt"
+    title: cfg.title
+
+    // The two surfaces that are up before the document, the same pair every
+    // other lane paints. A QML colour property reads `#rrggbb` itself, so this
+    // is the string as the config carries it -- and an unreadable one leaves
+    // both at their defaults rather than painting them black, which is what
+    // the launcher's own parseColor is asked here.
+    color: root.nt.parseColor(cfg.background) ? cfg.background : "white"
 
     function ntRead() {
         var xhr = new XMLHttpRequest()
@@ -541,6 +548,7 @@ Window {
     WebEngineView {
         id: view
         anchors.fill: parent
+        backgroundColor: root.color
         property bool preloadInjected: false
         property bool documentLoaded: false
         property bool contentLoaded: false
@@ -939,7 +947,11 @@ if WEBKIT_API is None:
 
 try:
     gi.require_version("Gtk", "3.0")
-    from gi.repository import GLib, Gio, Gtk, JavaScriptCore, WebKit2
+    # Pinned alongside Gtk and not left to the loader. Importing it unpinned
+    # writes a PyGIWarning to stderr on the way past, and this lane's stderr is
+    # the app's.
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import GLib, Gdk, Gio, Gtk, JavaScriptCore, WebKit2
 except Exception as exc:
     unavailable("%s" % (exc,))
 
@@ -1154,6 +1166,41 @@ title = config.object_get_property("title").to_string()
 width = config.object_get_property("width").to_int32()
 height = config.object_get_property("height").to_int32()
 
+
+# The two surfaces GTK puts up before the document, and the colour comes out of
+# the launcher's own parseColor rather than being read again here. This lane
+# reimplements nothing on purpose, and a second reading of the same value is a
+# second thing that can disagree with the other four.
+#
+# Both calls are allowed to fail. A background that will not paint is a window
+# in the theme colour, which is where this started -- worth a line on stderr,
+# not worth refusing to launch over.
+def paint(widget_window, web_view):
+    rgb = call("parseColor", config.object_get_property("background"))
+    if rgb.is_null() or rgb.is_undefined():
+        return
+    red = rgb.object_get_property("red").to_double()
+    green = rgb.object_get_property("green").to_double()
+    blue = rgb.object_get_property("blue").to_double()
+    try:
+        rgba = Gdk.RGBA()
+        rgba.red, rgba.green, rgba.blue, rgba.alpha = red, green, blue, 1.0
+        web_view.set_background_color(rgba)
+    except Exception as exc:
+        sys.stderr.write("neutrino: could not paint the view: %s\n" % (exc,))
+    try:
+        # On the widget and not on the screen: the screen-wide call reaches
+        # every window in the process, and there is one here only by accident
+        # of there being one window.
+        provider = Gtk.CssProvider()
+        provider.load_from_data(
+            ("window, .background { background-color: rgb(%d,%d,%d); }" % (
+                round(red * 255), round(green * 255), round(blue * 255))).encode("utf-8"))
+        widget_window.get_style_context().add_provider(
+            provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    except Exception as exc:
+        sys.stderr.write("neutrino: could not paint the window: %s\n" % (exc,))
+
 html = call("applyContentPolicy", call("extractHtmlDocument", js_string(source))).to_string()
 page_script = call("extractPageScript", js_string(source)).to_string()
 preload = call(
@@ -1174,12 +1221,13 @@ inject(page_script, WebKit2.UserScriptInjectionTime.END)
 GLib.set_prgname("neutrino")
 
 window = Gtk.Window(
-    title=title + " - Linux",
+    title=title,
     default_width=width,
     default_height=height,
 )
 window.set_position(Gtk.WindowPosition.CENTER)
 window.connect("destroy", lambda _w: Gtk.main_quit())
+paint(window, view)
 view_holder["view"] = view
 
 
@@ -1371,8 +1419,8 @@ fi
 # anywhere in it to notice.
 echo "neutrino: no runtime here can open a window (looked for gjs, cjs, a Qt QML runtime, osascript, and python3 with PyGObject)" >&2
 exit 1
-exit $?;:<<'//</script></head><body></body>' #-->
-<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-eval'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><style> html, body { background: white; color: black; font-size: 2em; }</style></head>
+exit $?;:<<'//</script></body></html>' #-->
+<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-eval'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><style>html,body{background:white;color:black;font-size:2em}</style></head><body>Welcome to neutrino
 <script type=text/javascript>//*/
 
     /*@cc_on
@@ -1583,11 +1631,236 @@ exit $?;:<<'//</script></head><body></body>' #-->
             return ("," + String(this.tiers || "default") + ",").indexOf("," + name + ",") >= 0;
         },
 
+        /*
+         * What the native window needs before there is a document to read it
+         * from, and nothing else. createWindow runs on every lane before
+         * loadHTML, so these three cannot come from the markup the way the
+         * style and the body now do -- there is no document yet when they are
+         * asked for.
+         *
+         * `url` used to sit here and had not been read by anything since the
+         * launcher stopped navigating to a remote page. It is gone rather than
+         * kept, because a config entry nothing consumes reads as a feature.
+         *
+         * `background` is the fourth for the same reason the other three are
+         * here: it is wanted before there is a document. Two surfaces are up
+         * ahead of the first paint -- the native window, and the view inside it
+         * -- and neither of them can be reached from a stylesheet. Measured on
+         * WebKitGTK with the load held back: the window is the theme's bare
+         * background, #F6F5F4 under Adwaita, and the view adds about two frames
+         * of its own on top. Both of them are white on a default desktop, and
+         * both are what the app was seen through before it painted.
+         *
+         * It does not touch the document. An author sets it to whatever their
+         * own CSS paints, and the two are deliberately separate: this is the
+         * colour of the frame the app has not arrived in yet, not a rule in
+         * anybody's stylesheet.
+         *
+         * Stamped by build.sh between the sentinels, the way the tier list is,
+         * and for the same reason: one value, read by five lanes, with nothing
+         * in the environment able to talk any of them out of it.
+         */
+        //#CONFIG_START
         config: {
             title: "neutrino",
-            url: "https://alganet.github.io/",
             width: 900,
-            height: 600
+            height: 600,
+            background: "#ffffff"
+        },
+        //#CONFIG_END
+
+        /*
+         * A colour, as the four toolkits want it.
+         *
+         * Three of the five lanes take the string as written -- Gdk.RGBA.parse,
+         * a QML colour property and ColorTranslator.FromHtml all read `#rrggbb`
+         * themselves -- so this exists for the one that does not. NSColor is
+         * built from components, and a lane that parsed its own would be a
+         * second reading of the same value that could disagree with the others.
+         *
+         * `#rgb` and `#rrggbb` and nothing else, and a value it cannot read
+         * comes back null rather than as black. A background nobody can parse
+         * is a build that should have been refused, and build.sh refuses it;
+         * this returning null is what lets each lane leave its surface alone
+         * instead of painting it a colour nobody asked for.
+         */
+        parseColor: function (value) {
+            var text = String(value || "");
+            if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(text)) {
+                return null;
+            }
+            var hex = text.substring(1);
+            if (hex.length === 3) {
+                hex = hex.charAt(0) + hex.charAt(0) +
+                      hex.charAt(1) + hex.charAt(1) +
+                      hex.charAt(2) + hex.charAt(2);
+            }
+            return {
+                red: parseInt(hex.substring(0, 2), 16) / 255,
+                green: parseInt(hex.substring(2, 4), 16) / 255,
+                blue: parseInt(hex.substring(4, 6), 16) / 255
+            };
+        },
+
+        /*
+         * The two surfaces GTK puts up before the document, painted from one
+         * value, on the two lanes that drive GTK -- this one and the PyGObject
+         * one, which calls in here rather than reading the colour itself.
+         *
+         * The window is styled through its own style context and not through
+         * add_provider_for_screen: the screen-wide call reaches every window in
+         * the process, and there is one here today only by accident of there
+         * being one window. A provider on the widget cannot grow that reach.
+         *
+         * Neither of these throws. A background that will not paint is a window
+         * that comes up in the theme colour, which is exactly where this
+         * started -- worth a note on stderr and not worth a launch.
+         */
+        paintGtkWindow: function (Gtk, Gdk, win, background) {
+            var rgb = this.parseColor(background);
+            if (!rgb || !Gtk || !Gdk) {
+                return false;
+            }
+            var css = "window, .background { background-color: rgb(" +
+                Math.round(rgb.red * 255) + "," +
+                Math.round(rgb.green * 255) + "," +
+                Math.round(rgb.blue * 255) + "); }";
+            try {
+                var provider = new Gtk.CssProvider();
+                provider.load_from_data(css);
+                win.get_style_context().add_provider(
+                    provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+                return true;
+            } catch (e) {
+                this.note("could not paint the window: " + e);
+                return false;
+            }
+        },
+
+        paintWebKitView: function (Gdk, wv, background) {
+            var rgb = this.parseColor(background);
+            if (!rgb || !Gdk) {
+                return false;
+            }
+            try {
+                var rgba = new Gdk.RGBA();
+                rgba.red = rgb.red;
+                rgba.green = rgb.green;
+                rgba.blue = rgb.blue;
+                rgba.alpha = 1;
+                wv.set_background_color(rgba);
+                return true;
+            } catch (e) {
+                this.note("could not paint the view: " + e);
+                return false;
+            }
+        },
+
+        /*
+         * The same pair on macOS, where the colour has to be taken apart
+         * because NSColor is built from components and reads no string.
+         * parseColor is where that happens, so this lane and the four that hand
+         * a string to a toolkit are all reading one value.
+         *
+         * The view is the harder half. WKWebView draws an opaque white behind
+         * the page and the property that says otherwise is not public: the
+         * supported spelling, underPageBackgroundColor, is macOS 12 and later,
+         * and drawsBackground is a key that has answered to setValue:forKey:
+         * for far longer. Both are tried, neither is required, and the window
+         * underneath is painted either way -- so the worst outcome here is the
+         * white this was opened to close, and never a lane that will not start.
+         */
+        paintMacWindow: function (win, background) {
+            var dollar = eval("$");
+            var rgb = this.parseColor(background);
+            if (!rgb) {
+                return false;
+            }
+            try {
+                win.backgroundColor = dollar.NSColor.colorWithSRGBRedGreenBlueAlpha(
+                    rgb.red, rgb.green, rgb.blue, 1.0);
+                return true;
+            } catch (e) {
+                this.note("could not paint the window: " + e);
+                return false;
+            }
+        },
+
+        paintMacView: function (wv) {
+            var dollar = eval("$");
+            var rgb = this.parseColor(this.config.background);
+            if (!rgb) {
+                return false;
+            }
+            var painted = false;
+            try {
+                wv.underPageBackgroundColor = dollar.NSColor.colorWithSRGBRedGreenBlueAlpha(
+                    rgb.red, rgb.green, rgb.blue, 1.0);
+                painted = true;
+            } catch (_) {}
+            // Lets the window's own colour through instead of the view's
+            // white, which is the older answer and the one that covers the
+            // releases the property above does not exist on.
+            try {
+                wv.setValueForKey(false, "drawsBackground");
+                painted = true;
+            } catch (_) {}
+            if (!painted) {
+                this.note("could not paint the view; it will show its own background");
+            }
+            return painted;
+        },
+
+        /*
+         * And on Windows, where both surfaces take a System.Drawing.Color.
+         *
+         * The Form paints the moment it is shown. The WebView2 control paints
+         * white until it has content, and DefaultBackgroundColor is the
+         * supported way to say otherwise -- it is a property of the WinForms
+         * control rather than of CoreWebView2, which matters here because
+         * CoreWebView2 does not exist until the runtime has finished starting
+         * and the window is on screen well before that.
+         *
+         * Reached by reflection because the type is loaded at run time and
+         * cannot be named at compile time, and because the property is not in
+         * every WebView2 version this may be running against. A control that
+         * does not carry it keeps its white and the Form underneath is still
+         * painted.
+         */
+        makeWindowsColor: function (SystemRef, background) {
+            var rgb = this.parseColor(background);
+            if (!rgb) {
+                return null;
+            }
+            try {
+                // Through Convert rather than by handing doubles to an
+                // overload set: JScript.NET picks an overload from the types it
+                // is given, and Math.round hands it a Number.
+                return SystemRef.Drawing.Color.FromArgb(
+                    255,
+                    SystemRef.Convert.ToInt32(Math.round(rgb.red * 255)),
+                    SystemRef.Convert.ToInt32(Math.round(rgb.green * 255)),
+                    SystemRef.Convert.ToInt32(Math.round(rgb.blue * 255)));
+            } catch (e) {
+                this.note("could not read the background: " + e);
+                return null;
+            }
+        },
+
+        paintWindowsView: function (wv, color) {
+            if (!color) {
+                return false;
+            }
+            try {
+                var prop = wv.GetType().GetProperty("DefaultBackgroundColor");
+                if (!prop || !prop.CanWrite) {
+                    return false;
+                }
+                prop.SetValue(wv, color, null);
+                return true;
+            } catch (e) {
+                return false;
+            }
         },
 
         hasGlobalExpr: function (expression) {
@@ -1685,11 +1958,28 @@ exit $?;:<<'//</script></head><body></body>' #-->
             return at;
         },
 
-        // The document, with the script taken out of it.
+        /*
+         * The document, with the script taken out of it.
+         *
+         * The tail used to be fabricated -- "<body></body></html>" appended to
+         * whatever the head cut produced -- so the document every engine loaded
+         * had an empty body no matter what the file said. That is why the demo
+         * blinked: the first paint was this launcher's default style over
+         * nothing, and the app's own markup arrived a frame or more later, from
+         * script.
+         *
+         * The body now opens on the document line, above the script tag, which
+         * is where the head cut already ends. So the markup an author builds in
+         * is in the first paint rather than after it, and this function no
+         * longer invents a document that is not in the file -- it returns the
+         * file's own, minus the script element. `<script>` inside `<body>` is
+         * valid HTML, so the file read directly by a browser is still the same
+         * document.
+         */
         extractHtmlDocument: function (content) {
             var text = String(content || "");
             var at = this.splitOrThrow(text);
-            return text.substring(at.start, at.tag) + "<body></body></html>";
+            return text.substring(at.start, at.tag) + "</body></html>";
         },
 
         // The other half: everything the document used to carry, handed to the
@@ -1785,9 +2075,10 @@ exit $?;:<<'//</script></head><body></body>' #-->
 
         runWeb: function () {
             //#RUNWEB_START
-            var win = eval("window");
-            var doc = eval("document");
-            doc.write("Welcome to neutrino");
+            // No app is spliced in here yet, and this template's own greeting
+            // is markup on the document line rather than something written
+            // from script -- which is the whole of what the early shell is
+            // for. Unbuilt, this file paints its greeting and does nothing.
             //#RUNWEB_END
         },
 
@@ -2041,7 +2332,8 @@ exit $?;:<<'//</script></head><body></body>' #-->
                         dollar.NSBackingStoreBuffered,
                         false
                     );
-                    win.title = config.title + " - macOS";
+                    win.title = config.title;
+                    self.paintMacWindow(win, config.background);
                     // Read and not called, by the rule the navigation
                     // guard's comment sets out. This was win.center(), which
                     // centred the window and then threw into this catch on
@@ -2050,7 +2342,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     try { win.center; } catch (_) {}
                     windowDelegateRef = dollar.NeutrinoWindowDelegate.alloc.init;
                     win["delegate"] = windowDelegateRef;
-                    this.writeStatus(config.title + " - macOS", win);
+                    this.writeStatus(config.title, win);
                     return win;
                 },
                 createWebView: function () {
@@ -2104,6 +2396,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
 
                     var wv = dollar.WKWebView.alloc.initWithFrameConfiguration(frame, wkConfig);
                     try { wv.allowsLinkPreview = false; } catch (_) {}
+                    self.paintMacView(wv);
                     webViewRef = wv;
                     // Bracket notation for the same reason createWindow uses it
                     // on a window's delegate.
@@ -2256,7 +2549,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
 
         createGjsDriver: function () {
             var importsRef = eval("imports");
-            var Gtk, WebKit2, GLib, ByteArray;
+            var Gtk, WebKit2, GLib, ByteArray, Gdk;
             var self = this;
             var messageCallback = null;
             var pendingPreload = null;
@@ -2283,6 +2576,13 @@ exit $?;:<<'//</script></head><body></body>' #-->
                         WebKit2 = importsRef["gi"]["WebKit2"];
                         GLib = importsRef["gi"]["GLib"];
                         ByteArray = importsRef["byteArray"];
+                        // Pinned to match Gtk rather than left to the loader.
+                        // Gdk 3 and Gdk 4 are different libraries and only one
+                        // of them belongs in a process running Gtk 3; the
+                        // PyGObject lane pins it for the same reason and gets a
+                        // warning on stderr when it does not.
+                        importsRef["gi"]["versions"]["Gdk"] = "3.0";
+                        Gdk = importsRef["gi"]["Gdk"];
                     } catch (e) {
                         if (e && e.neutrinoEngineUnavailable) {
                             throw e;
@@ -2352,12 +2652,13 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 },
                 createWindow: function (config) {
                     var win = new Gtk.Window({
-                        title: config.title + " - Linux",
+                        title: config.title,
                         default_width: config.width,
                         default_height: config.height
                     });
                     win.set_position(Gtk.WindowPosition.CENTER);
                     win.connect("destroy", function () { Gtk.main_quit(); });
+                    self.paintGtkWindow(Gtk, Gdk, win, config.background);
                     return win;
                 },
                 createWebView: function () {
@@ -2408,6 +2709,7 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     inject(pendingPageScript, WebKit2.UserScriptInjectionTime.END);
 
                     var wv = new WebKit2.WebView({ user_content_manager: ucm });
+                    self.paintWebKitView(Gdk, wv, self.config.background);
                     /*
                      * COMMITTED, not FINISHED, and the difference is a hole.
                      *
@@ -4185,13 +4487,18 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 },
                 createWindow: function (config) {
                     var win = new SystemRef.Windows.Forms.Form();
-                    win.Text = config.title + " - Windows";
+                    win.Text = config.title;
                     win.ClientSize = new SystemRef.Drawing.Size(config.width, config.height);
                     win.StartPosition = SystemRef.Windows.Forms.FormStartPosition.CenterScreen;
+                    var winColor = self.makeWindowsColor(SystemRef, config.background);
+                    if (winColor) {
+                        try { win.BackColor = winColor; } catch (e) { self.note("could not paint the window: " + e); }
+                    }
                     return win;
                 },
                 createWebView: function () {
                     var wv = SystemRef.Activator.CreateInstance(webViewType);
+                    self.paintWindowsView(wv, self.makeWindowsColor(SystemRef, self.config.background));
                     if (userDataDir) {
                         try {
                             var cpType = webViewWinFormsAssembly.GetType("Microsoft.Web.WebView2.WinForms.CoreWebView2CreationProperties");
@@ -4514,4 +4821,4 @@ exit $?;:<<'//</script></head><body></body>' #-->
 
     NeutrinoWebview.run();
 
-//</script></head><body></body>
+//</script></body></html>

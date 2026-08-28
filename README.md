@@ -76,6 +76,66 @@ Your JS runs in the browser context with access to `document`, `window`, and the
 
 **Note:** Use `eval("window")` and `eval("document")` instead of bare globals to avoid JScript.NET compile errors (the same file is compiled by `jsc.exe` on Windows where these globals don't exist at compile time).
 
+### The early shell
+
+What your app looks like *before* a line of its JavaScript has run.
+
+```bash
+./build.sh --title "My App" --size 1024x768 --background "#12141a" \
+           --style shell.css --body shell.html \
+           myapp.js myapp.cmd
+```
+
+The style and the body are spliced into the polyglot's document line, so they
+are in the first paint — there is no frame in which the window is up and your
+markup is not. The title, the size and the background go into the config object
+instead, because the native window is created before there is a document to read
+them from. Each flag replaces its own part; the ones you leave out keep the
+template's.
+
+Without this, an app draws itself from script, and every launch shows the
+launcher's own document first — the shape that made the sample app blink.
+
+**`--background` is not CSS.** Two surfaces are up before your document, and
+neither can be reached from a stylesheet: the native window, and the view inside
+it. Measured on WebKitGTK with the load held back, under a default desktop, the
+window is `#F6F5F4` — the GTK theme's bare background — and the view adds about
+two frames of its own on top. That is the white flash, and it is what this flag
+paints. Set it to whatever your CSS paints, and the app appears out of its own
+colour instead of out of the desktop's.
+
+| Lane | Window | View |
+|---|---|---|
+| gjs / cjs / PyGObject | `GtkCssProvider` on the widget | `webkit_web_view_set_background_color` |
+| Qt | `Window.color` | `WebEngineView.backgroundColor` |
+| macOS | `NSWindow.backgroundColor` | `underPageBackgroundColor`, then `drawsBackground` |
+| Windows | `Form.BackColor` | `WebView2.DefaultBackgroundColor` |
+
+`#rgb` or `#rrggbb`; anything else is refused at build time. It is deliberately
+separate from your stylesheet — this is the colour of the frame your app has not
+arrived in yet, not a rule in your CSS.
+
+**The one-line constraint, and the choice it gives you.** Both files are folded
+to a single line and spliced into a line that is simultaneously inside a
+JavaScript block comment, inside a shell here-document, and the line both halves
+of the file are cut from. CSS comments are removed for you. Four sequences are
+refused rather than escaped, and the error says what each one would have done:
+
+| Refused | Because |
+|---|---|
+| `*/` | ends the block comment the whole shell region lives inside |
+| `<script` | moves where both halves of the file are cut |
+| `<!doctype` | is a second doctype, which the launcher refuses |
+| `Content-Security-Policy` | is a second policy, which would sit in the document enforcing nothing |
+
+So the early shell is deliberately small, and you have a choice rather than a
+limit. Write an app that fits these rules — isomorphic ES5, one-lineable CSS and
+HTML — and it loads with nothing to wait for. Or keep the shell to the frame
+your app appears in, and build the rest from script once the engine is up, where
+none of these rules apply. The sample app does the second: `pages/demo.css` and
+`pages/demo.html` are the whole window, and `pages/demo.js` fills in the two
+words that only the runtime knows.
+
 ---
 
 ## IPC API

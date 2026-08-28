@@ -52,8 +52,23 @@ human() {
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
+# The window, the style and the markup go in as the early shell rather than
+# being written from the app's script, so the first paint is the finished page.
+# The size was a resize() the app used to send on startup, which meant every
+# launch opened at 900x600 and jumped.
+#
+# The background is demo.css's, said a second time because it is not CSS: it
+# paints the native window and the view, both of which are up before there is a
+# document and neither of which a stylesheet can reach. Measured on WebKitGTK
+# under a default desktop, with the load held back: #F6F5F4 without it.
 echo "Building the sample app"
-bash "$ROOT/build.sh" "$HERE/demo.js" "$OUT/$APP.cmd"
+bash "$ROOT/build.sh" \
+    --title "neutrino" \
+    --size 520x300 \
+    --background "#12141a" \
+    --style "$HERE/demo.css" \
+    --body "$HERE/demo.html" \
+    "$HERE/demo.js" "$OUT/$APP.cmd"
 
 # netinstall/build.sh falls back to a host-only build when zig is missing, and
 # says so on stderr rather than failing. Publishing on top of that fallback is

@@ -70,6 +70,46 @@ if [ -z "$DOC_TAG" ] || [ "$DOC_TAG" -lt "$DOC_LINE" ]; then
 fi
 echo "  PASS: the document is cut from the first doctype in the file"
 
+# The document's body opens on the document line and closes on the last line of
+# the file, and that last line is also the shell's here-document delimiter --
+# the one on line 1374 has to match it character for character. They are the
+# only two lines in the polyglot that have to agree with each other, they are
+# nowhere near each other, and nothing else notices when they stop: a shell
+# reading a here-document that never terminates warns and carries on, so the
+# launcher still runs and the file is no longer an HTML document.
+DELIM_OPEN="$(sed -n "s/^exit \$?;:<<'\(.*\)' #-->\$/\1/p" "$TARGET" | head -1)"
+DELIM_CLOSE="$(tail -1 "$TARGET")"
+if [ -z "$DELIM_OPEN" ] || [ "$DELIM_OPEN" != "$DELIM_CLOSE" ]; then
+    echo "parse.sh: the here-document delimiter and the last line disagree" >&2
+    echo "          opens with '${DELIM_OPEN:-nothing}', ends with '$DELIM_CLOSE'" >&2
+    exit 1
+fi
+echo "  PASS: the here-document delimiter is the line that closes the document"
+
+# One line, and it has to stay one line. The style and the body an author builds
+# in are spliced into it whole, so a newline anywhere in there puts the body
+# below the cut and the launcher loads a document without it -- silently, since
+# the halves still split and the policy is still in the head.
+if [ "$(grep -c '^<!doctype html><html>' "$TARGET")" != "1" ]; then
+    echo "parse.sh: the document line is not there exactly once" >&2
+    exit 1
+fi
+if ! grep -q '^<!doctype html><html>.*<style>.*</style></head><body>' "$TARGET"; then
+    echo "parse.sh: the document line does not open its own body" >&2
+    echo "          wanted: <!doctype html><html>...<style>...</style></head><body>..." >&2
+    exit 1
+fi
+echo "  PASS: the document line opens the body build.sh splices into"
+
+for nt_mark in CONFIG_START CONFIG_END; do
+    if [ "$(grep -c "//#$nt_mark" "$TARGET")" != "1" ]; then
+        echo "parse.sh: the //#$nt_mark sentinel is not there exactly once" >&2
+        echo "          build.sh stamps the title and the size between them" >&2
+        exit 1
+    fi
+done
+echo "  PASS: the config sentinels build.sh stamps between are both there"
+
 # The same hazard, everywhere else in the file, caught by its consequence
 # rather than by its shape. Everything from the first line to the <script> tag
 # is one block comment, and the shell region lives inside it -- so a sed
@@ -512,6 +552,51 @@ var pageScriptParses = true;
 try { new vm.Script(pageScript); } catch (e) { pageScriptParses = false; }
 eq("the page script parses as javascript", pageScriptParses, true);
 eq("default tier gets the default policy", policyOf(html), N.defaultContentPolicy);
+
+// The early shell. The document the engine loads is the document in the file
+// now, rather than the head cut with an empty body appended, and that is the
+// whole of why an app can paint before its script runs. Asserted on the real
+// artifact because the thing that would break it -- a build that spliced the
+// style or the body somewhere the cut does not reach -- produces a file that
+// still splits, still carries the policy, and comes up blank.
+eq("the document opens exactly one body", (html.match(/<body>/g) || []).length, 1);
+eq("and closes it at the end", html.slice(-14), "</body></html>");
+eq("the document carries a style", /<style>[\s\S]*<\/style><\/head><body>/.test(html), true);
+eq("nothing of the shell region is above the doctype", html.indexOf("exit") < 0, true);
+
+// What the native window needs before there is a document to read it from, and
+// nothing else. `url` sat here unread for the length of the project; a key
+// nobody consumes is the shape this asserts against coming back.
+eq("config carries only what createWindow needs",
+   Object.keys(N.config).sort(), ["background", "height", "title", "width"]);
+eq("the title is a non-empty string", typeof N.config.title === "string" && N.config.title.length > 0, true);
+eq("the size is two positive whole numbers",
+   [N.config.width > 0 && N.config.width === Math.floor(N.config.width),
+    N.config.height > 0 && N.config.height === Math.floor(N.config.height)], [true, true]);
+
+// The colour every lane paints its two pre-document surfaces with. Four of the
+// five hand the string straight to a toolkit that parses it; the fifth builds
+// an NSColor from components. This is the one reading they all come from, and a
+// build whose background none of them can read is a window that comes up in the
+// theme colour -- which is the shape this whole value exists to close.
+eq("the background parses", N.parseColor(N.config.background) !== null, true);
+var colors = [
+    ["#000000", { red: 0, green: 0, blue: 0 }],
+    ["#ffffff", { red: 1, green: 1, blue: 1 }],
+    ["#fff", { red: 1, green: 1, blue: 1 }],
+    ["#12141a", { red: 18 / 255, green: 20 / 255, blue: 26 / 255 }],
+    ["#FFFFFF", { red: 1, green: 1, blue: 1 }]
+];
+for (var c = 0; c < colors.length; c++) {
+    eq("parseColor " + colors[c][0], N.parseColor(colors[c][0]), colors[c][1]);
+}
+// Refused rather than read as black, so a lane can leave its surface alone
+// instead of painting it a colour nobody asked for.
+var badColors = ["", null, "white", "rgb(1,2,3)", "#12", "#1234", "#12345", "#1234567",
+                 "12141a", "#12141g", " #121212", "#121212 "];
+for (var b = 0; b < badColors.length; b++) {
+    eq("parseColor refuses " + JSON.stringify(badColors[b]), N.parseColor(badColors[b]), null);
+}
 N.tiers = "default,offline";
 eq("offline tier gets the offline policy", policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
 N.tiers = "default";
@@ -529,15 +614,17 @@ console.log("a source this launcher cannot split is refused, and says why");
 
 var DOC = '<!doctype html><html><head>' +
           '<meta http-equiv="Content-Security-Policy" content="' + N.defaultContentPolicy + '">' +
-          '</head>';
+          '<style>p{color:red}</style></head><body><p>the early shell</p>';
 var TAG = '\n<script type=text/javascript>';
 var CODE = '\nvar x = 1;\n';
 var ENDS = '//</script>\n';
 var WHOLE = 'shell region\n' + DOC + TAG + CODE + ENDS;
 // The cut runs to the script tag, so whatever sits between the document and
 // that tag belongs to the document -- here the newline TAG opens with, exactly
-// as in this file.
-var SPLIT_DOC = DOC + '\n<body></body></html>';
+// as in this file. The tail used to be fabricated, and an empty body was
+// appended no matter what the source said; the style and the body above are
+// what an author builds in, and this asserts they arrive.
+var SPLIT_DOC = DOC + '\n</body></html>';
 
 function refuses(name, source) {
     var results = [
