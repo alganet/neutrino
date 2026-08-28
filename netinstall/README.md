@@ -125,6 +125,79 @@ downloader command that would run, **what that downloader reads besides that com
 confinement that would be applied, and how much of the environment would be dropped. It describes
 without enforcing, so it changes nothing and reports what a real launch would do.
 
+## The window
+
+A cold run downloads before it can launch anything, and until this it did that behind nothing at
+all: `curl -fsSL`, `wget -q`, no output, for up to the 120 second deadline. So a cache miss opens a
+small window that says `Loading...`, and closes it when the download is done.
+
+Only a cache miss. A run that already holds the verified payload has nothing to wait for and goes
+straight to the script, drawing nothing — the window marks a download, not a launch.
+
+It says one word and carries nothing else, and that is a limit rather than a taste. What an app
+looks like — its title, its size, its colour — lives inside the payload, and this runs before there
+is a payload to read it from. A launcher that invented an appearance here would be describing
+something it has not downloaded yet.
+
+| Platform | Drawn by | Notes |
+|---|---|---|
+| Windows | `user32`, in this process, on its own thread | no child process, so nothing that looks like an unsigned download launching a scripting host |
+| macOS | AppKit, in a second copy of this binary | AppKit is main-thread only and the main thread is the one waiting on the download; see below |
+| Linux, BSD | the wayland protocol, over the compositor's socket | preferred whenever `WAYLAND_DISPLAY` is set |
+| Linux, BSD | the X11 protocol, over the server's socket | the fallback, and the only path on an X session |
+| anything else | nothing, silently | a machine that cannot draw a window still installs |
+
+No toolkit is linked and none is loaded. The Linux binaries are static musl, where `dlopen` is a
+stub that always fails, so a toolkit could only be reached by linking it — which would trade a
+launcher that runs anywhere for one that runs where its libraries are. Both display servers are
+spoken directly, as a socket and a few dozen bytes of structs. macOS is the exception and can
+`dlopen` AppKit, because static linking is unsupported there and every binary is already dynamic;
+nothing is linked at build time, so the cross-compile still needs no SDK.
+
+Wayland costs about half as much again as X11, for a reason worth knowing: X11 has server-side
+fonts and draws the string for you, and wayland has no drawing in it at all. The compositor takes
+finished pixels, so that path carries its own glyphs and rasterises them. It also cannot place its
+own window — position is the compositor's to choose — while the X11 path is override-redirect and
+centres itself.
+
+On every platform but Windows the window is held by a separate process, because between raising it
+and lowering it this program is blocked in `waitpid` on the downloader, and neither display server
+tolerates a client that stops reading its socket for two minutes. Those processes are killed when
+the download ends. They are also killed if this program dies without getting the chance —
+`PR_SET_PDEATHSIG` on Linux, and a pipe whose end-of-file the child watches for on macOS, which has
+no equivalent.
+
+The window comes down when the download does, and not at the moment the app appears. That is the
+one place a gap is visible, and it is deliberate: the run phase's confinement scopes signals, so
+after it there is no way left to reach the process holding the window. A teardown scheduled any
+later is a teardown that deadlocks.
+
+macOS re-executes this binary with `--splash <deathfd> <readyfd>` to get a process whose main
+thread is free for AppKit. It is the only argument netinstall has that is not for a person to type,
+and the only departure from having no subcommands at all; that copy installs nothing and draws until
+it is killed. The two descriptors are a pipe each way: the parent holds one open so that its own
+death is an end-of-file the child exits on, and the child writes a byte down the other once the
+window is actually on screen — so the answer this platform reports is a window that exists, and not
+a process that was started.
+
+## Windows has no console
+
+The Windows binaries are linked for the GUI subsystem, so running one no longer opens a black
+window. `CREATE_NO_WINDOW` goes on both spawns for the same reason — without it, stripping this
+program's console only moves the problem, and Windows hands a fresh console to `curl.exe` during
+the fetch and to the `cmd.exe` that runs the payload.
+
+**This reaches the payload.** netinstall runs an arbitrary `.cmd`, and one that prints output or
+waits for input now does so with nowhere to write and nobody to type. That is the intended trade for
+a launcher whose job is opening windowed apps, and it is the one behaviour here that a payload can
+notice.
+
+Diagnostics do not disappear with the console. A redirected stderr is inherited and keeps working,
+so `netinstall 2>log` is unchanged; a netinstall started from a terminal attaches to the console
+that is already open, so nothing is lost there either and no window is created to do it; and a run
+with neither — launched from Explorer — collects what it wrote and shows it in a message box before
+exiting. A refusal nobody can read is a refusal that did not happen.
+
 ## Layout
 
 ```

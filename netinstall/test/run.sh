@@ -81,7 +81,7 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 # record -- three probing and one candidate -- and it is an assertion suite now.
 # Its reports fall past the cap, a green tick is its whole answer, and a failure
 # is an ::error, which has a bucket of its own.
-SUITES="pinfloor fetchbound envlen writable fetchconf names verify confine confine-tight confine-strict confine-session privs env offline phases strict e2e"
+SUITES="pinfloor fetchbound envlen writable fetchconf names verify confine confine-tight confine-strict confine-session privs env offline phases splash strict e2e"
 # The BSDs have no webview on any runner that can be had, so e2e and env -- the
 # two suites that launch one -- would fail for the absence of a toolkit rather
 # than anything about the confinement. Everything that measures unveil and
@@ -89,7 +89,7 @@ SUITES="pinfloor fetchbound envlen writable fetchconf names verify confine confi
 # this platform) and says so, which is a statement and not a silent pass.
 case "$(uname -s)" in
     OpenBSD|FreeBSD|NetBSD|DragonFly)
-        SUITES="pinfloor fetchbound envlen writable fetchconf names verify confine confine-tight confine-strict offline phases strict" ;;
+        SUITES="pinfloor fetchbound envlen writable fetchconf names verify confine confine-tight confine-strict offline phases splash strict" ;;
 esac
 # session.sh is a probe rather than a gate: it applies each candidate mechanism
 # on its own to a real webview. It answered -- the session tier is what came of
