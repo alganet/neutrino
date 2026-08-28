@@ -74,14 +74,36 @@ if [ "$NT_WINDOWS" = "1" ]; then
     echo "=== Launch through cmd.exe ==="
     "$APP" > "$WORK/app.log" 2>&1 &
     APP_PID=$!
+    # The exe is kept beside the script now, not inside the app dir. That is the
+    # whole of why it can be kept at all: this directory is the one the app
+    # cannot write -- the same reason the launcher above is read-only here --
+    # and the app dir below it is the one it can. The launcher falls back into
+    # the app dir where the script's own directory will not take a stamp, so
+    # both are waited for and the reading says which arrived.
+    #
+    # This loop used to name the app dir alone. When the exe moved it spun its
+    # whole 120 seconds and then failed, and the cost was not the failure: the
+    # app runs a sixteen-second sequence and exits, so by the time
+    # verify-windows started there was no process left and it spent its own 240
+    # against one that had already finished.
+    KEPT="${SCRIPT%.cmd}.exe"
+    FALLBACK="$APPDIR/neutrinotest.exe"
     for _ in $(seq 1 120); do
-        [ -f "$APPDIR/neutrinotest.exe" ] && break
+        if [ -f "$KEPT" ] || [ -f "$FALLBACK" ]; then break; fi
         sleep 1
     done
-    if [ -f "$APPDIR/neutrinotest.exe" ]; then
-        echo "  PASS: jsc.exe compiled the app into its own dir"
+    if [ -f "$KEPT" ]; then
+        echo "  PASS: jsc.exe compiled the app beside the script it was verified from"
+        if [ -f "${SCRIPT%.cmd}.stamp" ]; then
+            echo "  PASS: and stamped it with the source it was built from"
+        else
+            nt_fail "stamp expected=${SCRIPT%.cmd}.stamp actual=missing"
+            FAILURES=$((FAILURES + 1))
+        fi
+    elif [ -f "$FALLBACK" ]; then
+        echo "  PASS: jsc.exe compiled the app into its own dir (stamp refused above it)"
     else
-        nt_fail "compiled exe expected=$APPDIR/neutrinotest.exe actual=missing"
+        nt_fail "compiled exe expected=$KEPT or $FALLBACK actual=missing"
         FAILURES=$((FAILURES + 1))
     fi
     # PowerShell cannot read an MSYS path, so hand it a native one.

@@ -70,6 +70,16 @@ $work = Join-Path $env:TEMP ("docswap-" + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 $lane = Join-Path $work "neutrinodoc.cmd"
 
+# The old spelling read its second document off NEUTRINO_SCRIPT_PATH, and the
+# batch region no longer sets it -- getScriptPath derives the path from the
+# exe's own location now, and standalone.ps1 is where that is measured. So this
+# suite supplies the variable itself, for the reconstruction below and for
+# nothing else: the shipped build ignores it, every phase launches $lane, and
+# reconstructing the defect through the derivation instead would change what is
+# being reproduced. `gone` in particular depends on this spelling -- the old
+# guard answers File.Exists("") on a removed file, where a derivation throws.
+$env:NEUTRINO_SCRIPT_PATH = $lane
+
 # ------------------------------------------------------------- the three builds
 #
 # Derived here rather than in the workflow, for the reason navrefuse.sh derives

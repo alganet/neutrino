@@ -3,11 +3,26 @@
 #
 # exerace.ps1 - the gap between the compile and the START is not winnable
 #
-# PR 20 took the implant out of the Windows launch path: the batch region used
-# to compile <app folder>\<name>.exe once and reuse it whenever a stamp beside
-# it matched, so an exe replaced in place ran on every later launch until the
-# source changed. It compiles every launch now, and parked what was left in one
-# line of its own comment and one row in SANDBOX.md:
+# PR 20 took the implant out of the Windows launch path and PR 33 put a kept exe
+# back, somewhere the app cannot reach: beside the verified script rather than
+# inside the writable app folder. Compiling every launch is therefore no longer
+# what most launches do, and this suite measures the path where it still is.
+#
+# **Which path, and why it has to be arranged rather than assumed.** A launch
+# that finds a kept exe and a matching stamp STARTs it without building, so
+# there is no MOVE and no window to race -- and a plant that lands on that kept
+# name is simply launched, no race required. That is the trade PR 33 made and
+# recorded (see appcache.ps1 and Still open), not a gap in it: anything able to
+# write there can edit the .cmd, which is the program either way. Asserting
+# against it here would be asserting against the design.
+#
+# So this lane puts the launcher on its fallback: an <name>.exe beside the
+# script with no stamp of ours next to it is a file the launcher will not adopt,
+# and it compiles into the app folder instead -- every launch, no stamp, exactly
+# PR 20's shape. That is a path the product still has, it is the one with the
+# window, and this is the suite that keeps it shut.
+#
+# What that window is, unchanged:
 #
 #     MOVE /Y "%APP_NEW%" "%APP_EXE%"     <- the file reaches its final content
 #     > "%MANIFEST%" ( ...twenty ECHOs... )
@@ -73,6 +88,13 @@ Copy-Item $src $lane -Force
 $folder = Join-Path $work "neutrinorace"
 $exe = Join-Path $folder "neutrinorace.exe"
 $manifest = Join-Path $folder "neutrinorace.exe.manifest"
+# The decoy that holds the launcher on its fallback. An exe beside the script
+# with no stamp of ours beside it is somebody else's file: the launcher leaves
+# it alone and compiles into the app folder, every launch and without writing a
+# stamp -- which is the compile-every-launch shape this suite needs. It is never
+# executed and never overwritten, and appcache.ps1 asserts both.
+$decoy = Join-Path $work "neutrinorace.exe"
+Copy-Item "$env:WINDIR\System32\certutil.exe" $decoy -Force
 $mark = Join-Path $work "poison-mark.txt"
 # The host this script is already running under, rather than a name off PATH.
 # PR 25's finding in this suite's own spelling: a bare program name is resolved
@@ -105,6 +127,9 @@ function Window-Up($seconds) {
 # runs and these apps are written never to close -- PR 20 lost a lane to it and
 # PR 28 lost a step. Start-Process waits on the launcher alone, with a bound.
 function Launch($waitSeconds) {
+    # Nothing to clear. The decoy beside the script keeps the launcher on its
+    # fallback, where it compiles into the app folder every launch and writes no
+    # stamp -- so every round here has a MOVE, which is what there is to race.
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $lane -PassThru -WindowStyle Hidden
     $exited = $p.WaitForExit(240000)
