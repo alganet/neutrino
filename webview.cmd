@@ -28,43 +28,104 @@ IF NOT EXIST "%APP_FOLDER%" (
     IF ERRORLEVEL 1 EXIT /B 1
 )
 
-REM The app folder outlives any single version of this script, and everything
-REM running as this user can write it -- so an exe found sitting there is not
-REM evidence of anything. This used to reuse one whenever a stamp beside it, the
-REM source's size and modification time, still matched. Measured on a runner: an
-REM exe replaced in place with the stamp left exactly as this file wrote it was
-REM launched, and went on being launched until the source itself changed. The
-REM stamp is as writable as the exe it vouches for, and the digest netinstall
-REM pins covers the .cmd and not the artifact compiled out of it.
+REM Compiled once and kept, and the placement is the whole of why it can be.
 REM
-REM So it compiles every launch. 340 ms measured against the 86 ms the reuse
-REM cost, which is the price of the thing that runs being the thing just built
-REM from the source that was verified. What is left is the gap between the MOVE
-REM that gives %APP_EXE% its final content and the START that runs it: cmd
-REM cannot hand CreateProcess a handle the way the Qt path hands qml a
-REM descriptor, so the name is exposed rather than the descriptor.
+REM It used to compile every launch. The app folder is the one directory
+REM netinstall leaves writable, so an exe cached there is one the app itself can
+REM replace -- measured on a runner as `poison ran=YES realapp=DOWN`, with the
+REM stamp that vouched for it left exactly as this file wrote it, because that
+REM stamp was as writable as the exe. Recompiling closed it by making the
+REM artifact too short-lived to poison: 290 ms every launch, plus a 150 ms
+REM window between the MOVE and the START that test/exerace.ps1 has to go on
+REM measuring shut because closing it needs a handle cmd cannot hand over.
 REM
-REM Measured, and the gap turns out to have no accessible window. From the
-REM instant the file has its new content until the process exists is about
-REM 150 ms, and across it the name is held open deny-write the whole time --
-REM the platform's real-time scan of a freshly written executable, then the
-REM loader's own image section. test/exerace.ps1 hammers a same-uid replacement
-REM onto the name for that entire span, both as a rename and as an in-place
-REM overwrite: some three hundred attempts a launch, every one refused, the
-REM rename ERROR_ACCESS_DENIED and the overwrite ERROR_SHARING_VIOLATION. It
-REM asserts that none lands before the process starts, so the day a Windows
-REM change opens that window the suite goes red. A race in time, not in access.
+REM Beside the script is a different place with a different rule. netinstall
+REM puts the verified .cmd one level *above* the only writable directory --
+REM "an app cannot rewrite the launcher it was verified from" -- so an exe kept
+REM there is out of reach of the one process the recompile was defending
+REM against. Anything else that can write here can write the .cmd itself and is
+REM already running as this user, which is everything poisoning the exe would
+REM have bought it; against that adversary the compile was buying a race it
+REM never needed to run.
 REM
-REM Compiled under another name and rotated into place, because a running
-REM instance holds its own exe open: Windows refuses to overwrite that file but
-REM allows it to be renamed, which is what keeps a second window openable.
-SET "APP_EXE=%APP_FOLDER%\%SCRIPT_NAME%.exe"
-SET "APP_NEW=%APP_FOLDER%\%SCRIPT_NAME%.new%RANDOM%%RANDOM%.exe"
-SET "APP_OLD=%APP_FOLDER%\%SCRIPT_NAME%.old%RANDOM%%RANDOM%.exe"
+REM The stamp is the source's SHA-256. It answers "was this exe built from this
+REM script", which is the only question left once the exe is somewhere the app
+REM cannot reach. It is deliberately not asked to vouch for the exe: nothing
+REM able to rewrite the exe here is stopped by a value written beside it, so a
+REM second digest would be ceremony. Size and modification time would have done
+REM the same job, and the hash is here because it costs one certutil and cannot
+REM be reproduced by hand.
+REM
+REM Two ways this ends up in the app folder compiling every launch, which is the
+REM old path kept whole rather than a degraded one. An exe already sitting
+REM beside the script with no stamp of ours next to it is somebody else's file
+REM and is not adopted. And a script directory that refuses the stamp -- the
+REM tight tier lowers this process's integrity and the shelf is above it -- has
+REM nowhere to keep anything.
+SET "CERTUTIL=%WINDIR%\System32\certutil.exe"
+SET "APP_EXE=%SCRIPT_DIR%%SCRIPT_NAME%.exe"
+SET "APP_STAMP=%SCRIPT_DIR%%SCRIPT_NAME%.stamp"
 SET "MANIFEST=%APP_EXE%.manifest"
-DEL /Q "%APP_FOLDER%\%SCRIPT_NAME%.new*.exe" >NUL 2>&1
-DEL /Q "%APP_FOLDER%\%SCRIPT_NAME%.old*.exe" >NUL 2>&1
-DEL /Q "%APP_FOLDER%\%SCRIPT_NAME%.stamp" >NUL 2>&1
+
+IF EXIST "%APP_EXE%" IF NOT EXIST "%APP_STAMP%" (
+    SET "APP_EXE=%APP_FOLDER%\%SCRIPT_NAME%.exe"
+    SET "APP_STAMP="
+    SET "MANIFEST=%APP_FOLDER%\%SCRIPT_NAME%.exe.manifest"
+)
+
+REM The digest of the file being run, which is also the file being compiled.
+REM Empty if certutil is not there or would not answer, and an empty one takes
+REM the compile path rather than trusting whatever is cached.
+REM %CERTUTIL% is deliberately unquoted. `FOR /F usebackq` hands the backticked
+REM command to a nested cmd, and one that *begins* with a quote comes back as
+REM "The filename, directory name, or volume label syntax is incorrect" with no
+REM output and no error the loop can see -- measured, and it is how the first
+REM version of this shipped a stamp reading "ECHO is off." while everything else
+REM looked right. %WINDIR%\System32 cannot contain a space, so the quotes bought
+REM nothing there; "%~f0" keeps its own, and a script under a path with spaces
+REM was measured hashing correctly.
+SET "SRC_HASH="
+IF EXIST "%CERTUTIL%" (
+    FOR /F "usebackq skip=1 tokens=* delims=" %%H IN (`%CERTUTIL% -hashfile "%~f0" SHA256`) DO (
+        IF NOT DEFINED SRC_HASH SET "SRC_HASH=%%H"
+    )
+)
+IF DEFINED SRC_HASH SET "SRC_HASH=!SRC_HASH: =!"
+
+SET "CACHED_HASH="
+IF DEFINED APP_STAMP IF EXIST "%APP_STAMP%" (
+    FOR /F "usebackq tokens=* delims=" %%S IN ("%APP_STAMP%") DO (
+        IF NOT DEFINED CACHED_HASH SET "CACHED_HASH=%%S"
+    )
+)
+
+FOR %%D IN ("%APP_EXE%") DO SET "EXE_DIR=%%~dpD"
+SET "APP_NEW=%EXE_DIR%%SCRIPT_NAME%.new%RANDOM%%RANDOM%.exe"
+SET "APP_OLD=%EXE_DIR%%SCRIPT_NAME%.old%RANDOM%%RANDOM%.exe"
+DEL /Q "%EXE_DIR%%SCRIPT_NAME%.new*.exe" >NUL 2>&1
+DEL /Q "%EXE_DIR%%SCRIPT_NAME%.old*.exe" >NUL 2>&1
+
+IF NOT DEFINED SRC_HASH GOTO :BUILD
+IF NOT DEFINED CACHED_HASH GOTO :BUILD
+IF NOT EXIST "%APP_EXE%" GOTO :BUILD
+IF /I NOT "!CACHED_HASH!"=="!SRC_HASH!" GOTO :BUILD
+GOTO :RUN
+
+:BUILD
+REM Claiming the stamp before the compile is also the test of whether this
+REM directory can be written at all, and it costs no probe file of its own. A
+REM launch that dies between here and the MOVE leaves a stamp naming a digest no
+REM exe matches, which is the next launch compiling again -- the safe way round.
+IF DEFINED APP_STAMP (
+    2>NUL > "%APP_STAMP%" ECHO building
+    IF NOT EXIST "%APP_STAMP%" (
+        SET "APP_STAMP="
+        SET "APP_EXE=%APP_FOLDER%\%SCRIPT_NAME%.exe"
+        SET "MANIFEST=%APP_FOLDER%\%SCRIPT_NAME%.exe.manifest"
+        SET "APP_NEW=%APP_FOLDER%\%SCRIPT_NAME%.new%RANDOM%%RANDOM%.exe"
+        SET "APP_OLD=%APP_FOLDER%\%SCRIPT_NAME%.old%RANDOM%%RANDOM%.exe"
+    )
+)
 
 REM The last two references are what lets the driver take the WebView2 package
 REM apart itself instead of asking powershell.exe to do it. Nothing here fails
@@ -116,6 +177,22 @@ IF EXIST "%APP_EXE%" MOVE /Y "%APP_EXE%" "%APP_OLD%" >NUL 2>&1
 MOVE /Y "%APP_NEW%" "%APP_EXE%" >NUL
 IF ERRORLEVEL 1 EXIT /B 1
 
+REM The stamp goes down only once the exe it names is in place, so the window
+REM where a stamp vouches for something that is not there yet does not exist.
+REM Redirect first: `ECHO %SRC_HASH%> file` on a digest ending in a digit is
+REM parsed as a handle redirect, and the stamp loses its last character.
+IF DEFINED APP_STAMP (
+    > "!APP_STAMP!" ECHO !SRC_HASH!
+)
+
+:RUN
+REM Written when it is missing rather than on every launch. It was rewritten
+REM each time only because each launch rebuilt the exe it belongs to; now that
+REM the exe is kept, so is this, and the launch that does not build has nothing
+REM to say here. A GOTO rather than wrapping the block in an IF: the ECHO lines
+REM below carry ^< escapes, and another level of parentheses changes what those
+REM escapes mean.
+IF EXIST "%MANIFEST%" GOTO :LAUNCH
 > "%MANIFEST%" (
     ECHO ^<?xml version="1.0" encoding="UTF-8" standalone="yes"?^>
     ECHO ^<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"^>
@@ -139,7 +216,15 @@ IF ERRORLEVEL 1 EXIT /B 1
     ECHO ^</assembly^>
 )
 
-SET "NEUTRINO_SCRIPT_PATH=%~f0"
+:LAUNCH
+REM No NEUTRINO_SCRIPT_PATH here any more. It named the document for the exe to
+REM render, and it is an environment variable that ends at which document this
+REM process executes -- reachable by anything that can set one, and kept intact
+REM under netinstall, whose allowlist admits the whole NEUTRINO_ prefix. The
+REM driver derives the path from its own location instead, so the launcher has
+REM nothing left to hand over: see getScriptPath. Not setting it is the half of
+REM that fix which lives here, and it is what makes the exe's derivation the
+REM live path on every tier rather than a fallback the testing builds skip.
 START "" /D "%APP_FOLDER%" "%APP_EXE%"
 IF ERRORLEVEL 1 EXIT /B 1
 EXIT /B 0
@@ -3125,6 +3210,79 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 SystemRef.IO.File.Exists(SystemRef.IO.Path.Combine(libDir, "Microsoft.Web.WebView2.WinForms.dll"));
         },
 
+        windowsLayoutCache: null,
+
+        /*
+         * Where this program is, and therefore where everything else is. One
+         * rule, answered once, because the document's path and the app folder
+         * used to be decided by two different mechanisms that only agreed by
+         * accident: the document came from an environment variable the launcher
+         * set, and the app folder from Application.StartupPath. Moving the exe
+         * out of the app folder broke the second and would have left the first
+         * pointing somewhere the exe no longer lives.
+         *
+         * The batch region compiles to <dir>\<name>.exe beside the script and
+         * keeps it, and falls back to <dir>\<name>\<name>.exe when the script's
+         * own directory will not take a file. Both layouts name the same app
+         * folder, <dir>\<name>, and in both the script is <name>.cmd -- beside
+         * the exe in the first, one level above it in the second. So the exe
+         * looks beside itself first and above itself second, and what it finds
+         * decides which of the two it is in.
+         *
+         * Two extensions, because %~n0 has already dropped the real one by the
+         * time the batch region names anything: netinstall always writes .cmd,
+         * cmd.exe will run a .bat as readily, and it will run nothing else.
+         */
+        windowsLayout: function (SystemRef) {
+            if (this.windowsLayoutCache) {
+                return this.windowsLayoutCache;
+            }
+            var exe = SystemRef.Windows.Forms.Application.ExecutablePath;
+            var name = SystemRef.IO.Path.GetFileNameWithoutExtension(exe);
+            var exeDir = SystemRef.IO.Path.GetDirectoryName(exe);
+            if (exeDir == null || String(exeDir) === "" ||
+                    name == null || String(name) === "") {
+                throw new Error("neutrino: this program is not where a neutrino " +
+                    "launcher puts it (" + String(exe) + ")");
+            }
+
+            var beside = this.windowsScriptIn(SystemRef, exeDir, name);
+            if (beside != null) {
+                this.windowsLayoutCache = {
+                    script: beside,
+                    appFolder: SystemRef.IO.Path.Combine(exeDir, name)
+                };
+                return this.windowsLayoutCache;
+            }
+
+            // GetDirectoryName answers null at a volume root, and Path.Combine
+            // throws on a null rather than returning one.
+            var parent = SystemRef.IO.Path.GetDirectoryName(exeDir);
+            if (parent != null && String(parent) !== "") {
+                var above = this.windowsScriptIn(SystemRef, parent, name);
+                if (above != null) {
+                    this.windowsLayoutCache = { script: above, appFolder: exeDir };
+                    return this.windowsLayoutCache;
+                }
+            }
+
+            throw new Error("neutrino: could not find the document this program " +
+                "was compiled from; looked for " + name + ".cmd and " + name +
+                ".bat beside it in " + exeDir + " and one level above");
+        },
+
+        windowsScriptIn: function (SystemRef, dir, name) {
+            var asCmd = SystemRef.IO.Path.Combine(dir, name + ".cmd");
+            if (SystemRef.IO.File.Exists(asCmd)) {
+                return asCmd;
+            }
+            var asBat = SystemRef.IO.Path.Combine(dir, name + ".bat");
+            if (SystemRef.IO.File.Exists(asBat)) {
+                return asBat;
+            }
+            return null;
+        },
+
         findWebView2LibDir: function (SystemRef, appFolder) {
             /*
              * This is an environment variable that ends at Assembly.LoadFrom,
@@ -3455,11 +3613,34 @@ exit $?;:<<'//</script></head><body></body>' #-->
          * worked so the box can name the file when there is one. If this throws
          * there is nowhere left to say so, and the box is still worth putting up.
          */
+        /*
+         * Where to write a failure down when the failure may be that there is
+         * no layout. windowsLayout throws when the document cannot be found,
+         * and that is the one refusal most worth recording -- so this does not
+         * get to depend on it. Both layouts put the app folder either beside
+         * this program or at it, and an existing <exe dir>\<name> tells them
+         * apart without asking where the document is.
+         */
+        windowsErrorFolder: function (SystemRef) {
+            try {
+                return this.windowsLayout(SystemRef).appFolder;
+            } catch (_) {
+            }
+            var exe = SystemRef.Windows.Forms.Application.ExecutablePath;
+            var exeDir = SystemRef.IO.Path.GetDirectoryName(exe);
+            var name = SystemRef.IO.Path.GetFileNameWithoutExtension(exe);
+            var beside = SystemRef.IO.Path.Combine(exeDir, name);
+            if (SystemRef.IO.Directory.Exists(beside)) {
+                return beside;
+            }
+            return exeDir;
+        },
+
         recordWindowsError: function (SystemRef, title, message) {
             var written = "";
             try {
                 var path = SystemRef.IO.Path.Combine(
-                    SystemRef.Windows.Forms.Application.StartupPath,
+                    this.windowsErrorFolder(SystemRef),
                     "neutrino-error.log"
                 );
                 SystemRef.IO.File.WriteAllText(
@@ -3926,7 +4107,14 @@ exit $?;:<<'//</script></head><body></body>' #-->
                     SystemRef.Windows.Forms.Application.EnableVisualStyles();
                     SystemRef.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
 
-                    appFolder = SystemRef.Windows.Forms.Application.StartupPath;
+                    // Not StartupPath. The exe is kept beside the script now
+                    // rather than inside the app folder, so where this program
+                    // sits and where it may write are two different places --
+                    // windowsLayout is the one rule that answers both.
+                    appFolder = self.windowsLayout(SystemRef).appFolder;
+                    if (!SystemRef.IO.Directory.Exists(appFolder)) {
+                        SystemRef.IO.Directory.CreateDirectory(appFolder);
+                    }
                     userDataDir = SystemRef.IO.Path.Combine(appFolder, "data");
 
                     // Before the package, because the package phase is one of
@@ -3957,15 +4145,43 @@ exit $?;:<<'//</script></head><body></body>' #-->
                 readFile: function (path) {
                     return SystemRef.IO.File.ReadAllText(path);
                 },
+                /*
+                 * Derived, not received. This used to take the document's path
+                 * from NEUTRINO_SCRIPT_PATH -- an environment variable that
+                 * ends at "which document does this process execute", which is
+                 * the same shape findWebView2LibDir carries for its own
+                 * variable and gets the same answer here. netinstall's
+                 * allowlist keeps the whole NEUTRINO_ prefix, so it arrived
+                 * intact there too; a release build no longer reads it, and the
+                 * tests that need to point at another document build with the
+                 * testing tier. The batch region has stopped setting it, so on
+                 * both launch paths the name an attacker would set is one
+                 * nothing reads.
+                 *
+                 * The derivation itself is windowsLayout, which the app folder
+                 * is resolved from too -- see the comment there. It also makes
+                 * the exe runnable on its own, which it was not.
+                 */
                 getScriptPath: function () {
-                    var p = SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH");
-                    if (!p) {
-                        throw new Error("Environment variable NEUTRINO_SCRIPT_PATH was not set.");
+                    // Named for what it is. `override` is a member modifier in
+                    // JScript.NET, and this file has already been caught once
+                    // by a name that means something to jsc and nothing to the
+                    // other three -- see the quoted "close" below.
+                    if (self.hasTier("testing")) {
+                        var fromEnv = SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH");
+                        // Tested against null and "" rather than for truth.
+                        // Every value here is a .NET String arriving through a
+                        // late-bound call, and whether an empty one is falsy is
+                        // a question the four engines do not have to answer the
+                        // same way. Nothing below asks.
+                        if (fromEnv != null && String(fromEnv) !== "") {
+                            if (!SystemRef.IO.File.Exists(fromEnv)) {
+                                throw new Error("neutrino: NEUTRINO_SCRIPT_PATH names no file: " + fromEnv);
+                            }
+                            return fromEnv;
+                        }
                     }
-                    if (!SystemRef.IO.File.Exists(p)) {
-                        throw new Error("Could not find local document: " + p);
-                    }
-                    return p;
+                    return self.windowsLayout(SystemRef).script;
                 },
                 createWindow: function (config) {
                     var win = new SystemRef.Windows.Forms.Form();

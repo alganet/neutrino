@@ -1056,6 +1056,29 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-appcache ~/appcache.log 'report:|FAIL:'
+      # The document the exe renders, and who gets to name it. It used to come
+      # from NEUTRINO_SCRIPT_PATH, which the batch region set and netinstall's
+      # allowlist passed through intact; getScriptPath derives it from the
+      # exe's own location now, so the exe also runs when nothing launched it.
+      # Two artifacts because the gate has two directions: the release build
+      # must ignore the variable, and the testing build must still read it, or
+      # a driver that reads it on no tier at all measures the same as one that
+      # reads it on the right one.
+      - if: always()
+        shell: bash
+        run: |
+          bash build.sh test/neutrinoloaders.js test/neutrinostandalone.cmd
+          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinostandalone-testing.cmd
+      - if: always()
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          & .\test\standalone.ps1 .\test\neutrinostandalone.cmd .\test\neutrinostandalone-testing.cmd *>&1 |
+              Tee-Object -FilePath "$HOME\standalone.log"
+          exit $LASTEXITCODE
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-standalone ~/standalone.log 'report:|FAIL:|failure\(s\)'
       # It launches the app some forty times over three probing modes, and the
       # first version of it was half an hour that nobody could overlap. Ninety
       # seconds now, which is what makes it a step again rather than a job.
