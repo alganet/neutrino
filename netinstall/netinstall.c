@@ -54,6 +54,7 @@
 #include "fetch.h"
 #include "sandbox.h"
 #include "sha256.h"
+#include "splash.h"
 
 const char *nt_basename(const char *path)
 {
@@ -805,6 +806,105 @@ int nt_win_spawn(const char *exe, char *const *args)
     return nt_win_spawn_as(exe, args, NULL);
 }
 
+/*
+ * Where a diagnostic goes when there is no console to put it in.
+ *
+ * netinstall is a GUI subsystem binary, so nothing is attached to stderr unless
+ * the caller attached something. Every refusal this program can make -- a pin
+ * mismatch, a payload that is not text, a confinement that did not apply -- is
+ * an fprintf to stderr, and SANDBOX ground rule 5 does not distinguish between
+ * a program that lies about what happened and one that cannot be heard saying
+ * it. So stderr is given somewhere to land before anything can write to it, and
+ * what landed there is shown at the end.
+ *
+ * Three cases, in the order they are tried:
+ *
+ *   - The caller already gave this program a stderr, by redirecting it. That
+ *     handle is inherited even by a GUI subsystem process, so `netinstall
+ *     2>log` keeps working exactly as it did and nothing here interferes.
+ *
+ *   - The caller ran this from a console. A GUI binary does not get that
+ *     console automatically, but it may ask for it, and AttachConsole takes the
+ *     one that is already open rather than creating one -- so someone who ran
+ *     this from cmd.exe reads the same lines they always did, and nobody who
+ *     did not gets a window they did not ask for.
+ *
+ *   - Neither: launched from explorer, with no console anywhere. stderr goes to
+ *     a file, and nt_win_report puts it in front of the user.
+ */
+static char nt_win_errlog[NT_PATH_MAX];
+/*
+ * Whether the payload was reached. Past that line netinstall's own work has
+ * succeeded and the exit code belongs to the app, which on this platform is
+ * waited for rather than exec'd into -- so without this, closing an app that
+ * exits non-zero would raise a netinstall error box about nothing.
+ */
+static int nt_win_launched = 0;
+
+static void nt_win_console_open(void)
+{
+    HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+    char dir[NT_PATH_MAX];
+    DWORD n;
+
+    if (h && h != INVALID_HANDLE_VALUE) {
+        return;
+    }
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        /* Both, because --info and --version write to stdout and are exactly
+         * the invocations someone makes from a console. stdout is allowed to
+         * fail on its own; it is stderr that decides whether anything below is
+         * needed, so only that one is checked. */
+        (void)freopen("CONOUT$", "w", stdout);
+        if (freopen("CONOUT$", "w", stderr)) {
+            return;
+        }
+        /* Attached to something that will not open. Fall through and collect
+         * the diagnostics in a file rather than write them nowhere. */
+    }
+    n = GetTempPathA((DWORD)sizeof(dir), dir);
+    if (n == 0 || n >= sizeof(dir)) {
+        return;
+    }
+    if (nt_pathf(nt_win_errlog, sizeof(nt_win_errlog), "%snetinstall-%ld.log",
+                 dir, nt_pid()) != 0) {
+        return;
+    }
+    if (!freopen(nt_win_errlog, "w", stderr)) {
+        nt_win_errlog[0] = '\0';
+    }
+}
+
+static void nt_win_report(int code)
+{
+    char buf[4096];
+    FILE *f;
+    size_t n = 0;
+
+    if (!nt_win_errlog[0]) {
+        return;
+    }
+    fflush(stderr);
+    f = fopen(nt_win_errlog, "rb");
+    if (f) {
+        n = fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+    }
+    buf[n] = '\0';
+    /*
+     * Only netinstall's own failures, and only when it actually said something.
+     * A warning on a run that worked is not worth a modal box in front of an
+     * app that is about to open.
+     */
+    if (code != 0 && !nt_win_launched && n > 0) {
+        MessageBoxA(NULL, buf, "netinstall", MB_OK | MB_ICONERROR);
+    }
+    /* stderr still holds it open, and a temp file per failed run is litter. */
+    if (!freopen("NUL", "w", stderr)) { /* closing is the point, not the mode */ }
+    remove(nt_win_errlog);
+    nt_win_errlog[0] = '\0';
+}
+
 int nt_win_spawn_as(const char *exe, char *const *args, void *token)
 {
     LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;
@@ -815,7 +915,22 @@ int nt_win_spawn_as(const char *exe, char *const *args, void *token)
     SIZE_T attrsize = 0;
     BOOL inherit = FALSE;
     DWORD nkeep = 0;
-    DWORD flags = 0;
+    /*
+     * CREATE_NO_WINDOW, on both of this function's callers, and the reason is
+     * the subsystem rather than taste. netinstall is built -mwindows, so it has
+     * no console of its own; without this flag windows gives each console child
+     * a brand new one -- a black window for curl.exe during the fetch, and
+     * another for the cmd.exe that runs the payload, held for as long as the
+     * app lives. Stripping this program's console and then letting its children
+     * conjure two would be a worse arrangement than the one it replaced.
+     *
+     * The consequence is deliberate and belongs to the payload as much as to
+     * the fetch: netinstall runs an arbitrary .cmd, and one that writes output
+     * or waits for input now does so with nowhere to write and nobody to type.
+     * That is the cost of a launcher for windowed apps; it is written down in
+     * README.md rather than left to be discovered.
+     */
+    DWORD flags = CREATE_NO_WINDOW;
     DWORD code = 126;
     char *cmdline;
 
@@ -934,7 +1049,7 @@ int nt_win_spawn_as(const char *exe, char *const *args, void *token)
         }
         if (attrs) {
             six.lpAttributeList = attrs;
-            flags = EXTENDED_STARTUPINFO_PRESENT;
+            flags |= EXTENDED_STARTUPINFO_PRESENT;
         } else {
             /*
              * Fail closed. Inheriting everything is precisely what this is here
@@ -949,8 +1064,11 @@ int nt_win_spawn_as(const char *exe, char *const *args, void *token)
         }
     }
 
-    /* cb describes which of the two structures this actually is. */
-    si->cb = flags ? sizeof(six) : sizeof(*si);
+    /* cb describes which of the two structures this actually is -- which is
+     * whether the attribute list went in, and not merely whether any flag is
+     * set: CREATE_NO_WINDOW is always set now and says nothing about the
+     * shape of what si points at. */
+    si->cb = attrs ? sizeof(six) : sizeof(*si);
 
     /*
      * One call or the other, and everything above is the same either way: the
@@ -1068,7 +1186,10 @@ static int nt_exec(const char *script, int argc, char **argv, int rest)
 
 #ifdef _WIN32
     {
-        int rc = nt_win_spawn("C:\\Windows\\System32\\cmd.exe", args);
+        int rc;
+
+        nt_win_launched = 1;
+        rc = nt_win_spawn("C:\\Windows\\System32\\cmd.exe", args);
         free(args);
         return rc;
     }
@@ -1229,7 +1350,7 @@ static int nt_exists(const char *path)
  * launch anyway, which keeps the name-to-content binding true even where no
  * confinement is available.
  */
-int main(int argc, char **argv)
+static int nt_main(int argc, char **argv)
 {
     char home[NT_PATH_MAX], blobs[NT_PATH_MAX], approot[NT_PATH_MAX];
     char script[NT_PATH_MAX], appdir[NT_PATH_MAX], tmpdir[NT_PATH_MAX];
@@ -1240,6 +1361,25 @@ int main(int argc, char **argv)
     int rest = argc;
     int cached = 0;
     int i;
+
+#ifdef __APPLE__
+    /*
+     * The macOS splash, which is this same binary run again by its own parent.
+     * It is answered here, before the name is even resolved, because this copy
+     * installs nothing: it draws a window and waits to be killed. See
+     * splash_macos.c for why the window cannot live in the process that is
+     * doing the downloading.
+     *
+     * Deliberately exact -- three arguments, in this order, nothing else on the
+     * line. A netinstall is addressed by its filename and has no subcommands,
+     * and this is the one exception; making it an exact match rather than
+     * another entry in the option loop keeps it from becoming a prefix of
+     * anything or from combining with the real options.
+     */
+    if (argc == 4 && strcmp(argv[1], "--splash") == 0) {
+        return nt_splash_macos_child(atoi(argv[2]), atoi(argv[3]));
+    }
+#endif
 
     if (nt_self_path(self, sizeof(self), argc > 0 ? argv[0] : NULL) != 0) {
         fprintf(stderr, "netinstall: cannot determine own path\n");
@@ -1401,8 +1541,48 @@ int main(int argc, char **argv)
             return 2;
         }
         remove(tmpfile);
+        /*
+         * The only place a window is raised, and it is inside `!cached` for the
+         * reason the branch exists: a run that already holds the payload has
+         * nothing to wait for, and drawing Loading... over a launch that is
+         * about to happen anyway would be a lie about where the time went.
+         *
+         * atexit rather than a call beside each return. Between here and the
+         * end of the branch there are nine ways out -- a pin mismatch, a
+         * payload that is not text, a blob that cannot be committed -- and a
+         * teardown repeated nine times is a teardown that will be missed once.
+         * Registered here rather than in main's preamble so that nothing is
+         * armed on the cached path.
+         *
+         * It is a net and not the mechanism: the window is taken down
+         * explicitly the moment the fetch returns, a few lines below, and the
+         * handler is what covers a future edit that adds a tenth way out above
+         * that line. It also has to run above the run phase's confinement,
+         * which is what makes it able to work at all -- that confinement scopes
+         * signals, and after it the kill that removes the window does not reach
+         * the process holding it. Measured: the parent sat in do_wait on a
+         * child it could no longer kill, and never reached nt_exec.
+         */
+        atexit(nt_splash_down);
+        nt_splash_up();
         {
             int got = nt_fetch(spec.url, tmpfile, home, shown, sizeof(shown));
+
+            /*
+             * The bytes have stopped moving, one way or the other, so the
+             * window that said they were moving goes now -- ahead of the
+             * refusals below rather than after them. Two reasons, and the
+             * second is the one that was measured. A window still up while a
+             * pin mismatch is being explained is a window making a claim that
+             * has stopped being true; and everything this program says about a
+             * failed download it says after this point, so a teardown that ran
+             * later put its own line at the end of stderr, underneath the
+             * message that mattered. fetchbound.sh reads that last line.
+             *
+             * What follows -- the digest, the text check, the link -- is
+             * bounded by NT_MAX_PAYLOAD and is not a wait worth decorating.
+             */
+            nt_splash_down();
 
             if (got != 0) {
                 remove(tmpfile);
@@ -1553,4 +1733,25 @@ int main(int argc, char **argv)
     }
 
     return nt_exec(script, argc, argv, rest);
+}
+
+/*
+ * The body is nt_main, and this exists so that the two things windows needs
+ * around it -- somewhere for a diagnostic to go, and somewhere for it to be
+ * read -- wrap every one of that function's many returns without a call beside
+ * each of them. On every other platform stderr is stderr and this is a
+ * forwarder.
+ */
+int main(int argc, char **argv)
+{
+#ifdef _WIN32
+    int code;
+
+    nt_win_console_open();
+    code = nt_main(argc, argv);
+    nt_win_report(code);
+    return code;
+#else
+    return nt_main(argc, argv);
+#endif
 }
