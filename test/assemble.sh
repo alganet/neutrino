@@ -383,6 +383,185 @@ else
        "$(grep -c 'no readable tier stamp' "$WORK/intact.log" | head -1)" "0"
 fi
 
+# =====================================================================
+# The early shell
+# =====================================================================
+# Four values that reach the artifact by two different routes -- the style and
+# the body as markup on the document line, the title and the size as a stamp
+# between the config sentinels -- and every one of them is a text substitution
+# with no failure path of its own. A pattern that stops matching produces a file
+# that is valid, runs, and quietly carries the template's value instead of the
+# author's. That is the whole reason build.sh reads each one back, and this is
+# what says the read-back is not itself a no-op.
+report "section: early-shell"
+echo "=== the shell an app is built with is the shell it gets ==="
+T="$(tree shell)"
+printf 'a{color:red}\n' > "$T/s.css"
+printf '<p id=x>hi</p>\n' > "$T/b.html"
+bash "$T/build.sh" --title "Sample" --size 1024x768 \
+     --style "$T/s.css" --body "$T/b.html" \
+     "$WORK/app-plain.js" "$T/out.cmd" > "$WORK/shell.log" 2>&1
+eq "a build with a full shell succeeds" "$?" "0"
+
+docline() { grep -m1 '^<!doctype html><html>' "$1"; }
+# Normalised, and that is not tidiness. These assertions used to compare the
+# raw remainder of the line -- `"Sample",` quotes and comma included -- so
+# adding a key after `height` and moving its comma turned a passing assertion
+# into a failing one about punctuation, next to the real defect it was hiding.
+# What is being asserted is the value.
+conf() {
+    sed -n '/\/\/#CONFIG_START/,/\/\/#CONFIG_END/p' "$1" |
+        sed -n "s/^ *$2: \"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}\$/\1/p" | head -1
+}
+
+eq "the style is the one that was given" \
+   "$(docline "$T/out.cmd" | sed -n 's/.*<style>\(.*\)<\/style>.*/\1/p')" "a{color:red}"
+eq "the body is the one that was given" \
+   "$(docline "$T/out.cmd" | sed -n 's/.*<\/style><\/head><body>//p')" "<p id=x>hi</p>"
+eq "the title is stamped between the sentinels" "$(conf "$T/out.cmd" title)" "Sample"
+eq "the width is too" "$(conf "$T/out.cmd" width)" "1024"
+eq "and the height" "$(conf "$T/out.cmd" height)" "768"
+# The content policy is carried over from the template rather than written out
+# by the assembler, because the offline tier is one string replace against the
+# launcher's own copy of it. A second spelling here is one that can drift, and
+# the drift shows up as a build that refuses at launch instead of at assembly.
+eq "the policy the offline tier swaps survived the splice" \
+   "$(docline "$T/out.cmd" | grep -c 'Content-Security-Policy')" "1"
+eq "and the document line is still one line" \
+   "$(grep -c '^<!doctype html><html>' "$T/out.cmd")" "1"
+
+# The other half of the same rule, and the one a flag-by-flag assembler gets
+# wrong: a value nobody asked to change must come through untouched.
+T="$(tree shell-partial)"
+TPL_STYLE="$(docline "$T/webview.cmd" | sed -n 's/.*<style>\(.*\)<\/style>.*/\1/p')"
+TPL_BODY="$(docline "$T/webview.cmd" | sed -n 's/.*<\/style><\/head><body>//p')"
+printf 'b{color:blue}\n' > "$T/s.css"
+bash "$T/build.sh" --style "$T/s.css" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+eq "the flag that was given applies" \
+   "$(docline "$T/out.cmd" | sed -n 's/.*<style>\(.*\)<\/style>.*/\1/p')" "b{color:blue}"
+eq "and the body nobody named keeps the template's" \
+   "$(docline "$T/out.cmd" | sed -n 's/.*<\/style><\/head><body>//p')" "$TPL_BODY"
+eq "as does the title" "$(conf "$T/out.cmd" title)" "$(conf "$T/webview.cmd" title)"
+
+# =====================================================================
+# What the shell may not carry
+# =====================================================================
+# Each of these is refused rather than escaped, and each produces a different
+# broken artifact if it is not. The star-slash is the one that matters most:
+# every engine but jsc reads the whole shell region as one block comment, so a
+# close in the document line spills 1375 lines of shell into four JavaScript
+# parsers at once -- and the file still looks like a neutrino app.
+report "section: early-shell-refusals"
+echo "=== the sequences that are this file's structure are refused ==="
+T="$(tree shell-refuse)"
+refuses() {
+    nt_name="$1"; nt_flag="$2"; nt_file="$3"
+    rm -f "$T/out.cmd"
+    bash "$T/build.sh" "$nt_flag" "$nt_file" "$WORK/app-plain.js" "$T/out.cmd" \
+        > "$WORK/refuse.log" 2>&1
+    if [ "$?" = "0" ]; then
+        fail "$nt_name was accepted"
+    elif ! grep -q '^Error:' "$WORK/refuse.log"; then
+        fail "$nt_name was refused without saying why"
+    else
+        pass "$nt_name is refused ($(sed -n 's/^Error: [^,]*contains `\([^`]*\)`.*/\1/p' "$WORK/refuse.log" | head -1))"
+    fi
+    eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
+}
+printf 'p::after{content:"*/"}\n'                       > "$T/star.css"
+printf '<p>x</p><script>alert(1)</script>\n'            > "$T/script.html"
+printf '<p><!doctype html></p>\n'                       > "$T/doctype.html"
+printf '<meta http-equiv="Content-Security-Policy" content="x">\n' > "$T/policy.html"
+refuses "a style closing the block comment"  --style "$T/star.css"
+refuses "a body opening a script"            --body   "$T/script.html"
+refuses "a body naming a second doctype"     --body   "$T/doctype.html"
+refuses "a body carrying a second policy"    --body   "$T/policy.html"
+
+# A CSS comment is ordinary and is removed rather than refused -- an author has
+# no reason to expect this file's comment rules to reach into their stylesheet.
+# What is refused is what survives the removal.
+printf '/* a normal comment */\nq{color:green}\n' > "$T/ok.css"
+bash "$T/build.sh" --style "$T/ok.css" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+eq "a stylesheet with an ordinary comment builds" "$?" "0"
+eq "and the comment is gone from the document" \
+   "$(docline "$T/out.cmd" | grep -c 'a normal comment')" "0"
+eq "while the rule after it survived" \
+   "$(docline "$T/out.cmd" | grep -c 'q{color:green}')" "1"
+
+# The title is a JavaScript string in live code, not markup, so its rules are
+# the string's. Refused for the reason parseMessage drops a malformed record
+# rather than repairing it: a window title is not worth a second quoting scheme
+# that has to be right.
+for nt_bad in 'x"y' 'x\y' ''; do
+    rm -f "$T/out.cmd"
+    bash "$T/build.sh" --title "$nt_bad" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+    [ "$?" = "0" ] && fail "the title [$nt_bad] was accepted" \
+                   || pass "the title [${nt_bad:-empty}] is refused"
+done
+# The control: a title with neither is the ordinary case and has to build, or
+# the three refusals above are also what a flag nobody implemented reports.
+bash "$T/build.sh" --title "Ordinary Title" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+eq "an ordinary title builds" "$?" "0"
+eq "and reaches the config" "$(conf "$T/out.cmd" title)" "Ordinary Title"
+for nt_bad in 0x600 900 900xtall 900x0; do
+    rm -f "$T/out.cmd"
+    bash "$T/build.sh" --size "$nt_bad" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+    [ "$?" = "0" ] && fail "--size $nt_bad was accepted" \
+                   || pass "--size $nt_bad is refused"
+done
+
+# The background, which is the one config value with a shape. It is refused here
+# rather than at launch because every lane declines to paint a colour it cannot
+# read -- so an unreadable one comes up in the theme colour, which is precisely
+# the bug the value exists to close, reached by a different route and with
+# nothing said on the way.
+report "section: background"
+echo "=== the background is a colour or it is refused ==="
+T="$(tree background)"
+for nt_ok in '#12141a' '#FFF' '#000000' '#AbCdEf'; do
+    rm -f "$T/out.cmd"
+    bash "$T/build.sh" --background "$nt_ok" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+    eq "--background $nt_ok reaches the config" "$(conf "$T/out.cmd" background)" "$nt_ok"
+done
+for nt_bad in 'white' 'rgb(1,2,3)' '#12' '#1234' '#12345' '#1234567' '12141a' '#12141g' ''; do
+    rm -f "$T/out.cmd"
+    bash "$T/build.sh" --background "$nt_bad" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+    [ "$?" = "0" ] && fail "--background [$nt_bad] was accepted" \
+                   || pass "--background [${nt_bad:-empty}] is refused"
+    eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
+done
+bash "$T/build.sh" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+eq "a build that names no background keeps the template's" \
+   "$(conf "$T/out.cmd" background)" "$(conf "$T/webview.cmd" background)"
+
+# The punctuation, asserted directly, because the way it went wrong produced a
+# file no engine could parse from an assembler that exited 0. `height` was the
+# last key when its rule was written, so the rule printed no comma; `background`
+# arrived after it and the object lost the separator between them. Measured on
+# cjs: `SyntaxError: missing } after property list`.
+bash "$T/build.sh" --title A --size 10x20 --background '#010203' \
+     "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+if command -v node >/dev/null 2>&1; then
+    cp "$T/out.cmd" "$T/out.js"
+    node --check "$T/out.js" >/dev/null 2>&1
+    eq "a fully stamped config still parses as JavaScript" "$?" "0"
+else
+    report "node absent: the stamped config was not parsed"
+fi
+
+# The read-back, asserted the way every other check in this file is: against a
+# template it cannot apply to. A document line with no style to replace used to
+# be nothing at all -- awk matched, printed a composed line, and the build went
+# on -- so this is the case that says the read-back is doing work.
+T="$(tree shell-readback)"
+sed 's|^\(<!doctype html><html>\).*$|\1<head></head>|' "$T/webview.cmd" > "$T/w.tmp"
+mv "$T/w.tmp" "$T/webview.cmd"
+bash "$T/build.sh" --title "Sample" "$WORK/app-plain.js" "$T/out.cmd" > "$WORK/rb.log" 2>&1
+eq "a template whose document line cannot be taken apart is refused" "$?" "1"
+eq "and it says which shape it wanted" \
+   "$(grep -c 'no document line this can take apart' "$WORK/rb.log" | head -1)" "1"
+eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
+
 echo ""
 if [ "$FAILURES" -gt 0 ]; then
     echo "=== Results: $FAILURES failure(s) ==="

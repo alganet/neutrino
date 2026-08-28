@@ -1,0 +1,41 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+ * SPDX-License-Identifier: ISC
+ *
+ * The sample app's early shell. build.sh folds this to one line and splices it
+ * into the document, so it is in the first paint -- there is no frame in which
+ * the window is up and this has not been applied.
+ *
+ * Written across as many lines as it wants to be. What it may not carry is a
+ * star followed by a slash that survives comment removal -- that pair ends the
+ * block comment the whole shell region of the polyglot lives inside, and
+ * build.sh refuses it rather than escaping it.
+ */
+html, body { margin: 0 }
+
+body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background: #12141a;
+    color: #e6e8ee;
+    text-align: center;
+    font: 14px/1.6 -apple-system, Segoe UI, Cantarell, sans-serif;
+}
+
+h1 { margin: 0 0 8px; font-size: 22px; font-weight: 600 }
+p  { margin: 0 0 20px; color: #8b93a7 }
+b  { color: #e6e8ee; font-weight: 500 }
+
+button {
+    font: inherit;
+    padding: 8px 18px;
+    border: 1px solid #2c3140;
+    border-radius: 6px;
+    background: #1b1f29;
+    color: #e6e8ee;
+    cursor: pointer;
+}
+
+button:hover { background: #232733 }
