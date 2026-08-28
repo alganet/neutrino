@@ -137,6 +137,24 @@ if [ ! -s "$WORK/obj.js" ]; then
     exit 1
 fi
 
+# The lift is a sed range that ends at the first line reading `    };`, and the
+# app's own source is inside that range -- it is spliced into runWeb(). So an
+# app that closes an object literal at this indent ends the range early, and
+# what comes out is the launcher cut in half.
+#
+# Without this the failure is node reporting "Unexpected end of input" against a
+# line number in a temporary directory, which names neither the app nor the
+# reason. Measured: adding one such line to test/neutrinotest.js produced
+# exactly that and nothing else. The check costs a line and the message is the
+# whole point of it.
+if command -v node >/dev/null 2>&1 && ! node --check "$WORK/obj.js" >/dev/null 2>&1; then
+    echo "parse.sh: the lifted NeutrinoWebview does not parse" >&2
+    echo "          the usual cause is a line in the app reading exactly '    };'," >&2
+    echo "          which ends the sed range this lift uses -- close object" >&2
+    echo "          literals at another indent, or through a helper" >&2
+    exit 1
+fi
+
 cat > "$WORK/assert.js" <<'JSEOF'
 var N = require("./obj.js");
 var S = String.fromCharCode(31);
@@ -579,7 +597,19 @@ eq("the size is two positive whole numbers",
 // an NSColor from components. This is the one reading they all come from, and a
 // build whose background none of them can read is a window that comes up in the
 // theme colour -- which is the shape this whole value exists to close.
-eq("the background parses", N.parseColor(N.config.background) !== null, true);
+//
+// `auto` is the one value here that is not a colour, and it is what a build
+// that named no background carries: the colour is not the app's, it is the
+// desktop's, and resolveBackground reads it there.
+//
+// Two spellings and no third. This file is run against a built artifact as
+// often as against the template, so it cannot assert *which* of the two is
+// there -- that the template ships `auto` is assemble.sh's assertion, made
+// against the template itself. What holds for every artifact is that the value
+// is one this file's lanes can act on, and a config carrying anything else is
+// five lanes painting white with nothing said.
+eq("the background is a colour or it is `auto`",
+   N.config.background === "auto" || N.parseColor(N.config.background) !== null, true);
 var colors = [
     ["#000000", { red: 0, green: 0, blue: 0 }],
     ["#ffffff", { red: 1, green: 1, blue: 1 }],
@@ -597,6 +627,248 @@ var badColors = ["", null, "white", "rgb(1,2,3)", "#12", "#1234", "#12345", "#12
 for (var b = 0; b < badColors.length; b++) {
     eq("parseColor refuses " + JSON.stringify(badColors[b]), N.parseColor(badColors[b]), null);
 }
+
+// The desktop's palette, and the rules five lanes share so that one reading
+// cannot disagree with another. All of it is pure -- no window, no toolkit, no
+// display -- which is why it is asserted here rather than only on a runner.
+console.log("");
+console.log("the desktop is dark when it takes light text better than dark");
+// The crossing is near 0.179 and is computed rather than written down, so
+// these pin the answer either side of it and at the two ends. #808080 is the
+// one a fixed 0.5 threshold would have called dark.
+var surfaces = [
+    ["#ffffff", false], ["#f6f5f4", false], ["#808080", false],
+    ["#767676", false], ["#747474", true],
+    ["#404040", true], ["#383838", true], ["#000000", true]
+];
+for (var s = 0; s < surfaces.length; s++) {
+    eq("isDarkSurface " + surfaces[s][0],
+       N.isDarkSurface(N.parseColor(surfaces[s][0])), surfaces[s][1]);
+}
+// The reading this desk was measured at: Mint-L-Dark's theme_bg_color is
+// rgb(56,56,56), which is dark, while gtk-application-prefer-dark-theme reads
+// False on the same machine. Asserted to the measured luminance so that a
+// change to the curve is a failure and not a silently different answer.
+eq("the measured GTK dark background is 0.0395",
+   Math.round(N.relativeLuminance(N.parseColor("#383838")) * 10000) / 10000, 0.0395);
+
+console.log("");
+console.log("a colour comes back one spelling however the toolkit spelled it");
+eq("toHex pads and lowercases", N.toHex(N.parseColor("#0A0B0C")), "#0a0b0c");
+eq("toHex expands the short form", N.toHex(N.parseColor("#fff")), "#ffffff");
+eq("toHex clamps above one", N.toHex({ red: 2, green: 1, blue: 0 }), "#ffff00");
+eq("toHex clamps below zero", N.toHex({ red: -1, green: 0, blue: 0.5 }), "#000080");
+
+console.log("");
+console.log("alpha is flattened over the surface behind it, not over white");
+// GTK hands over rgba(218,218,218,0.5) for insensitive text and macOS spells
+// separatorColor the same way. Flattened against white on a dark desktop this
+// would be the one thing the whole feature exists not to do.
+eq("half over black", N.flattenColor("#ffffff", 0.5, "#000000"), "#808080");
+eq("half over the measured dark background",
+   N.flattenColor("#dadada", 0.5, "#383838"), "#898989");
+eq("opaque ignores the surface", N.flattenColor("#123456", 1, "#000000"), "#123456");
+eq("no surface to flatten against keeps the colour",
+   N.flattenColor("#123456", 0.5, "not a colour"), "#123456");
+eq("an alpha outside the range is treated as opaque",
+   N.flattenColor("#123456", 7, "#000000"), "#123456");
+eq("a colour nobody can parse is refused", N.flattenColor("nope", 1, "#000000"), null);
+
+// A palette a lane could actually return, and the shape everything downstream
+// reads. Built from the values measured on this desk under Mint-L-Dark.
+function rawTheme(overrides) {
+    var raw = {
+        source: "gtk",
+        background: "#383838", foreground: "#dadada",
+        base: "#404040", text: "#dadada",
+        accent: "#8fa876", accentText: "#ffffff",
+        border: "#292929"
+    };
+    for (var k in overrides) { raw[k] = overrides[k]; }
+    return raw;
+}
+
+console.log("");
+console.log("a palette is taken whole or not at all");
+var theme = N.normalizeTheme(rawTheme());
+eq("the measured GTK palette normalizes", theme, {
+    scheme: "dark",
+    source: "gtk",
+    colors: {
+        background: "#383838", foreground: "#dadada",
+        base: "#404040", text: "#dadada",
+        accent: "#8fa876", accentText: "#ffffff",
+        border: "#292929"
+    }
+});
+eq("the scheme is derived, never reported by the lane",
+   N.normalizeTheme(rawTheme({ scheme: "light" })).scheme, "dark");
+eq("a light background makes a light scheme",
+   N.normalizeTheme(rawTheme({ background: "#f6f5f4" })).scheme, "light");
+eq("the short form is accepted and expanded",
+   N.normalizeTheme(rawTheme({ accent: "#f0a" })).colors.accent, "#ff00aa");
+// Whole, and this is the assertion that matters: a palette with one bad value
+// is refused rather than repaired, because an app would style itself from a
+// repaired one and have no way to tell.
+var keys = N.themeKeyList();
+for (var tk = 0; tk < keys.length; tk++) {
+    var broken = {};
+    broken[keys[tk]] = "rgb(1,2,3)";
+    eq("a palette missing a readable " + keys[tk] + " is refused whole",
+       N.normalizeTheme(rawTheme(broken)), null);
+}
+eq("and one with a key missing entirely",
+   N.normalizeTheme({ source: "gtk", background: "#383838" }), null);
+eq("a lane nobody has heard of is refused",
+   N.normalizeTheme(rawTheme({ source: "elsewhere" })), null);
+eq("and a palette with no lane at all", N.normalizeTheme(rawTheme({ source: "" })), null);
+eq("nothing at all is refused rather than thrown", N.normalizeTheme(null), null);
+eq("and a string is not a palette", N.normalizeTheme("#383838"), null);
+eq("every lane this file has a reader for is accepted",
+   ["gtk", "qt", "macos", "windows"].map(function (src) {
+       return N.normalizeTheme(rawTheme({ source: src })) !== null;
+   }), [true, true, true, true]);
+
+console.log("");
+console.log("the background a build named beats the one the desktop is using");
+var savedConfigBackground = N.config.background;
+N.config.background = "#12141a";
+eq("a named colour is not overridden by the desktop", N.resolveBackground(theme), "#12141a");
+eq("and the build does not follow the desktop at all", N.followsTheme(), false);
+N.config.background = "auto";
+eq("`auto` follows the desktop", N.followsTheme(), true);
+// base and not background: the view is nearly the whole window, and an app
+// following the desktop paints its body like a content surface.
+eq("`auto` borrows the content surface", N.resolveBackground(theme), "#404040");
+eq("and falls back to white when no lane could read a palette",
+   N.resolveBackground(null), "#ffffff");
+eq("as it does for a palette with no colours in it",
+   N.resolveBackground({ scheme: "dark", source: "gtk", colors: {} }), "#ffffff");
+N.config.background = savedConfigBackground;
+
+console.log("");
+console.log("an update that changes nothing is not an update");
+// Load-bearing rather than tidy: painting a GTK window adds a CssProvider to
+// it, which emits the style-updated the watcher listens on. Without this the
+// watcher feeds itself for as long as the app is open.
+eq("the same palette twice is not a change",
+   N.themesDiffer(theme, N.normalizeTheme(rawTheme())), false);
+eq("one colour different is", 
+   N.themesDiffer(theme, N.normalizeTheme(rawTheme({ accent: "#000000" }))), true);
+eq("a different scheme is",
+   N.themesDiffer(theme, N.normalizeTheme(rawTheme({ background: "#f6f5f4" }))), true);
+eq("a different lane is",
+   N.themesDiffer(theme, N.normalizeTheme(rawTheme({ source: "qt" }))), true);
+eq("having nothing yet is a change", N.themesDiffer(null, theme), true);
+eq("and having nothing twice is not", N.themesDiffer(null, null), false);
+
+console.log("");
+console.log("the one string this file evaluates into a page");
+// Every other direction is the page talking to the host. This is the host
+// talking to the page, so it is held to parseMessage's rule coming the other
+// way: a fixed shape, a known key set, and one anchored pattern per value.
+var script = N.buildThemeScript(theme);
+eq("the update is valid javascript", (function () {
+    try { new Function(script); return true; } catch (_) { return false; }
+})(), true);
+eq("it carries the palette", script.indexOf('background:"#383838"') > 0, true);
+eq("and calls only through the preload's own entry point",
+   script.indexOf("window.neutrino._theme(") > 0, true);
+// Nothing that is not six hex digits reaches a page as text. Built by hand
+// rather than through normalizeTheme, because normalizeTheme is exactly what
+// this is the second check on.
+function forged(key, value) {
+    var t = { scheme: "dark", source: "gtk", colors: {} };
+    var ks = N.themeKeyList();
+    for (var i = 0; i < ks.length; i++) { t.colors[ks[i]] = "#000000"; }
+    if (key === "scheme" || key === "source") { t[key] = value; } else { t.colors[key] = value; }
+    return t;
+}
+var forgeries = [
+    ["accent", '#000"};alert(1);//'],
+    ["accent", "#FFFFFF"],
+    ["accent", "#fff"],
+    ["accent", "white"],
+    ["accent", ""],
+    ["accent", null],
+    ["background", "#00000"],
+    ["scheme", "dark\";x=1"],
+    ["scheme", "auto"],
+    ["source", "gtk\";x=1"],
+    ["source", "elsewhere"]
+];
+for (var f = 0; f < forgeries.length; f++) {
+    eq("refuses " + forgeries[f][0] + " as " + JSON.stringify(forgeries[f][1]),
+       N.buildThemeScript(forged(forgeries[f][0], forgeries[f][1])), null);
+}
+eq("and refuses nothing at all", N.buildThemeScript(null), null);
+
+console.log("");
+console.log("the page starts with the palette rather than waiting for it");
+var preload = N.buildPreloadScript(
+    'function(m){console.log("__NEUTRINO__"+m);}', "console", N.themeLiteral(theme));
+eq("the preload is still valid javascript", (function () {
+    try { new Function(preload); return true; } catch (_) { return false; }
+})(), true);
+// Run it against a stand-in window and read back what an app would see.
+var pageWindow = { addEventListener: function () {}, dispatchEvent: function (e) { this.last = e; } };
+pageWindow.CustomEvent = function (type, init) { this.type = type; this.detail = init.detail; };
+(new Function("window", "CustomEvent", preload))(pageWindow, pageWindow.CustomEvent);
+eq("an app reads the palette at document start", pageWindow.neutrino.theme, {
+    scheme: "dark",
+    source: "gtk",
+    colors: {
+        background: "#383838", foreground: "#dadada",
+        base: "#404040", text: "#dadada",
+        accent: "#8fa876", accentText: "#ffffff",
+        border: "#292929"
+    }
+});
+// A lane that could not read a palette still gets an API, and the app finds
+// out by asking rather than by the property not being there.
+var noThemeWindow = { addEventListener: function () {}, dispatchEvent: function () {} };
+(new Function("window", N.buildPreloadScript(
+    'function(m){}', "console", N.themeLiteral(null))))(noThemeWindow);
+eq("a lane with no palette says so rather than inventing one",
+   noThemeWindow.neutrino.theme, null);
+
+console.log("");
+console.log("a standing failure is reported once, not once a second");
+// The Windows lane re-reads on a clock and the GTK lanes read on every
+// style-updated, which fires rather more often than the theme changes. A
+// toolkit that cannot be read is a standing condition, so an unlatched note
+// would bury the app's own stderr under one repeated sentence.
+var said = [];
+var savedSink = N.noteSink;
+var savedNoted = N.notedOnce;
+N.notedOnce = null;
+N.noteSink = function (m) { said.push(m); };
+for (var n = 0; n < 5; n++) {
+    N.noteOnce("this theme defines no theme_bg_color");
+}
+N.noteOnce("and a different thing entirely");
+eq("five identical notes are said once", said.length, 2);
+// "constructor" is the one that bites: an unprefixed key would find it truthy
+// on Object.prototype and swallow the message.
+N.noteOnce("constructor");
+N.noteOnce("constructor");
+eq("a message that names something on Object.prototype is still said", said.length, 3);
+N.noteSink = savedSink;
+N.notedOnce = savedNoted;
+
+console.log("");
+console.log("a change replaces the palette and says so");
+(new Function("window", "CustomEvent",
+    N.buildThemeScript(N.normalizeTheme(rawTheme({ background: "#f6f5f4", base: "#ffffff" })))
+))(pageWindow, pageWindow.CustomEvent);
+eq("the event carries the new palette", pageWindow.last.type, "neutrino:themechange");
+eq("with the scheme derived from it", pageWindow.last.detail.scheme, "light");
+// Replaced and not mutated: an app that captured the old object keeps a stable
+// snapshot, and one that reads window.neutrino.theme gets the current palette.
+eq("and window.neutrino.theme is the new one", pageWindow.neutrino.theme.colors.base, "#ffffff");
+eq("while the object captured before it is unchanged", theme.colors.base, "#404040");
+eq("the palette is current before the event fires",
+   pageWindow.last.detail === pageWindow.neutrino.theme, true);
 N.tiers = "default,offline";
 eq("offline tier gets the offline policy", policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
 N.tiers = "default";

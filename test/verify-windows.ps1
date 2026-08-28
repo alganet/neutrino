@@ -448,6 +448,11 @@ $null = Assert-Reached $record "STEP0"
 $null = Assert-Reached $record "STEP1-Test Title"
 $step2 = Assert-Reached $record "STEP2"
 $step3 = Assert-Reached $record "STEP3"
+# The app checks its own palette and reports a verdict, because it is the only
+# side that can see one. A lane that reached no toolkit reports null and titles
+# itself THEMEBAD, which this does not find -- and the sample log above carries
+# the reading either way.
+$null = Assert-Reached $record "THEMEOK"
 $null = Assert-Reached $record "TESTS DONE"
 
 Write-Host "=== Step 2: resize ==="

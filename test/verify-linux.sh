@@ -104,9 +104,20 @@ WID=$(wait_for_title "STEP3") || { echo "FAIL: STEP3 never reached"; exit 1; }
 assert_position "$WID" 0 0 100
 screenshot "04-step3"
 
+echo "=== Step 4: the desktop's palette ==="
+# The app does the checking -- it is the only side that can see the palette --
+# and this waits on its verdict. A lane that reached no toolkit reports null and
+# never sets THEMEOK, so the timeout here is the failure rather than a pass with
+# nothing behind it. The reading itself is on screen in the shot below.
+WID=$(wait_for_title "THEMEOK") || {
+    echo "  FAIL: the palette was not readable on this lane (see 05-theme.png)"
+    FAILURES=$((FAILURES + 1))
+}
+screenshot "05-theme"
+
 echo "=== Waiting for TESTS DONE ==="
 WID=$(wait_for_title "TESTS DONE") || { echo "FAIL: tests never completed"; exit 1; }
-screenshot "05-done"
+screenshot "06-done"
 
 echo ""
 echo "=== Results: $FAILURES failure(s) ==="
