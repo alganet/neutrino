@@ -2915,6 +2915,13 @@ exit $?;:<<'//</script></body></html>' #-->
             var driverRef = null;
             var windowRef = null;
             var observerRef = null;
+            // Held for the same reason observerRef is: an NSTimer's target is
+            // an object this script created, and nothing else refers to it.
+            var tickerRef = null;
+            // The status file's line 7, and the whole of what separates "the
+            // window has stopped changing" from "the thing writing this file
+            // has stopped". Both are testing-tier only.
+            var statusTicks = 0;
 
             // What the view is showing, as the view answers rather than as
             // anything that called in claims. Empty is an answer too: a view
@@ -2980,6 +2987,40 @@ exit $?;:<<'//</script></body></html>' #-->
                         });
                     } catch (e) {
                         self.note("no theme watcher on this lane: " + e);
+                    }
+
+                    /*
+                     * The status ticker, in the same shape and for the same
+                     * reason: -run never returns, so a clock on this lane has
+                     * to be an ObjC object with a selector, and NSTimer's
+                     * block-taking spelling is one JXA cannot supply.
+                     *
+                     * Registered only under the testing tier. writeStatus
+                     * already refuses to write in a release build, so a ticker
+                     * there would be a timer firing into a function that
+                     * returns immediately -- costing an app something for a
+                     * file nobody will read. Ground rule 4 puts the switch on
+                     * the tier and not in the environment.
+                     */
+                    if (self.hasTier("testing")) {
+                        try {
+                            ObjCRef.registerSubclass({
+                                name: "NeutrinoStatusTicker",
+                                superclass: "NSObject",
+                                methods: {
+                                    "tick:": {
+                                        types: ["void", ["id"]],
+                                        implementation: function () {
+                                            if (driverRef) {
+                                                driverRef.statusTick();
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        } catch (e) {
+                            self.note("no status ticker on this lane: " + e);
+                        }
                     }
 
                     /*
@@ -3188,7 +3229,7 @@ exit $?;:<<'//</script></body></html>' #-->
                     try { win.center; } catch (_) {}
                     windowDelegateRef = dollar.NeutrinoWindowDelegate.alloc.init;
                     win["delegate"] = windowDelegateRef;
-                    this.writeStatus(config.title, win);
+                    this.writeStatus(win);
                     return win;
                 },
                 createWebView: function () {
@@ -3295,27 +3336,102 @@ exit $?;:<<'//</script></body></html>' #-->
                 toTopLeftY: function (macY, winHeight) {
                     return this.primaryScreenHeight() - macY - winHeight;
                 },
-                writeStatus: function (title, win) {
-                    // Scaffolding for verify-macos.sh, which has no other way to
-                    // read a window's geometry back. It is not part of running an
-                    // app, so a release build does not write it anywhere.
+                /*
+                 * Scaffolding for verify-macos.sh, which has no other way to
+                 * read a window's geometry back. It is not part of running an
+                 * app, so a release build does not write it anywhere.
+                 *
+                 * Seven lines now, and the last four are what makes this an
+                 * instrument rather than a receipt. The first three were only
+                 * ever written from inside setTitle, resize and move -- so they
+                 * report what this driver was *asked* to do, and a window moved
+                 * by anything else on the platform produced no write at all.
+                 * That is enough to check an IPC call landed and not enough to
+                 * ask what `window.resizeTo` or an assignment to
+                 * `document.title` did, because neither of those comes through
+                 * here. statusTick below calls this on a clock for exactly that
+                 * reason.
+                 *
+                 * It still reads NSWindow and never the DOM: `win.title` is the
+                 * title bar, `win.frame` is the frame the window server has.
+                 * That keeps it standing outside the document in the same way
+                 * xdotool stands outside it on X11 -- in the app's process, but
+                 * not the page's account of itself. A reading taken from the
+                 * document belongs in the title as a -SELF field, not in here.
+                 *
+                 * Line 7 is a counter and not a clock. A file that has stopped
+                 * being written and a window that has stopped changing are the
+                 * same three lines otherwise, and the difference between them
+                 * is `close()` working and the poller having died.
+                 *
+                 * It takes the window and not a title, and that is a repair.
+                 * `resize` and `move` have called this as
+                 * `writeStatus(String(win.title), win)` since they were
+                 * written, and on this bridge `String()` of an ObjC wrapper is
+                 * the wrapper's description -- `[id __NSCFString]` -- and not
+                 * the string. Nothing noticed for as long as a setTitle always
+                 * followed and overwrote it. Put a clock on the same function
+                 * and it writes that text over the good title several times a
+                 * second, which starved every suite on this platform that polls
+                 * this file: measured, five red steps and a lane that could not
+                 * say why. Every other reader of an ObjC string in this file
+                 * goes through unwrap, and now so does this one -- taking the
+                 * window rather than a title is what stops a fifth caller
+                 * getting it wrong again.
+                 */
+                windowTitle: function (win) {
+                    try {
+                        return String(ObjCRef.unwrap(win.title) || "");
+                    } catch (_) {
+                        return "";
+                    }
+                },
+                writeStatus: function (win) {
                     if (!self.hasTier("testing")) {
                         return;
                     }
                     try {
+                        var title = this.windowTitle(win);
                         var f = win.frame;
                         var topLeftY = Math.round(this.toTopLeftY(f.origin.y, f.size.height));
+                        var inner = "?x?";
+                        try {
+                            var cv = win.contentView.frame;
+                            inner = Math.round(cv.size.width) + "x" + Math.round(cv.size.height);
+                        } catch (_) {}
+                        var work = "?x?";
+                        try {
+                            var vf = dollar.NSScreen.mainScreen.visibleFrame;
+                            work = Math.round(vf.size.width) + "x" + Math.round(vf.size.height);
+                        } catch (_) {}
+                        var windows = "?";
+                        try { windows = String(dollar.NSApp.windows.count); } catch (_) {}
+                        statusTicks = statusTicks + 1;
                         var status = title + "\n" +
                             Math.round(f.size.width) + "x" + Math.round(f.size.height) + "\n" +
-                            Math.round(f.origin.x) + "," + topLeftY;
+                            Math.round(f.origin.x) + "," + topLeftY + "\n" +
+                            inner + "\n" +
+                            work + "\n" +
+                            windows + "\n" +
+                            statusTicks;
                         var statusPath = dollar.NSTemporaryDirectory().js + "neutrino-title.txt";
                         dollar.NSString.alloc.initWithUTF8String(status)
                             .writeToFileAtomicallyEncodingError(statusPath, true, 4, null);
                     } catch (_) {}
                 },
+
+                // What the ticker calls. The title comes off the window rather
+                // than from a caller, because the whole reason this exists is
+                // the writes nobody made a call for.
+                statusTick: function () {
+                    if (!windowRef) {
+                        return;
+                    }
+                    try { this.writeStatus(windowRef); } catch (_) {}
+                },
                 setTitle: function (win, title) {
                     win.title = title;
-                    this.writeStatus(title, win);
+                    this.writeStatus(win);
                 },
                 resize: function (win, w, h) {
                     var frame = win.frame;
@@ -3347,13 +3463,13 @@ exit $?;:<<'//</script></body></html>' #-->
                     var top = this.toTopLeftY(frame.origin.y, frame.size.height);
                     win.setFrameDisplay(
                         dollar.NSMakeRect(frame.origin.x, this.toMacY(top, h), w, h), true);
-                    this.writeStatus(String(win.title), win);
+                    this.writeStatus(win);
                 },
                 move: function (win, x, y) {
                     var frame = win.frame;
                     var macY = this.toMacY(y, frame.size.height);
                     win.setFrameDisplay(dollar.NSMakeRect(x, macY, frame.size.width, frame.size.height), true);
-                    this.writeStatus(String(win.title), win);
+                    this.writeStatus(win);
                 },
                 "close": function (win) {
                     win.performClose(null);
@@ -3408,6 +3524,24 @@ exit $?;:<<'//</script></body></html>' #-->
                                 "NSSystemColorsDidChangeNotification", null);
                     } catch (e) {
                         self.note("no theme watcher on this lane: " + e);
+                    }
+                    /*
+                     * Two hundred milliseconds, against a probe that holds each
+                     * state for fifteen hundred. Seven turns inside the
+                     * shortest thing being measured is the margin, and it is
+                     * the number the verifier's own completeness control is
+                     * checked against -- not a rate chosen for feeling about
+                     * right.
+                     */
+                    if (self.hasTier("testing")) {
+                        try {
+                            tickerRef = dollar.NeutrinoStatusTicker.alloc.init;
+                            dollar.NSTimer
+                                .scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(
+                                    0.2, tickerRef, "tick:", null, true);
+                        } catch (e) {
+                            self.note("could not start the status ticker: " + e);
+                        }
                     }
                     dollar.NSApp.setActivationPolicy(0);
                     // Left as a call on purpose. By the same rule, reading

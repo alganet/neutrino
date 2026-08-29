@@ -176,6 +176,124 @@ jobs:
           cat ~/offline.log
           bash test/annotate.sh gjs-offline ~/offline.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # The web-standards probe, round 1: the apparatus, and nothing else.
+      #
+      # Two questions are being opened here. Whether an app can be written
+      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # `neutrino.window.resize` and nothing at all; and whether an assignment
+      # to `document.title` reaches the native title, which is the standard
+      # spelling of `neutrino.window.setTitle`. Neither is answered by this
+      # round. What this round is for is the instruments: verify-std.sh records
+      # a window's title and geometry in one loop with nothing slow in it, and
+      # until that loop is known to read a live window and to see it change,
+      # every pair of numbers it prints later is unattributable.
+      #
+      # So both apps mutate the window through the API that already works, and
+      # the verifier fails its own control when it cannot see the mutation. A
+      # run where the harness reads the same geometry either side of a resize
+      # has not measured the engine's `outerWidth`; it has measured a window
+      # that never moved, or an instrument pointed at the wrong one.
+      #
+      # Last in the lane and `if: always()`, which is both halves of one rule.
+      # A probe must not fail a lane -- these verifiers exit non-zero only when
+      # a control fails, never for a reading. And a lane must not fail a probe,
+      # which is what the gate buys: a suite ahead of this going red for
+      # unrelated reasons once skipped the probe behind it and cost a whole
+      # round for a step that could not have made the lane worse.
+      #
+      # The two probes are separate steps and separate apps. The geometry app
+      # is written never to close, so if the first step fails to reap it its
+      # window is still up when the second begins -- which is why they search
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
+      # step is the unit of the annotation budget: 12 report lines each, three
+      # annotations of the eight annotate.sh will pack.
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/parse.sh test/neutrinostdgeom.cmd
+          bash test/neutrinostdgeom.cmd > ~/stdgeom-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh geom ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
+          # The tree this step started, and only that. Never a pattern: this
+          # step's own command line carries the app's name, and a pkill -f
+          # matching it takes the shell running it down too.
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdgeom.log
+          bash test/annotate.sh gjs-stdgeom ~/stdgeom.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/parse.sh test/neutrinostddoc.cmd
+          bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh doc ~/screenshots > ~/stddoc.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stddoc.log
+          bash test/annotate.sh gjs-stddoc ~/stddoc.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # Round 2. Whether the standard window verbs do anything and can be
+      # taken over if they do not, and whether `neutrino.theme` is redundant
+      # with CSS. Round 1 is what earns these their place: it said the
+      # recording loop keeps up on every lane, that the size arithmetic agrees
+      # with the one engine that reports its own outer size, and -- on macOS --
+      # that the file this platform reads titles through was being written
+      # wrong. Stacking these on an unvalidated instrument would have made one
+      # red cost four readings instead of one.
+      #
+      # The window probe's own control is the phase order: the launcher's API
+      # is exercised *after* the four native calls, because "resizeTo did
+      # nothing" and "the window stopped responding" are the same reading
+      # otherwise. The theme probe's is a colour keyword no engine can resolve,
+      # so that "unsupported" is distinguishable from a value -- and this round
+      # deliberately does not flip the desktop palette, so it reports what each
+      # engine says and settles nothing about where the value came from.
+      - if: always()
+        timeout-minutes: 20
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/parse.sh test/neutrinostdwin.cmd
+          bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh win ~/screenshots > ~/stdwin.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdwin.log
+          bash test/annotate.sh gjs-stdwin ~/stdwin.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+          bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh theme ~/screenshots > ~/stdtheme.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdtheme.log
+          bash test/annotate.sh gjs-stdtheme ~/stdtheme.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -275,6 +393,124 @@ jobs:
               { echo "FAIL: the web process is not under bwrap on this lane" >&2; TEST_EXIT=1; }
           fi
           exit $TEST_EXIT
+      # The web-standards probe, round 1: the apparatus, and nothing else.
+      #
+      # Two questions are being opened here. Whether an app can be written
+      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # `neutrino.window.resize` and nothing at all; and whether an assignment
+      # to `document.title` reaches the native title, which is the standard
+      # spelling of `neutrino.window.setTitle`. Neither is answered by this
+      # round. What this round is for is the instruments: verify-std.sh records
+      # a window's title and geometry in one loop with nothing slow in it, and
+      # until that loop is known to read a live window and to see it change,
+      # every pair of numbers it prints later is unattributable.
+      #
+      # So both apps mutate the window through the API that already works, and
+      # the verifier fails its own control when it cannot see the mutation. A
+      # run where the harness reads the same geometry either side of a resize
+      # has not measured the engine's `outerWidth`; it has measured a window
+      # that never moved, or an instrument pointed at the wrong one.
+      #
+      # Last in the lane and `if: always()`, which is both halves of one rule.
+      # A probe must not fail a lane -- these verifiers exit non-zero only when
+      # a control fails, never for a reading. And a lane must not fail a probe,
+      # which is what the gate buys: a suite ahead of this going red for
+      # unrelated reasons once skipped the probe behind it and cost a whole
+      # round for a step that could not have made the lane worse.
+      #
+      # The two probes are separate steps and separate apps. The geometry app
+      # is written never to close, so if the first step fails to reap it its
+      # window is still up when the second begins -- which is why they search
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
+      # step is the unit of the annotation budget: 12 report lines each, three
+      # annotations of the eight annotate.sh will pack.
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/parse.sh test/neutrinostdgeom.cmd
+          bash test/neutrinostdgeom.cmd > ~/stdgeom-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh geom ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
+          # The tree this step started, and only that. Never a pattern: this
+          # step's own command line carries the app's name, and a pkill -f
+          # matching it takes the shell running it down too.
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdgeom.log
+          bash test/annotate.sh cjs-stdgeom ~/stdgeom.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/parse.sh test/neutrinostddoc.cmd
+          bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh doc ~/screenshots > ~/stddoc.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stddoc.log
+          bash test/annotate.sh cjs-stddoc ~/stddoc.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # Round 2. Whether the standard window verbs do anything and can be
+      # taken over if they do not, and whether `neutrino.theme` is redundant
+      # with CSS. Round 1 is what earns these their place: it said the
+      # recording loop keeps up on every lane, that the size arithmetic agrees
+      # with the one engine that reports its own outer size, and -- on macOS --
+      # that the file this platform reads titles through was being written
+      # wrong. Stacking these on an unvalidated instrument would have made one
+      # red cost four readings instead of one.
+      #
+      # The window probe's own control is the phase order: the launcher's API
+      # is exercised *after* the four native calls, because "resizeTo did
+      # nothing" and "the window stopped responding" are the same reading
+      # otherwise. The theme probe's is a colour keyword no engine can resolve,
+      # so that "unsupported" is distinguishable from a value -- and this round
+      # deliberately does not flip the desktop palette, so it reports what each
+      # engine says and settles nothing about where the value came from.
+      - if: always()
+        timeout-minutes: 20
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/parse.sh test/neutrinostdwin.cmd
+          bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh win ~/screenshots > ~/stdwin.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdwin.log
+          bash test/annotate.sh cjs-stdwin ~/stdwin.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+          bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh theme ~/screenshots > ~/stdtheme.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdtheme.log
+          bash test/annotate.sh cjs-stdtheme ~/stdtheme.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -367,6 +603,124 @@ jobs:
             pgrep -a bwrap | grep -q WebKitWebProcess ||
               { echo "FAIL: the web process is not under bwrap on this lane" >&2; TEST_EXIT=1; }
           fi
+          exit $TEST_EXIT
+      # The web-standards probe, round 1: the apparatus, and nothing else.
+      #
+      # Two questions are being opened here. Whether an app can be written
+      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # `neutrino.window.resize` and nothing at all; and whether an assignment
+      # to `document.title` reaches the native title, which is the standard
+      # spelling of `neutrino.window.setTitle`. Neither is answered by this
+      # round. What this round is for is the instruments: verify-std.sh records
+      # a window's title and geometry in one loop with nothing slow in it, and
+      # until that loop is known to read a live window and to see it change,
+      # every pair of numbers it prints later is unattributable.
+      #
+      # So both apps mutate the window through the API that already works, and
+      # the verifier fails its own control when it cannot see the mutation. A
+      # run where the harness reads the same geometry either side of a resize
+      # has not measured the engine's `outerWidth`; it has measured a window
+      # that never moved, or an instrument pointed at the wrong one.
+      #
+      # Last in the lane and `if: always()`, which is both halves of one rule.
+      # A probe must not fail a lane -- these verifiers exit non-zero only when
+      # a control fails, never for a reading. And a lane must not fail a probe,
+      # which is what the gate buys: a suite ahead of this going red for
+      # unrelated reasons once skipped the probe behind it and cost a whole
+      # round for a step that could not have made the lane worse.
+      #
+      # The two probes are separate steps and separate apps. The geometry app
+      # is written never to close, so if the first step fails to reap it its
+      # window is still up when the second begins -- which is why they search
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
+      # step is the unit of the annotation budget: 12 report lines each, three
+      # annotations of the eight annotate.sh will pack.
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/parse.sh test/neutrinostdgeom.cmd
+          bash test/neutrinostdgeom.cmd > ~/stdgeom-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh geom ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
+          # The tree this step started, and only that. Never a pattern: this
+          # step's own command line carries the app's name, and a pkill -f
+          # matching it takes the shell running it down too.
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdgeom.log
+          bash test/annotate.sh pygobject-stdgeom ~/stdgeom.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/parse.sh test/neutrinostddoc.cmd
+          bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh doc ~/screenshots > ~/stddoc.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stddoc.log
+          bash test/annotate.sh pygobject-stddoc ~/stddoc.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # Round 2. Whether the standard window verbs do anything and can be
+      # taken over if they do not, and whether `neutrino.theme` is redundant
+      # with CSS. Round 1 is what earns these their place: it said the
+      # recording loop keeps up on every lane, that the size arithmetic agrees
+      # with the one engine that reports its own outer size, and -- on macOS --
+      # that the file this platform reads titles through was being written
+      # wrong. Stacking these on an unvalidated instrument would have made one
+      # red cost four readings instead of one.
+      #
+      # The window probe's own control is the phase order: the launcher's API
+      # is exercised *after* the four native calls, because "resizeTo did
+      # nothing" and "the window stopped responding" are the same reading
+      # otherwise. The theme probe's is a colour keyword no engine can resolve,
+      # so that "unsupported" is distinguishable from a value -- and this round
+      # deliberately does not flip the desktop palette, so it reports what each
+      # engine says and settles nothing about where the value came from.
+      - if: always()
+        timeout-minutes: 20
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/parse.sh test/neutrinostdwin.cmd
+          bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh win ~/screenshots > ~/stdwin.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdwin.log
+          bash test/annotate.sh pygobject-stdwin ~/stdwin.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+          bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh theme ~/screenshots > ~/stdtheme.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdtheme.log
+          bash test/annotate.sh pygobject-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
@@ -592,6 +946,140 @@ jobs:
             > ~/offline.log 2>&1 || TEST_EXIT=$?
           cat ~/offline.log
           bash test/annotate.sh kde-offline ~/offline.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # The web-standards probe, round 1: the apparatus, and nothing else.
+      #
+      # Two questions are being opened here. Whether an app can be written
+      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # `neutrino.window.resize` and nothing at all; and whether an assignment
+      # to `document.title` reaches the native title, which is the standard
+      # spelling of `neutrino.window.setTitle`. Neither is answered by this
+      # round. What this round is for is the instruments: verify-std.sh records
+      # a window's title and geometry in one loop with nothing slow in it, and
+      # until that loop is known to read a live window and to see it change,
+      # every pair of numbers it prints later is unattributable.
+      #
+      # So both apps mutate the window through the API that already works, and
+      # the verifier fails its own control when it cannot see the mutation. A
+      # run where the harness reads the same geometry either side of a resize
+      # has not measured the engine's `outerWidth`; it has measured a window
+      # that never moved, or an instrument pointed at the wrong one.
+      #
+      # Last in the lane and `if: always()`, which is both halves of one rule.
+      # A probe must not fail a lane -- these verifiers exit non-zero only when
+      # a control fails, never for a reading. And a lane must not fail a probe,
+      # which is what the gate buys: a suite ahead of this going red for
+      # unrelated reasons once skipped the probe behind it and cost a whole
+      # round for a step that could not have made the lane worse.
+      #
+      # The two probes are separate steps and separate apps. The geometry app
+      # is written never to close, so if the first step fails to reap it its
+      # window is still up when the second begins -- which is why they search
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
+      # step is the unit of the annotation budget: 12 report lines each, three
+      # annotations of the eight annotate.sh will pack.
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/parse.sh test/neutrinostdgeom.cmd
+          bash test/neutrinostdgeom.cmd > ~/stdgeom-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh geom ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
+          # The tree this step started, and only that. Never a pattern: this
+          # step's own command line carries the app's name, and a pkill -f
+          # matching it takes the shell running it down too.
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdgeom.log
+          bash test/annotate.sh kde-stdgeom ~/stdgeom.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/parse.sh test/neutrinostddoc.cmd
+          bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh doc ~/screenshots > ~/stddoc.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stddoc.log
+          bash test/annotate.sh kde-stddoc ~/stddoc.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # Round 2. Whether the standard window verbs do anything and can be
+      # taken over if they do not, and whether `neutrino.theme` is redundant
+      # with CSS. Round 1 is what earns these their place: it said the
+      # recording loop keeps up on every lane, that the size arithmetic agrees
+      # with the one engine that reports its own outer size, and -- on macOS --
+      # that the file this platform reads titles through was being written
+      # wrong. Stacking these on an unvalidated instrument would have made one
+      # red cost four readings instead of one.
+      #
+      # The window probe's own control is the phase order: the launcher's API
+      # is exercised *after* the four native calls, because "resizeTo did
+      # nothing" and "the window stopped responding" are the same reading
+      # otherwise. The theme probe's is a colour keyword no engine can resolve,
+      # so that "unsupported" is distinguishable from a value -- and this round
+      # deliberately does not flip the desktop palette, so it reports what each
+      # engine says and settles nothing about where the value came from.
+      - if: always()
+        timeout-minutes: 20
+        run: |
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/parse.sh test/neutrinostdwin.cmd
+          bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh win ~/screenshots > ~/stdwin.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdwin.log
+          bash test/annotate.sh kde-stdwin ~/stdwin.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+          bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh theme ~/screenshots > ~/stdtheme.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdtheme.log
+          bash test/annotate.sh kde-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
@@ -1432,6 +1920,123 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-docswap ~/docswaplogs/docswap.log 'report:|FAIL:'
+      # The web-standards probe, round 1: the apparatus, and nothing else.
+      #
+      # Two questions are being opened here. Whether an app can be written
+      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # `neutrino.window.resize` and nothing at all; and whether an assignment
+      # to `document.title` reaches the native title, which is the standard
+      # spelling of `neutrino.window.setTitle`. Neither is answered by this
+      # round. What this round is for is the instruments: verify-std.sh records
+      # a window's title and geometry in one loop with nothing slow in it, and
+      # until that loop is known to read a live window and to see it change,
+      # every pair of numbers it prints later is unattributable.
+      #
+      # So both apps mutate the window through the API that already works, and
+      # the verifier fails its own control when it cannot see the mutation. A
+      # run where the harness reads the same geometry either side of a resize
+      # has not measured the engine's `outerWidth`; it has measured a window
+      # that never moved, or an instrument pointed at the wrong one.
+      #
+      # Last in the lane and `if: always()`, which is both halves of one rule.
+      # A probe must not fail a lane -- these verifiers exit non-zero only when
+      # a control fails, never for a reading. And a lane must not fail a probe,
+      # which is what the gate buys: a suite ahead of this going red for
+      # unrelated reasons once skipped the probe behind it and cost a whole
+      # round for a step that could not have made the lane worse.
+      #
+      # The two probes are separate steps and separate apps. The geometry app
+      # is written never to close, so if the first step fails to reap it its
+      # window is still up when the second begins -- which is why they search
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
+      # step is the unit of the annotation budget: 12 report lines each, three
+      # annotations of the eight annotate.sh will pack.
+      - if: always()
+        shell: bash
+        run: |
+          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/parse.sh test/neutrinostdgeom.cmd
+          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/parse.sh test/neutrinostddoc.cmd
+      - if: always()
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          .\test\neutrinostdgeom.cmd
+          & .\test\verify-std.ps1 -Probe geom -ScreenshotDir $env:USERPROFILE *>&1 |
+            Tee-Object -FilePath "$HOME\stdgeom.log"
+          $e = $LASTEXITCODE
+          Get-Process -Name neutrinostdgeom -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $e
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-stdgeom ~/stdgeom.log 'report:|FAIL:'
+      - if: always()
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          .\test\neutrinostddoc.cmd
+          & .\test\verify-std.ps1 -Probe doc -ScreenshotDir $env:USERPROFILE *>&1 |
+            Tee-Object -FilePath "$HOME\stddoc.log"
+          $e = $LASTEXITCODE
+          Get-Process -Name neutrinostddoc -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $e
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-stddoc ~/stddoc.log 'report:|FAIL:'
+      # Round 2. Whether the standard window verbs do anything and can be
+      # taken over if they do not, and whether `neutrino.theme` is redundant
+      # with CSS. Round 1 is what earns these their place: it said the
+      # recording loop keeps up on every lane, that the size arithmetic agrees
+      # with the one engine that reports its own outer size, and -- on macOS --
+      # that the file this platform reads titles through was being written
+      # wrong. Stacking these on an unvalidated instrument would have made one
+      # red cost four readings instead of one.
+      #
+      # The window probe's own control is the phase order: the launcher's API
+      # is exercised *after* the four native calls, because "resizeTo did
+      # nothing" and "the window stopped responding" are the same reading
+      # otherwise. The theme probe's is a colour keyword no engine can resolve,
+      # so that "unsupported" is distinguishable from a value -- and this round
+      # deliberately does not flip the desktop palette, so it reports what each
+      # engine says and settles nothing about where the value came from.
+      - if: always()
+        shell: bash
+        run: |
+          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/parse.sh test/neutrinostdwin.cmd
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+      - if: always()
+        timeout-minutes: 25
+        shell: pwsh
+        run: |
+          .\test\neutrinostdwin.cmd
+          & .\test\verify-std.ps1 -Probe win -ScreenshotDir $env:USERPROFILE *>&1 |
+            Tee-Object -FilePath "$HOME\stdwin.log"
+          $e = $LASTEXITCODE
+          Get-Process -Name neutrinostdwin -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $e
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-stdwin ~/stdwin.log 'report:|FAIL:'
+      - if: always()
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          .\test\neutrinostdtheme.cmd
+          & .\test\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE *>&1 |
+            Tee-Object -FilePath "$HOME\stdtheme.log"
+          $e = $LASTEXITCODE
+          Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $e
+      - if: always()
+        shell: bash
+        run: bash test/annotate.sh windows-stdtheme ~/stdtheme.log 'report:|FAIL:'
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -1649,6 +2254,116 @@ jobs:
             > ~/offline.log 2>&1 || TEST_EXIT=$?
           cat ~/offline.log
           bash test/annotate.sh macos-offline ~/offline.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # The web-standards probe, round 1: the apparatus, and nothing else.
+      #
+      # Two questions are being opened here. Whether an app can be written
+      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # `neutrino.window.resize` and nothing at all; and whether an assignment
+      # to `document.title` reaches the native title, which is the standard
+      # spelling of `neutrino.window.setTitle`. Neither is answered by this
+      # round. What this round is for is the instruments: verify-std.sh records
+      # a window's title and geometry in one loop with nothing slow in it, and
+      # until that loop is known to read a live window and to see it change,
+      # every pair of numbers it prints later is unattributable.
+      #
+      # So both apps mutate the window through the API that already works, and
+      # the verifier fails its own control when it cannot see the mutation. A
+      # run where the harness reads the same geometry either side of a resize
+      # has not measured the engine's `outerWidth`; it has measured a window
+      # that never moved, or an instrument pointed at the wrong one.
+      #
+      # Last in the lane and `if: always()`, which is both halves of one rule.
+      # A probe must not fail a lane -- these verifiers exit non-zero only when
+      # a control fails, never for a reading. And a lane must not fail a probe,
+      # which is what the gate buys: a suite ahead of this going red for
+      # unrelated reasons once skipped the probe behind it and cost a whole
+      # round for a step that could not have made the lane worse.
+      #
+      # The two probes are separate steps and separate apps. The geometry app
+      # is written never to close, so if the first step fails to reap it its
+      # window is still up when the second begins -- which is why they search
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
+      # step is the unit of the annotation budget: 12 report lines each, three
+      # annotations of the eight annotate.sh will pack.
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/parse.sh test/neutrinostdgeom.cmd
+          bash test/neutrinostdgeom.cmd > ~/stdgeom-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh geom ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
+          # The tree this step started, and only that. Never a pattern: this
+          # step's own command line carries the app's name, and a pkill -f
+          # matching it takes the shell running it down too.
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdgeom.log
+          bash test/annotate.sh macos-stdgeom ~/stdgeom.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/parse.sh test/neutrinostddoc.cmd
+          bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh doc ~/screenshots > ~/stddoc.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stddoc.log
+          bash test/annotate.sh macos-stddoc ~/stddoc.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # Round 2. Whether the standard window verbs do anything and can be
+      # taken over if they do not, and whether `neutrino.theme` is redundant
+      # with CSS. Round 1 is what earns these their place: it said the
+      # recording loop keeps up on every lane, that the size arithmetic agrees
+      # with the one engine that reports its own outer size, and -- on macOS --
+      # that the file this platform reads titles through was being written
+      # wrong. Stacking these on an unvalidated instrument would have made one
+      # red cost four readings instead of one.
+      #
+      # The window probe's own control is the phase order: the launcher's API
+      # is exercised *after* the four native calls, because "resizeTo did
+      # nothing" and "the window stopped responding" are the same reading
+      # otherwise. The theme probe's is a colour keyword no engine can resolve,
+      # so that "unsupported" is distinguishable from a value -- and this round
+      # deliberately does not flip the desktop palette, so it reports what each
+      # engine says and settles nothing about where the value came from.
+      - if: always()
+        timeout-minutes: 20
+        run: |
+          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/parse.sh test/neutrinostdwin.cmd
+          bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh win ~/screenshots > ~/stdwin.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdwin.log
+          bash test/annotate.sh macos-stdwin ~/stdwin.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+          bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh theme ~/screenshots > ~/stdtheme.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdtheme.log
+          bash test/annotate.sh macos-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
