@@ -23,4 +23,12 @@
 /test/neutrinowarm
 /test/neutrinoload.cmd
 /test/neutrinoload
+/test/neutrinostdgeom.cmd
+/test/neutrinostdgeom
+/test/neutrinostddoc.cmd
+/test/neutrinostddoc
+/test/neutrinostdwin.cmd
+/test/neutrinostdwin
+/test/neutrinostdtheme.cmd
+/test/neutrinostdtheme
 /_site

@@ -110,6 +110,44 @@ for nt_mark in CONFIG_START CONFIG_END; do
 done
 echo "  PASS: the config sentinels build.sh stamps between are both there"
 
+# The names jsc.exe will not let an app use.
+#
+# node parses this file and so does every engine but one. JScript.NET is typed,
+# and its reserved words include the CLR's type aliases -- `short`, `int`,
+# `long`, `char`, `float`, `boolean` and the rest -- so an app declaring `var
+# short` is valid JavaScript everywhere, parses here, and fails to compile on
+# the one platform that compiles it. What that looks like from outside is a
+# Windows lane whose app never opens a window, four minutes of a verifier
+# waiting for one, and no statement anywhere about why.
+#
+# Measured, at the cost of a round: `var short = ...` in a probe app took the
+# windows-content lane down and said only "no window from 'neutrinostdwin'
+# within 240s".
+#
+# Declarations only. Property access is a separate hazard with a separate
+# answer -- webview.cmd quotes "close" for it and says why beside the line --
+# and widening this to every occurrence of these words would refuse the prose
+# that explains them, which is how the sentinel census went red on its own
+# first run.
+NT_JSC_RESERVED='abstract|boolean|byte|char|class|const|debugger|decimal|double'
+NT_JSC_RESERVED="$NT_JSC_RESERVED|enum|export|extends|final|float|goto|implements"
+NT_JSC_RESERVED="$NT_JSC_RESERVED|import|int|interface|internal|long|native|package"
+NT_JSC_RESERVED="$NT_JSC_RESERVED|private|protected|public|sbyte|short|static|super"
+NT_JSC_RESERVED="$NT_JSC_RESERVED|synchronized|throws|transient|uint|ulong|ushort|volatile"
+
+# The app's own source, and not the launcher's: the range between the sentinels
+# build.sh splices into. An unbuilt template has nothing in there and passes.
+sed -n '/\/\/#RUNWEB_START/,/\/\/#RUNWEB_END/p' "$TARGET" > "$WORK/app.js"
+NT_BAD="$(grep -nE "\b(var|function)[[:space:]]+($NT_JSC_RESERVED)\b" "$WORK/app.js" || true)"
+if [ -n "$NT_BAD" ]; then
+    echo "parse.sh: the app declares a name jsc.exe reserves" >&2
+    printf '%s\n' "$NT_BAD" | sed 's/^/          /' >&2
+    echo "          valid JavaScript everywhere else; on Windows the app will not compile" >&2
+    echo "          and the lane reports only that no window ever appeared" >&2
+    exit 1
+fi
+echo "  PASS: the app declares no name jsc.exe reserves"
+
 # The same hazard, everywhere else in the file, caught by its consequence
 # rather than by its shape. Everything from the first line to the <script> tag
 # is one block comment, and the shell region lives inside it -- so a sed
