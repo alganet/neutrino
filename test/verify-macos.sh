@@ -42,7 +42,20 @@ report_launcher() {
     fi
     echo "report: osascript running: $(pgrep -x osascript 2>/dev/null | tr '\n' ' ' || true)"
 }
-read_status_geometry() { sed -n '2p' "$STATUS_FILE" 2>/dev/null || echo ""; }
+# Line 4, the content size, and not line 2, the frame.
+#
+# `resizeTo` sizes the content on every lane, so the content is what an
+# assertion about it has to read. While this read line 2 the numbers it
+# compared were a frame against a content request, and the fifty-pixel
+# tolerance below was what let the two look equal -- a 32 px title bar fits
+# inside fifty with room to spare, so this assertion passed both before and
+# after the driver changed which one it sets, and would have gone on passing if
+# the driver had got it backwards.
+#
+# Line 2 is still written and still read by the frame reporter above; nothing
+# here says the frame is uninteresting, only that it is not what `resizeTo`
+# was asked for.
+read_status_geometry() { sed -n '4p' "$STATUS_FILE" 2>/dev/null || echo ""; }
 read_status_position() { sed -n '3p' "$STATUS_FILE" 2>/dev/null || echo ""; }
 
 wait_for_title() {
@@ -77,7 +90,7 @@ assert_title() {
 }
 
 assert_geometry() {
-    local expected_w="$1" expected_h="$2" tolerance="${3:-50}"
+    local expected_w="$1" expected_h="$2" tolerance="${3:-0}"
     local geom actual_w actual_h
     geom=$(read_status_geometry)
     actual_w="${geom%x*}"; actual_h="${geom#*x}"
@@ -89,9 +102,9 @@ assert_geometry() {
     local dw=$(( actual_w - expected_w )); dw=${dw#-}
     local dh=$(( actual_h - expected_h )); dh=${dh#-}
     if [ "$dw" -le "$tolerance" ] && [ "$dh" -le "$tolerance" ]; then
-        echo "  PASS: geometry ~= ${expected_w}x${expected_h} (actual: ${actual_w}x${actual_h})"
+        echo "  PASS: content = ${actual_w}x${actual_h} (asked ${expected_w}x${expected_h}, tolerance ${tolerance})"
     else
-        echo "  FAIL: geometry expected ~= ${expected_w}x${expected_h} actual=${actual_w}x${actual_h}"
+        echo "  FAIL: content expected ${expected_w}x${expected_h} actual=${actual_w}x${actual_h}, off by ${dw}x${dh} (tolerance ${tolerance})"
         FAILURES=$((FAILURES + 1))
     fi
 }

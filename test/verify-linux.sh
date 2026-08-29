@@ -45,8 +45,21 @@ assert_title() {
     fi
 }
 
+# The requested size, exactly, unless a caller asks for slack.
+#
+# xdotool's WIDTH/HEIGHT is the client size -- the same quantity the standards
+# probe calls `inner`, read with the same tool on these same four lanes -- and
+# every driver they run sizes the content: the probe asked for 640x480 and the
+# window reported native inner 640x480 on GTK and on Qt, to the pixel.
+#
+# So the fifty pixels this allowed were never covering a difference between
+# toolkits. They were covering the fact that nothing had measured either side,
+# and fifty admits a whole title bar -- which is exactly the difference macOS
+# carried, unnoticed, for as long as its driver sized the frame while every
+# other sized the content. Zero is what turns a drift in either direction into
+# a failure instead of a shrug.
 assert_geometry() {
-    local wid="$1" expected_w="$2" expected_h="$3" tolerance="${4:-50}"
+    local wid="$1" expected_w="$2" expected_h="$3" tolerance="${4:-0}"
     local info size actual_w actual_h
     info=$(xdotool getwindowgeometry "$wid" 2>/dev/null) || true
     size=$(echo "$info" | grep -oP 'Geometry: \K[0-9]+x[0-9]+') || true
@@ -54,9 +67,9 @@ assert_geometry() {
     local dw=$(( actual_w - expected_w )); dw=${dw#-}
     local dh=$(( actual_h - expected_h )); dh=${dh#-}
     if [ "$dw" -le "$tolerance" ] && [ "$dh" -le "$tolerance" ]; then
-        echo "  PASS: geometry ~= ${expected_w}x${expected_h} (actual: ${actual_w}x${actual_h})"
+        echo "  PASS: content = ${actual_w}x${actual_h} (asked ${expected_w}x${expected_h}, tolerance ${tolerance})"
     else
-        echo "  FAIL: geometry expected ~= ${expected_w}x${expected_h} actual=${actual_w}x${actual_h}"
+        echo "  FAIL: content expected ${expected_w}x${expected_h} actual=${actual_w}x${actual_h}, off by ${dw}x${dh} (tolerance ${tolerance})"
         FAILURES=$((FAILURES + 1))
     fi
 }
