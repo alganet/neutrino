@@ -189,8 +189,10 @@ Two consequences worth knowing. `close()` does not run `beforeunload`, and it
 does not set `window.closed` — the engines already disagree about that flag,
 three setting it true while the window stays up and one leaving it false, and
 there is no value here that would be true everywhere. And `resizeTo` sizes the
-**content area**, not the frame: `resizeTo(800, 600)` leaves `innerWidth` at 800
-and `outerWidth` at whatever the decoration adds.
+**content area**, not the frame, on every platform: `resizeTo(800, 600)` leaves
+`innerWidth` at 800 and `outerWidth` at whatever the decoration adds. That is
+also what `--size` has always meant, so a window opened at `900x600` and one
+resized to `900x600` are the same window.
 
 ```javascript
 // No standard spelling, so these keep theirs.

@@ -3525,10 +3525,91 @@ exit $?;:<<'//</script></body></html>' #-->
                      * Cocoa's corner was the only one that leaked, and this
                      * driver had already decided not to speak it.
                      */
+                    var target = this.frameSizeForContent(win, w, h);
                     var top = this.toTopLeftY(frame.origin.y, frame.size.height);
                     win.setFrameDisplay(
-                        dollar.NSMakeRect(frame.origin.x, this.toMacY(top, h), w, h), true);
+                        dollar.NSMakeRect(frame.origin.x,
+                            this.toMacY(top, target.height),
+                            target.width, target.height), true);
                     this.writeStatus(win);
+                },
+
+                /*
+                 * The content size a caller asked for, in the frame size AppKit
+                 * needs to produce it.
+                 *
+                 * This driver had already decided what a size means, at the one
+                 * place it opens a window:
+                 * `initWithContentRectStyleMaskBackingDefer` takes a **content**
+                 * rect, so `--size 900x600` gives a 900x600 web view inside a
+                 * frame 32 px taller. `resize` then set the frame to the numbers
+                 * it was handed, so one app asking for one size got two
+                 * different windows depending on when it asked -- 900x600 of
+                 * content at launch and 900x568 afterwards. Measured:
+                 * `resize(640,480)` produced `inner=640x448 outer=640x480`,
+                 * against `640x480` of content on all three other lanes.
+                 *
+                 * So this is not a change of definition, it is the resize path
+                 * catching up with the creation path beside it, and with Windows
+                 * (`ClientSize`), GTK (`gtk_window_resize`) and QML
+                 * (`root.width`/`height`), which all size content already.
+                 * Content is also the only definition a page can check for
+                 * itself: `innerWidth === w` after the call.
+                 *
+                 * `frameRectForContentRect:` is AppKit's own conversion and
+                 * accounts for the chrome this window actually has rather than a
+                 * constant this file would have to keep true. If the bridge
+                 * cannot answer, the current frame and content view give the
+                 * same difference by subtraction -- exact as long as the chrome
+                 * does not change between the two reads, which is the same
+                 * assumption the first route makes and states less openly. If
+                 * neither answers, sizing the frame is what this did for its
+                 * whole life and is better than refusing to resize.
+                 */
+                frameSizeForContent: function (win, w, h) {
+                    try {
+                        var r = win.frameRectForContentRect(dollar.NSMakeRect(0, 0, w, h));
+                        var fw = Math.round(r.size.width);
+                        var fh = Math.round(r.size.height);
+                        if (fw > 0 && fh > 0) {
+                            return { width: fw, height: fh };
+                        }
+                    } catch (e) {
+                        self.noteOnce("frameRectForContentRect did not answer: " + e);
+                    }
+                    try {
+                        var frame = win.frame;
+                        var cv = win.contentView.frame;
+                        var dw = Math.round(frame.size.width - cv.size.width);
+                        var dh = Math.round(frame.size.height - cv.size.height);
+                        if (dw >= 0 && dh >= 0) {
+                            return { width: w + dw, height: h + dh };
+                        }
+                    } catch (e2) {
+                        self.noteOnce("could not measure the window chrome: " + e2);
+                    }
+                    self.noteOnce("sizing the frame instead of the content; " +
+                        "the chrome is unmeasurable on this window");
+                    return { width: w, height: h };
+                },
+
+                // The content size, by the same route writeStatus reads it --
+                // the WKWebView is this window's contentView, so its frame is
+                // what the page sees as innerWidth/innerHeight.
+                contentSize: function (win) {
+                    try {
+                        var cv = win.contentView.frame;
+                        return {
+                            width: Math.round(cv.size.width),
+                            height: Math.round(cv.size.height)
+                        };
+                    } catch (_) {
+                        var f = win.frame;
+                        return {
+                            width: Math.round(f.size.width),
+                            height: Math.round(f.size.height)
+                        };
+                    }
                 },
                 move: function (win, x, y) {
                     var frame = win.frame;
@@ -3536,11 +3617,23 @@ exit $?;:<<'//</script></body></html>' #-->
                     win.setFrameDisplay(dollar.NSMakeRect(x, macY, frame.size.width, frame.size.height), true);
                     this.writeStatus(win);
                 },
+                /*
+                 * Two units in one struct, on purpose: each half is in the units
+                 * of the verb that consumes it. `resizeBy` adds its delta to
+                 * `width`/`height` and hands the sum to `resize`, which now
+                 * speaks content; `moveBy` adds to `x`/`y` and hands the sum to
+                 * `move`, which speaks the frame's top-left. Reporting the frame
+                 * size here after `resize` switched to content would have made
+                 * every `resizeBy` on this lane wrong by the height of the title
+                 * bar, and wrong cumulatively -- each call shrinking the window
+                 * by the chrome it double-counted.
+                 */
                 getBounds: function (win) {
                     var f = win.frame;
+                    var size = this.contentSize(win);
                     return {
-                        width: Math.round(f.size.width),
-                        height: Math.round(f.size.height),
+                        width: size.width,
+                        height: size.height,
                         x: Math.round(f.origin.x),
                         y: Math.round(this.toTopLeftY(f.origin.y, f.size.height))
                     };
