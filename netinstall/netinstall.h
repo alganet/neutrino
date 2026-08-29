@@ -35,6 +35,14 @@
 #define NT_DEFAULT_STEM "netinstall"
 #define NT_MAX_PAYLOAD (16 * 1024 * 1024)
 
+/*
+ * What a downloader appended to a name that was already on disk, kept so the
+ * caller can say which file it is actually running. Bounded well under the
+ * shapes anyone produces -- "(1)", " (1)", " copy", " 2" -- because a longer
+ * tail is not decoration and is left on the name to fail parsing as it should.
+ */
+#define NT_DECOR_MAX 16
+
 typedef struct {
     char spec[NT_SPEC_MAX];
     char app[NT_SPEC_MAX];
@@ -43,6 +51,8 @@ typedef struct {
     char host[NT_HOST_MAX];
     char token[NT_TOKEN_MAX];
     char url[NT_PATH_MAX];
+    /* Empty unless the name carried a downloader's suffix. See nt_trim_decor. */
+    char decor[NT_DECOR_MAX];
 } nt_spec;
 
 /* `why`, when not NULL, is filled with the reason a token was refused. */
