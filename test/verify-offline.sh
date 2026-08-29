@@ -234,6 +234,7 @@ hits_since() {
 run_phase() {
     local label="$1" app="$2"
     local mark ext_mark ready="" title="" deadline hits="" shape n waited app_pid handled browsers
+    local baseline_pids="" preexisting="" pid
 
     # A phase may not start while the last one's window is still on the screen.
     # This is a precondition and not tidiness: round 1's kde reading was the
@@ -257,6 +258,15 @@ run_phase() {
     [ -n "$mark" ] || mark=0
     ext_mark="$(wc -l < "$EXTERNAL_LOG" 2>/dev/null | tr -d ' ')"
     [ -n "$ext_mark" ] || ext_mark=0
+
+    # Which browsers were already up, before this phase launches anything. Read
+    # here and compared after, so what the phase reports is what it started.
+    baseline_pids=""
+    for shape in $BROWSERS; do
+        for pid in $(pgrep -x "$shape" 2>/dev/null); do
+            baseline_pids="$baseline_pids $pid"
+        done
+    done
 
     bash "$app" > "$HOME/offline-$label.log" 2>&1 &
     app_pid=$!
@@ -339,13 +349,39 @@ run_phase() {
     # Where there is no shim, a browser having started is the reading the
     # handler log would have been. It is sampled before the phase's cleanup,
     # because the cleanup is what takes it away.
+    #
+    # Against the baseline taken before the launch, not against the machine.
+    # The question is whether this tier *started* a browser; what was asked was
+    # whether one is *running*, which the runner can answer for you -- a firefox
+    # that was already up failed this on Windows without the app opening
+    # anything. Process ids, because a name cannot tell the two apart.
     if [ -n "$BROWSERS" ]; then
         browsers=""
+        preexisting=""
         for shape in $BROWSERS; do
-            pgrep -x "$shape" >/dev/null 2>&1 && browsers="$browsers $shape"
+            for pid in $(pgrep -x "$shape" 2>/dev/null); do
+                case " $baseline_pids " in
+                    *" $pid "*)
+                        case " $preexisting " in
+                            *" $shape "*) ;;
+                            *) preexisting="$preexisting $shape" ;;
+                        esac
+                        ;;
+                    *)
+                        case " $browsers " in
+                            *" $shape "*) ;;
+                            *) browsers="$browsers $shape" ;;
+                        esac
+                        ;;
+                esac
+            done
         done
         eval "BROWSERS_${label}=\"\${browsers:-}\""
-        say "$label browsers running:${browsers:- none}"
+        say "$label browsers started:${browsers:- none}"
+        # Carried, not asserted: one that was up before this phase is the
+        # machine's business, and naming it stops the line above being read as
+        # "no browser was anywhere".
+        [ -n "$preexisting" ] && say "$label browsers already up, not this phase's:$preexisting"
     fi
 
     kill "$app_pid" 2>/dev/null || true

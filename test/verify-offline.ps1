@@ -145,6 +145,16 @@ $browsersOf = @{}
 
 function Run-Phase($label, $app) {
     Stop-Apps
+    # Which browsers were already up before this phase launched anything. The
+    # question below is whether the offline tier *started* a browser, and what
+    # was asked was whether one is *running* -- a different question, and one
+    # the runner can answer for you: a firefox nobody here launched was enough
+    # to fail the assertion. Taken by process id rather than by name, because a
+    # name cannot tell the browser this phase opened from the one that was
+    # already on screen.
+    $baselineBrowsers = @(Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $browserNames -contains $_.ProcessName } |
+        ForEach-Object { $_.Id })
     $mark = 0
     if (Test-Path $serverLog) { $mark = @(Get-Content $serverLog -ErrorAction SilentlyContinue).Count }
 
@@ -215,11 +225,20 @@ function Run-Phase($label, $app) {
     # There is no handler to instrument on this lane, so a browser having
     # started is the reading the handler's log would have been. Sampled before
     # the cleanup, because the cleanup is what takes it away.
+    $preexisting = @(Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $browserNames -contains $_.ProcessName -and $baselineBrowsers -contains $_.Id } |
+        ForEach-Object { $_.ProcessName } | Sort-Object -Unique)
     $running = @(Get-Process -ErrorAction SilentlyContinue |
-        Where-Object { $browserNames -contains $_.ProcessName } |
+        Where-Object { $browserNames -contains $_.ProcessName -and $baselineBrowsers -notcontains $_.Id } |
         ForEach-Object { $_.ProcessName } | Sort-Object -Unique)
     $browsersOf[$label] = $running
-    Say ("$label browsers running: " + $(if ($running.Count) { $running -join " " } else { "none" }))
+    Say ("$label browsers started: " + $(if ($running.Count) { $running -join " " } else { "none" }))
+    # Carried, not asserted: a browser that was up before this phase is the
+    # runner's business, and saying so is what stops the line above being read
+    # as "no browser was anywhere on the machine".
+    if ($preexisting.Count) {
+        Say ("$label browsers already up, not this phase's: " + ($preexisting -join " "))
+    }
 
     Stop-Apps
     Stop-Browsers

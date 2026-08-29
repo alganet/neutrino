@@ -349,13 +349,34 @@ function Find-Sample($record, $title) {
     return $null
 }
 
+# A title that was never observed and a step that never ran are different
+# readings, and this used to report both as the second one.
+#
+# The record starts when the sequence loop starts, which is after the window
+# exists and after `00-initial` is encoded -- about 1.4 s on a busy runner. An
+# app that got through two titles inside that gap leaves a record whose *first*
+# entry is already past the one being asked about, and "never observed 'STEP0'"
+# then reads as the app having failed to do something it did before anyone was
+# looking. So when the missing title is behind the first thing recorded, this
+# says which of the two it is. The app now holds three seconds before its first
+# step, so the case should not arise; if it does, the sentence names the
+# instrument instead of accusing the app.
 function Assert-Reached($record, $title) {
     $s = Find-Sample $record $title
     if ($s) {
         Write-Host "  PASS: reached '$title' at $($s.At)ms"
     } else {
-        Write-Host "  FAIL: never observed the title '$title'"
-        Write-Host "::warning title=windows-sequence::never observed the title '$title'"
+        $first = $null
+        if ($record -and $record.Samples -and $record.Samples.Count -gt 0) {
+            $first = $record.Samples[0]
+        }
+        if ($first) {
+            Write-Host "  FAIL: never observed the title '$title'; the record opens on '$($first.Title)' at $($first.At)ms, so the watch may have started after this step"
+            Write-Host "::warning title=windows-sequence::never observed '$title'; record opens on '$($first.Title)' at $($first.At)ms"
+        } else {
+            Write-Host "  FAIL: never observed the title '$title'; the record is empty"
+            Write-Host "::warning title=windows-sequence::never observed the title '$title'"
+        }
         $script:Failures++
     }
     return $s
