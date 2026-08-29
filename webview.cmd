@@ -2558,20 +2558,61 @@ exit $?;:<<'//</script></body></html>' #-->
         windowsDarkSurfaces: "background:#202020,foreground:#ffffff," +
             "base:#2b2b2b,text:#ffffff,border:#3d3d3d",
 
+        /*
+         * Where that scheme is read from, and why the obvious spelling of it
+         * was wrong for as long as it existed.
+         *
+         * `eval("Microsoft")` resolves nothing. The import block at the top of
+         * the jsc region brings in `System` and five namespaces under it and
+         * nothing else, so the name is not in scope, the read throws, and the
+         * catch turns it into `true` -- a light desktop reported on a dark one.
+         * Not an error and not empty, just wrong, and in exactly the direction
+         * that paints a white app on a dark machine. Every runner this has
+         * built on is light, so nothing that ran here could ever have caught
+         * it; flipping the desktop is what did, and the tell was that
+         * `prefers-color-scheme` followed the registry while every colour this
+         * file reports stayed at its light value.
+         *
+         * The type is reached by name instead. `Registry` is in mscorlib, so
+         * `System.Type.GetType` resolves it with no import to add, through the
+         * `eval("System")` every other late-bound call here already uses, and
+         * `GetValue` has one public static overload so `GetMethod` needs no
+         * signature to pick it out. The same reflected shape the WebView2 calls
+         * below are built from.
+         */
         windowsAppsUseLightTheme: function () {
             try {
-                var registry = eval("Microsoft").Win32.Registry;
-                var value = registry.GetValue(
+                var SystemRef = eval("System");
+                var type = SystemRef.Type.GetType("Microsoft.Win32.Registry");
+                if (!type) {
+                    this.noteOnce("no Microsoft.Win32.Registry in this runtime; " +
+                        "taking the desktop for light");
+                    return true;
+                }
+                var method = type.GetMethod("GetValue");
+                if (!method) {
+                    this.noteOnce("Microsoft.Win32.Registry carries no GetValue here; " +
+                        "taking the desktop for light");
+                    return true;
+                }
+                var value = method.Invoke(null, [
                     "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\" +
                         "CurrentVersion\\Themes\\Personalize",
-                    "AppsUseLightTheme", null);
+                    "AppsUseLightTheme", null]);
                 // Absent is light, and that is Windows' own default rather than
                 // a guess: the value is written when the setting is changed, so
                 // a machine that has never been switched to dark does not carry
                 // it at all.
                 if (value === null || value === undefined) {
+                    this.noteOnce("no AppsUseLightTheme on this machine; " +
+                        "taking Windows' own default of light");
                     return true;
                 }
+                // Once per distinct value, so a flip leaves two lines and a
+                // steady desktop leaves one. This is the reading the surface
+                // override turns on, and it was unattributable while the only
+                // record of it was the colour that came out the other end.
+                this.noteOnce("AppsUseLightTheme=" + value);
                 return Number(value) !== 0;
             } catch (e) {
                 this.noteOnce("could not read the app theme setting: " + e);
