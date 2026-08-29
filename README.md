@@ -147,26 +147,53 @@ words that only the runtime knows.
 
 ---
 
-## IPC API
+## The API
 
-The `window.neutrino` API is injected into the webview on all platforms, enabling web content to control the native window:
+Your app moves its window with the spelling it would use in a browser.
 
 ```javascript
 var win = eval("window");
 
-// Window management
+win.resizeTo(800, 600);   // and resizeBy(dw, dh)
+win.moveTo(100, 50);      // and moveBy(dx, dy)
+win.close();
+```
+
+These are the CSSOM View methods, written over in the webview at document start.
+They are not there because the engine provides them. **Measured on WebKitGTK,
+QtWebEngine, WKWebView and WebView2: all five exist, all five are writable and
+configurable properties of `window`, and all five do nothing.** A browser
+refuses to resize or move a window a script did not open — it protects a user
+from a page moving a tab they opened for something else — and it reports no
+error for the refusal, so an app calling the standard spelling gets silence.
+
+Here the window and the page are one artifact, launched from a file the user
+ran. There is no third party whose window is at risk, so neutrino does not
+honour that restriction. What it replaces is the silence; the call emits the
+same record the launcher has always used and meets the same checks on the way
+in.
+
+Two consequences worth knowing. `close()` does not run `beforeunload`, and it
+does not set `window.closed` — the engines already disagree about that flag,
+three setting it true while the window stays up and one leaving it false, and
+there is no value here that would be true everywhere. And `resizeTo` sizes the
+**content area**, not the frame: `resizeTo(800, 600)` leaves `innerWidth` at 800
+and `outerWidth` at whatever the decoration adds.
+
+```javascript
+// No standard spelling, so these keep theirs.
 win.neutrino.window.setTitle("My App");
-win.neutrino.window.resize(800, 600);
-win.neutrino.window.move(100, 50);
-
-// Shell integration
 win.neutrino.shell.openExternal("https://example.com");
-
-// Low-level message passing
 win.neutrino.send("actionName", { key: "value" });
 ```
 
 All coordinates use top-left origin on every platform (macOS coordinates are normalized internally).
+
+**Do not read the window's geometry back from the engine.** `outerWidth` and
+`outerHeight` report the frame truthfully on QtWebEngine only — WebKitGTK and
+WebView2 return the content size, and WKWebView returns `0`. `screenX` and
+`screenY` are truthful on WebView2 only. `innerWidth` and `innerHeight` are
+correct everywhere and are what `resizeTo` sets.
 
 ### Following the desktop
 
@@ -286,7 +313,7 @@ bash test/neutrinotest.cmd &
 bash test/verify-linux.sh screenshots/
 ```
 
-Tests exercise `setTitle`, `resize`, and `move` with external scripts that poll window state and assert expected values. CI runs these automatically on all four platforms.
+Tests exercise `setTitle`, `window.resizeTo` and `window.moveTo` with external scripts that poll window state and assert expected values. CI runs these automatically on all four platforms.
 
 ---
 

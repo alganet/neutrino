@@ -453,17 +453,22 @@ verdict() {
 }
 
 analyse_win() {
-    local st page inner pos pinner ppos v
+    local st page inner pos pinner ppos v moved_any
     note "win sequence: $(titles)"
 
-    for st in EXIST DESC OVR OPEN APPREGION; do
+    for st in EXIST DESC OVR OPEN APPREGION GONE; do
         page="$(field 2 "^STD-WIN-$st-SELF")"
         [ -n "$page" ] && note "self $st ${page#STD-WIN-$st-SELF }"
     done
 
-    # The four in doubt. Each prints what the page said, what the window did,
-    # and the word that separates a refusal from a no-op -- which are the same
-    # reading from inside the document and different ones from out here.
+    # The four. Each prints what the page said, what the window did, and the
+    # word that separates a refusal from a no-op -- which are the same reading
+    # from inside the document and different ones from out here.
+    #
+    # Before the launcher wrote over these, all four read NOOP on all four
+    # engines. They are the shipped API now, so a NOOP here is a regression and
+    # the control below says so.
+    moved_any=0
     for st in RT RZ MT MV; do
         page="$(field 2 "^STD-WIN-$st-PAIR")"
         if [ -z "$page" ]; then
@@ -476,6 +481,7 @@ analyse_win() {
             RT|RZ) v="$(verdict "$pinner" "$inner")" ;;
             *)     v="$(verdict "$ppos" "$pos")" ;;
         esac
+        [ "$v" = EFFECTIVE ] && moved_any=$((moved_any + 1))
         note "pair $st page=[${page#STD-WIN-$st-PAIR }] native $pinner@$ppos -> $inner@$pos verdict=$v"
     done
 
@@ -502,15 +508,16 @@ analyse_win() {
         fail "STD-WIN-CLOSE-PAIR was never observed"
     fi
 
-    # Control one: the window was movable the whole time. Without it the four
-    # NOOPs above are equally explained by a window that stopped responding.
-    inner="$(field 3 '^STD-WIN-CTL-PAIR')"; pos="$(field 4 '^STD-WIN-CTL-PAIR')"
-    pinner="$(prev_field 3 '^STD-WIN-CTL-PAIR')"; ppos="$(prev_field 4 '^STD-WIN-CTL-PAIR')"
-    page="$(field 2 '^STD-WIN-CTL-PAIR')"
-    if [ -n "$page" ] && { [ "$pinner" != "$inner" ] || [ "$ppos" != "$pos" ]; }; then
-        note "control api-still-works $pinner@$ppos -> $inner@$pos verdict=MOVED"
+    # Control one, and it moved with the thing it is about. It used to be a
+    # separate call known to work -- `neutrino.window.resize`, which no longer
+    # exists -- there to tell "the engine refused" from "the window is dead".
+    # Those are now one call, so the question is asked of it directly: a run in
+    # which none of the four moved the window is a dead window or an override
+    # that did not take, and both are regressions rather than readings.
+    if [ "${moved_any:-0}" -gt 0 ]; then
+        note "control the standard spellings move the window: $moved_any/4 EFFECTIVE"
     else
-        fail "control api-still-works $pinner@$ppos -> $inner@$pos; the window did not move for the API either, so nothing above is attributable"
+        fail "control none of resizeTo/resizeBy/moveTo/moveBy moved the window; either the override did not take or the window is dead, and this run measured neither"
     fi
 
     # Control two: the descriptors mean something. A reader that answers the

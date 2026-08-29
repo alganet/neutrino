@@ -217,17 +217,22 @@ function Analyse-Win($rows) {
     foreach ($r in $rows) { $names += ($r.Title -split ' ')[0] }
     Note "win sequence: $($names -join ' ')"
 
-    foreach ($st in @("EXIST", "DESC", "OVR", "OPEN", "APPREGION")) {
+    foreach ($st in @("EXIST", "DESC", "OVR", "OPEN", "APPREGION", "GONE")) {
         $r = Find-Row $rows "STD-WIN-$st-SELF"
         if ($r) { Note "self $st $($r.Title -replace "^STD-WIN-$st-SELF ",'')" }
     }
 
+    # The four. Before the launcher wrote over these, all four read NOOP on all
+    # four engines. They are the shipped API now, so a NOOP here is a regression
+    # and the control below says so.
+    $movedAny = 0
     foreach ($st in @("RT", "RZ", "MT", "MV")) {
         $r = Find-Row $rows "STD-WIN-$st-PAIR"
         if (-not $r) { Fail "STD-WIN-$st-PAIR was never observed"; continue }
         $p = Prev-Row $rows "STD-WIN-$st-PAIR"
         if ($st -eq "RT" -or $st -eq "RZ") { $v = Verdict $p.Inner $r.Inner }
         else { $v = Verdict $p.Pos $r.Pos }
+        if ($v -eq "EFFECTIVE") { $movedAny++ }
         Note "pair $st page=[$($r.Title -replace "^STD-WIN-$st-PAIR ",'')] native $($p.Inner)@$($p.Pos) -> $($r.Inner)@$($r.Pos) verdict=$v"
     }
 
@@ -247,13 +252,16 @@ function Analyse-Win($rows) {
         else { Note "pair CLOSE page=[no title after the call] native=GONE" }
     } else { Fail "STD-WIN-CLOSE-PAIR was never observed" }
 
-    # Control one: the window was movable the whole time.
-    $ctl = Find-Row $rows "STD-WIN-CTL-PAIR"
-    $pc = Prev-Row $rows "STD-WIN-CTL-PAIR"
-    if ($ctl -and $pc -and ($pc.Inner -ne $ctl.Inner -or $pc.Pos -ne $ctl.Pos)) {
-        Note "control api-still-works $($pc.Inner)@$($pc.Pos) -> $($ctl.Inner)@$($ctl.Pos) verdict=MOVED"
+    # Control one, and it moved with the thing it is about. It used to be a
+    # separate call known to work -- `neutrino.window.resize`, which no longer
+    # exists -- there to tell "the engine refused" from "the window is dead".
+    # Those are now one call, so the question is asked of it directly: a run in
+    # which none of the four moved the window is a dead window or an override
+    # that did not take, and both are regressions rather than readings.
+    if ($movedAny -gt 0) {
+        Note "control the standard spellings move the window: $movedAny/4 EFFECTIVE"
     } else {
-        Fail "control api-still-works; the window did not move for the API either, so nothing above is attributable"
+        Fail "control none of resizeTo/resizeBy/moveTo/moveBy moved the window; either the override did not take or the window is dead, and this run measured neither"
     }
 
     # Control two: the descriptors mean something. A reader that answers the
