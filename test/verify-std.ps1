@@ -332,6 +332,20 @@ function Analyse-Geom($rows) {
     if ($c) { Note "pair C page=[$($c.Title -replace '^STD-GEOM-C-PAIR ','')] native inner=$($c.Inner) outer=$($c.Outer) pos=$($c.Pos)" }
     if ($r) { Note "self $($r.Title -replace '^STD-GEOM-R-SELF ','')" }
 
+    # The one -SELF reading this file asserts; the shell verifier carries the
+    # reasoning. In short: whether the API was in scope at the app's own first
+    # statement is the one question no instrument outside the document can be
+    # pointed at, and pages/demo.js stopped polling for the API on the strength
+    # of the answer.
+    if (-not $r) {
+        Fail "control STD-GEOM-R-SELF was never observed; readiness went unmeasured this run"
+    } elseif ($r.Title -match 'nt0=yes') {
+        Note "control the API was in scope at the app's first statement (nt0=yes)"
+    } else {
+        $seen = if ($r.Title -match 'nt0=(\S+)') { $Matches[1] } else { '<absent>' }
+        Fail "control nt0=$seen; window.neutrino was not in scope at the app's first statement, and pages/demo.js no longer waits for it"
+    }
+
     # This driver sets ClientSize where macOS sets the outer frame and the two
     # GTK lanes set the toplevel. The pair of numbers here is the half of that
     # disagreement this platform contributes.

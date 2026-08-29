@@ -149,6 +149,18 @@ words that only the runtime knows.
 
 ## The API
 
+`window.neutrino` is in scope before your app's first statement. You do not need
+to poll for it, wait for `DOMContentLoaded`, or listen for a ready event — there
+isn't one. Measured on every lane and asserted on every push: WebKitGTK under
+gjs, cjs and PyGObject, QtWebEngine, WKWebView and WebView2 all have the API in
+scope when the first line of the app script runs.
+
+`document.readyState` is a separate question and it is *not* uniform — it reads
+`interactive` on WebKit, `complete` on QtWebEngine and `loading` on WebView2. If
+your script touches an element, put it after that element or wait for the
+document, exactly as you would in a browser. What you do not have to wait for is
+neutrino.
+
 Your app moves its window with the spelling it would use in a browser.
 
 ```javascript
