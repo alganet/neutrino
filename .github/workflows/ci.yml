@@ -294,6 +294,44 @@ jobs:
           cat ~/stdtheme.log
           bash test/annotate.sh gjs-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # Round 3: where each colour came from.
+      #
+      # The single-launch theme step above says what an engine reports and
+      # nothing about provenance, and that gap is not hypothetical. WebKit
+      # hardcodes Highlight one unit from Adwaita's accent, so on a default
+      # GNOME desktop it reads exactly like an engine following the palette --
+      # round 2 recorded it as doing so, and it does not. Flipped to
+      # Adwaita:dark the desktop's accent moved and Highlight did not.
+      #
+      # So this launches twice with the desktop flipped between and asks one
+      # question of each value: did it move. themeflip.sh owns the sequencing
+      # because two parts of it are easy to get wrong and invisible in YAML --
+      # the knob is cleared before it is set, each half, and the second half
+      # refuses to start while the first half's window is still up, since both
+      # answer to the same title prefix and a stale reading does not announce
+      # itself.
+      #
+      # The differential's middle control is what fails a lane whose knob does
+      # not work: better a red step that says the flip did not take than a
+      # green one reporting fifteen constants it never disturbed. Last in the
+      # lane and gated, so that costs its own reading and nothing else.
+      - if: always()
+        timeout-minutes: 25
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+          TEST_EXIT=0
+          bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots \
+            > ~/themediff.log 2>&1 || TEST_EXIT=$?
+          # The two halves' own logs go to the step log and not to the
+          # annotation: annotate reads one file, so a raw dump cannot crowd out
+          # the digest even though both carry the report: prefix.
+          cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
+          bash test/annotate.sh gjs-themediff ~/themediff.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -511,6 +549,44 @@ jobs:
           cat ~/stdtheme.log
           bash test/annotate.sh cjs-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # Round 3: where each colour came from.
+      #
+      # The single-launch theme step above says what an engine reports and
+      # nothing about provenance, and that gap is not hypothetical. WebKit
+      # hardcodes Highlight one unit from Adwaita's accent, so on a default
+      # GNOME desktop it reads exactly like an engine following the palette --
+      # round 2 recorded it as doing so, and it does not. Flipped to
+      # Adwaita:dark the desktop's accent moved and Highlight did not.
+      #
+      # So this launches twice with the desktop flipped between and asks one
+      # question of each value: did it move. themeflip.sh owns the sequencing
+      # because two parts of it are easy to get wrong and invisible in YAML --
+      # the knob is cleared before it is set, each half, and the second half
+      # refuses to start while the first half's window is still up, since both
+      # answer to the same title prefix and a stale reading does not announce
+      # itself.
+      #
+      # The differential's middle control is what fails a lane whose knob does
+      # not work: better a red step that says the flip did not take than a
+      # green one reporting fifteen constants it never disturbed. Last in the
+      # lane and gated, so that costs its own reading and nothing else.
+      - if: always()
+        timeout-minutes: 25
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+          TEST_EXIT=0
+          bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots \
+            > ~/themediff.log 2>&1 || TEST_EXIT=$?
+          # The two halves' own logs go to the step log and not to the
+          # annotation: annotate reads one file, so a raw dump cannot crowd out
+          # the digest even though both carry the report: prefix.
+          cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
+          bash test/annotate.sh cjs-themediff ~/themediff.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -721,6 +797,44 @@ jobs:
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdtheme.log
           bash test/annotate.sh pygobject-stdtheme ~/stdtheme.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # Round 3: where each colour came from.
+      #
+      # The single-launch theme step above says what an engine reports and
+      # nothing about provenance, and that gap is not hypothetical. WebKit
+      # hardcodes Highlight one unit from Adwaita's accent, so on a default
+      # GNOME desktop it reads exactly like an engine following the palette --
+      # round 2 recorded it as doing so, and it does not. Flipped to
+      # Adwaita:dark the desktop's accent moved and Highlight did not.
+      #
+      # So this launches twice with the desktop flipped between and asks one
+      # question of each value: did it move. themeflip.sh owns the sequencing
+      # because two parts of it are easy to get wrong and invisible in YAML --
+      # the knob is cleared before it is set, each half, and the second half
+      # refuses to start while the first half's window is still up, since both
+      # answer to the same title prefix and a stale reading does not announce
+      # itself.
+      #
+      # The differential's middle control is what fails a lane whose knob does
+      # not work: better a red step that says the flip did not take than a
+      # green one reporting fifteen constants it never disturbed. Last in the
+      # lane and gated, so that costs its own reading and nothing else.
+      - if: always()
+        timeout-minutes: 25
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+          TEST_EXIT=0
+          bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots \
+            > ~/themediff.log 2>&1 || TEST_EXIT=$?
+          # The two halves' own logs go to the step log and not to the
+          # annotation: annotate reads one file, so a raw dump cannot crowd out
+          # the digest even though both carry the report: prefix.
+          cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
+          bash test/annotate.sh pygobject-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
@@ -1080,6 +1194,48 @@ jobs:
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdtheme.log
           bash test/annotate.sh kde-stdtheme ~/stdtheme.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # Round 3: where each colour came from.
+      #
+      # The single-launch theme step above says what an engine reports and
+      # nothing about provenance, and that gap is not hypothetical. WebKit
+      # hardcodes Highlight one unit from Adwaita's accent, so on a default
+      # GNOME desktop it reads exactly like an engine following the palette --
+      # round 2 recorded it as doing so, and it does not. Flipped to
+      # Adwaita:dark the desktop's accent moved and Highlight did not.
+      #
+      # So this launches twice with the desktop flipped between and asks one
+      # question of each value: did it move. themeflip.sh owns the sequencing
+      # because two parts of it are easy to get wrong and invisible in YAML --
+      # the knob is cleared before it is set, each half, and the second half
+      # refuses to start while the first half's window is still up, since both
+      # answer to the same title prefix and a stale reading does not announce
+      # itself.
+      #
+      # The differential's middle control is what fails a lane whose knob does
+      # not work: better a red step that says the flip did not take than a
+      # green one reporting fifteen constants it never disturbed. Last in the
+      # lane and gated, so that costs its own reading and nothing else.
+      - if: always()
+        timeout-minutes: 25
+        run: |
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+          TEST_EXIT=0
+          bash test/themeflip.sh qt test/neutrinostdtheme.cmd ~/screenshots \
+            > ~/themediff.log 2>&1 || TEST_EXIT=$?
+          # The two halves' own logs go to the step log and not to the
+          # annotation: annotate reads one file, so a raw dump cannot crowd out
+          # the digest even though both carry the report: prefix.
+          cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
+          bash test/annotate.sh kde-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
@@ -2037,6 +2193,93 @@ jobs:
       - if: always()
         shell: bash
         run: bash test/annotate.sh windows-stdtheme ~/stdtheme.log 'report:|FAIL:'
+      # Round 3: where each colour came from.
+      #
+      # The single-launch theme step above says what an engine reports and
+      # nothing about provenance, and that gap is not hypothetical. WebKit
+      # hardcodes Highlight one unit from Adwaita's accent, so on a default
+      # GNOME desktop it reads exactly like an engine following the palette --
+      # round 2 recorded it as doing so, and it does not. Flipped to
+      # Adwaita:dark the desktop's accent moved and Highlight did not.
+      #
+      # So this launches twice with the desktop flipped between and asks one
+      # question of each value: did it move. themeflip.sh owns the sequencing
+      # because two parts of it are easy to get wrong and invisible in YAML --
+      # the knob is cleared before it is set, each half, and the second half
+      # refuses to start while the first half's window is still up, since both
+      # answer to the same title prefix and a stale reading does not announce
+      # itself.
+      #
+      # The differential's middle control is what fails a lane whose knob does
+      # not work: better a red step that says the flip did not take than a
+      # green one reporting fifteen constants it never disturbed. Last in the
+      # lane and gated, so that costs its own reading and nothing else.
+      - if: always()
+        shell: bash
+        run: |
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+      - if: always()
+        timeout-minutes: 25
+        shell: pwsh
+        run: |
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+          function Set-AppsTheme($light) {
+            New-Item -Path $key -Force | Out-Null
+            Set-ItemProperty -Path $key -Name AppsUseLightTheme -Value $light -Type DWord
+            Set-ItemProperty -Path $key -Name SystemUsesLightTheme -Value $light -Type DWord
+          }
+          # What the machine says the knob is at, asked after it was set and
+          # from outside the app -- the same reading themeflip.sh takes on the
+          # unix lanes, and for the same reason. Without it a half reports the
+          # value it *wrote*, and a lane where nothing moved cannot say whether
+          # the registry refused the write or the app never read it. Those are
+          # an apparatus defect and a finding, and they look identical.
+          function Read-Knob($tag) {
+            $apps = (Get-ItemProperty -Path $key -Name AppsUseLightTheme -ErrorAction SilentlyContinue).AppsUseLightTheme
+            $sys  = (Get-ItemProperty -Path $key -Name SystemUsesLightTheme -ErrorAction SilentlyContinue).SystemUsesLightTheme
+            $ctl  = [System.Drawing.SystemColors]::Control
+            # The classic palette is carried too, because on Windows it is the
+            # one thing expected *not* to move: SystemColors stays at its light
+            # values in either scheme, which is why the driver overrides the
+            # surfaces from the registry rather than reading them. A round that
+            # sees it move has found something nobody here predicted.
+            "report: knob $tag AppsUseLightTheme=$(if ($null -eq $apps) {'<absent:light>'} else {$apps}) " +
+              "SystemUsesLightTheme=$(if ($null -eq $sys) {'<absent:light>'} else {$sys}) " +
+              "SystemColors.Control=$($ctl.R),$($ctl.G),$($ctl.B)"
+          }
+          function Run-Half($tag) {
+            Add-Type -AssemblyName System.Drawing
+            Read-Knob $tag | Tee-Object -FilePath "$HOME\flip-knobs.log" -Append | Write-Host
+            .\test\neutrinostdtheme.cmd
+            & .\test\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE *>&1 |
+              Tee-Object -FilePath "$HOME\flip-$tag.log" | Out-Null
+            Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+            # The precondition the unix half states out loud: the next launch
+            # must not find this one's window.
+            $n = 0
+            while ($n -lt 60 -and (Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue)) {
+              Start-Sleep -Milliseconds 500; $n++
+            }
+          }
+          Set-AppsTheme 1
+          Run-Half a
+          Set-AppsTheme 0
+          Run-Half b
+          Set-AppsTheme 1
+          exit 0
+      - if: always()
+        shell: bash
+        run: |
+          TEST_EXIT=0
+          # The knob readings first, so the annotation carries them beside the
+          # verdict they explain rather than in a step log nobody can fetch.
+          cat ~/flip-knobs.log > ~/themediff.log 2>/dev/null || true
+          bash test/themediff.sh ~/flip-a.log ~/flip-b.log >> ~/themediff.log 2>&1 || TEST_EXIT=$?
+          cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
+          bash test/annotate.sh windows-themediff ~/themediff.log 'report:|FAIL:'
+          exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -2364,6 +2607,42 @@ jobs:
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdtheme.log
           bash test/annotate.sh macos-stdtheme ~/stdtheme.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # Round 3: where each colour came from.
+      #
+      # The single-launch theme step above says what an engine reports and
+      # nothing about provenance, and that gap is not hypothetical. WebKit
+      # hardcodes Highlight one unit from Adwaita's accent, so on a default
+      # GNOME desktop it reads exactly like an engine following the palette --
+      # round 2 recorded it as doing so, and it does not. Flipped to
+      # Adwaita:dark the desktop's accent moved and Highlight did not.
+      #
+      # So this launches twice with the desktop flipped between and asks one
+      # question of each value: did it move. themeflip.sh owns the sequencing
+      # because two parts of it are easy to get wrong and invisible in YAML --
+      # the knob is cleared before it is set, each half, and the second half
+      # refuses to start while the first half's window is still up, since both
+      # answer to the same title prefix and a stale reading does not announce
+      # itself.
+      #
+      # The differential's middle control is what fails a lane whose knob does
+      # not work: better a red step that says the flip did not take than a
+      # green one reporting fifteen constants it never disturbed. Last in the
+      # lane and gated, so that costs its own reading and nothing else.
+      - if: always()
+        timeout-minutes: 25
+        run: |
+          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/parse.sh test/neutrinostdtheme.cmd
+          TEST_EXIT=0
+          bash test/themeflip.sh macos test/neutrinostdtheme.cmd ~/screenshots \
+            > ~/themediff.log 2>&1 || TEST_EXIT=$?
+          # The two halves' own logs go to the step log and not to the
+          # annotation: annotate reads one file, so a raw dump cannot crowd out
+          # the digest even though both carry the report: prefix.
+          cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
+          bash test/annotate.sh macos-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
       - uses: actions/upload-artifact@v7
         if: always()
