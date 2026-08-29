@@ -5,8 +5,14 @@
 name: CI
 on: [push]
 jobs:
+  # Measured against a complete run rather than guessed: this lane took 12.0 min measured, and a netinstall step that may take 35.
+  # Without a job ceiling the default is six hours, which is what a wedged step
+  # spends before anyone finds out -- a run that hangs reports nothing, and
+  # nothing is the one result no round can act on. A lane that exceeds this has
+  # not got slower, it has stopped.
   gjs:
     runs-on: ubuntu-latest
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v7
       - run: |
@@ -364,8 +370,14 @@ jobs:
   #
   # The two halves write into the same ~/screenshots, so cjs's upload sits
   # between them rather than at the end.
+  # Measured against a complete run rather than guessed: this lane took 10.6 min measured.
+  # Without a job ceiling the default is six hours, which is what a wedged step
+  # spends before anyone finds out -- a run that hangs reports nothing, and
+  # nothing is the one result no round can act on. A lane that exceeds this has
+  # not got slower, it has stopped.
   linux-engines:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - run: |
@@ -842,8 +854,14 @@ jobs:
           name: pygobject-screenshots
           path: ~/screenshots/
 
+  # Measured against a complete run rather than guessed: this lane took 12.6 min measured, and a netinstall step that may take 35.
+  # Without a job ceiling the default is six hours, which is what a wedged step
+  # spends before anyone finds out -- a run that hangs reports nothing, and
+  # nothing is the one result no round can act on. A lane that exceeds this has
+  # not got slower, it has stopped.
   kde:
     runs-on: ubuntu-latest
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v7
       - run: |
@@ -1279,6 +1297,40 @@ jobs:
         with:
           name: netinstall-binaries
           path: netinstall/dist/
+      # The guests do not need this and cannot hold it.
+      #
+      # setup-zig points ZIG_GLOBAL_CACHE_DIR and ZIG_LOCAL_CACHE_DIR at
+      # `<workspace>/.zig-cache`, netinstall/build.sh fills `.zig-cache/o` with
+      # thousands of sibling directories, and every vmactions step rsyncs the
+      # whole workspace into its guest before running anything. On a BSD guest
+      # that hits the filesystem's per-directory link limit and rsync gives up:
+      # 7822 `mkdir ... failed: Too many links (31)` in one run, then exit 23.
+      #
+      # rsync exiting non-zero is what made the step "not complete", and the
+      # `.rc` files the outcome steps read are written inside the guest and
+      # copied back -- so they never arrived, `probe rc=absent`, and the lane
+      # went red having measured nothing. The suites themselves were fine; on
+      # the same run freebsd reported `Total: 0 failure(s)` from the half that
+      # got through.
+      #
+      # Moved rather than deleted, and put back by the last step in the job, so
+      # setup-zig's own post step still has a cache to save.
+      #
+      # Parked in $HOME and not in $RUNNER_TEMP, which would have looked right
+      # and done nothing: RUNNER_TEMP is `/home/runner/work/_temp` and the
+      # rsync source is `/home/runner/work/`, so the cache would have been
+      # copied in from there instead. $HOME is the nearest directory that is
+      # outside the tree the guests are sent.
+      - if: always()
+        name: move the zig cache out of the guests' way
+        run: |
+          if [ -d .zig-cache ]; then
+            rm -rf "$HOME/zig-cache-parked"
+            mv .zig-cache "$HOME/zig-cache-parked"
+            echo "report: .zig-cache parked outside the workspace for the vm steps"
+          else
+            echo "report: no .zig-cache to move"
+          fi
       # Pinned to the commit v1.4.6 points at, on the same terms as everything
       # else this branch pinned: a tag is a name its owner can move.
       - if: always()
@@ -1537,6 +1589,16 @@ jobs:
           suite="$(cat netbsd-suite.rc 2>/dev/null || echo 1)"
           [ "$suite" = "0" ] && [ "$probe" = "0" ] || exit 1
           exit 0
+      # Last, and unconditional: setup-zig's post step saves whatever is at
+      # ZIG_GLOBAL_CACHE_DIR, and that path is still the workspace one.
+      - if: always()
+        name: put the zig cache back
+        run: |
+          if [ -d "$HOME/zig-cache-parked" ]; then
+            rm -rf .zig-cache
+            mv "$HOME/zig-cache-parked" .zig-cache
+            echo "report: .zig-cache restored for the cache save"
+          fi
 
   # How the exe gets onto disk and comes up: the core launch, the driver's own
 
@@ -1553,8 +1615,14 @@ jobs:
   #
   # The load probe goes last on purpose. It starts cpus*3 spinners, and
   # nothing else in the lane should be measured against them.
+  # Measured against a complete run rather than guessed: this lane took 16.9 min measured, the longest lane, netinstall step 20.
+  # Without a job ceiling the default is six hours, which is what a wedged step
+  # spends before anyone finds out -- a run that hangs reports nothing, and
+  # nothing is the one result no round can act on. A lane that exceeds this has
+  # not got slower, it has stopped.
   windows-launch:
     runs-on: windows-latest
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
       - shell: bash
@@ -1941,8 +2009,14 @@ jobs:
   # question of the same driver. Every group is gated `if: always()`, so a red
   # offline tier does not hide whether docswap passed -- the failure that cost
   # a whole round when all of this sat in one long lane.
+  # Measured against a complete run rather than guessed: this lane took 14.8 min measured.
+  # Without a job ceiling the default is six hours, which is what a wedged step
+  # spends before anyone finds out -- a run that hangs reports nothing, and
+  # nothing is the one result no round can act on. A lane that exceeds this has
+  # not got slower, it has stopped.
   windows-content:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - shell: bash
@@ -2302,8 +2376,14 @@ jobs:
   #
   # One upload at the end: all four jobs pointed at ~/screenshots, so the
   # separate artifacts were separate names over the same directory.
+  # Measured against a complete run rather than guessed: this lane took 11.4 min measured.
+  # Without a job ceiling the default is six hours, which is what a wedged step
+  # spends before anyone finds out -- a run that hangs reports nothing, and
+  # nothing is the one result no round can act on. A lane that exceeds this has
+  # not got slower, it has stopped.
   macos:
     runs-on: macos-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
@@ -2655,8 +2735,14 @@ jobs:
   # matrix -- about thirteen minutes of run.sh that nothing here can split --
   # so it is what every other job is balanced against, and it carries nothing
   # else that a runner would have to wait behind.
+  # Measured against a complete run rather than guessed: this lane took 14.3 min measured, almost all of it one step.
+  # Without a job ceiling the default is six hours, which is what a wedged step
+  # spends before anyone finds out -- a run that hangs reports nothing, and
+  # nothing is the one result no round can act on. A lane that exceeds this has
+  # not got slower, it has stopped.
   macos-netinstall:
     runs-on: macos-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - name: netinstall suite

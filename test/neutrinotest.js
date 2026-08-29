@@ -30,15 +30,44 @@ function startTests() {
         if (current < steps.length) {
             steps[current]();
             current++;
-            if (current < steps.length) win.setTimeout(runNext, 1000);
+            /*
+             * How long each state is on screen, and the number
+             * verify-windows.ps1 lifts out of the built artifact to assert its
+             * sampler against. It was one second, and the sampler's slowest
+             * turn came in at 1017, 1031, 1037 and 1071 ms across four runs --
+             * over the line every time, by between two and seven per cent.
+             *
+             * The sampler is not slow. Its median turn is 2 ms and it looks ten
+             * times per state; what happens is that one `Start-Sleep` in a run
+             * overshoots by about a second because the runner deschedules it,
+             * and the tightness of that cluster is the tell -- 1017 to 1071 is
+             * one scheduling quantum, not a spread of degrees of slowness.
+             *
+             * So the state is held for two of them. This is the same bargain
+             * the wait below makes, and the honest one: a control that fires
+             * when a runner hiccups is measuring the runner, and a dwell the
+             * sampler can be a whole quantum late inside is one where passing
+             * means it kept up rather than that it got away with it.
+             */
+            if (current < steps.length) win.setTimeout(runNext, 2000);
         }
     }
-    // The whole sequence takes about eight seconds, and a verifier that is not
-    // watching by then misses steps it can never see again. verify-windows.ps1
-    // compiles inline C# with Add-Type before its first poll, which on a cold
-    // runner can cost longer than that -- so the app waits for its audience
-    // rather than racing it.
-    win.setTimeout(runNext, 8000);
+    // The app waits for its audience rather than racing it. The whole sequence
+    // is over quickly and a verifier that is not watching by then misses steps
+    // it can never see again -- verify-windows.ps1 compiles inline C# with
+    // Add-Type and encodes a full-screen PNG before its first poll, which on a
+    // cold runner costs longer than the sequence does.
+    //
+    // Eleven seconds, and measured rather than felt: at eight the Windows
+    // sampler's record opened on `STEP1-Test Title`, because `neutrino` and
+    // `STEP0` had both been and gone before its first sample. At eleven the
+    // record opens on `neutrino` and reaches `STEP0` twelve seconds in, on both
+    // load replicas and on a local WebKitGTK run.
+    //
+    // One wait and not two: this was briefly eight here and three more in
+    // waitForReady below, which is the same decision spelled in two places and
+    // the kind that drifts apart.
+    win.setTimeout(runNext, 11000);
 }
 
 // The desktop's palette, checked by the app rather than by four verifiers that
@@ -91,6 +120,12 @@ function checkTheme() {
     return verdict(true, theme.source + " " + theme.scheme + " " + shown.join(" "));
 }
 
+/*
+ * Called, not scheduled. `window.neutrino` is in scope before an app's first
+ * statement on every lane -- measured, asserted by both standards verifiers,
+ * and documented in the README. The wait this app needs is for its *audience*,
+ * not for its API, and that one lives beside the steps it protects.
+ */
 function waitForReady() {
     if (doc.body && win.neutrino) startTests();
     else win.setTimeout(waitForReady, 200);
