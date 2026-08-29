@@ -9,9 +9,9 @@ function startTests() {
     var steps = [
         function () { el.textContent = "Step 0: Ready"; win.neutrino.window.setTitle("STEP0"); },
         function () { el.textContent = "Step 1: setTitle"; win.neutrino.window.setTitle("STEP1-Test Title"); },
-        function () { el.textContent = "Step 2: resize"; win.neutrino.window.resize(500, 400); },
+        function () { el.textContent = "Step 2: resize"; win.resizeTo(500, 400); },
         function () { el.textContent = "Step 2: resize done"; win.neutrino.window.setTitle("STEP2"); },
-        function () { el.textContent = "Step 3: move"; win.neutrino.window.move(0, 0); },
+        function () { el.textContent = "Step 3: move"; win.moveTo(0, 0); },
         function () { el.textContent = "Step 3: move done"; win.neutrino.window.setTitle("STEP3"); },
         function () {
             // Before TESTS DONE and not after it: the Windows sampler stops
@@ -22,7 +22,7 @@ function startTests() {
             win.neutrino.window.setTitle(verdict.ok ? "THEMEOK" : "THEMEBAD");
         },
         function () { el.textContent = "TESTS DONE"; win.neutrino.window.setTitle("TESTS DONE"); },
-        function () { el.textContent = "Closing window..."; win.neutrino.window.close(); }
+        function () { el.textContent = "Closing window..."; win.close(); }
     ];
 
     var current = 0;

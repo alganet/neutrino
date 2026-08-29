@@ -7,10 +7,13 @@
 // so do move, close and openExternal. Whether an app can be written against
 // those instead turns on three questions this file asks in order.
 //
-// Does the engine ship them, and do they do anything? A browser refuses
-// resizeTo, moveTo and close on a window a script did not open, and four
-// embedders may each have decided that differently -- so each is called and the
-// harness watches whether the native window moved.
+// Do they do anything? Measured across four engines before this change: all
+// twelve exist, all are writable and configurable own properties of window, and
+// all four mutators returned without throwing and moved nothing -- a browser
+// refuses to resize or move a window a script did not open, and says nothing
+// about it. The launcher writes over them now, so the same four calls are the
+// assertion that the replacement took, and the verdict this file used to record
+// as NOOP is a regression if it comes back.
 //
 // Can the launcher take them over if it does not? That is a property
 // descriptor: on Window these are ordinary configurable properties by spec, but
@@ -206,20 +209,42 @@ function pMV() {
     var r = attempt(function () { win.moveBy(30, 30); });
     win.setTimeout(function () {
         put("STD-WIN-MV-PAIR req=+30+30 call=" + r + geom());
-        win.setTimeout(pCTL, DWELL);
+        win.setTimeout(pGONE, DWELL);
     }, SETTLE);
 }
 
-// The positive control, after the four in doubt and through the same
-// instrument. A run where this one does not move the window has measured
-// nothing above it, and says so instead of reporting four refusals.
-function pCTL() {
-    var a = attempt(function () { win.neutrino.window.resize(700, 520); });
-    var b = attempt(function () { win.neutrino.window.move(60, 40); });
-    win.setTimeout(function () {
-        put("STD-WIN-CTL-PAIR req=700x520@60,40 resize=" + a + " move=" + b + geom());
-        win.setTimeout(pOPEN, DWELL);
-    }, SETTLE);
+/*
+ * What used to be the positive control, and what it became.
+ *
+ * It called `neutrino.window.resize` and `.move` -- deliberately a different
+ * call from the four under test -- so that "the engine refused" and "the window
+ * is dead" could be told apart. Those names are gone: the launcher writes over
+ * `window.resizeTo` and the rest, so the control and the thing under test are
+ * now one call and there is nothing left here to compare against.
+ *
+ * The liveness question does not disappear, it moves. If all four above read
+ * NOOP the window is either dead or the override did not take, and both are
+ * regressions -- so the verifier asserts that at least one of them moved,
+ * which is the same question asked of the thing that is now supposed to answer
+ * it.
+ *
+ * What this phase reports instead is the other half of the change: that the
+ * names it used to call are not there. Asserted in parse.sh against a built
+ * preload without an engine, and read here inside a real one, because a
+ * wrapper surviving on some lane is exactly the thing node cannot see.
+ */
+function pGONE() {
+    var out = "STD-WIN-GONE-SELF";
+    var names = ["resize", "move", "close"];
+    for (var i = 0; i < names.length; i++) {
+        var t = "gone";
+        try { t = typeof win.neutrino.window[names[i]]; } catch (_) { t = "threw"; }
+        out += " nw:" + names[i] + "=" + t;
+    }
+    var keep = "absent";
+    try { keep = typeof win.neutrino.window.setTitle; } catch (_) {}
+    put(out + " nw:setTitle=" + keep);
+    win.setTimeout(pOPEN, DWELL);
 }
 
 // about:blank, never a real url. `openExternal` on this platform ends at the

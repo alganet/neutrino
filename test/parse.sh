@@ -241,6 +241,21 @@ eq("resize with code in a field",
    N.parseMessage("resize" + S + "1;GLib.spawn_command_line_sync('x')" + S + "2"), null);
 eq("resize to zero", N.parseMessage("resize" + S + "0" + S + "0"), null);
 eq("resize to negative", N.parseMessage("resize" + S + "-5" + S + "-5"), null);
+
+// The relative pair carries deltas, so the rule that refuses a zero or negative
+// *size* must not be the rule applied to them. Shrinking by forty is a request;
+// what keeps the result above zero is the clamp where the current size is
+// known, and that is not here.
+eq("resizeBy", N.parseMessage("resizeBy" + S + "40" + S + "-20"),
+   { action: "resizeBy", width: 40, height: -20 });
+eq("moveBy", N.parseMessage("moveBy" + S + "-10" + S + "30"),
+   { action: "moveBy", x: -10, y: 30 });
+eq("resizeBy of nothing is still a record", N.parseMessage("resizeBy" + S + "0" + S + "0"),
+   { action: "resizeBy", width: 0, height: 0 });
+eq("resizeBy missing a field", N.parseMessage("resizeBy" + S + "1"), null);
+eq("moveBy with an extra field", N.parseMessage("moveBy" + S + "1" + S + "2" + S + "3"), null);
+eq("resizeBy with code in a field",
+   N.parseMessage("resizeBy" + S + "1;GLib.spawn_command_line_sync('x')" + S + "2"), null);
 eq("an action nobody implements", N.parseMessage("evalThis" + S + "whatever"), null);
 eq("control character in a title", N.parseMessage("setTitle" + S + "a\nb"), null);
 eq("a title larger than any real one", N.parseMessage("setTitle" + S + new Array(5000).join("x")), null);
@@ -356,16 +371,43 @@ var sent = [];
 var sandbox = { window: {}, String: String, JSON: JSON, __t: function (m) { sent.push(m); } };
 vm.createContext(sandbox);
 new vm.Script(N.buildPreloadScript("__t")).runInContext(sandbox);
+// The standard spellings, driven the way an app now writes them. The preload
+// assigns these onto `window` itself, so the sandbox's plain object receives
+// them exactly as an engine's global would.
 sandbox.window.neutrino.window.setTitle("STEP1-Test Title");
-sandbox.window.neutrino.window.resize(500, 400);
-sandbox.window.neutrino.window.move(0, 0);
-sandbox.window.neutrino.window.close();
+sandbox.window.resizeTo(500, 400);
+sandbox.window.resizeBy(40, -20);
+sandbox.window.moveTo(0, 0);
+sandbox.window.moveBy(-10, 30);
+sandbox.window.close();
 sandbox.window.neutrino.shell.openExternal("https://example.com");
 eq("setTitle round trip", N.parseMessage(sent[0]), { action: "setTitle", title: "STEP1-Test Title" });
-eq("resize round trip", N.parseMessage(sent[1]), { action: "resize", width: 500, height: 400 });
-eq("move round trip", N.parseMessage(sent[2]), { action: "move", x: 0, y: 0 });
-eq("close round trip", N.parseMessage(sent[3]), { action: "close" });
-eq("openExternal round trip", N.parseMessage(sent[4]), { action: "openExternal", url: "https://example.com" });
+eq("resizeTo round trip", N.parseMessage(sent[1]), { action: "resize", width: 500, height: 400 });
+eq("resizeBy round trip", N.parseMessage(sent[2]), { action: "resizeBy", width: 40, height: -20 });
+eq("moveTo round trip", N.parseMessage(sent[3]), { action: "move", x: 0, y: 0 });
+eq("moveBy round trip", N.parseMessage(sent[4]), { action: "moveBy", x: -10, y: 30 });
+eq("close round trip", N.parseMessage(sent[5]), { action: "close" });
+eq("openExternal round trip", N.parseMessage(sent[6]), { action: "openExternal", url: "https://example.com" });
+
+// `window.resizeTo` emits the record `neutrino.window.resize` used to emit,
+// which is the whole claim this change makes: the same bytes, meeting the same
+// host-side guard, under a name an app author already knows.
+eq("the standard spelling is the same record", sent[1], "resize" + S + "500" + S + "400");
+
+// And the names it replaces are gone rather than aliased. Asserted here because
+// this is the only place that can see the built preload without an engine, and
+// because a wrapper left behind is a second way to do one thing that nobody
+// would notice until it drifted.
+eq("neutrino.window.resize is gone", typeof sandbox.window.neutrino.window.resize, "undefined");
+eq("neutrino.window.move is gone", typeof sandbox.window.neutrino.window.move, "undefined");
+eq("neutrino.window.close is gone", typeof sandbox.window.neutrino.window.close, "undefined");
+
+// The two that stay, and neither is an alias: setTitle is waiting on the native
+// title hook, openExternal on the anchor path and the nav probe that measures
+// it. Asserted present so that deleting one early fails here rather than in a
+// suite whose report channel it is.
+eq("setTitle is still there, pending its hook", typeof sandbox.window.neutrino.window.setTitle, "function");
+eq("openExternal is still there, pending step 5", typeof sandbox.window.neutrino.shell.openExternal, "function");
 var before = sent.length;
 sandbox.window.neutrino.send("evalThis", { payload: "x" });
 eq("an action nobody implements never reaches the wire", sent.length, before);

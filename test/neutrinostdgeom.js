@@ -6,18 +6,26 @@
 //
 // The question this branch exists to answer is whether an app can be written
 // against `window.resizeTo` and `window.outerWidth` instead of against
-// `neutrino.window.resize` and nothing at all. The write half is another file.
+// `neutrino.window.resize` and nothing at all -- and now it can. The write
+// half is another file.
 // This one is the read half, and it is first because it is also the apparatus:
 // every later probe reports a number the page believes beside a number the
 // harness measured, and none of those pairs mean anything until the harness is
 // known to be reading a live window and to see it change.
 //
 // So the sequence is three samples with two known mutations between them, and
-// the mutation is asked for through the API that already works. A run where the
+// the mutation is asked for through the launcher's own API. A run where the
 // harness reads the same geometry at A and at B has not measured the engine's
 // `outerWidth`; it has measured a window that never moved, or an instrument
-// pointed at the wrong one. That is the positive control and it is the reason
-// this file calls `neutrino.window.resize` rather than `window.resizeTo`.
+// pointed at the wrong one. That is the positive control.
+//
+// It used to call `neutrino.window.resize` here precisely because that was a
+// different call from the one under test. It is not any more: the launcher
+// writes over `window.resizeTo` now, so the control and the standard spelling
+// are one call, and these mutations double as the assertion that the spelling
+// works. What that no longer separates is "the engine refused" from "the
+// window is dead" -- and a window which refuses all of them is a regression
+// on either reading, which is why the verifier still fails on it.
 //
 // It also collects, for free, the number four drivers have been disagreeing
 // about since they were written: `resize(640,480)` sets ClientSize on Windows,
@@ -114,7 +122,7 @@ function phaseA() {
 }
 
 function phaseB() {
-    try { win.neutrino.window.resize(REQ_W, REQ_H); } catch (_) {}
+    try { win.resizeTo(REQ_W, REQ_H); } catch (_) {}
     // A frame for the toolkit to act on the request before the page is asked
     // what it thinks happened. Not a settling budget: the harness records the
     // native side continuously and does not depend on this.
@@ -125,7 +133,7 @@ function phaseB() {
 }
 
 function phaseC() {
-    try { win.neutrino.window.move(REQ_X, REQ_Y); } catch (_) {}
+    try { win.moveTo(REQ_X, REQ_Y); } catch (_) {}
     win.setTimeout(function () {
         put("STD-GEOM-C-PAIR req=" + REQ_X + "," + REQ_Y + sample());
         win.setTimeout(phaseR, DWELL);

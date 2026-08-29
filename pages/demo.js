@@ -44,7 +44,7 @@ function fill(id, text) {
 }
 
 function closeWindow() {
-    win.neutrino.window.close();
+    win.close();
 }
 
 function start() {

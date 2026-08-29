@@ -601,6 +601,15 @@ Window {
         if (msg.action === "setTitle") root.title = msg.title
         else if (msg.action === "resize") { root.width = msg.width; root.height = msg.height }
         else if (msg.action === "move") { root.x = msg.x; root.y = msg.y }
+        // Relative, against the same properties the two above set. No reader
+        // needed here: on this lane the window's geometry is the window's own
+        // bindable state, which is why boot's generic pair is not what serves
+        // this driver.
+        else if (msg.action === "resizeBy") {
+            root.width = Math.max(1, root.width + msg.width)
+            root.height = Math.max(1, root.height + msg.height)
+        }
+        else if (msg.action === "moveBy") { root.x = root.x + msg.x; root.y = root.y + msg.y }
         else if (msg.action === "close") root.close()
         else if (msg.action === "openExternal") Qt.openUrlExternally(msg.url)
     }
@@ -1097,6 +1106,21 @@ def route(raw):
         window.move(
             message.object_get_property("x").to_int32(),
             message.object_get_property("y").to_int32(),
+        )
+    elif action == "resizeBy":
+        # Against get_size, which is the pair to the resize above. The floor is
+        # one pixel and it is here for the same reason it is in boot: the
+        # splitter sees a delta and cannot know what it is a delta from.
+        current_w, current_h = window.get_size()
+        window.resize(
+            max(1, current_w + message.object_get_property("width").to_int32()),
+            max(1, current_h + message.object_get_property("height").to_int32()),
+        )
+    elif action == "moveBy":
+        current_x, current_y = window.get_position()
+        window.move(
+            current_x + message.object_get_property("x").to_int32(),
+            current_y + message.object_get_property("y").to_int32(),
         )
     elif action == "close":
         window.destroy()
@@ -3471,6 +3495,15 @@ exit $?;:<<'//</script></body></html>' #-->
                     win.setFrameDisplay(dollar.NSMakeRect(x, macY, frame.size.width, frame.size.height), true);
                     this.writeStatus(win);
                 },
+                getBounds: function (win) {
+                    var f = win.frame;
+                    return {
+                        width: Math.round(f.size.width),
+                        height: Math.round(f.size.height),
+                        x: Math.round(f.origin.x),
+                        y: Math.round(this.toTopLeftY(f.origin.y, f.size.height))
+                    };
+                },
                 "close": function (win) {
                     win.performClose(null);
                 },
@@ -3843,6 +3876,13 @@ exit $?;:<<'//</script></body></html>' #-->
                 },
                 move: function (win, x, y) {
                     win.move(x, y);
+                },
+                // The units this driver's own resize and move speak, so the
+                // relative verbs above compose with them exactly.
+                getBounds: function (win) {
+                    var size = win.get_size();
+                    var pos = win.get_position();
+                    return { width: size[0], height: size[1], x: pos[0], y: pos[1] };
                 },
                 openExternal: function (url) {
                     // Checked here as well as in the splitter: this is the end
@@ -4365,6 +4405,44 @@ exit $?;:<<'//</script></body></html>' #-->
                 return { action: "move", x: parseInt(parts[0], 10), y: parseInt(parts[1], 10) };
             }
 
+            /*
+             * The two relative verbs, and both carry signed deltas rather than
+             * sizes -- so they are checked with isCoordinate and never with
+             * isDimension, which refuses everything at or below zero. A resize
+             * of -40 is a legitimate request and the clamp that keeps the
+             * result positive belongs where the current size is known, which is
+             * the host and not here.
+             *
+             * They exist because neither could be computed in the page.
+             * `screenX` is truthful on one engine of four, so `moveBy` had no
+             * arithmetic available to it. `resizeBy` looked like it did --
+             * innerWidth matched the native content size everywhere -- but
+             * `resizeTo` means the content area on three lanes and the frame on
+             * macOS, so a page-side sum would compound that difference. Asking
+             * the driver for bounds in its own units is right on either side of
+             * the PR that settles it.
+             */
+            if (action === "resizeBy" || action === "moveBy") {
+                if (rest === null) {
+                    return null;
+                }
+                var deltas = rest.split(sep);
+                if (deltas.length !== 2) {
+                    return null;
+                }
+                if (!this.isCoordinate(deltas[0]) || !this.isCoordinate(deltas[1])) {
+                    return null;
+                }
+                if (action === "resizeBy") {
+                    return {
+                        action: "resizeBy",
+                        width: parseInt(deltas[0], 10),
+                        height: parseInt(deltas[1], 10)
+                    };
+                }
+                return { action: "moveBy", x: parseInt(deltas[0], 10), y: parseInt(deltas[1], 10) };
+            }
+
             return null;
         },
 
@@ -4409,20 +4487,68 @@ exit $?;:<<'//</script></body></html>' #-->
                 'var d=data||{};' +
                 'if(action==="setTitle")_send("setTitle"+S+_n(d.title));' +
                 'else if(action==="resize")_send("resize"+S+_n(d.width)+S+_n(d.height));' +
+                'else if(action==="resizeBy")_send("resizeBy"+S+_n(d.width)+S+_n(d.height));' +
                 'else if(action==="move")_send("move"+S+_n(d.x)+S+_n(d.y));' +
+                'else if(action==="moveBy")_send("moveBy"+S+_n(d.x)+S+_n(d.y));' +
                 'else if(action==="openExternal")_send("openExternal"+S+_n(d.url));' +
                 'else if(action==="close")_send("close");' +
                 '},' +
                 'shell:{' +
                 'openExternal:function(url){window.neutrino.send("openExternal",{url:url});}' +
                 '},' +
+                /*
+                 * What is left of the bespoke namespace, and both entries are
+                 * waiting on a PR rather than kept as aliases.
+                 *
+                 * setTitle's standard spelling is an assignment to
+                 * document.title, which reaches no native window on any of the
+                 * four engines -- measured, all four, with the DOM taking the
+                 * value and the title bar never moving. Its replacement is a
+                 * native title-changed hook per lane, and until that exists
+                 * this is also the report channel every verifier in the tree
+                 * reads, so deleting it would take the instrument with it.
+                 *
+                 * openExternal's is window.open, which is not shimmed here on
+                 * purpose: test/neutrinonav.js asserts what the *engine's* own
+                 * new-window path does against the native guard, and a shim
+                 * would leave that probe passing while measuring the shim.
+                 */
                 'window:{' +
-                'setTitle:function(t){window.neutrino.send("setTitle",{title:t});},' +
-                'resize:function(w,h){window.neutrino.send("resize",{width:w,height:h});},' +
-                'move:function(x,y){window.neutrino.send("move",{x:x,y:y});},' +
-                'close:function(){window.neutrino.send("close");}' +
+                'setTitle:function(t){window.neutrino.send("setTitle",{title:t});}' +
                 '}' +
                 '};' +
+                /*
+                 * And the five that do have a spelling, written over the
+                 * engine's own.
+                 *
+                 * Measured on WebKitGTK, QtWebEngine, WKWebView and WebView2:
+                 * all five exist, all five are writable and configurable own
+                 * properties of window, and all five do nothing. Four engines
+                 * refuse to resize or move a window a script did not open, and
+                 * report no error for it -- so an app calling the standard
+                 * spelling today gets silence. What is being replaced is that
+                 * silence, and nothing else: these emit the identical record
+                 * the bespoke names emitted and meet the identical host-side
+                 * guard, which is why this is a spelling change and not a
+                 * policy one.
+                 *
+                 * Plain assignment rather than defineProperty, because the
+                 * descriptor was read on all four and all four said writable.
+                 * Each in its own try: a lane that ever refuses one should lose
+                 * that verb and not the four beside it.
+                 *
+                 * close() returns nothing and does not set window.closed. The
+                 * engines disagree about that flag already -- three set it true
+                 * while the window stays up, WebView2 leaves it false -- so
+                 * there is no value here that would be true everywhere, and
+                 * inventing one is the thing this file refuses to do.
+                 */
+                'var _def=function(n,f){try{window[n]=f;}catch(_){}};' +
+                '_def("resizeTo",function(w,h){window.neutrino.send("resize",{width:w,height:h});});' +
+                '_def("resizeBy",function(w,h){window.neutrino.send("resizeBy",{width:w,height:h});});' +
+                '_def("moveTo",function(x,y){window.neutrino.send("move",{x:x,y:y});});' +
+                '_def("moveBy",function(x,y){window.neutrino.send("moveBy",{x:x,y:y});});' +
+                '_def("close",function(){window.neutrino.send("close");});' +
                 '})();';
         },
 
@@ -4556,6 +4682,35 @@ exit $?;:<<'//</script></body></html>' #-->
                 if (driverRef.setTitle) actions.setTitle = function (m) { try { driverRef.setTitle(winRef, m.title); } catch (_) {} };
                 if (driverRef.resize) actions.resize = function (m) { try { driverRef.resize(winRef, m.width, m.height); } catch (_) {} };
                 if (driverRef.move) actions.move = function (m) { try { driverRef.move(winRef, m.x, m.y); } catch (_) {} };
+                /*
+                 * The relative pair, resolved here rather than in five drivers.
+                 * One arithmetic and one clamp, against a reading each driver
+                 * supplies in whatever units its own resize and move already
+                 * speak -- which is what lets this be right on macOS both
+                 * before and after the PR that switches that lane from sizing
+                 * its frame to sizing its content.
+                 *
+                 * The clamp is here and not in the splitter because the
+                 * splitter sees a delta and cannot know what it is a delta
+                 * from. A width of zero is a refused window on some toolkits
+                 * and a crash on others, so the floor is one pixel.
+                 */
+                if (driverRef.getBounds && driverRef.resize) actions.resizeBy = function (m) {
+                    try {
+                        var b = driverRef.getBounds(winRef);
+                        if (!b) { return; }
+                        var w = b.width + m.width;
+                        var h = b.height + m.height;
+                        driverRef.resize(winRef, w < 1 ? 1 : w, h < 1 ? 1 : h);
+                    } catch (_) {}
+                };
+                if (driverRef.getBounds && driverRef.move) actions.moveBy = function (m) {
+                    try {
+                        var p = driverRef.getBounds(winRef);
+                        if (!p) { return; }
+                        driverRef.move(winRef, p.x + m.x, p.y + m.y);
+                    } catch (_) {}
+                };
                 if (typeof driverRef["close"] === "function") actions["close"] = function (m) { try { driverRef["close"](winRef); } catch (_) {} };
                 if (driverRef.openExternal) actions.openExternal = function (m) { try { driverRef.openExternal(m.url); } catch (_) {} };
                 driver.onWebMessage(function (json) {
@@ -5707,6 +5862,18 @@ exit $?;:<<'//</script></body></html>' #-->
                 },
                 move: function (win, x, y) {
                     win.Location = new SystemRef.Drawing.Point(parseInt(x), parseInt(y));
+                },
+                // ClientSize and Location, matching the two above: this lane
+                // sizes the content and positions the frame, and a relative
+                // verb has to be relative to the same thing its absolute
+                // sibling sets.
+                getBounds: function (win) {
+                    return {
+                        width: SystemRef.Convert.ToInt32(win.ClientSize.Width),
+                        height: SystemRef.Convert.ToInt32(win.ClientSize.Height),
+                        x: SystemRef.Convert.ToInt32(win.Location.X),
+                        y: SystemRef.Convert.ToInt32(win.Location.Y)
+                    };
                 },
                 openExternal: function (url) {
                     // Process.Start on a bare string is ShellExecute, which will
