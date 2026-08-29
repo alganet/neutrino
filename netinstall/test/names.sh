@@ -167,6 +167,106 @@ else
     assert_url app-example-com-1a1b2c3d4e5f60718a1b2c3d4e5f60718.exe "https://example.com/app.cmd"
 fi
 
+# --- a downloader's suffix on an already-present name ------------------------
+# The name is the spec, so a browser's "(1)" lands inside the pin and the file
+# refuses to run. The copy that is inert is always the *new* one, so a user who
+# re-downloads after a release keeps launching the old binary and is told
+# nothing -- which is how a splash that had shipped went unnoticed for a day.
+#
+# What needs asserting is not the rescue, it is everything the rescue must not
+# reach. The first rule tried here was "the pin ends where hex ends, discard the
+# rest", and it passed every case in the first block below while quietly
+# enforcing 60 characters of a 64 character pin whose typo was 'ABCD' -- because
+# a mistyped pin also ends where hex ends. Narrowing the cut to characters
+# outside the spec charset did not help; 'A' and '+' are outside it too. So the
+# refusals below are the point of this block, and the case classes are the ones
+# that actually broke it: lowercase, uppercase, and punctuation.
+P32="a1b2c3d4e5f60718a1b2c3d4e5f60718"
+P60="$(printf 'a%.0s' $(seq 1 60))"
+P40="$(printf 'a%.0s' $(seq 1 40))"
+
+echo "=== A second download runs, under the name without the suffix ==="
+assert_url "app-example-com-1$P32(1)"       "https://example.com/app.cmd"  # firefox
+assert_url "app-example-com-1$P32 (1)"      "https://example.com/app.cmd"  # chrome
+assert_url "app-example-com-1$P32 2"        "https://example.com/app.cmd"  # finder
+assert_url "app-example-com-1$P32 copy"     "https://example.com/app.cmd"  # finder
+assert_url "app-example-com-1$P32 copy 2"   "https://example.com/app.cmd"  # finder
+assert_url "app-example-com-1$P32.1"        "https://example.com/app.cmd"  # wget
+# The suffix must not reach the cache key, or one app gets two app dirs and the
+# second download re-fetches what the first already holds.
+assert_field "app-example-com-1$P32(1)" token "1$P32"
+
+echo "=== ...and it says so, rather than running as if it were the only copy ==="
+as "app-example-com-1$P32(1)"
+if "$WORK/bin/app-example-com-1$P32(1)$NT_EXE" --info 2>&1 >/dev/null | grep -qa "duplicate"; then
+    echo "  PASS: the duplicate names itself on stderr"
+else
+    nt_fail "a decorated name ran without saying it was a duplicate"
+    FAILURES=$((FAILURES + 1))
+fi
+
+echo "=== A mistyped pin is refused, whatever the typo is made of ==="
+# Each of these is a 64-character pin with the last four characters wrong. A
+# rule that trims at the end of the hex run accepts all three, enforces 60
+# characters, and says nothing.
+assert_reject "app-example-com-1${P60}gbbb"     # lowercase: a spec character
+assert_reject "app-example-com-1${P60}ABCD"     # uppercase: measured at 60
+assert_reject "app-example-com-1${P60}+ext"     # punctuation: measured at 32
+assert_reject "app-example-com-1${P40}gbbb"
+assert_reject "app-example-com-1${P32}+extra"
+
+echo "=== A refusal in this area says which character and what to do ==="
+# Everything the duplicate grammar declines to recognise lands in the charset
+# loop, and that loop used to refuse with nothing under it. Explorer's " - Copy"
+# is the shape that gets there most often.
+as "app-example-com-1$P32 - Copy"
+COPYERR="$("$WORK/bin/app-example-com-1$P32 - Copy$NT_EXE" --info 2>&1 >/dev/null)"
+case "$COPYERR" in
+    *"the name has a ' ' in it"*"rename the file"*)
+        echo "  PASS: an unrecognised suffix names the character and the fix" ;;
+    *)
+        nt_fail "explorer-copy refusal expected=names-the-character actual=$(printf '%s' "$COPYERR" | tr '\n' ' ' | cut -c1-160)"
+        FAILURES=$((FAILURES + 1)) ;;
+esac
+
+# Safari's "-1" cannot be trimmed -- the dash makes it a segment, so the segment
+# becomes the token. The refusal must not then blame the publisher's digest for
+# being too short, which is where it pointed before.
+as "app-example-com-1$P32-1"
+SAFARIERR="$("$WORK/bin/app-example-com-1$P32-1$NT_EXE" --info 2>&1 >/dev/null)"
+case "$SAFARIERR" in
+    *"a shape with no pin behind it"*"second download"*)
+        echo "  PASS: a \"-1\" refusal blames the suffix, not the digest" ;;
+    *)
+        nt_fail "safari refusal expected=blames-the-suffix actual=$(printf '%s' "$SAFARIERR" | tr '\n' ' ' | cut -c1-160)"
+        FAILURES=$((FAILURES + 1)) ;;
+esac
+
+echo "=== The sibling it points at is a file that could exist ==="
+# The name on disk keeps the extension the parse stripped, so the "is still
+# beside it" line has to put it back or it sends a windows user after a file
+# nobody has.
+as "app-example-com-1$P32(1).exe"
+EXEMSG="$("$WORK/bin/app-example-com-1$P32(1).exe$NT_EXE" --info 2>&1 >/dev/null)"
+case "$EXEMSG" in
+    *"named \"app-example-com-1$P32.exe\" is still beside it"*)
+        echo "  PASS: the sibling keeps the extension" ;;
+    *)
+        nt_fail "sibling expected=keeps-.exe actual=$(printf '%s' "$EXEMSG" | tr '\n' ' ' | cut -c1-200)"
+        FAILURES=$((FAILURES + 1)) ;;
+esac
+
+echo "=== A tail that is not a downloader's marker is left to be refused ==="
+# .bak is a person renaming a file, not a downloader keeping two. The narrow
+# grammar is what makes the refusals above hold, so its edges are asserted
+# rather than assumed.
+assert_reject "app-example-com-1$P32.bak"
+assert_reject "app-example-com-1$P32 backup"
+assert_reject "app-example-com-1$P32()"
+assert_reject "app-example-com-1$P32(x)"
+assert_reject "app-example-com-1$P32-1"                                  # safari
+assert_reject "app-example-com-1$(printf 'a%.0s' $(seq 1 31))(1)"        # short pin
+
 echo "=== Symlinks resolve to the real name, never the link ==="
 if [ "$NT_WINDOWS" = "1" ]; then
     echo "  SKIP: symlinks need privilege on windows"

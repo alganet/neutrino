@@ -211,6 +211,111 @@ static void nt_why(char *why, size_t whylen, const char *fmt, ...)
 }
 
 /*
+ * A second copy of a download, named by the thing that saved it rather than by
+ * the publisher: "…-3<pin>(1)" from firefox, " (1)" from chrome, " copy" from
+ * finder, ".1" from wget. The name is the spec here, so those characters are
+ * not cosmetic -- they land inside the pin, the parse fails, and the file
+ * refuses to run at all. Which is the worst shape this failure could take: the
+ * copy that is inert is always the *new* one, so a user who re-downloads after
+ * a release keeps launching the old binary and is told nothing. Measured on a
+ * launcher whose splash had shipped two commits earlier and never appeared.
+ *
+ * What is matched is the suffix itself, and only the shapes downloaders
+ * actually produce. The first attempt at this was a general rule -- the pin
+ * ends where hex ends, discard the rest -- which is wrong in a way worth
+ * writing down, because it reads as the more principled of the two. A pin is
+ * hex, so anything after it must be decoration; but a *mistyped* pin also ends
+ * where hex ends. Measured on the built binary: "…<60 hex>ABCD" ran with 60
+ * characters enforced and "…<32 hex>+extra" with 32, in both cases against a
+ * name whose author had written 64 and was told nothing. Narrowing the cut to
+ * characters outside the spec charset does not help either -- 'A' and '+' are
+ * already outside it. Only the suffix's own shape separates the two.
+ *
+ * So a tail is decoration when it is a duplicate marker and nothing else, and
+ * every other tail is left on the name to be refused as it always was. That
+ * refusal is the safe direction: a name that will not run is a name someone
+ * looks at, and a pin quietly shortened by four characters is not.
+ *
+ * Safari's "-1" is outside this by construction -- a dash makes it a segment of
+ * its own, so the last segment becomes the token and the name is a different
+ * one rather than a decorated one.
+ */
+static int nt_digits(const char *p)
+{
+    if (!*p) {
+        return 0;
+    }
+    for (; *p; p++) {
+        if (*p < '0' || *p > '9') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int nt_is_decor(const char *s)
+{
+    const char *p = s;
+
+    if (*p == '.') {
+        return nt_digits(p + 1);                  /* wget: ".1" */
+    }
+    if (*p == ' ') {
+        p++;
+        if (strncmp(p, "copy", 4) == 0) {         /* finder: " copy", " copy 2" */
+            p += 4;
+            return *p == '\0' || (*p == ' ' && nt_digits(p + 1));
+        }
+        if (nt_digits(p)) {                       /* finder: " 2" */
+            return 1;
+        }
+    }
+    if (*p == '(') {                              /* firefox "(1)", chrome " (1)" */
+        const char *close = p + 1;
+
+        while (*close >= '0' && *close <= '9') {
+            close++;
+        }
+        return close > p + 1 && *close == ')' && close[1] == '\0';
+    }
+    return 0;
+}
+
+/*
+ * Splits a decorated name into the spec it was saved from and the suffix that
+ * was added, or leaves it entirely alone. `len` follows the truncation so the
+ * charset check below measures the name this will actually parse.
+ */
+static void nt_trim_decor(char *work, size_t *len, char *decor, size_t decorlen)
+{
+    char *dash = strrchr(work, '-');
+    size_t run = 0;
+    char *pin;
+
+    decor[0] = '\0';
+    if (!dash || dash[1] == '\0' || dash[2] == '\0') {
+        return;
+    }
+    /* dash[1] is the shape; the pin is what follows it. */
+    pin = dash + 2;
+    while (pin[run] && ((pin[run] >= '0' && pin[run] <= '9') ||
+                        (pin[run] >= 'a' && pin[run] <= 'f'))) {
+        run++;
+    }
+    /* An over-long run is a pin someone typed wrong, and keeping its first 64
+     * characters would turn a refusal into a download. */
+    if (run > 64 || pin[run] == '\0') {
+        return;
+    }
+    if (!nt_is_decor(pin + run) || strlen(pin + run) >= decorlen) {
+        return;
+    }
+    snprintf(decor, decorlen, "%s", pin + run);
+    pin[run] = '\0';
+    *len = (size_t)(pin + run - work);
+}
+
+/*
  * The name is the URL read inside-out: the file, then its directory, then the
  * host's labels in the order anyone writes them, then the token. The token's
  * first character says how many of the leading segments are path rather than
@@ -249,6 +354,7 @@ static void nt_why(char *why, size_t whylen, const char *fmt, ...)
 int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
 {
     char work[NT_SPEC_MAX];
+    char decor[NT_DECOR_MAX];
     char *seg[64];
     size_t nseg = 0;
     size_t len, i;
@@ -270,15 +376,38 @@ int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
         return -1;
     }
 
+    /*
+     * Before the charset check below, which is what a "(1)" would otherwise
+     * die on -- and die without a reason, since a parenthesis is refused by a
+     * loop that has no message in it.
+     */
+    nt_trim_decor(work, &len, decor, sizeof(decor));
+
     for (i = 0; i < len; i++) {
         char c = work[i];
         if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) {
+            /*
+             * This used to refuse without saying anything, which was survivable
+             * while the only way to reach it was typing a name by hand. It is
+             * not survivable now: every duplicate the grammar above declines to
+             * recognise -- explorer's " - Copy", a marker past NT_DECOR_MAX --
+             * arrives here, and "is not a valid spec" with nothing under it is
+             * what sent a whole afternoon after the wrong binary.
+             */
+            nt_why(why, whylen, "the name has a '%c' in it, and a spec is "
+                                "lowercase letters, digits, '_' and '-'; if a "
+                                "downloader put it there, rename the file to "
+                                "the name it was published under", c);
             return -1;
         }
     }
 
     memset(out, 0, sizeof(*out));
     memcpy(out->spec, work, len + 1);
+    /* The trimmed form is what everything below builds from, so the spec, the
+     * cache key and the url never carry a downloader's suffix. Only this says
+     * there was one. */
+    memcpy(out->decor, decor, strlen(decor) + 1);
     /*
      * The cache key is the spec without the pin, so the shape stays in it. Two
      * names that differ only in shape point at different URLs and must not
@@ -403,6 +532,24 @@ int nt_parse_name(const char *base, nt_spec *out, char *why, size_t whylen)
     {
         size_t pinlen = strlen(out->token) - 1;
 
+        /*
+         * A pin of no length at all is not a short pin, and telling its owner
+         * to take more characters from their digest sends them to the one place
+         * the problem is not. Safari is how this is reached: it saves a second
+         * download as "<name>-1", the dash makes a segment, and the segment
+         * becomes the token -- so the refusal blamed the publisher's digest for
+         * a suffix the browser had added. The dash is why this cannot be
+         * trimmed the way "(1)" is; it changes the name rather than decorating
+         * it, and only its owner can say which name was meant.
+         */
+        if (pinlen == 0) {
+            nt_why(why, whylen, "the last segment is \"%s\": a shape with no "
+                                "pin behind it. A name ending in \"-1\" or "
+                                "\"-2\" is usually a second download, and has "
+                                "to be renamed to the name it was published "
+                                "under", out->token);
+            return -1;
+        }
         if (pinlen < NT_TOKEN_MIN) {
             nt_why(why, whylen, "the pin is %lu hex characters and the minimum "
                                 "is %d; take the extra ones from the digest you "
@@ -1422,6 +1569,41 @@ static int nt_main(int argc, char **argv)
             fputc('\n', stderr);
             nt_usage(stderr, nt_basename(self));
             return 2;
+        }
+        /*
+         * Said out loud, and not only tolerated. A downloader adds "(1)" for
+         * one reason -- the undecorated name was taken -- so there is very
+         * likely an older copy of this same app sitting beside it, and that is
+         * the one a desktop launches when the user double-clicks by habit.
+         * Running is the right answer; letting the user believe there is only
+         * one binary is not.
+         *
+         * The name printed is the one on disk rather than spec + decor, which
+         * would drop a ".exe" the parse had already taken off and so name a
+         * file nobody has. And it says "if", because this has not looked: a
+         * message that asserts a sibling it never checked for is the same kind
+         * of confident wrongness this whole change exists to remove.
+         */
+        if (spec.decor[0]) {
+            const char *real = nt_basename(self);
+            char sibling[NT_SPEC_MAX];
+            size_t skip = strlen(spec.spec) + strlen(spec.decor);
+
+            /*
+             * The name on disk is the spec, then the decoration, then whatever
+             * the parse took off the end -- ".exe" and nothing else today. So
+             * putting the spec back in front of that tail names a file someone
+             * could actually go and look for, which "%s" of the bare spec does
+             * not on windows: it would send them after "app-...-1<pin>" beside
+             * an "app-...-1<pin>.exe".
+             */
+            snprintf(sibling, sizeof(sibling), "%s%s", spec.spec,
+                     strlen(real) > skip ? real + skip : "");
+            fprintf(stderr, "netinstall: \"%s\" is a downloader's duplicate; "
+                            "running it as \"%s\".\n"
+                            "  If a file named \"%s\" is still beside it, that "
+                            "is a different download and may be older.\n",
+                    real, spec.spec, sibling);
         }
     }
 
