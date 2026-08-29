@@ -246,8 +246,16 @@ echo "=== The sibling it points at is a file that could exist ==="
 # The name on disk keeps the extension the parse stripped, so the "is still
 # beside it" line has to put it back or it sends a windows user after a file
 # nobody has.
-as "app-example-com-1$P32(1).exe"
-EXEMSG="$("$WORK/bin/app-example-com-1$P32(1).exe$NT_EXE" --info 2>&1 >/dev/null)"
+#
+# The file wanted here is the one a windows downloader actually leaves:
+# "app-...-1<pin>(1).exe", the marker before the extension. Windows already
+# supplies that extension through NT_EXE, so the spec must not carry its own --
+# spelling it out on both platforms made a ".exe.exe" there, which is a name
+# nobody has and which the parse is right to refuse.
+EXESPEC="app-example-com-1$P32(1)"
+[ -n "$NT_EXE" ] || EXESPEC="$EXESPEC.exe"
+as "$EXESPEC"
+EXEMSG="$("$WORK/bin/$EXESPEC$NT_EXE" --info 2>&1 >/dev/null)"
 case "$EXEMSG" in
     *"named \"app-example-com-1$P32.exe\" is still beside it"*)
         echo "  PASS: the sibling keeps the extension" ;;
