@@ -375,6 +375,24 @@ analyse_geom() {
     [ -n "$c" ] && note "pair C page=[${c#STD-GEOM-C-PAIR }] native inner=$ci outer=$co pos=$cp raw=$cr"
     [ -n "$r" ] && note "self ${r#STD-GEOM-R-SELF }"
 
+    # The one -SELF reading in this file that is asserted, and the exception
+    # earns its lines. The rule everywhere else is that a document's account of
+    # itself is a diagnostic and the instrument outside it is the reading --
+    # sound, because the window is the thing in question and the page's view of
+    # it can be wrong. Here the question is whether the API was in scope when
+    # the app's own first statement ran, and no instrument outside the document
+    # can see that. The page is not the best witness, it is the only one.
+    #
+    # Asserted rather than printed because `pages/demo.js` stopped polling for
+    # the API on the strength of it, and a guarantee nothing checks is a
+    # comment. A lane that starts registering the API later fails here instead
+    # of in the sample app, which nothing in CI builds.
+    case "$r" in
+        "")        fail "control STD-GEOM-R-SELF was never observed; readiness went unmeasured this run" ;;
+        *nt0=yes*) note "control the API was in scope at the app's first statement (nt0=yes)" ;;
+        *)         fail "control nt0=$(printf '%s' "$r" | sed -n 's/.*nt0=\([^ ]*\).*/\1/p'); window.neutrino was not in scope at the app's first statement, and pages/demo.js no longer waits for it" ;;
+    esac
+
     # The number four drivers have been disagreeing about. resize(640,480) means
     # ClientSize on Windows, the outer frame on macOS and the toplevel size on
     # the two GTK lanes; verify-linux.sh has been hiding the difference behind a

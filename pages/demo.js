@@ -54,18 +54,22 @@ function start() {
 }
 
 /*
- * The markup is already there -- this script is injected at document end, so
- * the shell is parsed before the first statement above runs. What may not be
- * there yet is the API, which each engine registers on its own schedule.
+ * Called, not scheduled.
  *
- * So the wait is for `neutrino` and not for `document.body`, and it is a frame
- * rather than the fifth of a second it used to be. Nothing on screen depends on
- * it now: the page is painted and correct while this is still waiting, and all
- * that arrives late is two words and a click handler.
+ * `window.neutrino` is in scope before an app's first statement on every lane,
+ * and that is measured rather than assumed: test/neutrinostdgeom.js reads
+ * `typeof window.neutrino` as its own first statement and reports it as `nt0`,
+ * and both verifiers now fail a lane that answers anything but `yes`.
+ * WebKitGTK under gjs, cjs and PyGObject, QtWebEngine, WKWebView and WebView2
+ * all answer yes. So the fifth of a second this once polled for, and the frame
+ * it polled for after that, were each waiting on something that had already
+ * happened before the wait was armed.
+ *
+ * The markup is a second guarantee and a different one, and it still holds:
+ * demo.html and demo.css are spliced into the document by build.sh and this
+ * script sits after them, so the shell is parsed by the time the line below
+ * runs. It is also why `document.readyState` can read `loading` at this point
+ * on WebView2 -- the parser has not reached the end of the document, which says
+ * nothing about the elements already above this script.
  */
-function waitForReady() {
-    if (win.neutrino) start();
-    else win.setTimeout(waitForReady, 16);
-}
-
-waitForReady();
+start();
