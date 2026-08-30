@@ -133,6 +133,14 @@ assert "malformed records refused" "REFUSED" "$(field raw)"
 assert "base-uri pinned"           "REFUSED" "$(field base)"
 assert "inline script refused"     "BLOCKED" "$(field inline)"
 
+# What a frame reached, measured from the parent. The frame is handed this
+# build's API, so it attempts the same verb every other check here attempts;
+# the size of the window afterwards is the answer, and the parent is the only
+# realm that can read it. The title check below is the second half and asks a
+# different question -- whether a subframe's title reached the native window,
+# which no engine here is supposed to let happen at all.
+assert "a frame could not drive it" "REFUSED" "$(field frame)"
+
 # A forged title is only refusable where the title is not the channel. Keying
 # this off the transport the build reports means the assertion follows the code
 # instead of a platform's history: the day a transport is replaced, this starts
@@ -145,8 +153,10 @@ fi
 assert "forged title refused"      "$EXPECT_FORGE" "$(field forge)"
 assert "navigation refused"        "$EXPECT_NAV"   "$(field nav)"
 
-# A frame that drove the window would have said so in the title, and that is
-# checked before any of this is read. Reaching here means it did not.
+# A frame whose *title* reached the native window would have said so in that
+# title, and that is checked before any of this is read. Reaching here means
+# it did not, and the field above says the API it was handed reached nothing
+# either.
 echo "  PASS: no frame drove the window"
 
 # Refusing the top-frame data: navigation is not this project's doing -- every

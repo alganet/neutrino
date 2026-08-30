@@ -51,6 +51,7 @@ function report(navState) {
         " forge=" + results.forge +
         " raw=" + results.raw +
         " base=" + results.base +
+        " frame=" + results.frame +
         " inline=" + results.inline +
         " navdata=" + results.navdata +
         " postnav=" + results.postnav +
@@ -61,7 +62,7 @@ function report(navState) {
         // rather than reading whichever arrived first.
         (navState === "PENDING" ? "" : " DONE");
     show(text);
-    win.neutrino.window.setTitle(text);
+    doc.title = text;
 }
 
 // A forged record placed in the document title. On any platform whose transport
@@ -161,14 +162,10 @@ function checkInline(next) {
  *
  * Two things are supposed to stop it. frame-src 'none' should keep the frame
  * from running at all, and where it runs anyway the injection is main-frame
- * only and the host checks which frame a message came from. So this reports
- * whether the frame ran, and if it managed to drive the window it says so in
- * the title, which the verifier treats as an escape rather than a result.
+ * only and the host checks which frame a message came from.
  */
 function checkFrame(next) {
-    // This one reports nothing of its own, deliberately.
-    //
-    // Whether the frame loaded is not observable from here in a way worth
+    // Whether the frame *loaded* is not observable from here in a way worth
     // trusting: this document has no origin, so a child gets a *different*
     // opaque origin and cannot reach back, and load does not fire for srcdoc in
     // WebKitGTK at all -- measured, along with a data: frame that reported
@@ -176,12 +173,22 @@ function checkFrame(next) {
     // field that reads the same whatever the configuration is not a control,
     // and one that disagrees with itself is worse.
     //
-    // What is worth asserting is the only thing that matters: if a frame drives
-    // the native window, it says so in the title, and the verifier treats that
-    // as an escape rather than a result. That assertion can fail, which is more
-    // than the other could say.
+    // Whether it drove the window is observable, and that is the question. The
+    // frame is handed the API this build injects, so it attempts the same verb
+    // every other check here attempts, and the size of this window afterwards
+    // is the answer -- read from the parent, which is the only realm that can
+    // read it.
+    //
+    // It used to attempt a title instead, and that stopped being a check the
+    // day `document.title` became the spelling. A subframe's title is its own
+    // document's on every engine and reaches no native window anywhere, so the
+    // assertion could not have failed. It is still attempted, one line below
+    // the one that matters, because an engine that ever did report a subframe's
+    // title would be an escape and the verifier already fails on that string.
+    var before = geometry();
     var escape = "<script>" +
-        "try{window.neutrino.window.setTitle('ATTACK-FRAME-ESCAPED');}catch(e){}" +
+        "try{window.neutrino.send('resize',{width:333,height:333});}catch(e){}" +
+        "try{document.title='ATTACK-FRAME-ESCAPED';}catch(e){}" +
         "<\/script>";
     try {
         var viaSrcdoc = doc.createElement("iframe");
@@ -193,7 +200,10 @@ function checkFrame(next) {
         viaData.setAttribute("src", "data:text/html," + encodeURIComponent(escape));
         doc.body.appendChild(viaData);
     } catch (_) {}
-    win.setTimeout(next, 2000);
+    win.setTimeout(function () {
+        results.frame = (geometry() === before) ? "REFUSED" : "OBEYED";
+        next();
+    }, 2000);
 }
 
 // base-uri 'none' in the document's content policy. A page that can move the
@@ -230,8 +240,8 @@ function checkNavData(next) {
         try {
             win.location.href = "data:text/html," + encodeURIComponent(
                 "<html><head><title>neutrino data probe</title></head><body>" +
-                "<script>try{window.neutrino.window.setTitle(" +
-                "'ATTACK-DATA-ESCAPED');}catch(e){}<\/script></body></html>"
+                "<script>try{document.title=" +
+                "'ATTACK-DATA-ESCAPED';}catch(e){}<\/script></body></html>"
             );
         } catch (_) {}
         win.setTimeout(function () {
@@ -271,7 +281,7 @@ function checkNav() {
 
 function start() {
     show("attacking");
-    win.neutrino.window.setTitle("ATTACK-READY");
+    doc.title = "ATTACK-READY";
     win.setTimeout(function () {
         checkForge(function () {
             checkRaw(function () {

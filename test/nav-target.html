@@ -46,18 +46,17 @@ navigation target
     beacon("page", page);
     beacon("tx", (api === "object" && window.neutrino) ? window.neutrino.transport : "none");
 
-    // And whether it can drive the native window from here. Two routes, told
-    // apart in the title the host would end up wearing: the injected API, and
-    // a forged record placed in this document's title for a host whose
-    // transport is the title and which never asks whose title it is.
-    try {
-        window.neutrino.window.setTitle("NAV-ESCAPED-API api=" + api + " page=" + page);
-    } catch (_) {}
-    try {
-        document.title = "__NEUTRINO__" + encodeURIComponent(
-            "setTitle" + String.fromCharCode(31) +
-            "NAV-ESCAPED-TITLE api=" + api + " page=" + page);
-    } catch (_) {}
+    // And whether it can drive the native window from here. One route now, and
+    // it is the strongest one there has ever been: the host connects each
+    // engine's title-changed signal to the native window, so an assignment here
+    // is a document that was navigated to asking to rename the app's window --
+    // and the window title is the channel every verifier in this tree reads.
+    //
+    // It used to be two, the second a forged record placed in this title for a
+    // host whose transport is the title and which never asks whose title it is.
+    // That record was a setTitle and there is no such record any more; what it
+    // probed is what the line below probes directly.
+    document.title = "NAV-ESCAPED-API api=" + api + " page=" + page;
 
     // A window opened from the app's document is a second view of this app,
     // and this says whether one arrived and what it was handed.
