@@ -283,8 +283,8 @@ function Analyse-Theme($rows) {
     foreach ($r in $rows) { $names += ($r.Title -split ' ')[0] }
     Note "theme sequence: $($names -join ' ')"
 
-    $map = @{ "A" = "palette"; "B" = "cssnames"; "P" = "customprops"; "F" = "fonts" }
-    foreach ($k in @("A", "B", "P", "F")) {
+    $map = @{ "A" = "palette"; "B" = "cssnames"; "V" = "delivery"; "P" = "customprops"; "F" = "fonts" }
+    foreach ($k in @("A", "B", "V", "P", "F")) {
         $r = Find-Row $rows "STD-THEME-$k-SELF"
         if ($r) { Note "self $($map[$k]) $($r.Title -replace "^STD-THEME-$k-SELF ",'')" }
     }
@@ -302,6 +302,31 @@ function Analyse-Theme($rows) {
     if (-not $b) { Fail "control unknown-keyword: STD-THEME-B-SELF was never observed" }
     elseif ($b.Title -match 'control=UNSUP') { Note "control unknown-keyword=UNSUP verdict=DISTINGUISHED" }
     else { Fail "control unknown-keyword resolved to a colour; every UNSUP below it is the instrument, not the engine" }
+
+    # The delivery. Two page readings, and the assertion is that they agree:
+    # the palette an app gets from `neutrino.theme` came through the preload,
+    # and the palette it gets from `var(--neutrino-Canvas)` came through a
+    # stylesheet the launcher put in the document. Different mechanisms, one
+    # measurement, and an app is entitled to either.
+    $v = Find-Row $rows "STD-THEME-V-SELF"
+    if (-not $v) { Fail "control delivery: STD-THEME-V-SELF was never observed" }
+    elseif ($v.Title -match ' pal=null ') { Note "control delivery not_asked: this lane read no toolkit" }
+    elseif ($v.Title -match ' match=7/7 ') { Note "control delivery match=7/7 verdict=DELIVERED" }
+    else { Fail "control delivery $($v.Title -replace '^.* match=','match=') -- the properties and neutrino.theme disagree" }
+
+    # And the reason the properties are named for the keywords. A name the
+    # launcher never sets has to fall through to the engine's own system
+    # colour; a keyword the engine cannot resolve would leave the declaration
+    # alone instead, and the page would style itself from what it inherited.
+    if ($v -and $v.Title -match ' fallback=(\S+) canvas=(\S+)') {
+        $fb = $Matches[1]
+        $ca = $Matches[2]
+        if ($fb -eq $ca -and $fb -ne "UNSUP" -and $fb -ne "threw") {
+            Note "control fallback var(--neutrino-absent, Canvas)=$fb Canvas=$ca verdict=RESOLVED"
+        } else {
+            Fail "control fallback var(--neutrino-absent, Canvas)=$fb against Canvas=$ca; an absent property does not reach the engine's own colour on this lane"
+        }
+    }
 
     if (-not (Find-Row $rows "STD-THEME-CTL")) { Fail "control ctl was never observed; the instrument read no window" }
     if (-not (Find-Row $rows "STD-THEME-END")) { Fail "control end was never observed; the app did not finish its sequence" }

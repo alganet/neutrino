@@ -244,9 +244,45 @@ correct everywhere and are what `resizeTo` sets.
 
 ### Following the desktop
 
-`window.neutrino.theme` is the palette the launcher read off the running toolkit,
-and it is there at document start — not pushed after load — so your first paint
-can use it.
+The palette is delivered twice, because the two ways a page wants it are not the
+same way. In CSS it is seven custom properties named for the non-deprecated
+`<system-color>` keywords, in the document's own stylesheet before the first
+paint:
+
+```css
+body {
+  background: var(--neutrino-Canvas, Canvas);
+  color:      var(--neutrino-CanvasText, CanvasText);
+  border:     1px solid var(--neutrino-ButtonBorder, ButtonBorder);
+}
+::selection { background: var(--neutrino-Highlight, Highlight); }
+```
+
+| neutrino | property | what it is |
+|---|---|---|
+| `base` | `--neutrino-Canvas` | content surface |
+| `text` | `--neutrino-CanvasText` | text on it |
+| `background` | `--neutrino-ButtonFace` | window chrome |
+| `foreground` | `--neutrino-ButtonText` | text on that |
+| `border` | `--neutrino-ButtonBorder` | separators |
+| `accent` | `--neutrino-Highlight` | selection / accent |
+| `accentText` | `--neutrino-HighlightText` | text on the accent |
+
+The fallback in each `var()` is the point of naming them after the keywords. On
+a lane where the launcher could not read a toolkit it sets **no** property, so
+the declaration falls through to the engine's own system colour — the desktop's
+real value where there is one, the engine's guess where there is not, decided at
+the point of use with no branch in your script. **None of these keywords follows
+the desktop on its own**: measured on all four engines, every one of the fifteen
+system colours is a constant. macOS reports `Canvas` as `ffffff` against a
+content surface that is `1e1e1e`; both WebKit lanes report `ButtonFace` as
+Windows 3.1 grey. That is what the custom properties are for.
+
+The rule sits after the document's content policy and before your own
+stylesheet, so your `:root` declarations override it.
+
+And in script, `window.neutrino.theme` is the same palette at document start —
+not pushed after load — so your first paint can use it either way.
 
 ```javascript
 var theme = win.neutrino.theme;   // null if this lane could not read one
@@ -278,7 +314,9 @@ win.addEventListener("neutrino:themechange", function (e) {
 ```
 
 `win.neutrino.theme` is already the new palette when the handler runs, so a
-handler may read either. A reference you captured earlier keeps the palette it
+handler may read either, and the custom properties are rewritten on the same
+update — through `documentElement.style.setProperty`, which is measured working
+on all four engines. A reference you captured earlier keeps the palette it
 had. If your build left `--background` out, the two native surfaces are repainted
 to match at the same time; if you named a colour, they are never repainted.
 
