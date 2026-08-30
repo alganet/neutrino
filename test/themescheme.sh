@@ -52,6 +52,16 @@ SHOTS="${2:-$HOME/screenshots}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOGDIR="${NT_SCHEME_LOGDIR:-$HOME}"
 
+# Not `themescheme.log`, and the reason is a line of this suite's own record.
+# The step that runs this file sends its stdout to `~/themescheme.log`, and the
+# first version of this file gave the verifier the same path: two writers on one
+# file, opened at two offsets. `cat` refused it -- "input file is output file" --
+# and the harness's own next line landed inside the verifier's, so the annotation
+# read `turns=153cat: ...`. Every value in that record was right and the record
+# was not readable. A log a caller redirects into is not a name a callee may
+# reuse.
+VERIFY_LOG="$LOGDIR/themescheme-verify.log"
+
 FAILURES=0
 fail() { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 note() { echo "report: $*"; }
@@ -105,13 +115,13 @@ export GTK_THEME="$THEME_NAME"
 bash "$ART" > "$LOGDIR/themescheme-app.log" 2>&1 &
 APP=$!
 VERIFY=0
-bash "$ROOT/test/verify-std.sh" theme "$SHOTS" > "$LOGDIR/themescheme.log" 2>&1 || VERIFY=$?
+bash "$ROOT/test/verify-std.sh" theme "$SHOTS" > "$VERIFY_LOG" 2>&1 || VERIFY=$?
 pkill -P "$APP" 2>/dev/null || true
 kill "$APP" 2>/dev/null || true
 
-cat "$LOGDIR/themescheme.log"
+cat "$VERIFY_LOG"
 
-PAL="$(sed -n 's/^report: self palette //p' "$LOGDIR/themescheme.log" | head -1)"
+PAL="$(sed -n 's/^report: self palette //p' "$VERIFY_LOG" | head -1)"
 val() { printf '%s' " $PAL" | sed -n "s/.* $1=\([^ ]*\).*/\1/p"; }
 
 if [ -z "$PAL" ]; then
