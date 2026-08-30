@@ -137,11 +137,25 @@ if [ "$NT_WINDOWS" = "1" ]; then
         # the whole netinstall suite shares one step, its ten-notice bucket is
         # full of findings long before e2e runs, and these lines were dropped.
         # The error bucket is near empty -- only actual failures reach it.
+        #
+        # The failures first, and that is the repair. This was one grep for
+        # `FAIL:|report:` with `head -8` on the end, and verify-windows.ps1
+        # prints a `report:` line per recorded state before it asserts anything
+        # -- so eight lines of a run that reported seven states was seven states
+        # and a watch line, and the sentence naming what failed was the ninth.
+        # A red round surfaced a complete, correct sequence and no reason,
+        # which is worse than surfacing nothing: it reads like the app was fine.
+        #
+        # The per-state `seq` lines go, because a failing assertion prints its
+        # own detail and the full log is in the artifact. What is kept beside
+        # the failures is the apparatus: the sampler's turn count and its widest
+        # gap, which is the reading half of these controls fire on.
         while IFS= read -r line; do
             echo "  verify-windows: $line"
             [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=netinstall::e2e verify-windows: $line"
-        done < <(grep -aE '^[[:space:]]*(FAIL:|report:)' "$WORK/verify-windows.log" \
-                    | tr -d '\r' | sed 's/^[[:space:]]*//' | head -8)
+        done < <({ grep -aE '^[[:space:]]*FAIL:' "$WORK/verify-windows.log"
+                   grep -aE '^[[:space:]]*report: (sampler|watch)' "$WORK/verify-windows.log"
+                 } | tr -d '\r' | sed 's/^[[:space:]]*//' | head -10)
         nt_fail "verify-windows.ps1 reported $RC failure(s)"
     fi
     FAILURES=$((FAILURES + RC))
