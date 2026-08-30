@@ -103,6 +103,14 @@ Assert-Field "malformed records refused" "REFUSED" (Get-Field "raw")
 Assert-Field "base-uri pinned"           "REFUSED" (Get-Field "base")
 Assert-Field "inline script refused"     "BLOCKED" (Get-Field "inline")
 
+# What a frame reached, measured from the parent. The frame is handed this
+# build's API, so it attempts the same verb every other check here attempts;
+# the size of the window afterwards is the answer, and the parent is the only
+# realm that can read it. The title check below is the second half and asks a
+# different question -- whether a subframe's title reached the native window,
+# which no engine here is supposed to let happen at all.
+Assert-Field "a frame could not drive it" "REFUSED" (Get-Field "frame")
+
 # A forged title is only refusable where the title is not the channel. This
 # build reports which one it wired, so the assertion follows the code rather
 # than this platform's history: if the real message channel came up, a forged
@@ -124,8 +132,10 @@ if ($transport -eq "title") {
 # that proves it is test/verify-nav.ps1, against a target that answers.
 Assert-Field "navigation refused" "REFUSED" (Get-Field "nav")
 
-# A frame that drove the window would have said so in the title, and that is
-# checked before any of this is read. Reaching here means it did not.
+# A frame whose *title* reached the native window would have said so in that
+# title, and that is checked before any of this is read. Reaching here means
+# it did not, and the field above says the API it was handed reached nothing
+# either.
 Write-Host "  PASS: no frame drove the window"
 
 # Refusing the top-frame data: navigation is not this project's doing -- every

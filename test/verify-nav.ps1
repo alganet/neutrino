@@ -194,11 +194,12 @@ Say ("would-have-carried api=" + (Beacon-Field "probe%3Dnav&" "api") +
      " page=" + (Beacon-Field "probe%3Dnav&" "page") +
      " tx=" + (Beacon-Field "probe%3Dnav&" "tx"))
 
-# Neither route to the native window. NAV-ESCAPED-API is the injected API used
-# from a document that was navigated to; NAV-ESCAPED-TITLE is a forged record in
-# that document's own title, for a host whose transport is the title and which
-# never asks whose title it is. The second is why the title branch now reads
-# Source.
+# No route to the native window. NAV-ESCAPED-API is a document that was
+# navigated to naming the window it is in -- the standard spelling, which the
+# host connects to each engine's title-changed signal, and which the gate
+# admits only for the document this launcher loaded. It was two routes while a
+# forged record could carry a setTitle; that record is gone and this is what it
+# probed. The title branch reading Source is what answers both.
 $escaped = @($titles | Where-Object { $_ -match "NAV-ESCAPED" })
 Assert-Is "no document that was navigated to drove the window" 0 $escaped.Count
 foreach ($e in $escaped) { Say "ESCAPE $e" }
