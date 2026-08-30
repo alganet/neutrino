@@ -4,7 +4,7 @@
 #
 # verify-macos.sh - External test verifier for macOS
 # Reads status from $TMPDIR/neutrino-title.txt written by macOS driver.
-# setTitle writes: title (1 line)
+# a title write: title (1 line)
 # resize/move writes: title\nWxH\nX,Y (3 lines)
 
 set -euo pipefail
@@ -133,7 +133,7 @@ assert_position() {
 rm -f "$STATUS_FILE"
 
 # --- Test steps ---
-# Each step: action fires, then 1s later setTitle fires.
+# Each step: action fires, then 1s later the app names the window.
 # When we see the title, the action has already happened.
 # resize/move also write geometry+position to the status file.
 
@@ -167,7 +167,7 @@ wait_for_title "STEP0" "$FIRST_TIMEOUT" || { echo "FAIL: STEP0 never reached"; e
 assert_title "STEP0"
 screenshot "01-step0"
 
-echo "=== Step 1: setTitle ==="
+echo "=== Step 1: title ==="
 wait_for_title "STEP1-Test Title" || { echo "FAIL: STEP1 never reached"; exit 1; }
 assert_title "STEP1-Test Title"
 screenshot "02-step1"

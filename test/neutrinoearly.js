@@ -23,7 +23,6 @@
  */
 var win = eval("window");
 var doc = eval("document");
-var log = eval("console");
 
 // Fixed here and in the workflow that starts test/stall.py. Nothing listening
 // means the requests fail fast, the load completes, and `ready` says so.
@@ -43,14 +42,6 @@ var STALL = "http://127.0.0.1:8099/never";
  */
 var TARGET = "http://127.0.0.1:8098/early-target.html";
 var TARGET_MARK = "early-target.html";
-
-function rawSend(record) {
-    var encoded = encodeURIComponent(record);
-    try { win.webkit.messageHandlers.neutrino.postMessage(record); } catch (_) {}
-    try { win.chrome.webview.postMessage(record); } catch (_) {}
-    try { log.log("__NEUTRINO__" + encoded); } catch (_) {}
-    try { doc.title = "__NEUTRINO__" + encoded; } catch (_) {}
-}
 
 /*
  * Where this ends up is the whole result, and the title cannot carry it on its
@@ -76,11 +67,14 @@ function report() {
         el.textContent = text;
         if (!el.parentNode && doc.body) doc.body.appendChild(el);
     } catch (_) {}
-    // Through the injected API, which is the channel a page that got here
-    // would be using. If the host refuses it there is no title and the
-    // verifier says so, which is the right answer for a build that renders
-    // nothing.
-    try { win.neutrino.window.setTitle(text); } catch (_) { rawSend("setTitle" + String.fromCharCode(31) + text); }
+    // The standard spelling, which is also the channel a page that got here
+    // would be using: the host mirrors a document's title onto the native
+    // window only for the document it loaded itself. So where the navigation
+    // was allowed there is no title at all and the verifier says so, which is
+    // the right answer for a build that renders nothing. It used to fall back
+    // to a raw setTitle record when the API was missing; that record no longer
+    // exists, and an assignment needs no API to reach.
+    doc.title = text;
 }
 
 /*

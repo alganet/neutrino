@@ -75,7 +75,7 @@ function put(s) {
     if (t.length > 1000) {
         t = "STD-OVER len=" + t.length + " " + t.substring(0, 900);
     }
-    try { win.neutrino.window.setTitle(t); } catch (_) {}
+    doc.title = t;
 }
 
 function engine() {
@@ -233,7 +233,11 @@ function step5() {
 function step6() { put("STD-THEME-END"); }
 
 function ready() {
-    if (win.neutrino && doc.documentElement) { step1(); }
+    // `doc.body` and not `doc.documentElement`: the parser inserts `<html>`
+    // before `<head>`, so documentElement is true inside the window where a
+    // `document.title` write -- which is how this suite reports -- does nothing
+    // at all. Waiting for the body is waiting for `</head>` to have been passed.
+    if (win.neutrino && doc.body) { step1(); }
     else { win.setTimeout(ready, 16); }
 }
 

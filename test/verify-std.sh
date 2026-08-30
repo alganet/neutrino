@@ -421,7 +421,7 @@ analyse_geom() {
 }
 
 analyse_doc() {
-    local ctl end rb dom1 dom2 after
+    local ctl end rb dom1 dom2 after opened
     ctl="$(field 2 '^STD-DOC-CTL')"
     end="$(field 2 '^STD-DOC-END')"
     rb="$(field 2 '^STD-DOC-RB-SELF')"
@@ -431,21 +431,39 @@ analyse_doc() {
     note "doc sequence: $(titles)"
     [ -n "$rb" ] && note "self ${rb#STD-DOC-RB-SELF }"
 
-    # Absent is the expected answer on every lane -- nothing in this file
-    # connects notify::title, onTitleChanged, the KVO on WKWebView.title or
-    # DocumentTitleChanged today. It is asked because expected is not measured,
-    # and because a lane that answers otherwise is a finding about that lane.
-    note "pair dom1 native=$([ -n "$dom1" ] && echo seen || echo absent)"
-    note "pair dom2 native=$([ -n "$dom2" ] && echo seen || echo absent)"
+    # The name the window came up wearing, before the app wrote anything. The
+    # launcher puts the build's title into the document, so this is also the
+    # first title-changed signal of the launch and it has to be a no-op. A note
+    # and not an assertion: this loop starts when the window appears, and a lane
+    # that is slow to hand the recorder its first read would be reporting its
+    # own scheduling.
+    opened="$(awk -F'\t' 'NR == 1 { print $2; exit }' "$REC")"
+    note "opened native=[${opened:-<nothing recorded>}]"
 
-    # What the native title was holding while the DOM said the empty string.
-    # Only meaningful if a DOM write reached the window in the first place, and
-    # said so rather than left to be inferred.
+    # The change this suite exists for. Both writes are plain assignments to
+    # document.title and both have to reach the native window; a lane where they
+    # do not is a lane whose title hook is not connected, which is the whole of
+    # the finding.
+    if [ -n "$dom1" ]; then note "pair dom1 native=seen"; else fail "pair dom1 native=absent; an assignment to document.title did not reach the window"; fi
+    if [ -n "$dom2" ]; then note "pair dom2 native=seen"; else fail "pair dom2 native=absent; an assignment to document.title did not reach the window"; fi
+
+    # And the two the gate refuses, asked as one question: what the window was
+    # showing after them. DOM2 is the last title that may reach it, so the next
+    # recorded state has to be the report at the end of the sequence. An empty
+    # title reaching the window would take the app's name away; a marked one
+    # reaching it would put a record in the channel every verifier here reads.
     after="$(awk -F'\t' '/STD-DOC-DOM2/ { found=1; next } found { print $2; exit }' "$REC")"
-    if [ -n "$dom2" ]; then
-        note "pair empty after_dom2_native=[${after:-<unchanged>}]"
+    if [ -z "$dom2" ]; then
+        note "pair refused not_asked: no DOM write reached the window to hold"
     else
-        note "pair empty not_asked: no DOM write reached the window to revert"
+        case "$after" in
+            "STD-DOC-RB-SELF"*)
+                note "pair refused after_dom2_native=[held DOM2 through both]" ;;
+            "")
+                fail "pair refused after_dom2_native=[nothing recorded]; the sequence stopped at DOM2" ;;
+            *)
+                fail "pair refused after_dom2_native=[$after]; the window took a title the gate refuses" ;;
+        esac
     fi
 
     # The brackets. A run where the hook did nothing and a run where no window

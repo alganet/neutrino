@@ -72,10 +72,10 @@ var myConfig = {
     tiers: "offline,tight",
     name: "example"
 };
-window.neutrino.window.setTitle(myConfig.name);
+document.title = myConfig.name;
 EOF
 cat > "$WORK/app-plain.js" <<'EOF'
-window.neutrino.window.setTitle("example");
+document.title = "example";
 EOF
 APP_TIERS_BYTES="$(size "$WORK/app-tiers.js")"
 TPL_BYTES="$(size "$ROOT/webview.cmd")"
@@ -308,7 +308,7 @@ eq "a template missing a marker is refused" "$([ "$?" -eq 0 ] && echo built || e
 eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
 
 T="$(tree appmarker)"
-printf 'window.neutrino.window.setTitle("x");\n//#RUNWEB_END\n' > "$WORK/app-marker.js"
+printf 'document.title = "x";\n//#RUNWEB_END\n' > "$WORK/app-marker.js"
 bash "$T/build.sh" --tier=tight "$WORK/app-marker.js" "$T/out.cmd" > "$WORK/appmarker.log" 2>&1
 eq "an app carrying a marker line is refused" "$([ "$?" -eq 0 ] && echo built || echo refused)" "refused"
 eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"

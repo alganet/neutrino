@@ -598,8 +598,7 @@ Window {
             console.warn("neutrino: refused a malformed record")
             return
         }
-        if (msg.action === "setTitle") root.title = msg.title
-        else if (msg.action === "resize") { root.width = msg.width; root.height = msg.height }
+        if (msg.action === "resize") { root.width = msg.width; root.height = msg.height }
         else if (msg.action === "move") { root.x = msg.x; root.y = msg.y }
         // Relative, against the same properties the two above set. No reader
         // needed here: on this lane the window's geometry is the window's own
@@ -628,6 +627,21 @@ Window {
         property bool preloadInjected: false
         property bool documentLoaded: false
         property bool contentLoaded: false
+        // This lane's half of the title hook. `title` is a WebEngineView
+        // property that follows the loaded document, so the signal is the one
+        // QML generates for it and nothing has to be connected by hand.
+        //
+        // The assignment is what breaks the binding to `cfg.title` above, and
+        // that is the point: from the first title this document names, the
+        // window is following the document. Until then the binding holds, and
+        // the gate refuses the empty title a document that names nothing
+        // reports.
+        onTitleChanged: {
+            var name = root.nt.acceptDocumentTitle(view.url, view.title)
+            if (name !== null) {
+                root.title = name
+            }
+        }
         onLoadingChanged: function(info) {
             if (info.status === WebEngineView.LoadSucceededStatus) {
                 if (!preloadInjected) {
@@ -699,8 +713,10 @@ Window {
             }
         }
         Component.onCompleted: {
-            view.loadHtml(root.nt.applyContentPolicy(
-                root.nt.extractHtmlDocument(root.ntSource)))
+            view.loadHtml(root.nt.titledDocument(
+                root.nt.applyContentPolicy(
+                    root.nt.extractHtmlDocument(root.ntSource)),
+                cfg.title))
         }
     }
 }
@@ -1095,9 +1111,7 @@ def route(raw):
         sys.stderr.write("neutrino: refused a malformed record\n")
         return
     action = message.object_get_property("action").to_string()
-    if action == "setTitle":
-        window.set_title(message.object_get_property("title").to_string())
-    elif action == "resize":
+    if action == "resize":
         window.resize(
             message.object_get_property("width").to_int32(),
             message.object_get_property("height").to_int32(),
@@ -1379,7 +1393,11 @@ def paint(widget_window, web_view, background):
     except Exception as exc:
         sys.stderr.write("neutrino: could not paint the window: %s\n" % (exc,))
 
-html = call("applyContentPolicy", call("extractHtmlDocument", js_string(source))).to_string()
+html = call(
+    "titledDocument",
+    call("applyContentPolicy", call("extractHtmlDocument", js_string(source))),
+    js_string(title),
+).to_string()
 page_script = call("extractPageScript", js_string(source)).to_string()
 preload = call(
     "buildPreloadScript",
@@ -1497,6 +1515,23 @@ def on_decide_policy(_view, decision, kind):
 
 view.connect("decide-policy", on_decide_policy)
 
+
+# This lane's half of the title hook, and the same signal the gjs lane connects.
+# `notify::title` is GObject's own, so it fires for a `<title>` the parser met
+# and for an assignment the page made alike, and the value read back is the
+# engine's rather than anything the page handed over.
+#
+# showing() is the reader the message handler already uses, so the sender check
+# here and the sender check there cannot drift apart.
+def on_title(view_object, _pspec):
+    name = call("acceptDocumentTitle", js_string(showing()),
+                js_string(view_object.get_title() or ""))
+    if not name.is_null():
+        window.set_title(name.to_string())
+
+
+view.connect("notify::title", on_title)
+
 view.load_html(html, None)
 window.add(view)
 window.show_all()
@@ -1554,10 +1589,10 @@ PYGIEOF
 # whole launch down with it; the walk moves on and finds the qml6 that was
 # sitting there the entire time.
 #
-# The status is not forgeable by an app. Nothing on the IPC surface -- setTitle,
-# resize, move, close, openExternal -- sets an exit code, so an app that fails
-# on its own says so with its own status and the walk stops. That distinction is
-# the difference between falling through to the next engine and running someone
+# The status is not forgeable by an app. Nothing on the IPC surface -- resize,
+# move, close, openExternal -- sets an exit code, so an app that fails on its
+# own says so with its own status and the walk stops. That distinction is the
+# difference between falling through to the next engine and running someone
 # else's program a second time.
 nt_ex_noengine=69
 
@@ -2987,6 +3022,10 @@ exit $?;:<<'//</script></body></html>' #-->
             // window has stopped changing" from "the thing writing this file
             // has stopped". Both are testing-tier only.
             var statusTicks = 0;
+            // The last title this lane read off the view. The clock below is a
+            // poll and this is what makes it an edge: without it every tick
+            // would set the window's title again, and writeStatus with it.
+            var lastDocumentTitle = "";
 
             // What the view is showing, as the view answers rather than as
             // anything that called in claims. Empty is an answer too: a view
@@ -3055,37 +3094,45 @@ exit $?;:<<'//</script></body></html>' #-->
                     }
 
                     /*
-                     * The status ticker, in the same shape and for the same
-                     * reason: -run never returns, so a clock on this lane has
-                     * to be an ObjC object with a selector, and NSTimer's
-                     * block-taking spelling is one JXA cannot supply.
+                     * This lane's clock, in the same shape and for the same
+                     * reason: -run never returns, so a clock here has to be an
+                     * ObjC object with a selector, and NSTimer's block-taking
+                     * spelling is one JXA cannot supply.
                      *
-                     * Registered only under the testing tier. writeStatus
-                     * already refuses to write in a release build, so a ticker
-                     * there would be a timer firing into a function that
-                     * returns immediately -- costing an app something for a
-                     * file nobody will read. Ground rule 4 puts the switch on
-                     * the tier and not in the environment.
+                     * It used to be registered only under the testing tier,
+                     * because writeStatus was all it did and writeStatus
+                     * refuses to write in a release build. It now also carries
+                     * the title hook, which every build needs, so the tier gate
+                     * moved down into writeStatus alone -- where it already
+                     * was.
+                     *
+                     * A clock and not a signal, on the one lane where that is a
+                     * choice this file did not get to make. The hook the other
+                     * four use is the engine's own title-changed notification;
+                     * WKWebView's is KVO, whose observer selector takes a
+                     * `void *` context, and the JXA bridge has no type string
+                     * for a pointer -- a registered method whose types cannot
+                     * name its last argument marshals whatever happens to be in
+                     * the register. Two hundred milliseconds against a property
+                     * read is the price of not writing that.
                      */
-                    if (self.hasTier("testing")) {
-                        try {
-                            ObjCRef.registerSubclass({
-                                name: "NeutrinoStatusTicker",
-                                superclass: "NSObject",
-                                methods: {
-                                    "tick:": {
-                                        types: ["void", ["id"]],
-                                        implementation: function () {
-                                            if (driverRef) {
-                                                driverRef.statusTick();
-                                            }
+                    try {
+                        ObjCRef.registerSubclass({
+                            name: "NeutrinoStatusTicker",
+                            superclass: "NSObject",
+                            methods: {
+                                "tick:": {
+                                    types: ["void", ["id"]],
+                                    implementation: function () {
+                                        if (driverRef) {
+                                            driverRef.statusTick();
                                         }
                                     }
                                 }
-                            });
-                        } catch (e) {
-                            self.note("no status ticker on this lane: " + e);
-                        }
+                            }
+                        });
+                    } catch (e) {
+                        self.note("no clock on this lane: " + e);
                     }
 
                     /*
@@ -3485,13 +3532,50 @@ exit $?;:<<'//</script></body></html>' #-->
                     } catch (_) {}
                 },
 
-                // What the ticker calls. The title comes off the window rather
-                // than from a caller, because the whole reason this exists is
-                // the writes nobody made a call for.
+                /*
+                 * What the clock calls, and it has two jobs.
+                 *
+                 * The first is this lane's half of the title hook: the view's
+                 * `title` is WKWebView's own reading of the document it has
+                 * loaded, and comparing it against the last one accepted is
+                 * what turns a poll into an edge. The url comes from
+                 * currentUrl, which is the reader isTrustedMacSender already
+                 * uses, so the two sender checks on this lane cannot drift
+                 * apart.
+                 *
+                 * The second is writeStatus, which is scaffolding and gates
+                 * itself on the tier. The title goes first so that a tick which
+                 * moves the window's name writes the file with the new name in
+                 * it rather than one tick behind -- setTitle writes it again on
+                 * the way past, and a second write of the same seven lines
+                 * costs nothing.
+                 */
                 statusTick: function () {
                     if (!windowRef) {
                         return;
                     }
+                    try {
+                        // The same rule the WebView2 loop follows, for the same
+                        // reason: this is a poll, lastDocumentTitle is what makes
+                        // it an edge, and latching a title before there is a
+                        // document to judge it against would swallow that title
+                        // for the rest of the run.
+                        if (webViewRef && self.hasCommittedDocument()) {
+                            var raw = "";
+                            try {
+                                raw = String(ObjCRef.unwrap(webViewRef.title) || "");
+                            } catch (_) {
+                                raw = "";
+                            }
+                            if (raw !== lastDocumentTitle) {
+                                lastDocumentTitle = raw;
+                                var name = self.acceptDocumentTitle(currentUrl(), raw);
+                                if (name !== null) {
+                                    this.setTitle(windowRef, name);
+                                }
+                            }
+                        }
+                    } catch (_) {}
                     try { this.writeStatus(windowRef); } catch (_) {}
                 },
                 setTitle: function (win, title) {
@@ -3700,15 +3784,13 @@ exit $?;:<<'//</script></body></html>' #-->
                      * checked against -- not a rate chosen for feeling about
                      * right.
                      */
-                    if (self.hasTier("testing")) {
-                        try {
-                            tickerRef = dollar.NeutrinoStatusTicker.alloc.init;
-                            dollar.NSTimer
-                                .scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(
-                                    0.2, tickerRef, "tick:", null, true);
-                        } catch (e) {
-                            self.note("could not start the status ticker: " + e);
-                        }
+                    try {
+                        tickerRef = dollar.NeutrinoStatusTicker.alloc.init;
+                        dollar.NSTimer
+                            .scheduledTimerWithTimeIntervalTargetSelectorUserInfoRepeats(
+                                0.2, tickerRef, "tick:", null, true);
+                    } catch (e) {
+                        self.note("could not start the clock on this lane: " + e);
                     }
                     dollar.NSApp.setActivationPolicy(0);
                     // Left as a call on purpose. By the same rule, reading
@@ -3729,6 +3811,10 @@ exit $?;:<<'//</script></body></html>' #-->
             var pendingPreload = null;
             var pendingPageScript = null;
             var documentLoaded = false;
+            // The window the title hook writes to. boot creates the window
+            // before the view, so this is set by the time createWebView
+            // connects anything to it.
+            var windowRef = null;
 
             return {
                 webMessageTransport: "window.webkit.messageHandlers.neutrino.postMessage",
@@ -3846,6 +3932,7 @@ exit $?;:<<'//</script></body></html>' #-->
                         default_width: config.width,
                         default_height: config.height
                     });
+                    windowRef = win;
                     win.set_position(Gtk.WindowPosition.CENTER);
                     win.connect("destroy", function () { Gtk.main_quit(); });
                     self.paintGtkWindow(Gtk, Gdk, win, self.resolveBackground(self.theme));
@@ -3878,6 +3965,34 @@ exit $?;:<<'//</script></body></html>' #-->
                 },
                 createWebView: function () {
                     var ucm = new WebKit2.UserContentManager();
+
+                    /*
+                     * This lane's half of the title hook. `notify::title` is
+                     * GObject's own signal on the view's own property, so it
+                     * fires for a `<title>` the parser met and for an
+                     * assignment the page made alike, and what is read back is
+                     * WebKit's answer rather than anything the page handed
+                     * over.
+                     *
+                     * The uri is read off the view and not off the event, the
+                     * same way the message handler below reads it, so the two
+                     * sender checks on this lane cannot drift apart.
+                     */
+                    var titleWatcher = function (view) {
+                        if (!windowRef) {
+                            return;
+                        }
+                        var showing = "";
+                        try {
+                            showing = String(view.get_uri());
+                        } catch (_) {
+                            showing = "";
+                        }
+                        var name = self.acceptDocumentTitle(showing, view.get_title());
+                        if (name !== null) {
+                            windowRef.set_title(name);
+                        }
+                    };
 
                     if (messageCallback) {
                         ucm.register_script_message_handler("neutrino");
@@ -4000,10 +4115,8 @@ exit $?;:<<'//</script></body></html>' #-->
                         driverRef.openExternal(uri);
                         return true;
                     });
+                    wv.connect("notify::title", titleWatcher);
                     return wv;
-                },
-                setTitle: function (win, title) {
-                    win.set_title(title);
                 },
                 resize: function (win, w, h) {
                     win.resize(w, h);
@@ -4348,9 +4461,11 @@ exit $?;:<<'//</script></body></html>' #-->
          * view to trust, and the guard adopted the attacker. Every driver now
          * arms at the load it started and before any page script exists to send
          * anything: gjs at COMMITTED, Qt immediately before it injects the
-         * preload, macOS at didCommitNavigation:. A message arriving with
-         * nothing remembered is therefore not an app that has not got going
-         * yet; it is a view that never committed the document this file loaded.
+         * preload, macOS at didCommitNavigation:, WebView2 at the turn of its
+         * loop where the navigation sink says the document arrived. A message
+         * arriving with nothing remembered is therefore not an app that has not
+         * got going yet; it is a view that never committed the document this
+         * file loaded.
          *
          * The reason the fail-open was there in the first place still holds and
          * is answered rather than dropped: every caller says why it refused, so
@@ -4361,6 +4476,171 @@ exit $?;:<<'//</script></body></html>' #-->
                 return false;
             }
             return this.viewIdentity(uri) === this.trustedView;
+        },
+
+        /*
+         * Whether there is a document to judge a title against yet, asked
+         * separately from judging one.
+         *
+         * The two lanes that read the title on a clock have to know the
+         * difference before they record what they read. Both keep a last-seen
+         * title so that a poll becomes an edge, and a poll that latches a value
+         * the gate then refuses for "nothing has committed" would swallow that
+         * title for the rest of the run -- the next read is equal to the last
+         * one and never fires again. So they ask this first and read nothing
+         * until it is true.
+         */
+        hasCommittedDocument: function () {
+            return this.trustedView !== null;
+        },
+
+        /*
+         * The transport's marker, as a value rather than as a literal.
+         *
+         * It is written five times in this file and only two of those can read
+         * it from here: the WebView2 loop, which decides whether a document
+         * title is a record or a name, and the gate below, which has to refuse
+         * exactly what that loop accepts. The other three are page-side or
+         * QML-side source being built as a string, where a literal is what
+         * there is.
+         *
+         * So this is not "the marker in one place". It is the pair that has to
+         * agree about it not having two spellings between them, which is the
+         * disagreement that would matter: a record delivered as a window title.
+         */
+        recordPrefix: "__NEUTRINO__",
+
+        /*
+         * What a document is allowed to do to the name of the window it is in.
+         *
+         * `document.title` is the standard spelling of the verb this file used
+         * to expose as `neutrino.window.setTitle`, and every one of the four
+         * engines raises a signal when it changes -- `notify::title`,
+         * `onTitleChanged`, `WKWebView.title`, `DocumentTitleChanged`.
+         * Measured, all four: the DOM takes the value and the native window
+         * never sees it, so connecting those signals is the whole change. What
+         * each lane connects differs; what any of them may pass through does
+         * not, which is why the rule is here and not written five times.
+         *
+         * It is a gate rather than a passthrough for four reasons, and each of
+         * them is a reading rather than a precaution.
+         *
+         * The view has to be the one this launcher handed a document to. The
+         * old spelling arrived over the IPC surface, which every driver
+         * sender-checks; a title arrives from whatever the engine currently has
+         * loaded, and on lanes whose preload the engine reinjects, a page that
+         * got navigated to inherits the API and the document alike. The window
+         * title is also the channel every verifier in this tree reads, so a
+         * foreign document writing it is a foreign document filing this run's
+         * report. A view that has committed nothing is a third case and is
+         * neither: it is answered below, before the refusal, because two of
+         * the five lanes ask this question on a clock that starts first.
+         *
+         * A record is never a title. Where the title *is* the transport --
+         * WebView2 with no `postMessage` wired -- a record and a title share
+         * one property, and the marker is what tells them apart. Refusing the
+         * marker on every lane rather than only on that one keeps
+         * `test/neutrinoattack.js`'s planted record reading the same
+         * everywhere, and costs an app nothing it would ever want.
+         *
+         * An empty title is not a title. A document that never named itself
+         * reports one on some engines and nothing on others, and a window whose
+         * name disappears because its author wrote no `<title>` is worse than
+         * the name the build gave it. `boot` puts the build's title into the
+         * document for the same reason, so this is the second of two answers to
+         * the same question and the one that does not need the markup to
+         * cooperate.
+         *
+         * Neither is the document's own url, and that rule needed two spellings
+         * rather than one. WebView2 documents `DocumentTitle` as falling back
+         * to the URI of the document. QtWebEngine was then measured reporting
+         * `about:blank` as the view's title the moment the page set
+         * `document.title` to the empty string -- on a view whose own url is
+         * the `data:` document Qt navigated to, so comparing the title against
+         * what the view says it is showing let it straight through and the
+         * window took `about:blank` for a name. Both are refused: the identity
+         * the view reports, and the placeholder every driver here loads its
+         * content into.
+         *
+         * The bounds are the ones `parseMessage` already put on a title, for
+         * the same reason it had them: this ends up in a window title that
+         * shell and PowerShell verifiers read line by line, and a control
+         * character in it breaks the reader rather than the window.
+         */
+        acceptDocumentTitle: function (showing, title) {
+            /*
+             * Nothing committed yet is silence and not a refusal. Two lanes
+             * read the title on a clock -- macOS off the view, WebView2 off
+             * CoreWebView2 -- and both of those clocks start before the
+             * document arrives, so every launch would otherwise open with a
+             * note saying the app was refused its own window.
+             */
+            if (this.trustedView === null) {
+                return null;
+            }
+            if (!this.isTrustedView(showing)) {
+                this.noteOnce("refused a window title from a document the view " +
+                    "was not given");
+                return null;
+            }
+            var text = String(title == null ? "" : title);
+            if (text === "") {
+                return null;
+            }
+            if (text.indexOf(this.recordPrefix) === 0) {
+                return null;
+            }
+            if (text === "about:blank" || text === this.viewIdentity(showing)) {
+                return null;
+            }
+            if (text.length > 1024 || this.hasControlCharacters(text)) {
+                this.noteOnce("refused a window title this launcher cannot carry");
+                return null;
+            }
+            return text;
+        },
+
+        /*
+         * The build's title, put where a browser would look for it.
+         *
+         * Every engine here reports the loaded document's title, and an app
+         * whose markup names nothing therefore reports nothing -- which would
+         * make the first title-changed signal of every launch an instruction to
+         * blank the window's name. Naming the document is what stops that being
+         * a special case: the first signal now carries the title the window was
+         * already created with, so it changes nothing, and every signal after
+         * it is the app's own.
+         *
+         * It also makes the read side true. An app that assigns
+         * `document.title` expects to be able to read it back, and before this
+         * the answer was the empty string until the app itself wrote one.
+         *
+         * A document that named itself keeps its name, and the window takes it:
+         * that is what `<title>` means everywhere else, and an author who wrote
+         * one meant it more recently than whoever passed `--title`.
+         *
+         * Escaped for markup rather than trusted. `build.sh` refuses a title
+         * carrying a quote, a backslash or a control character, because it is
+         * stamped into a JavaScript string literal -- `<` and `&` were never
+         * its problem and are this one's.
+         */
+        titledDocument: function (html, title) {
+            var text = String(html);
+            var name = String(title == null ? "" : title);
+            if (name === "" || /<title[\s>]/i.test(text)) {
+                return text;
+            }
+            var head = text.indexOf("</head>");
+            if (head < 0) {
+                this.noteOnce("this document has no <head>, so the window keeps " +
+                    "its own name whatever the page calls itself");
+                return text;
+            }
+            var escaped = name.replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
+            return text.substring(0, head) + "<title>" + escaped + "</title>" +
+                text.substring(head);
         },
 
         /*
@@ -4494,13 +4774,6 @@ exit $?;:<<'//</script></body></html>' #-->
                 return (rest === null) ? { action: "close" } : null;
             }
 
-            if (action === "setTitle") {
-                if (rest === null || rest.length > 1024 || this.hasControlCharacters(rest)) {
-                    return null;
-                }
-                return { action: "setTitle", title: rest };
-            }
-
             if (action === "openExternal") {
                 if (rest === null || !this.isExternalUrl(rest)) {
                     return null;
@@ -4619,36 +4892,30 @@ exit $?;:<<'//</script></body></html>' #-->
                 '},' +
                 'send:function(action,data){' +
                 'var d=data||{};' +
-                'if(action==="setTitle")_send("setTitle"+S+_n(d.title));' +
-                'else if(action==="resize")_send("resize"+S+_n(d.width)+S+_n(d.height));' +
+                'if(action==="resize")_send("resize"+S+_n(d.width)+S+_n(d.height));' +
                 'else if(action==="resizeBy")_send("resizeBy"+S+_n(d.width)+S+_n(d.height));' +
                 'else if(action==="move")_send("move"+S+_n(d.x)+S+_n(d.y));' +
                 'else if(action==="moveBy")_send("moveBy"+S+_n(d.x)+S+_n(d.y));' +
                 'else if(action==="openExternal")_send("openExternal"+S+_n(d.url));' +
                 'else if(action==="close")_send("close");' +
                 '},' +
+                /*
+                 * All that is left of the bespoke namespace, and it is waiting
+                 * on a PR rather than kept as an alias.
+                 *
+                 * Its standard spelling is window.open, which is not shimmed
+                 * here on purpose: test/neutrinonav.js asserts what the
+                 * *engine's* own new-window path does against the native guard,
+                 * and a shim would leave that probe passing while measuring the
+                 * shim.
+                 *
+                 * setTitle used to sit beside it. Its spelling is an assignment
+                 * to document.title, and that assignment now reaches the native
+                 * window on all five lanes -- so there is nothing left here to
+                 * alias it with.
+                 */
                 'shell:{' +
                 'openExternal:function(url){window.neutrino.send("openExternal",{url:url});}' +
-                '},' +
-                /*
-                 * What is left of the bespoke namespace, and both entries are
-                 * waiting on a PR rather than kept as aliases.
-                 *
-                 * setTitle's standard spelling is an assignment to
-                 * document.title, which reaches no native window on any of the
-                 * four engines -- measured, all four, with the DOM taking the
-                 * value and the title bar never moving. Its replacement is a
-                 * native title-changed hook per lane, and until that exists
-                 * this is also the report channel every verifier in the tree
-                 * reads, so deleting it would take the instrument with it.
-                 *
-                 * openExternal's is window.open, which is not shimmed here on
-                 * purpose: test/neutrinonav.js asserts what the *engine's* own
-                 * new-window path does against the native guard, and a shim
-                 * would leave that probe passing while measuring the shim.
-                 */
-                'window:{' +
-                'setTitle:function(t){window.neutrino.send("setTitle",{title:t});}' +
                 '}' +
                 '};' +
                 /*
@@ -4803,7 +5070,9 @@ exit $?;:<<'//</script></body></html>' #-->
 
             var scriptPath = driver.getScriptPath();
             var source = driver.readFile(scriptPath);
-            var html = this.applyContentPolicy(this.extractHtmlDocument(source));
+            var html = this.titledDocument(
+                this.applyContentPolicy(this.extractHtmlDocument(source)),
+                config.title);
             var pageScript = this.extractPageScript(source);
 
             var win = driver.createWindow(config);
@@ -4813,7 +5082,6 @@ exit $?;:<<'//</script></body></html>' #-->
                 var driverRef = driver;
                 var winRef = win;
                 var actions = {};
-                if (driverRef.setTitle) actions.setTitle = function (m) { try { driverRef.setTitle(winRef, m.title); } catch (_) {} };
                 if (driverRef.resize) actions.resize = function (m) { try { driverRef.resize(winRef, m.width, m.height); } catch (_) {} };
                 if (driverRef.move) actions.move = function (m) { try { driverRef.move(winRef, m.x, m.y); } catch (_) {} };
                 /*
@@ -5772,6 +6040,28 @@ exit $?;:<<'//</script></body></html>' #-->
         // of the document that called postMessage, and the document this file
         // loads through NavigateToString has none worth the name -- so a
         // message from anywhere else is from a page that was navigated to.
+        /*
+         * What the view says it is showing, off the view and not off an event.
+         *
+         * Two things in the WebView2 loop need it and they used to be one, so
+         * it lived inline: the turn that remembers the committed document, and
+         * every title change judged against it. They have to be the same
+         * reading -- remembering one and comparing another is a guard that
+         * cannot pass -- and a function is how that stops being a thing to
+         * remember. `null` is "the view would not say", which is refused rather
+         * than trusted everywhere it reaches.
+         */
+        readWebView2Source: function (coreWv2, sourceProp) {
+            if (!sourceProp) {
+                return null;
+            }
+            try {
+                return String(sourceProp.GetValue(coreWv2, null) || "");
+            } catch (_) {
+                return null;
+            }
+        },
+
         readWebView2Message: function (args) {
             var source = "";
             try {
@@ -6045,6 +6335,7 @@ exit $?;:<<'//</script></body></html>' #-->
                     var titleProp = null;
                     var sourceProp = null;
                     var preloadInjected = false;
+                    var trustedRemembered = false;
                     // Heartbeat and first-exception state. The loop body below
                     // is one big try/catch that discards what it catches, so a
                     // build whose every iteration threw would spin in silence
@@ -6183,54 +6474,113 @@ exit $?;:<<'//</script></body></html>' #-->
                                         messageCallback(text);
                                     }
                                 }
-                            } else if (coreWv2 && messageCallback) {
+                            }
+                            /*
+                             * The document's title, read on the same clock and
+                             * now read whatever the transport is.
+                             *
+                             * One property with two meanings, and the marker is
+                             * what separates them. Where wireWebView2Messages
+                             * returned false the title *is* the channel, so a
+                             * marked value is a record and is handed to the
+                             * callback. Everything else is a name the document
+                             * chose, and this lane's half of the title hook is
+                             * to put it on the Form -- which is why this read
+                             * moved out of the branch it used to live in: with
+                             * webmessages wired, which is every run on this
+                             * lane that CI has ever recorded, it never ran.
+                             *
+                             * Who set it, asked the same way readWebView2Message
+                             * asks. This used to ask nothing at all, which made
+                             * this the one driver that never checked a sender --
+                             * and wherever the title is the whole channel, a
+                             * page navigated to could drive the native window by
+                             * writing its own.
+                             *
+                             * Source is the reading that makes it checkable and
+                             * it had to be measured: the view's Source stays
+                             * about:blank across the driver's NavigateToString,
+                             * and names the remote document once a navigation
+                             * has arrived -- polled on this same clock, a
+                             * foreign title and a foreign Source were seen in
+                             * the same pair.
+                             *
+                             * A view that cannot say what it is showing is
+                             * refused rather than trusted, which is the rule
+                             * isTrustedView already settled.
+                             */
+                            if (coreWv2) {
                                 if (!titleProp) {
                                     titleProp = coreWv2.GetType().GetProperty("DocumentTitle");
                                     sourceProp = coreWv2.GetType().GetProperty("Source");
                                 }
-                                if (titleProp) {
-                                    var docTitle = String(titleProp.GetValue(coreWv2, null) || "");
-                                    /*
-                                     * Who set it, asked the same way
-                                     * readWebView2Message asks. This branch used
-                                     * to ask nothing at all, which made this the
-                                     * one driver that never checked a sender --
-                                     * and wherever wireWebView2Messages returns
-                                     * false it is the whole channel, so a page
-                                     * navigated to could drive the native window
-                                     * by writing its own title.
-                                     *
-                                     * Source is the reading that makes it
-                                     * checkable and it had to be measured: the
-                                     * view's Source stays about:blank across the
-                                     * driver's NavigateToString, and names the
-                                     * remote document once a navigation has
-                                     * arrived -- polled on this same clock, a
-                                     * foreign title and a foreign Source were
-                                     * seen in the same pair.
-                                     *
-                                     * A view that cannot say what it is showing
-                                     * is refused rather than trusted, which is
-                                     * the rule isTrustedView already settled.
-                                     */
-                                    var showing = null;
-                                    if (sourceProp) {
-                                        try {
-                                            showing = String(sourceProp.GetValue(coreWv2, null) || "");
-                                        } catch (_) {
-                                            showing = null;
-                                        }
+                                /*
+                                 * The fifth lane arming the way the other four
+                                 * do, and remembering the reading it is going to
+                                 * compare.
+                                 *
+                                 * NeutrinoNavSink.armed is this lane's commit --
+                                 * the document this file navigated to has
+                                 * arrived. What gets remembered is `Source`, and
+                                 * that is the whole of the fix: the sink's
+                                 * `ownDocument` is the `data:` url the
+                                 * navigation event reported, while `Source`
+                                 * stays `about:blank` for the life of the view.
+                                 * Remembering the first and checking the second
+                                 * is a guard that can never pass, and it shipped
+                                 * once: every title on this lane was refused,
+                                 * and since the title is the only report channel
+                                 * here, every suite on the platform went dark at
+                                 * the same moment.
+                                 *
+                                 * Remembered here rather than inside the sink,
+                                 * which stays a .NET static with no reach into
+                                 * this object -- the arrangement that makes it
+                                 * unreachable from any document.
+                                 */
+                                if (!trustedRemembered && NeutrinoNavSink.armed) {
+                                    var committed = self.readWebView2Source(coreWv2, sourceProp);
+                                    if (committed !== null && committed !== "") {
+                                        trustedRemembered = true;
+                                        self.rememberTrustedView(committed);
                                     }
-                                    var mine = (showing !== null) && self.isOwnDocument(showing);
-                                    if (docTitle !== lastDocTitle && docTitle.indexOf("__NEUTRINO__") === 0) {
+                                }
+                                // Nothing is read until there is a document to
+                                // judge it against. lastDocTitle is what turns
+                                // this poll into an edge, so latching a title
+                                // that would be refused for arriving too early
+                                // would swallow it for the rest of the run.
+                                if (titleProp && trustedRemembered) {
+                                    var docTitle = String(titleProp.GetValue(coreWv2, null) || "");
+                                    if (docTitle !== lastDocTitle) {
                                         lastDocTitle = docTitle;
-                                        if (mine) {
-                                            try {
-                                                messageCallback(decodeURIComponent(docTitle.substring(12)));
-                                            } catch (_) {}
+                                        var showing = self.readWebView2Source(coreWv2, sourceProp);
+                                        if (docTitle.indexOf(self.recordPrefix) === 0) {
+                                            var mine = (showing !== null) && self.isOwnDocument(showing);
+                                            if (!messageCallback || webMessagesWired) {
+                                                // A record on a lane whose
+                                                // channel is elsewhere. Nothing
+                                                // is listening for it here and
+                                                // it is not a name either, so it
+                                                // goes no further in either
+                                                // direction.
+                                                self.trace("a record arrived in the title and the channel is " +
+                                                    (webMessagesWired ? "webmessage" : "unwired"));
+                                            } else if (mine) {
+                                                try {
+                                                    messageCallback(decodeURIComponent(
+                                                        docTitle.substring(self.recordPrefix.length)));
+                                                } catch (_) {}
+                                            } else {
+                                                self.note("refused a record in the title of " +
+                                                    (showing === null ? "a view that did not say" : showing));
+                                            }
                                         } else {
-                                            self.note("refused a record in the title of " +
-                                                (showing === null ? "a view that did not say" : showing));
+                                            var name = self.acceptDocumentTitle(
+                                                showing === null ? "" : showing, docTitle);
+                                            if (name !== null) {
+                                                driver.setTitle(win, name);
+                                            }
                                         }
                                     }
                                 }

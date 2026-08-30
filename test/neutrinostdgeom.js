@@ -76,7 +76,7 @@ function put(s) {
     if (t.length > 1000) {
         t = "STD-OVER len=" + t.length + " " + t.substring(0, 900);
     }
-    try { win.neutrino.window.setTitle(t); } catch (_) {}
+    doc.title = t;
 }
 
 // The engine, from the one string that names it. Not a finding -- it is what
@@ -151,12 +151,16 @@ function phaseR() {
     win.setTimeout(function () { put("STD-GEOM-END"); }, DWELL);
 }
 
-// The wait is for the API and not for the body: this script is injected at
-// document end, so the markup is parsed before its first statement, and what
-// may not be there yet is the object every phase reports through. NT0 above has
-// already recorded whether it was.
+// The wait is for both, and it used to be for the API alone on the grounds that
+// this script is injected at document end so the markup is already parsed. That
+// is true on three lanes and false on WebView2, where the first statement runs
+// at `loading` -- and it stopped being a harmless inaccuracy the day this suite
+// began reporting through `document.title`, because a title written before
+// `<head>` exists is a no-op by the DOM's own rule and phase A went missing.
+// NT0 and RS0 above are read at the first statement and are unaffected by the
+// wait; they are what says which lane this is.
 function ready() {
-    if (win.neutrino) { phaseA(); }
+    if (doc.body && win.neutrino) { phaseA(); }
     else { win.setTimeout(ready, 16); }
 }
 

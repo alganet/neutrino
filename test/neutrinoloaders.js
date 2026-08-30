@@ -15,7 +15,7 @@ var doc = eval("document");
 function ready() {
     if (doc.body && win.neutrino) {
         doc.body.textContent = "LOADERS";
-        win.neutrino.window.setTitle("LOADERS READY");
+        doc.title = "LOADERS READY";
     } else {
         win.setTimeout(ready, 200);
     }

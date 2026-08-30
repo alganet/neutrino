@@ -102,7 +102,7 @@ WID=$(wait_for_title "STEP0") || { echo "FAIL: STEP0 never reached"; exit 1; }
 assert_title "$WID" "STEP0"
 screenshot "01-step0"
 
-echo "=== Step 1: setTitle ==="
+echo "=== Step 1: title ==="
 WID=$(wait_for_title "STEP1-Test Title") || { echo "FAIL: STEP1 never reached"; exit 1; }
 assert_title "$WID" "STEP1-Test Title"
 screenshot "02-step1"

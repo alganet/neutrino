@@ -378,15 +378,30 @@ function Analyse-Doc($rows) {
     Note "doc sequence: $($names -join ' ')"
     if ($rb) { Note "self $($rb.Title -replace '^STD-DOC-RB-SELF ','')" }
 
-    # Absent is the expected answer: nothing wires DocumentTitleChanged today.
-    # It is asked because expected is not measured. On this lane there is a
-    # second reason -- when the WebMessageReceived subscription does not take,
-    # the host polls DocumentTitle and the title *is* the wire, so a DOM write
-    # landing here would mean something different again. The transport the app
-    # reports on the self line above is what tells the two apart.
-    Note "pair dom1 native=$(if ($d1) { 'seen' } else { 'absent' })"
-    Note "pair dom2 native=$(if ($d2) { 'seen' } else { 'absent' })"
+    # The name the window came up wearing, before the app wrote anything. The
+    # launcher puts the build's title into the document, so this is also the
+    # first title-changed signal of the launch and it has to be a no-op. A note
+    # and not an assertion: this loop starts when the window appears, and a lane
+    # slow to hand the recorder its first read would be reporting its own
+    # scheduling.
+    $opened = if ($rows.Count -gt 0) { $rows[0].Title } else { $null }
+    Note "opened native=[$(if ($opened) { $opened } else { '<nothing recorded>' })]"
 
+    # The change this suite exists for. Both writes are plain assignments to
+    # document.title and both have to reach the native window; a lane where they
+    # do not is a lane whose title hook is not connected.
+    #
+    # On this lane there is a second reading behind the first. Where the
+    # WebMessageReceived subscription does not take, the host polls
+    # DocumentTitle and the title *is* the wire -- the marker is what separates
+    # a record from a name there, and the transport on the self line above says
+    # which case this run is.
+    if ($d1) { Note "pair dom1 native=seen" } else { Fail "pair dom1 native=absent; an assignment to document.title did not reach the window" }
+    if ($d2) { Note "pair dom2 native=seen" } else { Fail "pair dom2 native=absent; an assignment to document.title did not reach the window" }
+
+    # And the two the gate refuses, asked as one question: what the window was
+    # showing after them. DOM2 is the last title that may reach it, so the next
+    # recorded state has to be the report at the end of the sequence.
     if ($d2) {
         $after = $null
         $seen = $false
@@ -394,9 +409,15 @@ function Analyse-Doc($rows) {
             if ($seen) { $after = $r.Title; break }
             if ($r.Title -like "STD-DOC-DOM2*") { $seen = $true }
         }
-        Note "pair empty after_dom2_native=[$(if ($after) { $after } else { '<unchanged>' })]"
+        if (-not $after) {
+            Fail "pair refused after_dom2_native=[nothing recorded]; the sequence stopped at DOM2"
+        } elseif ($after -like "STD-DOC-RB-SELF*") {
+            Note "pair refused after_dom2_native=[held DOM2 through both]"
+        } else {
+            Fail "pair refused after_dom2_native=[$after]; the window took a title the gate refuses"
+        }
     } else {
-        Note "pair empty not_asked: no DOM write reached the window to revert"
+        Note "pair refused not_asked: no DOM write reached the window to hold"
     }
 
     if ($ctl) { Note "control ctl observed=YES" } else { Fail "control ctl was never observed; the instrument read no window" }
