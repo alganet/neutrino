@@ -161,11 +161,14 @@ your script touches an element, put it after that element or wait for the
 document, exactly as you would in a browser. What you do not have to wait for is
 neutrino.
 
-Your app moves its window with the spelling it would use in a browser.
+Your app moves and names its window with the spelling it would use in a
+browser.
 
 ```javascript
 var win = eval("window");
+var doc = eval("document");
 
+doc.title = "My App";     // and the window's title bar says so
 win.resizeTo(800, 600);   // and resizeBy(dw, dh)
 win.moveTo(100, 50);      // and moveBy(dx, dy)
 win.close();
@@ -185,6 +188,37 @@ honour that restriction. What it replaces is the silence; the call emits the
 same record the launcher has always used and meets the same checks on the way
 in.
 
+`document.title` is the one of these the engines do implement, and none of them
+carries it any further than the DOM — **measured on all four: the document takes
+the value and the native window never moves.** So the launcher connects the
+signal each engine raises when a document's title changes (`notify::title`,
+`onTitleChanged`, `WKWebView.title`, `DocumentTitleChanged`) and puts the value
+on the window. A `<title>` in your markup works for the same reason, and your
+build's `--title` is put into the document if you wrote none, so reading
+`document.title` back gives you the name your window already has.
+
+Only the document this launcher loaded can name the window. A page that somehow
+got itself loaded in the view cannot, and neither can a frame — a subframe's
+title is its own document's on every engine here.
+
+**Wait for a document before you name it.** `document.title` writes into the
+`<title>` of a `<head>`, and where the page has neither yet the DOM's own rule
+is to do nothing — no error, no title. `window.neutrino` is in scope at your
+first statement on every platform and the document is not: `document.readyState`
+is `interactive` on WebKitGTK, `complete` on QtWebEngine and **`loading` on
+WebView2**, where your script really does start before the head is parsed. So a
+title written at the top of the file is silently dropped on Windows and lands
+everywhere else, which is the worst shape a difference can have. `doc.body` is
+the cheap proof that `</head>` has been passed:
+
+```javascript
+function start() {
+    if (!doc.body) { return win.setTimeout(start, 16); }
+    doc.title = "My App";
+}
+start();
+```
+
 Two consequences worth knowing. `close()` does not run `beforeunload`, and it
 does not set `window.closed` — the engines already disagree about that flag,
 three setting it true while the window stays up and one leaving it false, and
@@ -196,7 +230,6 @@ resized to `900x600` are the same window.
 
 ```javascript
 // No standard spelling, so these keep theirs.
-win.neutrino.window.setTitle("My App");
 win.neutrino.shell.openExternal("https://example.com");
 win.neutrino.send("actionName", { key: "value" });
 ```
@@ -327,7 +360,7 @@ bash test/neutrinotest.cmd &
 bash test/verify-linux.sh screenshots/
 ```
 
-Tests exercise `setTitle`, `window.resizeTo` and `window.moveTo` with external scripts that poll window state and assert expected values. CI runs these automatically on all four platforms.
+Tests exercise `document.title`, `window.resizeTo` and `window.moveTo` with external scripts that poll window state and assert expected values. CI runs these automatically on all four platforms.
 
 ---
 

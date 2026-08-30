@@ -154,7 +154,7 @@ function report() {
     for (var i = 0; i < ORDER.length; i++) {
         out += " " + ORDER[i] + "=" + marks[ORDER[i]];
     }
-    try { win.neutrino.window.setTitle(out + " DONE"); } catch (_) {}
+    doc.title = out + " DONE";
     win.setTimeout(escape_, 3000);
 }
 
@@ -186,10 +186,7 @@ function escape_() {
         win.neutrino.shell.openExternal(url("off-probe.html", "external"));
         ext = "SENT";
     } catch (_) {}
-    try {
-        win.neutrino.window.setTitle("OFFLINE-ESCAPE pol=" + policyName() +
-            " ext=" + ext + " END");
-    } catch (_) {}
+    doc.title = "OFFLINE-ESCAPE pol=" + policyName() + " ext=" + ext + " END";
     win.setTimeout(function () {
         try { win.location.href = url("off-probe.html", "navout"); } catch (_) {}
     }, 2000);
@@ -204,10 +201,7 @@ function start() {
     // which is exactly what a policy strict enough to stop the injected script
     // would break, and without it every "blocked" below is indistinguishable
     // from a corpse.
-    try {
-        win.neutrino.window.setTitle(
-            "OFFLINE-READY tx=" + tx + " pol=" + policyName());
-    } catch (_) {}
+    doc.title = "OFFLINE-READY tx=" + tx + " pol=" + policyName();
 
     fire();
     // Long enough for a loopback answer and for an engine to give up on one.

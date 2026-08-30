@@ -217,8 +217,6 @@ function eq(name, got, want) {
 }
 
 console.log("legitimate traffic still arrives");
-eq("setTitle", N.parseMessage("setTitle" + S + "Hello World"),
-   { action: "setTitle", title: "Hello World" });
 eq("resize", N.parseMessage("resize" + S + "500" + S + "400"),
    { action: "resize", width: 500, height: 400 });
 eq("move", N.parseMessage("move" + S + "0" + S + "0"),
@@ -230,7 +228,6 @@ eq("openExternal", N.parseMessage("openExternal" + S + "https://example.com/x"),
    { action: "openExternal", url: "https://example.com/x" });
 
 console.log("a field cannot be split into two");
-eq("separator in a title", N.parseMessage("setTitle" + S + "a" + S + "b"), null);
 eq("separator in a url", N.parseMessage("openExternal" + S + "https://a" + S + "https://b"), null);
 
 console.log("malformed records are dropped, not repaired");
@@ -257,8 +254,7 @@ eq("moveBy with an extra field", N.parseMessage("moveBy" + S + "1" + S + "2" + S
 eq("resizeBy with code in a field",
    N.parseMessage("resizeBy" + S + "1;GLib.spawn_command_line_sync('x')" + S + "2"), null);
 eq("an action nobody implements", N.parseMessage("evalThis" + S + "whatever"), null);
-eq("control character in a title", N.parseMessage("setTitle" + S + "a\nb"), null);
-eq("a title larger than any real one", N.parseMessage("setTitle" + S + new Array(5000).join("x")), null);
+eq("a record nobody sends any more", N.parseMessage("setTitle" + S + "Hello World"), null);
 eq("an empty record", N.parseMessage(""), null);
 eq("no record at all", N.parseMessage(null), null);
 
@@ -344,6 +340,80 @@ eq("the first document remembered is the only one",
    remembered.isTrustedView("about:blank"), true);
 N.trustedView = null;
 
+// What a document's title is allowed to do to the name of the window it is in.
+// Five lanes connect five different engine signals to this one gate, and node
+// is the only place it can be asked anything without an engine underneath it.
+console.log("a document names the window it is in, within limits");
+eq("the app's own document names the window",
+   withView("about:blank").acceptDocumentTitle("about:blank", "My App"), "My App");
+// Two lanes read the title on a clock that starts before the document commits.
+// Silence there, not a refusal: a note on every launch saying the app was
+// refused its own window is a build that looks broken and is not.
+eq("nothing committed yet is silence",
+   withView().acceptDocumentTitle("about:blank", "My App"), null);
+// The new spelling is a channel from the document to the native window, and
+// the native window is the channel every verifier in this tree reads. A page
+// that got itself loaded here would otherwise be filing the run's report.
+eq("a document the view was not given names nothing",
+   withView("about:blank").acceptDocumentTitle("https://example.com/", "Evil"), null);
+// A document that never named itself. The window keeps the name the build gave
+// it rather than losing it to markup that said nothing.
+eq("an empty title is not a title",
+   withView("about:blank").acceptDocumentTitle("about:blank", ""), null);
+eq("and neither is a missing one",
+   withView("about:blank").acceptDocumentTitle("about:blank", null), null);
+// WebView2 documents DocumentTitle as falling back to the uri of the document,
+// and this lane loads its document into a view whose uri is about:blank -- so
+// the fallback is reachable and it is not a name anybody chose.
+eq("the engine's fallback to the url is not a name",
+   withView("about:blank").acceptDocumentTitle("about:blank", "about:blank"), null);
+// And the fallback is not always the url the view reports. QtWebEngine answers
+// `about:blank` for a document whose title the page had just emptied, on a view
+// whose own url is the data: document Qt navigated to -- so the two spellings
+// are separate rules and the second one shipped missing.
+eq("the placeholder is not a name either",
+   withView("data:text/html,neutrino")
+       .acceptDocumentTitle("data:text/html,neutrino", "about:blank"), null);
+// Asked separately from judging a title, because the two lanes that poll have
+// to know it before they record what they read.
+eq("nothing committed yet", withView().hasCommittedDocument(), false);
+eq("a document committed", withView("about:blank").hasCommittedDocument(), true);
+// Where the title is also the transport, a record and a title share one
+// property. Refused on every lane rather than only that one, so that
+// test/neutrinoattack.js's planted record reads the same everywhere.
+eq("a record is never a title",
+   withView("about:blank").acceptDocumentTitle("about:blank",
+       "__NEUTRINO__resize"), null);
+// The bounds parseMessage put on a title, for the reason it had them: this
+// ends up in a window title that shell and PowerShell verifiers read line by
+// line.
+eq("a control character in a title",
+   withView("about:blank").acceptDocumentTitle("about:blank", "a\nb"), null);
+eq("a title larger than any real one",
+   withView("about:blank").acceptDocumentTitle("about:blank",
+       new Array(5000).join("x")), null);
+N.trustedView = null;
+
+// And the other half of the same answer: the build's name goes into the
+// document, so the first title every engine reports is the one the window
+// already has and nothing has to special-case the launch.
+console.log("the build's name goes into the document it loads");
+var bare = "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>x</body></html>";
+eq("a document that named nothing is named",
+   N.titledDocument(bare, "My App").indexOf("<title>My App</title></head>") > 0, true);
+// An author who wrote one meant it more recently than whoever passed --title,
+// and that is what <title> means everywhere else.
+eq("a document that named itself keeps its name",
+   N.titledDocument("<html><head><title>Mine</title></head><body></body></html>", "My App"),
+   "<html><head><title>Mine</title></head><body></body></html>");
+// build.sh refuses a title carrying a quote, a backslash or a control
+// character, because it is stamped into a JavaScript string literal. `<` and
+// `&` were never its problem and they are this one's.
+eq("the name is escaped for markup",
+   N.titledDocument(bare, "a<b&c").indexOf("<title>a&lt;b&amp;c</title>") > 0, true);
+eq("a document with no head keeps whatever it has",
+   N.titledDocument("<body>x</body>", "My App"), "<body>x</body>");
+
 console.log("a fragment is not a navigation away from the document");
 eq("about:blank", N.isOwnDocument("about:blank"), true);
 eq("about:blank with a fragment", N.isOwnDocument("about:blank#route"), true);
@@ -374,39 +444,33 @@ new vm.Script(N.buildPreloadScript("__t")).runInContext(sandbox);
 // The standard spellings, driven the way an app now writes them. The preload
 // assigns these onto `window` itself, so the sandbox's plain object receives
 // them exactly as an engine's global would.
-sandbox.window.neutrino.window.setTitle("STEP1-Test Title");
 sandbox.window.resizeTo(500, 400);
 sandbox.window.resizeBy(40, -20);
 sandbox.window.moveTo(0, 0);
 sandbox.window.moveBy(-10, 30);
 sandbox.window.close();
 sandbox.window.neutrino.shell.openExternal("https://example.com");
-eq("setTitle round trip", N.parseMessage(sent[0]), { action: "setTitle", title: "STEP1-Test Title" });
-eq("resizeTo round trip", N.parseMessage(sent[1]), { action: "resize", width: 500, height: 400 });
-eq("resizeBy round trip", N.parseMessage(sent[2]), { action: "resizeBy", width: 40, height: -20 });
-eq("moveTo round trip", N.parseMessage(sent[3]), { action: "move", x: 0, y: 0 });
-eq("moveBy round trip", N.parseMessage(sent[4]), { action: "moveBy", x: -10, y: 30 });
-eq("close round trip", N.parseMessage(sent[5]), { action: "close" });
-eq("openExternal round trip", N.parseMessage(sent[6]), { action: "openExternal", url: "https://example.com" });
+eq("resizeTo round trip", N.parseMessage(sent[0]), { action: "resize", width: 500, height: 400 });
+eq("resizeBy round trip", N.parseMessage(sent[1]), { action: "resizeBy", width: 40, height: -20 });
+eq("moveTo round trip", N.parseMessage(sent[2]), { action: "move", x: 0, y: 0 });
+eq("moveBy round trip", N.parseMessage(sent[3]), { action: "moveBy", x: -10, y: 30 });
+eq("close round trip", N.parseMessage(sent[4]), { action: "close" });
+eq("openExternal round trip", N.parseMessage(sent[5]), { action: "openExternal", url: "https://example.com" });
 
 // `window.resizeTo` emits the record `neutrino.window.resize` used to emit,
 // which is the whole claim this change makes: the same bytes, meeting the same
 // host-side guard, under a name an app author already knows.
-eq("the standard spelling is the same record", sent[1], "resize" + S + "500" + S + "400");
+eq("the standard spelling is the same record", sent[0], "resize" + S + "500" + S + "400");
 
 // And the names it replaces are gone rather than aliased. Asserted here because
 // this is the only place that can see the built preload without an engine, and
 // because a wrapper left behind is a second way to do one thing that nobody
 // would notice until it drifted.
-eq("neutrino.window.resize is gone", typeof sandbox.window.neutrino.window.resize, "undefined");
-eq("neutrino.window.move is gone", typeof sandbox.window.neutrino.window.move, "undefined");
-eq("neutrino.window.close is gone", typeof sandbox.window.neutrino.window.close, "undefined");
+eq("neutrino.window is gone", typeof sandbox.window.neutrino.window, "undefined");
 
-// The two that stay, and neither is an alias: setTitle is waiting on the native
-// title hook, openExternal on the anchor path and the nav probe that measures
-// it. Asserted present so that deleting one early fails here rather than in a
-// suite whose report channel it is.
-eq("setTitle is still there, pending its hook", typeof sandbox.window.neutrino.window.setTitle, "function");
+// The one that stays, and it is not an alias: openExternal is waiting on the
+// anchor path and the nav probe that measures it. Asserted present so that
+// deleting it early fails here rather than in a suite that needs it.
 eq("openExternal is still there, pending step 5", typeof sandbox.window.neutrino.shell.openExternal, "function");
 var before = sent.length;
 sandbox.window.neutrino.send("evalThis", { payload: "x" });

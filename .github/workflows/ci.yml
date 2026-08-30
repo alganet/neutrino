@@ -184,12 +184,13 @@ jobs:
           exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
-      # Two questions are being opened here. Whether an app can be written
-      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # Two questions were opened here. Whether an app can be written against
+      # `window.resizeTo` and `window.outerWidth` instead of against
       # `neutrino.window.resize` and nothing at all; and whether an assignment
-      # to `document.title` reaches the native title, which is the standard
-      # spelling of `neutrino.window.setTitle`. Neither is answered by this
-      # round. What this round is for is the instruments: verify-std.sh records
+      # to `document.title` reaches the native title. Both are answered now --
+      # the standard spellings are written over the engine's, and the launcher
+      # connects each engine's title-changed signal to the window -- and
+      # neither was answered by this round. What this round is for is the instruments: verify-std.sh records
       # a window's title and geometry in one loop with nothing slow in it, and
       # until that loop is known to read a live window and to see it change,
       # every pair of numbers it prints later is unattributable.
@@ -445,12 +446,13 @@ jobs:
           exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
-      # Two questions are being opened here. Whether an app can be written
-      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # Two questions were opened here. Whether an app can be written against
+      # `window.resizeTo` and `window.outerWidth` instead of against
       # `neutrino.window.resize` and nothing at all; and whether an assignment
-      # to `document.title` reaches the native title, which is the standard
-      # spelling of `neutrino.window.setTitle`. Neither is answered by this
-      # round. What this round is for is the instruments: verify-std.sh records
+      # to `document.title` reaches the native title. Both are answered now --
+      # the standard spellings are written over the engine's, and the launcher
+      # connects each engine's title-changed signal to the window -- and
+      # neither was answered by this round. What this round is for is the instruments: verify-std.sh records
       # a window's title and geometry in one loop with nothing slow in it, and
       # until that loop is known to read a live window and to see it change,
       # every pair of numbers it prints later is unattributable.
@@ -694,12 +696,13 @@ jobs:
           exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
-      # Two questions are being opened here. Whether an app can be written
-      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # Two questions were opened here. Whether an app can be written against
+      # `window.resizeTo` and `window.outerWidth` instead of against
       # `neutrino.window.resize` and nothing at all; and whether an assignment
-      # to `document.title` reaches the native title, which is the standard
-      # spelling of `neutrino.window.setTitle`. Neither is answered by this
-      # round. What this round is for is the instruments: verify-std.sh records
+      # to `document.title` reaches the native title. Both are answered now --
+      # the standard spellings are written over the engine's, and the launcher
+      # connects each engine's title-changed signal to the window -- and
+      # neither was answered by this round. What this round is for is the instruments: verify-std.sh records
       # a window's title and geometry in one loop with nothing slow in it, and
       # until that loop is known to read a live window and to see it change,
       # every pair of numbers it prints later is unattributable.
@@ -1081,12 +1084,13 @@ jobs:
           exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
-      # Two questions are being opened here. Whether an app can be written
-      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # Two questions were opened here. Whether an app can be written against
+      # `window.resizeTo` and `window.outerWidth` instead of against
       # `neutrino.window.resize` and nothing at all; and whether an assignment
-      # to `document.title` reaches the native title, which is the standard
-      # spelling of `neutrino.window.setTitle`. Neither is answered by this
-      # round. What this round is for is the instruments: verify-std.sh records
+      # to `document.title` reaches the native title. Both are answered now --
+      # the standard spellings are written over the engine's, and the launcher
+      # connects each engine's title-changed signal to the window -- and
+      # neither was answered by this round. What this round is for is the instruments: verify-std.sh records
       # a window's title and geometry in one loop with nothing slow in it, and
       # until that loop is known to read a live window and to see it change,
       # every pair of numbers it prints later is unattributable.
@@ -2219,12 +2223,13 @@ jobs:
         run: bash test/annotate.sh windows-docswap ~/docswaplogs/docswap.log 'report:|FAIL:'
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
-      # Two questions are being opened here. Whether an app can be written
-      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # Two questions were opened here. Whether an app can be written against
+      # `window.resizeTo` and `window.outerWidth` instead of against
       # `neutrino.window.resize` and nothing at all; and whether an assignment
-      # to `document.title` reaches the native title, which is the standard
-      # spelling of `neutrino.window.setTitle`. Neither is answered by this
-      # round. What this round is for is the instruments: verify-std.sh records
+      # to `document.title` reaches the native title. Both are answered now --
+      # the standard spellings are written over the engine's, and the launcher
+      # connects each engine's title-changed signal to the window -- and
+      # neither was answered by this round. What this round is for is the instruments: verify-std.sh records
       # a window's title and geometry in one loop with nothing slow in it, and
       # until that loop is known to read a live window and to see it change,
       # every pair of numbers it prints later is unattributable.
@@ -2647,12 +2652,13 @@ jobs:
           exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
-      # Two questions are being opened here. Whether an app can be written
-      # against `window.resizeTo` and `window.outerWidth` instead of against
+      # Two questions were opened here. Whether an app can be written against
+      # `window.resizeTo` and `window.outerWidth` instead of against
       # `neutrino.window.resize` and nothing at all; and whether an assignment
-      # to `document.title` reaches the native title, which is the standard
-      # spelling of `neutrino.window.setTitle`. Neither is answered by this
-      # round. What this round is for is the instruments: verify-std.sh records
+      # to `document.title` reaches the native title. Both are answered now --
+      # the standard spellings are written over the engine's, and the launcher
+      # connects each engine's title-changed signal to the window -- and
+      # neither was answered by this round. What this round is for is the instruments: verify-std.sh records
       # a window's title and geometry in one loop with nothing slow in it, and
       # until that loop is known to read a live window and to see it change,
       # every pair of numbers it prints later is unattributable.

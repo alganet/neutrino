@@ -84,7 +84,7 @@ function put(s) {
     if (t.length > 1000) {
         t = "STD-OVER len=" + t.length + " " + t.substring(0, 900);
     }
-    try { win.neutrino.window.setTitle(t); } catch (_) {}
+    doc.title = t;
 }
 
 function engine() {
@@ -229,21 +229,20 @@ function pMV() {
  * it.
  *
  * What this phase reports instead is the other half of the change: that the
- * names it used to call are not there. Asserted in parse.sh against a built
- * preload without an engine, and read here inside a real one, because a
+ * namespace it used to call into is not there. Asserted in parse.sh against a
+ * built preload without an engine, and read here inside a real one, because a
  * wrapper surviving on some lane is exactly the thing node cannot see.
  */
 function pGONE() {
-    var out = "STD-WIN-GONE-SELF";
-    var names = ["resize", "move", "close"];
-    for (var i = 0; i < names.length; i++) {
-        var t = "gone";
-        try { t = typeof win.neutrino.window[names[i]]; } catch (_) { t = "threw"; }
-        out += " nw:" + names[i] + "=" + t;
-    }
-    var keep = "absent";
-    try { keep = typeof win.neutrino.window.setTitle; } catch (_) {}
-    put(out + " nw:setTitle=" + keep);
+    // The namespace and not its members. `neutrino.window` carried four verbs
+    // when this phase was written; three left with the standard geometry
+    // spellings and setTitle left with the native title hook, so the object
+    // itself is now what there is to ask about. Asking for a member of it
+    // instead would throw rather than answer "undefined", and a phase that
+    // reports "threw" whatever the truth is reports nothing.
+    var nw = "threw";
+    try { nw = typeof win.neutrino.window; } catch (_) { nw = "threw"; }
+    put("STD-WIN-GONE-SELF nw=" + nw);
     win.setTimeout(pOPEN, DWELL);
 }
 
@@ -366,7 +365,11 @@ function pCLOSE() {
 }
 
 function ready() {
-    if (win.neutrino && doc.documentElement) { pEXIST(); }
+    // `doc.body` and not `doc.documentElement`: the parser inserts `<html>`
+    // before `<head>`, so documentElement is true inside the window where a
+    // `document.title` write -- which is how this suite reports -- does nothing
+    // at all. Waiting for the body is waiting for `</head>` to have been passed.
+    if (win.neutrino && doc.body) { pEXIST(); }
     else { win.setTimeout(ready, 16); }
 }
 

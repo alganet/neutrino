@@ -7,21 +7,21 @@ function startTests() {
     doc.body.appendChild(el);
 
     var steps = [
-        function () { el.textContent = "Step 0: Ready"; win.neutrino.window.setTitle("STEP0"); },
-        function () { el.textContent = "Step 1: setTitle"; win.neutrino.window.setTitle("STEP1-Test Title"); },
+        function () { el.textContent = "Step 0: Ready"; doc.title = "STEP0"; },
+        function () { el.textContent = "Step 1: title"; doc.title = "STEP1-Test Title"; },
         function () { el.textContent = "Step 2: resize"; win.resizeTo(500, 400); },
-        function () { el.textContent = "Step 2: resize done"; win.neutrino.window.setTitle("STEP2"); },
+        function () { el.textContent = "Step 2: resize done"; doc.title = "STEP2"; },
         function () { el.textContent = "Step 3: move"; win.moveTo(0, 0); },
-        function () { el.textContent = "Step 3: move done"; win.neutrino.window.setTitle("STEP3"); },
+        function () { el.textContent = "Step 3: move done"; doc.title = "STEP3"; },
         function () {
             // Before TESTS DONE and not after it: the Windows sampler stops
             // watching the moment it sees that title, so a step behind it is
             // one that platform can never report.
             var verdict = checkTheme();
             el.textContent = "Step 4: theme -- " + verdict.detail;
-            win.neutrino.window.setTitle(verdict.ok ? "THEMEOK" : "THEMEBAD");
+            doc.title = verdict.ok ? "THEMEOK" : "THEMEBAD";
         },
-        function () { el.textContent = "TESTS DONE"; win.neutrino.window.setTitle("TESTS DONE"); },
+        function () { el.textContent = "TESTS DONE"; doc.title = "TESTS DONE"; },
         function () { el.textContent = "Closing window..."; win.close(); }
     ];
 

@@ -50,7 +50,7 @@ function start() {
     // The control. A window wearing this title is a build that came up, ran its
     // page script and drove its native window -- so everything after it that
     // reports nothing is reporting a refusal and not a corpse.
-    try { win.neutrino.window.setTitle("NAV-READY tx=" + tx); } catch (_) {}
+    doc.title = "NAV-READY tx=" + tx;
 
     // A window opened from the app's document, before the app's document goes
     // away. Whether one arrives is the NewWindowRequested question, and the
@@ -60,9 +60,7 @@ function start() {
         try {
             opened = win.open(TARGET + "?probe=popup") ? "HANDLE" : "NULL";
         } catch (_) {}
-        try {
-            win.neutrino.window.setTitle("NAV-POPUP tx=" + tx + " opened=" + opened);
-        } catch (_) {}
+        doc.title = "NAV-POPUP tx=" + tx + " opened=" + opened;
 
         // And then the navigation itself. From here this document may stop
         // existing, so nothing after this line is promised to run.

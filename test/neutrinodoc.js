@@ -69,11 +69,10 @@ function policyAt() {
 
 function report() {
     try {
-        if (doc.body && win.neutrino && win.neutrino.window) {
+        if (doc.body && win.neutrino) {
             doc.body.textContent = "DOCSWAP";
-            win.neutrino.window.setTitle(
-                "DOCSWAP script=" + BUILD + " doc=" + marker() +
-                " where=" + where() + " pol=" + policyAt());
+            doc.title = "DOCSWAP script=" + BUILD + " doc=" + marker() +
+                " where=" + where() + " pol=" + policyAt();
         }
     } catch (_) {}
     win.setTimeout(report, 250);
