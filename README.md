@@ -304,6 +304,23 @@ Every value is `#rrggbb`. `scheme` is derived from the luminance of
 so the flag says light and the window is dark grey. The palette is what is on
 screen, so the palette is what decides.
 
+`@media (prefers-color-scheme: dark)` agrees with it. That is not free, and on
+one engine it is not the engine's own answer: WebKitGTK decides the media query
+from the theme's **name** — the prefer-dark flag, or a name carrying the dark
+variant — and not from the palette. Mint's stock `Mint-Y-Dark-Grey` and the
+twenty-odd themes in its `-Dark-<colour>` families are the same dark grey as
+`Mint-Y-Dark`, named for the accent instead of the variant, and the engine calls
+every one of them light. So the launcher raises the flag itself where it
+measured a dark palette, and the query follows.
+
+One direction only, and it is the engine's asymmetry rather than a choice: the
+rule there is the flag *or* the name, so a light theme whose name ends in `-dark`
+reports dark and there is nothing to set that would say otherwise. That is a
+theme named for a variant it does not have, and no distribution ships one. There
+is no in-page spelling of any of this either — `color-scheme` as a stylesheet
+rule, through CSSOM, and as a `<meta>` all leave `prefers-color-scheme` where it
+was on this engine.
+
 When the desktop changes, the object is **replaced** and an event fires:
 
 ```javascript

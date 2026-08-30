@@ -1361,6 +1361,30 @@ if not take_theme():
         call("resolveBackground", theme_state["value"]).to_string(),))
 
 
+# The scheme, and this lane asks the launcher whether to raise the flag rather
+# than looking at the palette itself -- gtkPreferDark says why it is raised and
+# never lowered, and a second copy of that reasoning here is a second thing that
+# can drift from the gjs driver's.
+#
+# Called before the window for the reason boot calls it there: the media query
+# is a value the first paint is already styled by.
+def force_scheme():
+    if not call("gtkPreferDark", theme_state["value"]).to_boolean():
+        return
+    settings = Gtk.Settings.get_default()
+    if settings is None:
+        return
+    try:
+        if settings.get_property("gtk-application-prefer-dark-theme"):
+            return
+        settings.set_property("gtk-application-prefer-dark-theme", True)
+    except Exception as exc:
+        sys.stderr.write("neutrino: could not force the colour scheme: %s\n" % (exc,))
+
+
+force_scheme()
+
+
 # The two surfaces GTK puts up before the document, and the colour comes out of
 # the launcher's own resolveBackground rather than being decided again here.
 # This lane reimplements nothing on purpose, and a second reading of the same
@@ -1446,6 +1470,10 @@ view_holder["view"] = view
 def on_style_updated(_widget):
     if not take_theme():
         return
+    # Before the paint, because raising the flag is a thing GTK may answer by
+    # changing the palette, and a paint that ran first would be painting the
+    # one it was about to replace.
+    force_scheme()
     if call("followsTheme").to_boolean():
         paint(window, view, call("resolveBackground", theme_state["value"]).to_string())
     # Before the commit there is no document of ours to evaluate into. Nothing
@@ -2345,6 +2373,19 @@ exit $?;:<<'//</script></body></html>' #-->
                 return false;
             }
             this.theme = next;
+            /*
+             * Before the repaint, because on GTK the flag that carries this is
+             * one the toolkit may answer by changing the palette -- and a
+             * repaint that ran first would be painting the palette the flag was
+             * about to replace.
+             */
+            if (driver.forceScheme) {
+                try {
+                    driver.forceScheme(next);
+                } catch (e0) {
+                    this.noteOnce("could not force the colour scheme: " + e0);
+                }
+            }
             if (this.followsTheme() && driver.repaint) {
                 try {
                     driver.repaint(win, wv, this.resolveBackground(next));
@@ -2429,6 +2470,55 @@ exit $?;:<<'//</script></body></html>' #-->
                 raw[keys[j]] = this.flattenColor(hex[j], alpha[j], hex[0]);
             }
             return raw;
+        },
+
+        /*
+         * Whether GTK's prefer-dark flag should be raised for this palette,
+         * asked by both lanes that drive GTK so that neither decides it.
+         *
+         * It is not a preference being restated. `prefers-color-scheme` in the
+         * page is the engine's own answer and on WebKitGTK it is a *name*: the
+         * flag below, or a theme whose name carries the dark variant. It is not
+         * the palette. Measured on this desk, one launch per row, the media
+         * query beside `neutrino.theme.scheme`:
+         *
+         *   GTK_THEME=Adwaita            f6f5f4   mq=light   scheme=light
+         *   GTK_THEME=Adwaita:dark       353535   mq=dark    scheme=dark
+         *   GTK_THEME=Adwaita-dark       353535   mq=dark    scheme=dark
+         *   GTK_THEME=Mint-Y-Dark        2e2e33   mq=dark    scheme=dark
+         *   GTK_THEME=Mint-Y-Dark-Grey   2e2e33   mq=light   scheme=dark
+         *   GTK_THEME=Mint-L-Dark-Blue   383838   mq=light   scheme=dark
+         *
+         * The last two are stock Mint themes, installed by the distribution and
+         * selectable from its settings panel. `Mint-Y-Dark-Grey` is the same
+         * dark grey as `Mint-Y-Dark` and the engine calls it light, because the
+         * name ends in the colour and not in the variant -- and the `-Dark-`
+         * families are twenty-odd themes shipped that way. So this is a defect
+         * an ordinary desktop reaches by picking a theme from a list.
+         *
+         * `gtk-application-prefer-dark-theme` reads False on every row above,
+         * including the three the engine calls dark, which is the flag this
+         * file's luminance rule already refuses to trust for the palette. What
+         * is measured here is that *writing* it moves the media query, both
+         * before the web process exists and after it is up.
+         *
+         * Raised and never lowered, and the asymmetry is the engine's. Setting
+         * it False under `Adwaita-dark` left the query at dark: the rule there
+         * is the flag OR the name, so the name cannot be argued with. The half
+         * that can be fixed is the one that occurs -- a dark desktop reported
+         * light -- and the half that cannot is a theme named for a variant it
+         * does not have, which no distribution ships.
+         *
+         * Raising it can move the palette, and only in the direction this never
+         * asks for: on a light theme with a dark variant, GTK switches to the
+         * variant, and `Adwaita` went f6f5f4 to 353535 under it. This returns
+         * true only where the palette already measured dark, and on the three
+         * dark themes above the flag moved nothing. A theme that did move would
+         * be re-read by the watcher, measure dark again, and ask for the same
+         * flag -- one repaint, not a loop.
+         */
+        gtkPreferDark: function (theme) {
+            return !!theme && theme.scheme === "dark";
         },
 
         /*
@@ -4010,6 +4100,40 @@ exit $?;:<<'//</script></body></html>' #-->
                     self.paintGtkWindow(Gtk, Gdk, win, self.resolveBackground(self.theme));
                     return win;
                 },
+                /*
+                 * The scheme, on the toolkit's flag rather than on anything the
+                 * document can reach: CSS `color-scheme` was measured against
+                 * this engine first and moves nothing -- `:root{color-scheme:
+                 * dark}` in the markup, the same declaration through CSSOM, and
+                 * a `<meta name=color-scheme>` all left `prefers-color-scheme`
+                 * where it was. There is no in-page spelling of this.
+                 *
+                 * The default settings object and not the widget's, because
+                 * this runs before there is a widget -- boot forces the scheme
+                 * between reading the palette and creating the window. Both
+                 * resolve to the same GtkSettings for the default screen, and
+                 * only one of them exists at that moment.
+                 *
+                 * Read before it is written, and not for the write's sake:
+                 * GTK emits the settings change whether or not the value moved,
+                 * and once there is a window the style-updated handler is
+                 * listening for exactly that. applyTheme's themesDiffer gate is
+                 * what stops the second pass, so asking first is the difference
+                 * between never entering that path and entering it once.
+                 */
+                forceScheme: function (theme) {
+                    if (!self.gtkPreferDark(theme)) {
+                        return;
+                    }
+                    var settings = Gtk.Settings.get_default();
+                    if (!settings) {
+                        return;
+                    }
+                    if (settings.gtk_application_prefer_dark_theme) {
+                        return;
+                    }
+                    settings.gtk_application_prefer_dark_theme = true;
+                },
                 // Both surfaces again, from the colour the new palette resolves
                 // to. Only ever reached for a build that named no background --
                 // applyTheme holds that gate, not this.
@@ -5252,6 +5376,27 @@ exit $?;:<<'//</script></body></html>' #-->
                 if (!this.theme) {
                     this.note("could not read the desktop palette; using " +
                         this.resolveBackground(null));
+                }
+            }
+
+            /*
+             * And here for the same reason the read is here: before the window,
+             * because `prefers-color-scheme` is a value the page's first paint
+             * is already styled by. A media query corrected after the document
+             * has laid out is the flash again, in the other direction -- the
+             * app's dark stylesheet arriving over a light one it already drew.
+             *
+             * Ungated by followsTheme, unlike the repaint below it. That gate
+             * asks whether this build named its own background, and a build
+             * that did still gets `neutrino.theme.scheme` and still gets the
+             * palette pushed to the page. The scheme the desktop is at is the
+             * same reading however this window is painted.
+             */
+            if (driver.forceScheme) {
+                try {
+                    driver.forceScheme(this.theme);
+                } catch (e) {
+                    this.note("could not force the colour scheme: " + e);
                 }
             }
 

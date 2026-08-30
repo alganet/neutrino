@@ -298,6 +298,26 @@ function Analyse-Theme($rows) {
     elseif ($a.Title -match 'nsrc=null') { Fail "control palette: this lane read no toolkit, so every comparison here is void" }
     else { Note "control palette read=YES" }
 
+    # The scheme, read twice on one launch: `prefers-color-scheme` is the
+    # engine's answer and `neutrino.theme.scheme` is the launcher's, taken from
+    # the luminance of the palette the toolkit handed over. An app may branch on
+    # either, and a desktop where they disagree hands it a dark palette under a
+    # light media query. Neither side is a constant, so one launch settles it.
+    if ($a -and $a.Title -match ' mq=(\S+)' ) {
+        $mq = $Matches[1]
+        $sc = ""
+        if ($a.Title -match ' nscheme=(\S+)') { $sc = $Matches[1] }
+        if ($sc -eq "null" -or $sc -eq "") {
+            # The palette control above has already failed this run.
+        } elseif ($mq -eq "unsupported" -or $mq -eq "threw" -or $mq -eq "none") {
+            Note "control scheme not_asked mq=$mq; this engine states no preference"
+        } elseif ($mq -eq $sc) {
+            Note "control scheme mq=$mq neutrino=$sc verdict=AGREED"
+        } else {
+            Fail "control scheme mq=$mq against neutrino=$sc; the page's media query and the palette it was handed disagree about this desktop"
+        }
+    }
+
     $b = Find-Row $rows "STD-THEME-B-SELF"
     if (-not $b) { Fail "control unknown-keyword: STD-THEME-B-SELF was never observed" }
     elseif ($b.Title -match 'control=UNSUP') { Note "control unknown-keyword=UNSUP verdict=DISTINGUISHED" }

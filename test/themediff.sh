@@ -17,13 +17,16 @@
 # one question of each value: did it move. What moved with the desktop is the
 # desktop's; what did not is the engine's own constant, whatever it resembles.
 #
-# Three controls, and none of them is optional. Both runs must have read a
+# Four controls, and none of them is optional. Both runs must have read a
 # toolkit, or there is nothing to compare against. The two palettes must
 # differ, or the flip did not take and every "did not move" below is the
 # apparatus rather than the engine -- this is the one that fails a lane where
 # the knob is wrong, which is the correct outcome and why the step is last and
-# gated. And the unknown-keyword control must have refused in both, or an
-# "UNSUP" is the instrument talking.
+# gated. The unknown-keyword control must have refused in both, or an "UNSUP"
+# is the instrument talking. And each half's `prefers-color-scheme` must agree
+# with the scheme the launcher derived from the palette that half was handed:
+# the two are read from different places in one instant, so a disagreement is
+# never a coincidence the way a colour can be.
 
 set -uo pipefail
 
@@ -122,7 +125,35 @@ SRC="$(val "$PA" nsrc)"
 note "themediff source=$SRC toolkit_moved=$moved_nt/7 css_moved=$moved_css/15 css_unsupported=$unsup"
 note "themediff toolkit moved:$moved_nt_names"
 note "themediff css moved:${moved_css_names:- none}"
-note "themediff scheme mq=$MQA->$MQB neutrino=$SCA->$SCB agreed=$([ "$MQA" = "$SCA" ] && [ "$MQB" = "$SCB" ] && echo YES || echo NO)"
+note "themediff scheme mq=$MQA->$MQB neutrino=$SCA->$SCB"
+
+# And that is an assertion here, not the note it was until the round that
+# forced the scheme.
+#
+# verify-std.sh already asks each half whether its media query and its palette
+# agree, so what this adds is the pair across a desktop that moved. A lane whose
+# engine answers a constant -- always light, whatever the toolkit did -- passes
+# the single-launch check on whichever half happens to be light and fails here,
+# because the two halves cannot both be right about a desktop that changed.
+#
+# Both halves are named in the failure. Which one moved wrongly is the whole
+# diagnosis, and a verdict that says only "they disagree" sends the reader back
+# to the log to work out which.
+for half in "A:$MQA:$SCA" "B:$MQB:$SCB"; do
+    tag="${half%%:*}"; rest="${half#*:}"
+    mq="${rest%%:*}"; sc="${rest#*:}"
+    if [ -z "$mq" ] || [ "$sc" = null ] || [ -z "$sc" ]; then
+        continue
+    fi
+    case "$mq" in
+        unsupported|threw|none)
+            note "control scheme half $tag not_asked mq=$mq; this engine states no preference" ;;
+        "$sc")
+            : ;;
+        *)
+            fail "control scheme half $tag: mq=$mq against neutrino=$sc -- on this half of the flip the engine's media query and the palette the toolkit handed over disagree about the desktop" ;;
+    esac
+done
 
 # Said as a sentence, because the number alone has been misread once already:
 # a keyword sitting one unit from the desktop's value is not following it.

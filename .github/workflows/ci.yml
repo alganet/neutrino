@@ -301,6 +301,38 @@ jobs:
           cat ~/stdtheme.log
           bash test/annotate.sh gjs-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # Round 3b: a desktop built so the media query is wrong about it.
+      #
+      # The two steps above ask what this runner's desktop looks like, and both
+      # of its states -- Adwaita and Adwaita:dark -- are ones where WebKitGTK
+      # happens to be right. That is not the engine reading the palette. On
+      # WebKitGTK `prefers-color-scheme` follows the theme's *name*: the
+      # prefer-dark flag, or a name carrying the dark variant. Adwaita:dark
+      # carries it, so the flip cannot produce the disagreement this exists for
+      # and reported `agreed=YES` on every lane for two rounds.
+      #
+      # Mint ships some twenty themes that do produce it -- `Mint-Y-Dark-Grey`
+      # and the rest of the `-Dark-<colour>` families are the same dark grey as
+      # `Mint-Y-Dark`, named for the accent instead of the variant, and measured
+      # dark by this launcher and light by the engine. None of them is on this
+      # image, so themescheme.sh writes the theme it needs and asserts that it
+      # loaded before it asserts anything about the query.
+      #
+      # This is the step that fails with the force taken out of webview.cmd,
+      # which is the only reason it exists.
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          TEST_EXIT=0
+          bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots \
+            > ~/themescheme.log 2>&1 || TEST_EXIT=$?
+          cat ~/themescheme.log
+          bash test/annotate.sh gjs-themescheme ~/themescheme.log 'report:|FAIL:'
+          exit $TEST_EXIT
       # Round 3: where each colour came from.
       #
       # The single-launch theme step above says what an engine reports and
@@ -563,6 +595,38 @@ jobs:
           cat ~/stdtheme.log
           bash test/annotate.sh cjs-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # Round 3b: a desktop built so the media query is wrong about it.
+      #
+      # The two steps above ask what this runner's desktop looks like, and both
+      # of its states -- Adwaita and Adwaita:dark -- are ones where WebKitGTK
+      # happens to be right. That is not the engine reading the palette. On
+      # WebKitGTK `prefers-color-scheme` follows the theme's *name*: the
+      # prefer-dark flag, or a name carrying the dark variant. Adwaita:dark
+      # carries it, so the flip cannot produce the disagreement this exists for
+      # and reported `agreed=YES` on every lane for two rounds.
+      #
+      # Mint ships some twenty themes that do produce it -- `Mint-Y-Dark-Grey`
+      # and the rest of the `-Dark-<colour>` families are the same dark grey as
+      # `Mint-Y-Dark`, named for the accent instead of the variant, and measured
+      # dark by this launcher and light by the engine. None of them is on this
+      # image, so themescheme.sh writes the theme it needs and asserts that it
+      # loaded before it asserts anything about the query.
+      #
+      # This is the step that fails with the force taken out of webview.cmd,
+      # which is the only reason it exists.
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          TEST_EXIT=0
+          bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots \
+            > ~/themescheme.log 2>&1 || TEST_EXIT=$?
+          cat ~/themescheme.log
+          bash test/annotate.sh cjs-themescheme ~/themescheme.log 'report:|FAIL:'
+          exit $TEST_EXIT
       # Round 3: where each colour came from.
       #
       # The single-launch theme step above says what an engine reports and
@@ -812,6 +876,38 @@ jobs:
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdtheme.log
           bash test/annotate.sh pygobject-stdtheme ~/stdtheme.log 'report:|FAIL:'
+          exit $TEST_EXIT
+      # Round 3b: a desktop built so the media query is wrong about it.
+      #
+      # The two steps above ask what this runner's desktop looks like, and both
+      # of its states -- Adwaita and Adwaita:dark -- are ones where WebKitGTK
+      # happens to be right. That is not the engine reading the palette. On
+      # WebKitGTK `prefers-color-scheme` follows the theme's *name*: the
+      # prefer-dark flag, or a name carrying the dark variant. Adwaita:dark
+      # carries it, so the flip cannot produce the disagreement this exists for
+      # and reported `agreed=YES` on every lane for two rounds.
+      #
+      # Mint ships some twenty themes that do produce it -- `Mint-Y-Dark-Grey`
+      # and the rest of the `-Dark-<colour>` families are the same dark grey as
+      # `Mint-Y-Dark`, named for the accent instead of the variant, and measured
+      # dark by this launcher and light by the engine. None of them is on this
+      # image, so themescheme.sh writes the theme it needs and asserts that it
+      # loaded before it asserts anything about the query.
+      #
+      # This is the step that fails with the force taken out of webview.cmd,
+      # which is the only reason it exists.
+      - if: always()
+        timeout-minutes: 15
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          TEST_EXIT=0
+          bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots \
+            > ~/themescheme.log 2>&1 || TEST_EXIT=$?
+          cat ~/themescheme.log
+          bash test/annotate.sh pygobject-themescheme ~/themescheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 3: where each colour came from.
       #
