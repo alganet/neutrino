@@ -307,12 +307,22 @@ function Analyse-Theme($rows) {
         $mq = $Matches[1]
         $sc = ""
         if ($a.Title -match ' nscheme=(\S+)') { $sc = $Matches[1] }
+        $sr = ""
+        if ($a.Title -match ' nsrc=(\S+)') { $sr = $Matches[1] }
+        # `qt` is exempt by name; verify-std.sh's analyse_theme carries the
+        # reason and the condition that retires it. This file never runs that
+        # lane -- Windows has no QtWebEngine here -- and the branch is kept
+        # anyway, because one spelling changed in two verifiers is one change,
+        # and a verifier that has quietly stopped matching its twin is how step
+        # 1 lost the only lane where everything worked.
         if ($sc -eq "null" -or $sc -eq "") {
             # The palette control above has already failed this run.
         } elseif ($mq -eq "unsupported" -or $mq -eq "threw" -or $mq -eq "none") {
             Note "control scheme not_asked mq=$mq; this engine states no preference"
         } elseif ($mq -eq $sc) {
             Note "control scheme mq=$mq neutrino=$sc verdict=AGREED"
+        } elseif ($sr -eq "qt") {
+            Note "control scheme KNOWN qt mq=$mq against neutrino=$sc; QtWebEngine does not follow the toolkit palette and QStyleHints::colorScheme is Qt 6.8+, so this lane has no knob -- delete this exemption when a runner has one"
         } else {
             Fail "control scheme mq=$mq against neutrino=$sc; the page's media query and the palette it was handed disagree about this desktop"
         }

@@ -26,7 +26,8 @@
 # is the instrument talking. And each half's `prefers-color-scheme` must agree
 # with the scheme the launcher derived from the palette that half was handed:
 # the two are read from different places in one instant, so a disagreement is
-# never a coincidence the way a colour can be.
+# never a coincidence the way a colour can be -- `qt` excepted by name, for the
+# reason recorded where that assertion's twin lives.
 
 set -uo pipefail
 
@@ -139,9 +140,17 @@ note "themediff scheme mq=$MQA->$MQB neutrino=$SCA->$SCB"
 # Both halves are named in the failure. Which one moved wrongly is the whole
 # diagnosis, and a verdict that says only "they disagree" sends the reader back
 # to the log to work out which.
-for half in "A:$MQA:$SCA" "B:$MQB:$SCB"; do
+#
+# One lane is exempt by name, and verify-std.sh's analyse_theme carries the
+# reason: QtWebEngine does not follow the toolkit palette and has no knob before
+# Qt 6.8. This is where that was measured -- the readings under `themediff B`
+# below are the ones the exemption is written from -- so the note here prints
+# the disagreement rather than swallowing it.
+SRA="$(val "$PA" nsrc)"; SRB="$(val "$PB" nsrc)"
+for half in "A:$MQA:$SCA:$SRA" "B:$MQB:$SCB:$SRB"; do
     tag="${half%%:*}"; rest="${half#*:}"
-    mq="${rest%%:*}"; sc="${rest#*:}"
+    mq="${rest%%:*}"; rest="${rest#*:}"
+    sc="${rest%%:*}"; sr="${rest#*:}"
     if [ -z "$mq" ] || [ "$sc" = null ] || [ -z "$sc" ]; then
         continue
     fi
@@ -149,9 +158,19 @@ for half in "A:$MQA:$SCA" "B:$MQB:$SCB"; do
         unsupported|threw|none)
             note "control scheme half $tag not_asked mq=$mq; this engine states no preference" ;;
         "$sc")
-            : ;;
+            # Only where the desktop was dark. A light half agrees because
+            # neither reading has anything to be wrong about, and saying "the
+            # exemption can go" on that would be a standing instruction printed
+            # on every green run.
+            if [ "$sr" = qt ] && [ "$sc" = dark ]; then
+                note "control scheme half $tag: qt agreed on a dark desktop; the exemption named in verify-std.sh can go"
+            fi ;;
         *)
-            fail "control scheme half $tag: mq=$mq against neutrino=$sc -- on this half of the flip the engine's media query and the palette the toolkit handed over disagree about the desktop" ;;
+            if [ "$sr" = qt ]; then
+                note "control scheme half $tag KNOWN qt: mq=$mq against neutrino=$sc -- QtWebEngine does not follow the toolkit palette and QStyleHints::colorScheme is Qt 6.8+, so this lane has no knob"
+            else
+                fail "control scheme half $tag: mq=$mq against neutrino=$sc -- on this half of the flip the engine's media query and the palette the toolkit handed over disagree about the desktop"
+            fi ;;
     esac
 done
 
