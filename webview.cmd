@@ -713,10 +713,12 @@ Window {
             }
         }
         Component.onCompleted: {
-            view.loadHtml(root.nt.titledDocument(
-                root.nt.applyContentPolicy(
-                    root.nt.extractHtmlDocument(root.ntSource)),
-                cfg.title))
+            view.loadHtml(root.nt.themedDocument(
+                root.nt.titledDocument(
+                    root.nt.applyContentPolicy(
+                        root.nt.extractHtmlDocument(root.ntSource)),
+                    cfg.title),
+                root.ntTheme))
         }
     }
 }
@@ -1394,9 +1396,13 @@ def paint(widget_window, web_view, background):
         sys.stderr.write("neutrino: could not paint the window: %s\n" % (exc,))
 
 html = call(
-    "titledDocument",
-    call("applyContentPolicy", call("extractHtmlDocument", js_string(source))),
-    js_string(title),
+    "themedDocument",
+    call(
+        "titledDocument",
+        call("applyContentPolicy", call("extractHtmlDocument", js_string(source))),
+        js_string(title),
+    ),
+    theme_state["value"],
 ).to_string()
 page_script = call("extractPageScript", js_string(source)).to_string()
 preload = call(
@@ -2094,6 +2100,42 @@ exit $?;:<<'//</script></body></html>' #-->
         themeKeys: "background,foreground,base,text,accent,accentText,border",
         themeSources: "gtk,qt,macos,windows",
 
+        /*
+         * The same seven, spelled as CSS. In themeKeys order and read
+         * positionally, because two lists that have to stay parallel are safer
+         * as two lists in one order than as a map anyone can add half an entry
+         * to.
+         *
+         * These are the non-deprecated `<system-color>` keywords, and the names
+         * are the keywords exactly so that the fallback idiom reads itself:
+         *
+         *     background: var(--neutrino-Canvas, Canvas);
+         *     color:      var(--neutrino-CanvasText, CanvasText);
+         *
+         * The desktop's real colour where a lane read one, the engine's own
+         * system colour where it did not -- said at the point of use, with no
+         * branch in script, which is strictly better than an app testing
+         * `theme === null` and picking something.
+         *
+         * `Highlight` and not `AccentColor` for the accent pair, and the flip
+         * is what decided it. `AccentColor` matched the desktop only on macOS.
+         * `Highlight` matched WebView2 and came within one unit on WebKitGTK --
+         * *and that near-match was a coincidence*: it stayed `3484e4` when the
+         * desktop's accent moved to `15539e`. So neither keyword is the
+         * desktop's accent anywhere but one lane, the custom property carries
+         * the measured value in either spelling, and what is left to choose on
+         * is the fallback. `Highlight` and `HighlightText` are CSS2 and resolve
+         * on all four engines; `AccentColor` is newer and does not everywhere.
+         * A fallback that resolves to nothing leaves the previous value in
+         * place, which is the one failure this delivery must not have.
+         *
+         * It is also the more honest name for what is being read: on three of
+         * the four lanes the source is literally the selection colour, and only
+         * macOS asks for `controlAccentColor` first.
+         */
+        systemColorNames: "ButtonFace,ButtonText,Canvas,CanvasText," +
+            "Highlight,HighlightText,ButtonBorder",
+
         inSet: function (set, name) {
             return ("," + set + ",").indexOf("," + String(name) + ",") >= 0;
         },
@@ -2226,17 +2268,47 @@ exit $?;:<<'//</script></body></html>' #-->
             if (!this.inSet(this.themeSources, theme.source)) {
                 return null;
             }
+            var values = this.themeColorList(theme);
+            if (!values) {
+                return null;
+            }
             var keys = this.themeKeyList();
             var parts = [];
+            for (var i = 0; i < keys.length; i++) {
+                parts[parts.length] = keys[i] + ':"' + values[i] + '"';
+            }
+            return '{scheme:"' + theme.scheme + '",source:"' + theme.source +
+                '",colors:{' + parts.join(",") + '}}';
+        },
+
+        /*
+         * The seven colours, in themeKeys order, or null for the whole palette.
+         *
+         * Two deliveries read this now -- the object the page gets and the CSS
+         * the document carries -- and they have to agree about what a
+         * presentable palette is. A palette that is good enough to hand to
+         * script and not good enough to put in a stylesheet would be a window
+         * whose two accounts of the desktop disagree.
+         *
+         * The check is the anchored one this file has always applied. It is
+         * also what makes themeCssText closed by construction: every value that
+         * reaches a stylesheet matched `^#[0-9a-f]{6}$`, and every property
+         * name came from a constant in this file.
+         */
+        themeColorList: function (theme) {
+            if (!theme || !theme.colors) {
+                return null;
+            }
+            var keys = this.themeKeyList();
+            var out = [];
             for (var i = 0; i < keys.length; i++) {
                 var value = String(theme.colors[keys[i]]);
                 if (!/^#[0-9a-f]{6}$/.test(value)) {
                     return null;
                 }
-                parts[parts.length] = keys[i] + ':"' + value + '"';
+                out[out.length] = value;
             }
-            return '{scheme:"' + theme.scheme + '",source:"' + theme.source +
-                '",colors:{' + parts.join(",") + '}}';
+            return out;
         },
 
         buildThemeScript: function (theme) {
@@ -4624,6 +4696,93 @@ exit $?;:<<'//</script></body></html>' #-->
          * stamped into a JavaScript string literal -- `<` and `&` were never
          * its problem and are this one's.
          */
+        /*
+         * The palette as a stylesheet, or null where there is no palette to
+         * write. `:root` because these have to inherit into everything the app
+         * draws, and one declaration per key in the fixed order above.
+         *
+         * Nothing here can escape the element it lands in: every value matched
+         * the anchored hex check in themeColorList and every property name is a
+         * substring of a constant in this file. There is no path from a
+         * toolkit's answer to markup.
+         */
+        themeCssText: function (theme) {
+            var values = this.themeColorList(theme);
+            if (!values) {
+                return null;
+            }
+            var names = String(this.systemColorNames).split(",");
+            var parts = [];
+            for (var i = 0; i < names.length; i++) {
+                parts[parts.length] = "--neutrino-" + names[i] + ":" + values[i];
+            }
+            return ":root{" + parts.join(";") + "}";
+        },
+
+        /*
+         * The launch palette, delivered as markup rather than as a script that
+         * runs at document start.
+         *
+         * The measured mechanism for an *update* is
+         * `documentElement.style.setProperty`, which works and reads back on
+         * all four engines, and that is what `_theme` uses. The launch is a
+         * different question and it is the one the flash exists in: the values
+         * have to be there before the first paint, and a document-start script
+         * has an element to set them on only if the parser has produced one.
+         * `document.title` taught this file that lesson at the cost of a round
+         * -- on WebView2 the page script's first statement runs at `loading`,
+         * with no `<head>` yet -- and a stylesheet in the markup has no such
+         * moment. It is parsed with the document that carries it.
+         *
+         * Permitted under both tiers, by the policy this file writes: the
+         * default tier restricts no styles at all, and the offline tier's
+         * carries `style-src 'unsafe-inline'`, which is what an inline
+         * `<style>` needs and what an external one is denied.
+         *
+         * Placed immediately before the document's own `<style>`, and both
+         * halves of that are load-bearing.
+         *
+         * *Before* the author's stylesheet, because an author who writes
+         * `:root{--neutrino-Canvas:#123}` means it, and two `:root` rules of
+         * equal specificity are decided by which comes last. Overriding the
+         * desktop is the app's to do and this must not be the thing that stops
+         * it.
+         *
+         * *After* the head's meta elements, because one of them is the content
+         * policy, and a policy governs what follows it in the document rather
+         * than what precedes it. Injecting at the top of the head would put the
+         * launcher's own stylesheet outside the policy the launcher wrote,
+         * which is a small hole and an embarrassing one.
+         *
+         * A document with no `<style>` of its own gets the rule at the end of
+         * the head, which is the same anchor titledDocument uses. That loses
+         * the author-wins property and keeps the policy one; a document with no
+         * stylesheet has no author declarations to lose to.
+         *
+         * A lane that read no palette gets no rule, which is the whole point of
+         * naming the properties after the keywords: `var(--neutrino-Canvas,
+         * Canvas)` then falls through to the engine's own system colour.
+         */
+        themedDocument: function (html, theme) {
+            var text = String(html);
+            var css = this.themeCssText(theme);
+            if (!css) {
+                return text;
+            }
+            var head = text.indexOf("</head>");
+            if (head < 0) {
+                this.noteOnce("this document has no <head>, so the palette is " +
+                    "on window.neutrino.theme and not in its stylesheet");
+                return text;
+            }
+            var at = text.substring(0, head).indexOf("<style");
+            if (at < 0) {
+                at = head;
+            }
+            return text.substring(0, at) + "<style>" + css + "</style>" +
+                text.substring(at);
+        },
+
         titledDocument: function (html, title) {
             var text = String(html);
             var name = String(title == null ? "" : title);
@@ -4858,6 +5017,33 @@ exit $?;:<<'//</script></body></html>' #-->
                 'var S=String.fromCharCode(31);' +
                 'var _send=function(m){try{(' + transport + ')(m);}catch(_){}};' +
                 'var _n=function(v){return String(v===undefined||v===null?"":v);};' +
+                /*
+                 * The update half of the palette's CSS delivery. The launch
+                 * half is a stylesheet in the document -- see themedDocument,
+                 * which says why a document-start script is the wrong mechanism
+                 * for a value that has to be there before the first paint.
+                 *
+                 * This is the mechanism that was measured: setProperty on
+                 * documentElement works and reads back on all four engines. By
+                 * the time it runs there is certainly a document, because
+                 * `_theme` is only ever reached through a driver's evaluate,
+                 * and every one of those is gated on the commit.
+                 *
+                 * Both lists are written from this file's own two constants, in
+                 * one order, so the mapping from a neutrino key to a CSS
+                 * keyword exists once. Neither needs escaping: one is a list of
+                 * identifiers and the other a list of CSS keywords, and both
+                 * are constants here rather than anything a toolkit answered.
+                 */
+                'var _K=["' + this.themeKeyList().join('","') + '"];' +
+                'var _P=["' + String(this.systemColorNames).split(",").join('","') + '"];' +
+                'var _css=function(t){' +
+                'var e=document.documentElement;' +
+                'if(!e||!t||!t.colors){return;}' +
+                'for(var i=0;i<_K.length;i++){' +
+                'try{e.style.setProperty("--neutrino-"+_P[i],t.colors[_K[i]]);}catch(_){}' +
+                '}' +
+                '};' +
                 'window.neutrino={' +
                 // Which channel the host is actually listening on. The page can
                 // work this out by feature detection anyway, so naming it costs
@@ -4888,6 +5074,7 @@ exit $?;:<<'//</script></body></html>' #-->
                  */
                 '_theme:function(t){' +
                 'window.neutrino.theme=t;' +
+                '_css(t);' +
                 'try{window.dispatchEvent(new CustomEvent("neutrino:themechange",{detail:t}));}catch(_){}' +
                 '},' +
                 'send:function(action,data){' +
@@ -5070,9 +5257,11 @@ exit $?;:<<'//</script></body></html>' #-->
 
             var scriptPath = driver.getScriptPath();
             var source = driver.readFile(scriptPath);
-            var html = this.titledDocument(
-                this.applyContentPolicy(this.extractHtmlDocument(source)),
-                config.title);
+            var html = this.themedDocument(
+                this.titledDocument(
+                    this.applyContentPolicy(this.extractHtmlDocument(source)),
+                    config.title),
+                this.theme);
             var pageScript = this.extractPageScript(source);
 
             var win = driver.createWindow(config);

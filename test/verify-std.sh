@@ -571,15 +571,17 @@ analyse_win() {
 }
 
 analyse_theme() {
-    local a b pp f
+    local a b v pp f fbv cav
     note "theme sequence: $(titles)"
     a="$(field 2 '^STD-THEME-A-SELF')"
     b="$(field 2 '^STD-THEME-B-SELF')"
+    v="$(field 2 '^STD-THEME-V-SELF')"
     pp="$(field 2 '^STD-THEME-P-SELF')"
     f="$(field 2 '^STD-THEME-F-SELF')"
 
     [ -n "$a" ] && note "self palette ${a#STD-THEME-A-SELF }"
     [ -n "$b" ] && note "self cssnames ${b#STD-THEME-B-SELF }"
+    [ -n "$v" ] && note "self delivery ${v#STD-THEME-V-SELF }"
     [ -n "$pp" ] && note "self customprops ${pp#STD-THEME-P-SELF }"
     [ -n "$f" ] && note "self fonts ${f#STD-THEME-F-SELF }"
 
@@ -600,6 +602,32 @@ analyse_theme() {
         *control=*)      fail "control unknown-keyword resolved to a colour; every UNSUP below it is the instrument, not the engine" ;;
         *)               fail "control unknown-keyword: STD-THEME-B-SELF was never observed" ;;
     esac
+    # The delivery. Two page readings, and the assertion is that they agree:
+    # the palette an app gets from `neutrino.theme` came through the preload,
+    # and the palette it gets from `var(--neutrino-Canvas)` came through a
+    # stylesheet the launcher put in the document. Different mechanisms, one
+    # measurement, and an app is entitled to either.
+    case "$v" in
+        *" match=7/7 "*) note "control delivery match=7/7 verdict=DELIVERED" ;;
+        *" pal=null "*)  note "control delivery not_asked: this lane read no toolkit" ;;
+        *match=*)        fail "control delivery ${v#*match=}; the properties and neutrino.theme disagree" ;;
+        *)               fail "control delivery: STD-THEME-V-SELF was never observed" ;;
+    esac
+
+    # And the reason the properties are named for the keywords. A name the
+    # launcher never sets has to fall through to the engine's own system
+    # colour; a keyword the engine cannot resolve would leave the declaration
+    # alone instead, and the page would style itself from whatever it inherited.
+    fbv="$(echo "$v" | sed -n 's/.* fallback=\([^ ]*\).*/\1/p')"
+    cav="$(echo "$v" | sed -n 's/.* canvas=\([^ ]*\).*/\1/p')"
+    if [ -z "$fbv" ]; then
+        :
+    elif [ "$fbv" = "$cav" ] && [ "$fbv" != "UNSUP" ] && [ "$fbv" != "threw" ]; then
+        note "control fallback var(--neutrino-absent, Canvas)=$fbv Canvas=$cav verdict=RESOLVED"
+    else
+        fail "control fallback var(--neutrino-absent, Canvas)=$fbv against Canvas=$cav; an absent property does not reach the engine's own colour on this lane"
+    fi
+
     [ -n "$(field 2 '^STD-THEME-CTL')" ] || fail "control ctl was never observed; the instrument read no window"
     [ -n "$(field 2 '^STD-THEME-END')" ] || fail "control end was never observed; the app did not finish its sequence"
 }

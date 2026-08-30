@@ -955,9 +955,21 @@ eq("the preload is still valid javascript", (function () {
     try { new Function(preload); return true; } catch (_) { return false; }
 })(), true);
 // Run it against a stand-in window and read back what an app would see.
+//
+// And a stand-in document, because the palette has a second delivery now: the
+// launch value rides in the document's own stylesheet and every later one is
+// written through `documentElement.style.setProperty`. That second half is
+// reachable from here, so it is asserted here rather than only on an engine.
 var pageWindow = { addEventListener: function () {}, dispatchEvent: function (e) { this.last = e; } };
 pageWindow.CustomEvent = function (type, init) { this.type = type; this.detail = init.detail; };
-(new Function("window", "CustomEvent", preload))(pageWindow, pageWindow.CustomEvent);
+var pageProps = {};
+var pageDoc = {
+    documentElement: {
+        style: { setProperty: function (name, value) { pageProps[name] = value; } }
+    }
+};
+(new Function("window", "CustomEvent", "document", preload))(
+    pageWindow, pageWindow.CustomEvent, pageDoc);
 eq("an app reads the palette at document start", pageWindow.neutrino.theme, {
     scheme: "dark",
     source: "gtk",
@@ -1002,9 +1014,9 @@ N.notedOnce = savedNoted;
 
 console.log("");
 console.log("a change replaces the palette and says so");
-(new Function("window", "CustomEvent",
+(new Function("window", "CustomEvent", "document",
     N.buildThemeScript(N.normalizeTheme(rawTheme({ background: "#f6f5f4", base: "#ffffff" })))
-))(pageWindow, pageWindow.CustomEvent);
+))(pageWindow, pageWindow.CustomEvent, pageDoc);
 eq("the event carries the new palette", pageWindow.last.type, "neutrino:themechange");
 eq("with the scheme derived from it", pageWindow.last.detail.scheme, "light");
 // Replaced and not mutated: an app that captured the old object keeps a stable
@@ -1013,6 +1025,53 @@ eq("and window.neutrino.theme is the new one", pageWindow.neutrino.theme.colors.
 eq("while the object captured before it is unchanged", theme.colors.base, "#404040");
 eq("the palette is current before the event fires",
    pageWindow.last.detail === pageWindow.neutrino.theme, true);
+// The other delivery, written through CSSOM by the same update. The names are
+// the non-deprecated <system-color> keywords, so an author can infer the
+// property from the keyword and write `var(--neutrino-Canvas, Canvas)` without
+// looking anything up.
+eq("the update writes the palette as custom properties too", pageProps, {
+    "--neutrino-ButtonFace": "#f6f5f4",
+    "--neutrino-ButtonText": "#dadada",
+    "--neutrino-Canvas": "#ffffff",
+    "--neutrino-CanvasText": "#dadada",
+    "--neutrino-Highlight": "#8fa876",
+    "--neutrino-HighlightText": "#ffffff",
+    "--neutrino-ButtonBorder": "#292929"
+});
+
+console.log("");
+console.log("and the launch palette rides in the document, not in a script");
+// The launch is the half a document-start script cannot be trusted with: the
+// values have to be there before the first paint, and whether there is an
+// element to set them on at that moment is a per-engine answer this project
+// has already been caught by once.
+var CSSDOC = '<!doctype html><html><head>' +
+             '<meta http-equiv="Content-Security-Policy" content="' + N.defaultContentPolicy + '">' +
+             '<style>p{color:red}</style></head><body><p>x</p></body></html>';
+var themed = N.themedDocument(CSSDOC, theme);
+eq("the rule carries every key", N.themeCssText(theme),
+   ":root{--neutrino-ButtonFace:#383838;--neutrino-ButtonText:#dadada;" +
+   "--neutrino-Canvas:#404040;--neutrino-CanvasText:#dadada;" +
+   "--neutrino-Highlight:#8fa876;--neutrino-HighlightText:#ffffff;" +
+   "--neutrino-ButtonBorder:#292929}");
+// After the policy, because a content policy governs what follows it and the
+// launcher's own stylesheet has no business sitting outside the one the
+// launcher wrote.
+eq("it lands after the content policy",
+   themed.indexOf("Content-Security-Policy") < themed.indexOf("--neutrino-Canvas"), true);
+// Before the author's, because two :root rules of equal specificity are
+// decided by which comes last, and overriding the desktop is the app's to do.
+eq("and before the author's stylesheet",
+   themed.indexOf("--neutrino-Canvas") < themed.indexOf("p{color:red}"), true);
+eq("a lane that read no palette writes no rule", N.themeCssText(null), null);
+eq("and its document comes back untouched", N.themedDocument(CSSDOC, null), CSSDOC);
+// No stylesheet of its own is no author declarations to lose to, so the end of
+// the head is enough.
+var bare = '<!doctype html><html><head><meta charset="utf-8"></head><body>x</body></html>';
+eq("a document with no stylesheet gets it at the end of the head",
+   N.themedDocument(bare, theme).indexOf("</style></head>") > 0, true);
+eq("a document with no head keeps what it has",
+   N.themedDocument("<body>x</body>", theme), "<body>x</body>");
 N.tiers = "default,offline";
 eq("offline tier gets the offline policy", policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
 N.tiers = "default";

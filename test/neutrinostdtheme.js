@@ -50,6 +50,13 @@ var NT_KEYS = ["background", "foreground", "base", "text", "accent", "accentText
 // spellings of the accent, because three of the four lanes read the *selection*
 // colour where only macOS reads the OS accent. Which name this API should use
 // is decided by which of these two pairs the desktop value matches.
+// The property this launcher delivers each of the seven under, in NT_KEYS
+// order. Named for the keyword exactly, so `var(--neutrino-Canvas, Canvas)`
+// reads itself: the desktop's colour where a lane read one, the engine's own
+// system colour where it did not.
+var NT_PROPS = ["ButtonFace", "ButtonText", "Canvas", "CanvasText",
+                "Highlight", "HighlightText", "ButtonBorder"];
+
 var CSS_COLORS = ["Canvas", "CanvasText", "ButtonFace", "ButtonText", "ButtonBorder",
                   "AccentColor", "AccentColorText", "Highlight", "HighlightText",
                   "SelectedItem", "SelectedItemText", "Field", "FieldText",
@@ -196,22 +203,68 @@ function step3() {
         out += " " + CSS_COLORS[i] + "=" + resolveColor(CSS_COLORS[i]);
     }
     put(out);
+    win.setTimeout(stepV, DWELL);
+}
+
+// The delivery itself: whether the seven custom properties are on the document
+// at all, and whether they say what neutrino.theme says.
+//
+// Both halves of that are page readings, so the phase is -SELF -- but it can
+// still be asserted, because the assertion is that two *different deliveries*
+// of one measurement agree. The palette in the object came through the preload;
+// the palette in the properties came through a stylesheet the launcher put in
+// the document. An app is entitled to use either and must not get two answers.
+//
+// A lane that read no palette reports pal=null and sets nothing, which is the
+// case the fallback below is for.
+function stepV() {
+    var out = "STD-THEME-V-SELF";
+    var theme = null;
+    try { theme = win.neutrino.theme; } catch (_) {}
+    if (!theme) {
+        out += " pal=null match=n/a miss=";
+    } else {
+        var seen = 0;
+        var miss = "";
+        for (var i = 0; i < NT_PROPS.length; i++) {
+            var got = "";
+            try {
+                got = String(win.getComputedStyle(doc.documentElement)
+                    .getPropertyValue("--neutrino-" + NT_PROPS[i]))
+                    .replace(/[^0-9a-fA-F]/g, "").toLowerCase();
+            } catch (_) { got = "threw"; }
+            var want = "";
+            try { want = String(theme.colors[NT_KEYS[i]]).replace("#", ""); } catch (_) {}
+            if (got === want && got !== "") { seen++; } else { miss += "," + NT_PROPS[i]; }
+            out += " v:" + NT_PROPS[i] + "=" + (got === "" ? "unset" : got);
+        }
+        out += " pal=" + theme.source + " match=" + seen + "/" + NT_PROPS.length +
+            " miss=" + miss.substring(1);
+    }
+
+    // The fallback idiom, on a name this launcher never sets. It is the other
+    // half of the naming decision: an absent property has to fall through to
+    // the engine's own system colour, and a keyword the engine cannot resolve
+    // would leave the declaration alone instead -- which is why the accent pair
+    // is named Highlight and not AccentColor.
+    out += " fallback=" + resolveColor("var(--neutrino-NoSuchKeyHere, Canvas)") +
+        " canvas=" + resolveColor("Canvas");
+    put(out);
     win.setTimeout(step4, DWELL);
 }
 
-// Whether the delivery this design proposes is even available. Custom
-// properties are written through CSSOM rather than through a <style> element on
-// purpose: the offline tier's document carries `default-src 'none'`, and a
-// property write is not governed by style-src -- which is a claim about four
-// engines and two tiers, so it is measured here rather than designed around.
+// Whether the *update* path is available: every later palette is written
+// through CSSOM rather than through a second stylesheet, and that is the
+// mechanism this measures. Under a name the launcher never delivers, so the
+// probe cannot overwrite the value the phase above just asserted.
 function step4() {
     var set = "threw";
     var read = "threw";
     try {
-        doc.documentElement.style.setProperty("--neutrino-Canvas", "#123456");
+        doc.documentElement.style.setProperty("--neutrino-ProbeOnly", "#123456");
         set = "ok";
         read = String(win.getComputedStyle(doc.documentElement)
-            .getPropertyValue("--neutrino-Canvas")).replace(/[^0-9a-fA-F]/g, "");
+            .getPropertyValue("--neutrino-ProbeOnly")).replace(/[^0-9a-fA-F]/g, "");
     } catch (_) {}
     var pol = "NONE";
     try {
