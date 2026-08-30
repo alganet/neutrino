@@ -1512,12 +1512,79 @@ jobs:
             PATH=/usr/pkg/bin:/usr/pkg/sbin:$PATH
             export PATH
             {
+              # What this guest is, first, because every line under it is only
+              # meaningful against a release.
+              echo "release $(uname -sr) arch $(uname -m)"
               command -v pkgin || echo "no pkgin"
               command -v pkg_add || echo "no pkg_add"
-              pkgin -y update || true
-              pkgin -y install curl wget || true
-              pkgin -y install python312 || pkgin -y install python311 || true
-              pkg_add curl wget python312 || true
+
+              # Where the binary packages are, said out loud rather than left to
+              # a default that is not there.
+              #
+              # This lane reported `curl missing`, `wget missing` and `python3
+              # missing` for four rounds and nineteen netinstall failures
+              # followed from it every time -- `nt_serve` has no interpreter to
+              # start a server with and no client to poll it with, so eleven
+              # suites report that their fixture never came up and say nothing
+              # about confinement at all. The reason was never in the log,
+              # because `pkgin` is not on this image and the three `pkgin` lines
+              # said `not found` while the `pkg_add` line ended in `|| true`.
+              #
+              # What it is: `pkg_add <name>` with no PKG_PATH set does not go to
+              # the network at all -- it looks for the file beside itself and
+              # says `no pkg found`. This image sets none, and the tool that
+              # carries its own repository list is the pkgin that is not
+              # installed. Measured against the mirror rather than assumed: the
+              # 11.0 index answers, and it holds curl-8.21.0, wget-1.25.0nb5 and
+              # python312-3.12.13. Nothing was unbuilt; nothing was asked for.
+              #
+              # The ladder below is still a ladder, for the release after this
+              # one that really has no packages yet, and each rung says whether
+              # it answered.
+              #
+              # ftp(1) and not curl: this is the check that runs *before* curl
+              # can be installed, and NetBSD's base ftp speaks http. It is also
+              # what pkg_add fetches with, so a candidate ftp cannot reach is
+              # one pkg_add could not have used either.
+              nb_rel="$(uname -r)"
+              nb_arch="$(uname -m)"
+              nb_base="https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD"
+              nb_seen=""
+              for nb_try in "$nb_rel" "${nb_rel%%.*}.0" 10.1 10.0; do
+                # A release like 11.0 makes the first two candidates the same
+                # string, and a reading printed twice is a reading that invites
+                # being counted twice.
+                case " $nb_seen " in *" $nb_try "*) continue ;; esac
+                nb_seen="$nb_seen $nb_try"
+                nb_url="$nb_base/$nb_arch/$nb_try/All"
+                printf 'repo %s ' "$nb_url"
+                if ftp -o /dev/null "$nb_url/" >/dev/null 2>&1; then
+                  echo answers
+                  PKG_PATH="$nb_url"
+                  export PKG_PATH
+                  break
+                fi
+                echo silent
+              done
+              echo "PKG_PATH=${PKG_PATH:-<unset, pkg_add will use its own>}"
+
+              # One package per line, each with its status and its reason. The
+              # reason is the whole point: "curl missing" is the symptom four
+              # rounds already reported, and what none of them carried is the
+              # sentence pkg_add prints underneath it.
+              for nb_pkg in curl wget python312 python311; do
+                printf 'pkg_add %s ' "$nb_pkg"
+                if nb_out="$(pkg_add "$nb_pkg" 2>&1)"; then
+                  echo ok
+                else
+                  # Taken before anything else runs. `$?` inside the same
+                  # echo as a command substitution is a word-expansion order
+                  # to be right about, and this is a line whose whole job is
+                  # to be believed.
+                  nb_rc=$?
+                  echo "rc=$nb_rc $(printf '%s' "$nb_out" | tr '\n' ' ' | cut -c1-300)"
+                fi
+              done
               # pkgsrc's python is versioned -- the package is python3NN and
               # what lands is python3.NN, which is not a name lib.sh knows.
               #
@@ -1549,7 +1616,7 @@ jobs:
         run: bash test/annotate.sh netbsd-probe netbsd-probe.log '^ +report:|^ +FAIL:|SKIP:'
       - name: packages
         if: always()
-        run: bash test/annotate.sh netbsd-pkg netbsd-pkg.log 'missing|not found|rror|^tool '
+        run: bash test/annotate.sh netbsd-pkg netbsd-pkg.log 'missing|not found|rror|^tool |^release |^repo |^pkg_add |^PKG_PATH|^no pkg'
       # Three steps over the suite log, because the cap is per step and round 2
       # dropped four chunks from the middle of the failures alone. Anchored to
       # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
