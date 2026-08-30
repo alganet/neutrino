@@ -571,7 +571,7 @@ analyse_win() {
 }
 
 analyse_theme() {
-    local a b v pp f fbv cav mqv scv
+    local a b v pp f fbv cav mqv scv srv
     note "theme sequence: $(titles)"
     a="$(field 2 '^STD-THEME-A-SELF')"
     b="$(field 2 '^STD-THEME-B-SELF')"
@@ -614,14 +614,43 @@ analyse_theme() {
     # There is nothing to disagree with and nothing to force, and saying so with
     # the value in it is what keeps this from going quiet on a lane that stopped
     # answering.
+    # One lane is exempt, by name, with a reason and a way out. QtWebEngine does
+    # not follow the toolkit palette here: measured across the flip, Qt's
+    # palette moved efefef -> 323232 with the knob read back on both halves and
+    # the query stayed light. It is the same defect the GTK lanes have and there
+    # is nothing to set -- `QStyleHints::colorScheme` is readable from Qt 6.5
+    # and settable from 6.8, and the runner this lane exists on is 6.4.2. A knob
+    # written for a version nothing here can run is a guarantee about an API and
+    # not about a document, which is how the last three rounds went wrong.
+    #
+    # So it is a note, and the note is the record: it prints the disagreement in
+    # full every run rather than going quiet, and it says what retires it. This
+    # is not a widened tolerance -- the exemption is one named toolkit, the other
+    # five lanes still fail, and a `qt` that starts agreeing is told to come back
+    # and delete this.
+    #
+    # Keyed on `nsrc`, the launcher's own answer about which toolkit it read,
+    # and not on the engine string: the engine is what the page can see and the
+    # source is what the reading came from.
+    #
+    # Nothing is said on the agreeing path about the exemption, and that is a
+    # correction this file needed before it shipped: a light runner agrees
+    # trivially -- both readings are "light" because there is nothing to be
+    # wrong about -- so a `qt` lane here would have printed "the exemption is no
+    # longer needed" on every green run it ever had. Agreement is only evidence
+    # where the desktop was dark, and the only place that knows a desktop went
+    # dark is themediff.sh, which is where that note lives.
     mqv="$(echo "$a" | sed -n 's/.*mq=\([^ ]*\).*/\1/p')"
     scv="$(echo "$a" | sed -n 's/.*nscheme=\([^ ]*\).*/\1/p')"
+    srv="$(echo "$a" | sed -n 's/.*nsrc=\([^ ]*\).*/\1/p')"
     if [ -z "$mqv" ] || [ "$scv" = null ]; then
         :
     elif [ "$mqv" = unsupported ] || [ "$mqv" = threw ] || [ "$mqv" = none ]; then
         note "control scheme not_asked mq=$mqv; this engine states no preference"
     elif [ "$mqv" = "$scv" ]; then
         note "control scheme mq=$mqv neutrino=$scv verdict=AGREED"
+    elif [ "$srv" = qt ]; then
+        note "control scheme KNOWN qt mq=$mqv against neutrino=$scv; QtWebEngine does not follow the toolkit palette and QStyleHints::colorScheme is Qt 6.8+, so this lane has no knob -- delete this exemption when a runner has one"
     else
         fail "control scheme mq=$mqv against neutrino=$scv; the page's media query and the palette it was handed disagree about this desktop"
     fi
