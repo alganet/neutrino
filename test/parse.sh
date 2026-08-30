@@ -907,6 +907,30 @@ eq("having nothing yet is a change", N.themesDiffer(null, theme), true);
 eq("and having nothing twice is not", N.themesDiffer(null, null), false);
 
 console.log("");
+console.log("the flag the two GTK lanes raise, and the one they never lower");
+// The engine's `prefers-color-scheme` on WebKitGTK follows the theme's *name*
+// -- the prefer-dark flag, or a name carrying the dark variant -- and not the
+// palette, so a stock `Mint-Y-Dark-Grey` is dark on screen and light in the
+// media query. Raising the flag is what closes that.
+//
+// Only ever raised. Setting it false under a name that already says dark left
+// the query at dark: the engine's rule there is the flag OR the name, and the
+// name cannot be argued with. So the answer is a single boolean and "leave it
+// alone" is what false means, which is the shape asserted here.
+eq("a dark palette raises it", N.gtkPreferDark(theme), true);
+eq("a light one does not",
+   N.gtkPreferDark(N.normalizeTheme(rawTheme({ background: "#f6f5f4" }))), false);
+// The scheme and not the colour, because the luminance rule has already been
+// applied by the time this is asked. A palette whose background is dark and
+// whose scheme somehow said light would be a normalizeTheme defect, and this
+// reading has to point at the one value every lane pushes to the page.
+eq("it reads the scheme, not the background",
+   N.gtkPreferDark({ scheme: "dark", source: "gtk", colors: { background: "#ffffff" } }), true);
+eq("a lane that read no toolkit is left alone", N.gtkPreferDark(null), false);
+eq("and so is a palette with no scheme at all",
+   N.gtkPreferDark({ source: "gtk", colors: {} }), false);
+
+console.log("");
 console.log("the one string this file evaluates into a page");
 // Every other direction is the page talking to the host. This is the host
 // talking to the page, so it is held to parseMessage's rule coming the other

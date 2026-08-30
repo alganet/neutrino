@@ -571,7 +571,7 @@ analyse_win() {
 }
 
 analyse_theme() {
-    local a b v pp f fbv cav
+    local a b v pp f fbv cav mqv scv
     note "theme sequence: $(titles)"
     a="$(field 2 '^STD-THEME-A-SELF')"
     b="$(field 2 '^STD-THEME-B-SELF')"
@@ -597,6 +597,35 @@ analyse_theme() {
         *nsrc=*)     note "control palette read=YES" ;;
         *)           fail "control palette: STD-THEME-A-SELF was never observed" ;;
     esac
+
+    # The scheme, read twice on one launch: `prefers-color-scheme` is the
+    # engine's answer and `neutrino.theme.scheme` is the launcher's, taken from
+    # the luminance of the palette the toolkit actually handed over. An app is
+    # entitled to branch on either -- 3a gave it `var(--neutrino-Canvas)` beside
+    # the media query it already had -- and a desktop where the two disagree is
+    # one where it gets a dark palette under a light media query.
+    #
+    # One launch is enough for this one, unlike every colour above it. The two
+    # readings come from different places in the same instant, so a disagreement
+    # is a disagreement; there is no constant here that could be agreeing by
+    # accident, because neither side is a constant.
+    #
+    # An engine with no matchMedia, or one that matches neither, is not asked.
+    # There is nothing to disagree with and nothing to force, and saying so with
+    # the value in it is what keeps this from going quiet on a lane that stopped
+    # answering.
+    mqv="$(echo "$a" | sed -n 's/.*mq=\([^ ]*\).*/\1/p')"
+    scv="$(echo "$a" | sed -n 's/.*nscheme=\([^ ]*\).*/\1/p')"
+    if [ -z "$mqv" ] || [ "$scv" = null ]; then
+        :
+    elif [ "$mqv" = unsupported ] || [ "$mqv" = threw ] || [ "$mqv" = none ]; then
+        note "control scheme not_asked mq=$mqv; this engine states no preference"
+    elif [ "$mqv" = "$scv" ]; then
+        note "control scheme mq=$mqv neutrino=$scv verdict=AGREED"
+    else
+        fail "control scheme mq=$mqv against neutrino=$scv; the page's media query and the palette it was handed disagree about this desktop"
+    fi
+
     case "$b" in
         *control=UNSUP*) note "control unknown-keyword=UNSUP verdict=DISTINGUISHED" ;;
         *control=*)      fail "control unknown-keyword resolved to a colour; every UNSUP below it is the instrument, not the engine" ;;
