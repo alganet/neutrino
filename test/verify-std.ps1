@@ -394,6 +394,45 @@ function Analyse-Theme($rows) {
 
 function Check-Apparatus($rec, $dwell) {
     Note "sampler platform=windows turns=$($rec.Turns) transitions=$($rec.Rows.Count) dwell_ms=$dwell max_turn_gap_ms=$($rec.MaxGap)"
+    # The decoration, named, in the spelling verify-std.sh reports it -- so a
+    # differential reading either platform's log looks for one line.
+    #
+    # `via=live` and not `read`: both numbers here come from a rect this file
+    # asked Windows for in the turn that read the title, so there is no hint to
+    # be absent and no fallback to mistake for a reading. That is a real
+    # difference between the platforms and it is what this word carries. x11
+    # derives its outer from a property the window manager may simply not set.
+    #
+    # Only the rows the app had arrived in. This lane finds its window by
+    # process and starts recording immediately, so the record opens with
+    # `Downloading`, `<none>` and `neutrino` -- states from before the frame
+    # settles, and measured: `6x29 0x0 16x39` in one run, where only `16x39` is
+    # the window. The frame of a window the app has not arrived in is not the
+    # frame anything here is asking about. x11 never showed this because it
+    # finds its window by the prefix in the first place.
+    $prefix = "STD-" + $Probe.ToUpper() + "-"
+    $extents = @()
+    foreach ($row in $rec.Rows) {
+        if (-not $row.Title.StartsWith($prefix)) { continue }
+        if ($row.Inner -match '^(\d+)x(\d+)$') {
+            $iw = [int]$Matches[1]; $ih = [int]$Matches[2]
+            if ($row.Outer -match '^(\d+)x(\d+)$') {
+                $e = "$([int]$Matches[1] - $iw)x$([int]$Matches[2] - $ih)"
+                if ($extents -notcontains $e) { $extents += $e }
+            }
+        }
+    }
+    if ($extents.Count -eq 0) { Note "sampler extent none via=live" }
+    else { Note "sampler extent $($extents -join ' ') via=live" }
+    # The same name verify-std.sh emits, and the same choice of turn: the
+    # probe's first state, before it moves anything. Pos here is GetWindowRect's
+    # Left/Top, which is the frame's outside corner -- the quantity x11 derives
+    # by subtracting the reparent offset, arrived at directly.
+    $firstPos = "none"
+    foreach ($row in $rec.Rows) {
+        if ($row.Title.StartsWith($prefix)) { $firstPos = $row.Pos; break }
+    }
+    Note "sampler framepos $firstPos"
     if ($rec.Rows.Count -lt 2) {
         Fail "the instrument recorded $($rec.Rows.Count) transition(s); it saw no window change at all"
     }

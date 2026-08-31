@@ -57,6 +57,9 @@ report_launcher() {
 # was asked for.
 read_status_geometry() { sed -n '4p' "$STATUS_FILE" 2>/dev/null || echo ""; }
 read_status_position() { sed -n '3p' "$STATUS_FILE" 2>/dev/null || echo ""; }
+# Line 5, `WxH+X+Y`: the work area, with its top-left corner converted out of
+# AppKit's bottom-left coordinates by the driver, where the flip already lives.
+read_status_workarea() { sed -n '5p' "$STATUS_FILE" 2>/dev/null || echo ""; }
 
 wait_for_title() {
     local expected="$1"
@@ -109,9 +112,25 @@ assert_geometry() {
     fi
 }
 
+# The requested position, clamped to the work area, exactly.
+#
+# The fifty pixels this allowed were never paying for a decoration: line 3 is
+# the frame's top-left and `move` sets the frame, so the two sides were the same
+# quantity all along. What they were paying for is the menu bar. macOS will not
+# place a window above it, so `moveTo(0,0)` lands at the top of
+# `NSScreen.visibleFrame` and not at zero, and fifty is wide enough to swallow
+# a menu bar of any height anyone has shipped.
+#
+# So the expectation is derived rather than guessed: a window goes where it was
+# asked or to the edge of the work area, whichever is further in. That is a rule
+# and not a constant, which is why it can be asserted at zero on a runner whose
+# menu bar and Dock this file has never seen.
+#
+# Where the work area cannot be read the tolerance comes back, and the reason is
+# printed. A clamp that cannot be computed is not a clamp of zero.
 assert_position() {
-    local expected_x="$1" expected_y="$2" tolerance="${3:-50}"
-    local pos actual_x actual_y
+    local expected_x="$1" expected_y="$2" tolerance="${3:-}"
+    local pos actual_x actual_y work wx wy
     pos=$(read_status_position)
     actual_x="${pos%,*}"; actual_y="${pos#*,}"
     if [ -z "$actual_x" ] || [ -z "$actual_y" ]; then
@@ -119,12 +138,29 @@ assert_position() {
         FAILURES=$((FAILURES + 1))
         return
     fi
+    work=$(read_status_workarea)
+    case "$work" in
+        *x*+*+*)
+            wx="${work#*+}"; wx="${wx%+*}"
+            wy="${work##*+}"
+            ;;
+        *) wx=""; wy="" ;;
+    esac
+    echo "report: position actual=${actual_x},${actual_y} asked=${expected_x},${expected_y} workarea=${work:-?}"
+    if [ -z "$wx" ] || [ -z "$wy" ] || [ -n "${wx//[0-9-]/}" ] || [ -n "${wy//[0-9-]/}" ]; then
+        tolerance="${tolerance:-50}"
+        echo "report: no work area on line 5; the clamp cannot be derived and the tolerance stands"
+    else
+        [ "$expected_x" -lt "$wx" ] && expected_x="$wx"
+        [ "$expected_y" -lt "$wy" ] && expected_y="$wy"
+        tolerance="${tolerance:-0}"
+    fi
     local dx=$(( actual_x - expected_x )); dx=${dx#-}
     local dy=$(( actual_y - expected_y )); dy=${dy#-}
     if [ "$dx" -le "$tolerance" ] && [ "$dy" -le "$tolerance" ]; then
-        echo "  PASS: position ~= ${expected_x},${expected_y} (actual: ${actual_x},${actual_y})"
+        echo "  PASS: position = ${expected_x},${expected_y} (actual: ${actual_x},${actual_y}, tolerance ${tolerance})"
     else
-        echo "  FAIL: position expected ~= ${expected_x},${expected_y} actual=${actual_x},${actual_y}"
+        echo "  FAIL: position expected ${expected_x},${expected_y} actual=${actual_x},${actual_y} (tolerance ${tolerance}); if the work area above is right, this is what moveTo means on this lane and the definition is what needs writing down"
         FAILURES=$((FAILURES + 1))
     fi
 }

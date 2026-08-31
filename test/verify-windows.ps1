@@ -30,6 +30,7 @@ using System;
 using System.Runtime.InteropServices;
 public class WinAPI {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }
 }
@@ -320,17 +321,34 @@ function Watch-Sequence($proc, $seconds) {
         try { $title = [string]$proc.MainWindowTitle } catch { $title = "" }
         if ($title -ne $last) {
             $last = $title
+            # Both rects, in the turn that read the title, for the reason the
+            # comment above gives about sampling geometry with the title: a
+            # frame read now and a client read a turn later is a difference
+            # between two windows, and the difference is what this is for.
+            #
+            # GetClientRect is the one this file never had. resizeTo sets
+            # ClientSize on this lane, and every size assertion below was
+            # comparing that request against GetWindowRect -- a frame -- with
+            # an eighty-pixel tolerance quietly paying the caption and the
+            # borders. The frame stays because the difference between the two
+            # is the decoration, and that is a reading worth having; what
+            # changes is which one the assertions are pointed at.
             $rect = New-Object WinAPI+RECT
+            $crect = New-Object WinAPI+RECT
             [WinAPI]::GetWindowRect($proc.MainWindowHandle, [ref]$rect) | Out-Null
+            [WinAPI]::GetClientRect($proc.MainWindowHandle, [ref]$crect) | Out-Null
             [void]$samples.Add([pscustomobject]@{
                 At     = [int]((Get-Date) - $script:WatchStart).TotalMilliseconds
                 Title  = $title
-                Width  = $rect.Right - $rect.Left
-                Height = $rect.Bottom - $rect.Top
+                Width  = $crect.Right - $crect.Left
+                Height = $crect.Bottom - $crect.Top
+                OuterW = $rect.Right - $rect.Left
+                OuterH = $rect.Bottom - $rect.Top
                 Left   = $rect.Left
                 Top    = $rect.Top
             })
-            Write-Host "report: seq $($samples[$samples.Count - 1].At)ms '$title' $($rect.Right - $rect.Left)x$($rect.Bottom - $rect.Top) at $($rect.Left),$($rect.Top)"
+            $s = $samples[$samples.Count - 1]
+            Write-Host "report: seq $($s.At)ms '$title' inner $($s.Width)x$($s.Height) outer $($s.OuterW)x$($s.OuterH) extent $($s.OuterW - $s.Width)x$($s.OuterH - $s.Height) at $($s.Left),$($s.Top)"
             if ($title -like "*TESTS DONE*") { break }
         }
         Start-Sleep -Milliseconds $SampleInterval
@@ -382,9 +400,26 @@ function Assert-Reached($record, $title) {
     return $s
 }
 
+# The requested size, exactly, unless a caller asks for slack -- which is the
+# rule verify-linux.sh's own comment already sets out, arrived at here by the
+# same route and about a year late.
+#
+# `resizeTo` sets ClientSize on this lane, so the client area is the quantity
+# that was asked for and the quantity this reads. While it read GetWindowRect
+# the numbers it compared were a frame against a client request, and the eighty
+# pixels below were what let the two look equal: a caption and two borders fit
+# inside eighty with room to spare, so this passed whichever rect the driver
+# was setting, and would have gone on passing if the driver had got it
+# backwards. The sampler still records the frame, and the difference between
+# them is printed on every turn as `extent`; nothing here says the frame is
+# uninteresting, only that it is not what resizeTo was asked for.
+#
+# Zero, and `-eq 0` rather than `-not` on the parameter, because a caller
+# asking for a tolerance of zero and a caller asking for none are the same
+# request and PowerShell reads both as falsy.
 function Assert-GeometryAt($sample, $title, $expectedW, $expectedH, $tolerance) {
     if (-not $sample) { return }
-    if (-not $tolerance) { $tolerance = 80 }
+    if (-not $tolerance) { $tolerance = 0 }
     $dw = [Math]::Abs($sample.Width - $expectedW)
     $dh = [Math]::Abs($sample.Height - $expectedH)
     if ($dw -le $tolerance -and $dh -le $tolerance) {
@@ -395,6 +430,15 @@ function Assert-GeometryAt($sample, $title, $expectedW, $expectedH, $tolerance) 
     }
 }
 
+# Frame against frame, which is the half of this that was always right:
+# GetWindowRect's Left/Top is the frame's outside corner and `move` sets
+# Form.Location, which is the same corner. A decoration cannot move this number
+# -- an undecorated Form asked for 0,0 is at 0,0 -- so the ten pixels here were
+# never paying for a title bar, and nothing has been found that they are paying
+# for. They stay for one round while the decorated and chromeless halves are
+# measured against each other: two runs reporting the same position is what
+# says this is decoration-independent, and it is the reading that lets the
+# number go to zero rather than an argument that it should.
 function Assert-PositionAt($sample, $title, $expectedX, $expectedY, $tolerance) {
     if (-not $sample) { return }
     if (-not $tolerance) { $tolerance = 10 }
