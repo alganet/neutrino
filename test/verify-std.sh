@@ -237,8 +237,26 @@ x11_frame_extents() {
 # for any reason. That is an assertion that cannot fail for the reason it
 # exists. Reading the hint again at the end is what turns the constant into a
 # measured one, and a window that was reframed mid-run now says so.
+# Whether the window this script has been reading is still there at all.
+# `xprop -id` on a window that has gone answers nothing and exits non-zero,
+# which is the same silence a hint that stopped being set would produce.
+x11_alive() {
+    xprop -id "$X11_WID" WM_CLASS >/dev/null 2>&1
+}
+
 x11_recheck_extents() {
     local second
+    # A probe that closes its own window is not a frame that changed.
+    # Measured on `kde-stdwin`, which ends on STD-WIN-CLOSE-PAIR: the recheck
+    # ran after the window was gone, read nothing, and called it `moved` --
+    # and `moved` is a control failure in decodiff.sh, so a probe that closes
+    # itself would have failed the differential for finishing correctly.
+    # Asked before either branch below, because both of them read the same
+    # silence and neither can tell what produced it.
+    if ! x11_alive; then
+        note "the window closed before the extents could be re-read; the reading stands as taken"
+        return
+    fi
     # A window that was unreparented at the start and framed by the end is the
     # same kind of finding as extents that moved, and it is the one this
     # branch's whole reading rests on -- so it is asked, not skipped.
