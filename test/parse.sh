@@ -489,7 +489,15 @@ for (var t = 0; t < transports.length; t++) {
 
 console.log("what the page sends is what the host accepts");
 var sent = [];
-var sandbox = { window: {}, String: String, JSON: JSON, __t: function (m) { sent.push(m); } };
+// The engine's own `open`, so the target rule below can be read from both
+// sides: what the wire got, and what was left for the engine. A plain object
+// with nothing on it would make "did not intercept" and "intercepted and threw"
+// the same reading, because the override calls through inside a try.
+var enginesOpen = [];
+var sandbox = {
+    window: { open: function (u, t) { enginesOpen.push(String(u) + "|" + String(t)); return "ENGINE"; } },
+    String: String, JSON: JSON, __t: function (m) { sent.push(m); }
+};
 vm.createContext(sandbox);
 new vm.Script(N.buildPreloadScript("__t")).runInContext(sandbox);
 // The standard spellings, driven the way an app now writes them. The preload
@@ -519,10 +527,66 @@ eq("the standard spelling is the same record", sent[0], "resize" + S + "500" + S
 // would notice until it drifted.
 eq("neutrino.window is gone", typeof sandbox.window.neutrino.window, "undefined");
 
-// The one that stays, and it is not an alias: openExternal is waiting on the
-// anchor path and the nav probe that measures it. Asserted present so that
-// deleting it early fails here rather than in a suite that needs it.
-eq("openExternal is still there, pending step 5", typeof sandbox.window.neutrino.shell.openExternal, "function");
+// The one that stays, and it is not an alias: openExternal is what window.open
+// now sends, and step 6 is what deletes the bespoke name. Asserted present so
+// that deleting it early fails here rather than in a suite that needs it.
+eq("openExternal is still there, pending step 6", typeof sandbox.window.neutrino.shell.openExternal, "function");
+
+console.log("");
+console.log("window.open routes on the url, not on the target");
+// Measured on WebKitGTK before any of this was written: `open` with no target,
+// with `_blank` and with a name all returned null having reached no guard in
+// the launcher at all -- the engine raises its `create` signal for those and
+// nothing is connected to it. `_self` returned the window, navigated, and was
+// refused and forwarded by the navigation guard like any other location change.
+//
+// What this file now steps in front of is one case: a url bound for the
+// machine's browser. Everything else is handed to the engine as it arrived, and
+// that is not politeness -- the engine's own new-window signal is the only
+// thing that can ever hand a page a real WindowProxy, so an override that
+// answered every call would put the second window out of reach rather than
+// merely leaving it unbuilt.
+var nOpen = sent.length;
+eq("an external url goes out", sandbox.window.open("https://example.com/a"), null);
+eq("and it is the openExternal record",
+   N.parseMessage(sent[nOpen]), { action: "openExternal", url: "https://example.com/a" });
+eq("the target does not change that", sandbox.window.open("https://example.com/b", "_blank"), null);
+eq("nor does a name", sandbox.window.open("https://example.com/c", "ntwin"), null);
+eq("mailto is external too", sandbox.window.open("mailto:a@b.example", "_blank"), null);
+eq("four records for four external urls", sent.length - nOpen, 4);
+eq("and the engine was never asked for any of them", enginesOpen.length, 0);
+
+// Everything the launcher does not route. The engine gets the call with the
+// arguments it was given, and nothing reaches the wire -- this is the path the
+// second window will arrive on.
+var nEng = sent.length;
+eq("a relative url is the engine's", sandbox.window.open("panel.html", "_blank"), "ENGINE");
+eq("about:blank is the engine's", sandbox.window.open("about:blank", "_blank"), "ENGINE");
+eq("and so is a scheme this file never sends out",
+   sandbox.window.open("ftp://example.com/x", "_blank"), "ENGINE");
+eq("none of them is a record", sent.length - nEng, 0);
+eq("the engine got the url and the target it was given",
+   enginesOpen[0], "panel.html|_blank");
+
+// The three targets that mean this window, checked before the url because they
+// are not an opening at all. An external url here still reaches the browser --
+// by the navigation guard, which is where a location change has always gone.
+var nSelf = sent.length;
+eq("_self goes to the engine", sandbox.window.open("https://example.com/d", "_self"), "ENGINE");
+eq("_parent too", sandbox.window.open("https://example.com/e", "_parent"), "ENGINE");
+eq("_top too", sandbox.window.open("https://example.com/f", "_top"), "ENGINE");
+eq("and the match is case-insensitive",
+   sandbox.window.open("https://example.com/g", "_SELF"), "ENGINE");
+eq("none of them is a record either", sent.length - nSelf, 0);
+
+// No url, no window, no record. The platform's answer is about:blank in a new
+// window, which is the second-window case; until there is one to open this does
+// nothing rather than sending the host an empty url to refuse.
+var nNone = sent.length;
+eq("open with no url is a no-op", sandbox.window.open(), null);
+eq("and so is an empty one", sandbox.window.open(""), null);
+eq("neither reaches the wire", sent.length - nNone, 0);
+eq("and neither reaches the engine", enginesOpen.length, 7);
 var before = sent.length;
 sandbox.window.neutrino.send("evalThis", { payload: "x" });
 eq("an action nobody implements never reaches the wire", sent.length, before);

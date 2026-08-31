@@ -489,13 +489,47 @@ verdict() {
 }
 
 analyse_win() {
-    local st page inner pos pinner ppos v moved_any
+    local st page inner pos pinner ppos v moved_any on ov
     note "win sequence: $(titles)"
 
     for st in EXIST DESC OVR OPEN APPREGION GONE; do
         page="$(field 2 "^STD-WIN-$st-SELF")"
         [ -n "$page" ] && note "self $st ${page#STD-WIN-$st-SELF }"
     done
+
+    # window.open, and the one shape of it the page can answer for.
+    #
+    # What an external url does is not askable from inside the document: it
+    # becomes a record, the host decides, and the desktop's URI handler acts.
+    # parse.sh asserts that half against the built preload with no engine. What
+    # is here is the no-argument call, which the launcher answers itself -- the
+    # platform's reply is a new about:blank window and this file does nothing
+    # until there is a second window to open. QtWebEngine's own `open` returns
+    # an object, so on that lane this is the difference between the launcher's
+    # no-op and the engine's answer.
+    #
+    # And every shape must leave the document where it was. No url in the phase
+    # can reach a browser, so a CHANGED here is this window having been
+    # navigated away by a call that was meant to open a different one.
+    page="$(field 2 '^STD-WIN-OPEN-SELF')"
+    if [ -z "$page" ]; then
+        fail "control open: STD-WIN-OPEN-SELF was never observed"
+    else
+        on="$(echo "$page" | sed -n 's/.* noargs=\([^ ]*\).*/\1/p')"
+        case "$on" in
+            null/same) note "control open noargs=$on verdict=NOOP" ;;
+            "")        fail "control open: STD-WIN-OPEN-SELF carried no noargs reading" ;;
+            *)         fail "control open noargs=$on, wanted null/same; window.open() is not the launcher's on this lane" ;;
+        esac
+        for v in blank self; do
+            ov="$(echo "$page" | sed -n "s/.* $v=\([^ ]*\).*/\1/p")"
+            case "$ov" in
+                */CHANGED) fail "control open $v=$ov; a call meant to open a window took this document somewhere" ;;
+                "")        : ;;
+                *)         note "control open $v=$ov (the engine's own, left alone)" ;;
+            esac
+        done
+    fi
 
     # The four. Each prints what the page said, what the window did, and the
     # word that separates a refusal from a no-op -- which are the same reading
