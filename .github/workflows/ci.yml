@@ -221,17 +221,16 @@ jobs:
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
-          bash test/neutrinostdgeom.cmd > ~/stdgeom-app.log 2>&1 &
-          APP_PID=$!
+          bash test/parse.sh test/neutrinostdgeom-none.cmd
           TEST_EXIT=0
-          bash test/verify-std.sh geom ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
-          # The tree this step started, and only that. Never a pattern: this
-          # step's own command line carries the app's name, and a pkill -f
-          # matching it takes the shell running it down too.
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdgeom.log
+          # Both halves and the differential, in place of the single launch
+          # this step used to make. The decorated half is that launch: it runs
+          # first, it is the control, and its verifier exit is carried into
+          # this step's exit the way it always was.
+          bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
+          cat ~/deco-a.log ~/deco-b.log ~/stdgeom.log
           bash test/annotate.sh gjs-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
@@ -515,17 +514,16 @@ jobs:
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
-          bash test/neutrinostdgeom.cmd > ~/stdgeom-app.log 2>&1 &
-          APP_PID=$!
+          bash test/parse.sh test/neutrinostdgeom-none.cmd
           TEST_EXIT=0
-          bash test/verify-std.sh geom ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
-          # The tree this step started, and only that. Never a pattern: this
-          # step's own command line carries the app's name, and a pkill -f
-          # matching it takes the shell running it down too.
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdgeom.log
+          # Both halves and the differential, in place of the single launch
+          # this step used to make. The decorated half is that launch: it runs
+          # first, it is the control, and its verifier exit is carried into
+          # this step's exit the way it always was.
+          bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
+          cat ~/deco-a.log ~/deco-b.log ~/stdgeom.log
           bash test/annotate.sh cjs-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
@@ -797,17 +795,16 @@ jobs:
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
-          bash test/neutrinostdgeom.cmd > ~/stdgeom-app.log 2>&1 &
-          APP_PID=$!
+          bash test/parse.sh test/neutrinostdgeom-none.cmd
           TEST_EXIT=0
-          bash test/verify-std.sh geom ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
-          # The tree this step started, and only that. Never a pattern: this
-          # step's own command line carries the app's name, and a pkill -f
-          # matching it takes the shell running it down too.
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdgeom.log
+          # Both halves and the differential, in place of the single launch
+          # this step used to make. The decorated half is that launch: it runs
+          # first, it is the control, and its verifier exit is carried into
+          # this step's exit the way it always was.
+          bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
+          cat ~/deco-a.log ~/deco-b.log ~/stdgeom.log
           bash test/annotate.sh pygobject-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
@@ -1221,17 +1218,16 @@ jobs:
           mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
           bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
-          bash test/neutrinostdgeom.cmd > ~/stdgeom-app.log 2>&1 &
-          APP_PID=$!
+          bash test/parse.sh test/neutrinostdgeom-none.cmd
           TEST_EXIT=0
-          bash test/verify-std.sh geom ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
-          # The tree this step started, and only that. Never a pattern: this
-          # step's own command line carries the app's name, and a pkill -f
-          # matching it takes the shell running it down too.
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdgeom.log
+          # Both halves and the differential, in place of the single launch
+          # this step used to make. The decorated half is that launch: it runs
+          # first, it is the control, and its verifier exit is carried into
+          # this step's exit the way it always was.
+          bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
+          cat ~/deco-a.log ~/deco-b.log ~/stdgeom.log
           bash test/annotate.sh kde-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
@@ -2354,18 +2350,36 @@ jobs:
         run: |
           bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
+          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
+          bash test/parse.sh test/neutrinostdgeom-none.cmd
           bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
+      # Both halves and the differential, in place of the single launch this
+      # step used to make -- the decorated half is that launch, it runs first
+      # because it is the control, and its verifier exit is carried into this
+      # step's exit the way it always was. decoflip.ps1 reaps each half itself;
+      # the sweep below is the belt to its braces.
+      #
+      # Named, and the budget is doubled with the work: a step with no `name`
+      # is titled after its first line, and when this one timed out the failure
+      # read `The action 'Run # Both halves and the differential, in place of
+      # the single launch this' has timed out`. Twenty minutes was one probe's
+      # budget and this step runs two, on the slowest lane, the first of which
+      # may be fetching WebView2.
       - if: always()
-        timeout-minutes: 20
+        name: stdgeom (decorated and chromeless)
+        timeout-minutes: 30
         shell: pwsh
         run: |
-          .\test\neutrinostdgeom.cmd
-          & .\test\verify-std.ps1 -Probe geom -ScreenshotDir $env:USERPROFILE *>&1 |
+          & .\test\decoflip.ps1 -Decorated neutrinostdgeom -Chromeless neutrinostdgeom-none `
+            -ScreenshotDir $env:USERPROFILE *>&1 |
             Tee-Object -FilePath "$HOME\stdgeom.log"
           $e = $LASTEXITCODE
-          Get-Process -Name neutrinostdgeom -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Content "$HOME\deco-a.log","$HOME\deco-b.log" -ErrorAction SilentlyContinue
+          foreach ($n in @("neutrinostdgeom","neutrinostdgeom-none")) {
+            Get-Process -Name $n -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+          }
           exit $e
       - if: always()
         shell: bash
@@ -2783,17 +2797,16 @@ jobs:
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
-          bash test/neutrinostdgeom.cmd > ~/stdgeom-app.log 2>&1 &
-          APP_PID=$!
+          bash test/parse.sh test/neutrinostdgeom-none.cmd
           TEST_EXIT=0
-          bash test/verify-std.sh geom ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
-          # The tree this step started, and only that. Never a pattern: this
-          # step's own command line carries the app's name, and a pkill -f
-          # matching it takes the shell running it down too.
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdgeom.log
+          # Both halves and the differential, in place of the single launch
+          # this step used to make. The decorated half is that launch: it runs
+          # first, it is the control, and its verifier exit is carried into
+          # this step's exit the way it always was.
+          bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
+          cat ~/deco-a.log ~/deco-b.log ~/stdgeom.log
           bash test/annotate.sh macos-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
