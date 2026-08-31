@@ -2232,7 +2232,7 @@ jobs:
       # the four-job split was bought for, kept without the four jobs.
       - if: always()
         shell: bash
-        run: bash build.sh test/neutrinonav.js test/neutrinonav.cmd
+        run: bash build.sh --tier=offline test/neutrinonav.js test/neutrinonav.cmd
       - if: always()
         timeout-minutes: 15
         shell: pwsh

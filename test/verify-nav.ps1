@@ -31,7 +31,21 @@
 #                  so "refuses the app" is a live failure mode and not a
 #                  hypothetical
 #   NAV-POPUP      the page got as far as asking for a window, so popup_arrived
-#                  is about the refusal and not about a page that never asked
+#                  is about the refusal and not about a page that never asked.
+#                  It asks twice now: `window.open`, which since that verb was
+#                  given its standard meaning no longer reaches the engine for
+#                  an external url, and a `<a target=_blank>` click, which is
+#                  what still raises NewWindowRequested and is therefore what
+#                  the refusal below is about
+#
+# The app is built `--tier=offline`, and that is load-bearing rather than a
+# preference. A refused new window now has its url forwarded to the machine's
+# browser, which is the correct behaviour and would be ruinous here: the browser
+# would fetch the url this suite's instrument is a request log for, and every
+# assertion below would be answering a question about a browser. Offline closes
+# mayOpenExternal, so a beacon can only arrive if a *document* was created to
+# fetch it -- which is the question. The cost is that the default tier's
+# forwarding is exercised on no lane.
 #
 # Usage: verify-nav.ps1 <app.cmd built from test/neutrinonav.js> <outDir>
 
@@ -176,13 +190,18 @@ Assert-Is "the page asked for a window (control)" $true `
 # What window.open returned is reported, not asserted. Handled=true was measured
 # to suppress the window; what the engine hands back to the caller was not, and
 # an assertion on an unmeasured value is a guess with a PASS on it.
-Say "popup opened=$(($titles | Where-Object { $_ -like 'NAV-POPUP*' } |
-    Select-Object -First 1) -replace '.*opened=', '')"
+Say "popup $(($titles | Where-Object { $_ -like 'NAV-POPUP*' } |
+    Select-Object -First 1) -replace '^NAV-POPUP ', '')"
 
 # ------------------------------------------------------------ the refusals
 
 Assert-Is "the navigation was refused" "NO" `
     $(if ((Beacons "probe%3Dnav&").Count -gt 0) { "YES" } else { "NO" })
+# Neither route may produce a document. `window.open` cannot reach the engine
+# with this url any more, so what this now asserts is the anchor's half: a
+# `<a target=_blank>` must not become a view that fetches. Under the offline
+# tier there is no other way for that url to be requested, which is what keeps
+# the reading unambiguous.
 Assert-Is "the new window was refused" "NO" `
     $(if ((Beacons "probe%3Dpopup&").Count -gt 0) { "YES" } else { "NO" })
 
