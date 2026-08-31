@@ -508,29 +508,29 @@ sandbox.window.resizeBy(40, -20);
 sandbox.window.moveTo(0, 0);
 sandbox.window.moveBy(-10, 30);
 sandbox.window.close();
-sandbox.window.neutrino.shell.openExternal("https://example.com");
 eq("resizeTo round trip", N.parseMessage(sent[0]), { action: "resize", width: 500, height: 400 });
 eq("resizeBy round trip", N.parseMessage(sent[1]), { action: "resizeBy", width: 40, height: -20 });
 eq("moveTo round trip", N.parseMessage(sent[2]), { action: "move", x: 0, y: 0 });
 eq("moveBy round trip", N.parseMessage(sent[3]), { action: "moveBy", x: -10, y: 30 });
 eq("close round trip", N.parseMessage(sent[4]), { action: "close" });
-eq("openExternal round trip", N.parseMessage(sent[5]), { action: "openExternal", url: "https://example.com" });
 
 // `window.resizeTo` emits the record `neutrino.window.resize` used to emit,
 // which is the whole claim this change makes: the same bytes, meeting the same
 // host-side guard, under a name an app author already knows.
 eq("the standard spelling is the same record", sent[0], "resize" + S + "500" + S + "400");
 
-// And the names it replaces are gone rather than aliased. Asserted here because
+// And the names they replace are gone rather than aliased. Asserted here because
 // this is the only place that can see the built preload without an engine, and
 // because a wrapper left behind is a second way to do one thing that nobody
 // would notice until it drifted.
+//
+// `shell.openExternal` was the last of them: `window.open` sends the record it
+// used to send, so what is left is the object an app cannot get any other way.
 eq("neutrino.window is gone", typeof sandbox.window.neutrino.window, "undefined");
-
-// The one that stays, and it is not an alias: openExternal is what window.open
-// now sends, and step 6 is what deletes the bespoke name. Asserted present so
-// that deleting it early fails here rather than in a suite that needs it.
-eq("openExternal is still there, pending step 6", typeof sandbox.window.neutrino.shell.openExternal, "function");
+eq("neutrino.shell is gone", typeof sandbox.window.neutrino.shell, "undefined");
+eq("neutrino.send is gone", typeof sandbox.window.neutrino.send, "undefined");
+eq("and what is left is the palette and the channel's name",
+   Object.keys(sandbox.window.neutrino).sort().join(","), "_theme,theme,transport");
 
 console.log("");
 console.log("window.open routes on the url, not on the target");
@@ -587,9 +587,6 @@ eq("open with no url is a no-op", sandbox.window.open(), null);
 eq("and so is an empty one", sandbox.window.open(""), null);
 eq("neither reaches the wire", sent.length - nNone, 0);
 eq("and neither reaches the engine", enginesOpen.length, 7);
-var before = sent.length;
-sandbox.window.neutrino.send("evalThis", { payload: "x" });
-eq("an action nobody implements never reaches the wire", sent.length, before);
 
 console.log("the webview2 package is pinned, and only what is pinned is unpacked");
 // This app downloads its Windows engine assemblies and loads them, so what it

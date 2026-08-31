@@ -4761,11 +4761,10 @@ exit $?;:<<'//</script></body></html>' #-->
          * The offline tier says the page has no network. A url handed to the
          * desktop's handler is the page reaching the network in another
          * program, and it was measured going out that way on all four engines,
-         * by both routes -- `neutrino.shell.openExternal`, which any page
-         * script may call, and a navigation this file refuses and then forwards
-         * on gjs and Qt without the page having to ask twice. Neither is
-         * something a content policy can see: CSP governs subresources, and
-         * this is not a load.
+         * by both routes -- `window.open`, which any page script may call, and
+         * a navigation this file refuses and then forwards on gjs and Qt
+         * without the page having to ask twice. Neither is something a content
+         * policy can see: CSP governs subresources, and this is not a load.
          *
          * So the tier closes it, and every place that was asking isExternalUrl
          * before opening asks this instead -- including the four drivers' own
@@ -5461,6 +5460,32 @@ exit $?;:<<'//</script></body></html>' #-->
                 'try{e.style.setProperty("--neutrino-"+_P[i],t.colors[_K[i]]);}catch(_){}' +
                 '}' +
                 '};' +
+                /*
+                 * The wire, and it is a closure rather than a member.
+                 *
+                 * It used to be `window.neutrino.send`, reachable by any page
+                 * script, and the README called it an extension point. It never
+                 * was one: the chain below names six actions and nothing else,
+                 * and every one of the six now has a spelling the web platform
+                 * already has -- so the last caller with a reason to reach it
+                 * directly went away with the bespoke names.
+                 *
+                 * Being unreachable is worth something on its own. The five
+                 * verbs written over the engine's own below route through this
+                 * variable and not through a property, so a page that replaces
+                 * `window.neutrino` cannot make `window.resizeTo` send anything
+                 * else. That is a consequence of the deletion and not its
+                 * reason -- the host checks every record it receives either way.
+                 */
+                'var _act=function(action,data){' +
+                'var d=data||{};' +
+                'if(action==="resize")_send("resize"+S+_n(d.width)+S+_n(d.height));' +
+                'else if(action==="resizeBy")_send("resizeBy"+S+_n(d.width)+S+_n(d.height));' +
+                'else if(action==="move")_send("move"+S+_n(d.x)+S+_n(d.y));' +
+                'else if(action==="moveBy")_send("moveBy"+S+_n(d.x)+S+_n(d.y));' +
+                'else if(action==="openExternal")_send("openExternal"+S+_n(d.url));' +
+                'else if(action==="close")_send("close");' +
+                '};' +
                 'window.neutrino={' +
                 // Which channel the host is actually listening on. The page can
                 // work this out by feature detection anyway, so naming it costs
@@ -5493,28 +5518,6 @@ exit $?;:<<'//</script></body></html>' #-->
                 'window.neutrino.theme=t;' +
                 '_css(t);' +
                 'try{window.dispatchEvent(new CustomEvent("neutrino:themechange",{detail:t}));}catch(_){}' +
-                '},' +
-                'send:function(action,data){' +
-                'var d=data||{};' +
-                'if(action==="resize")_send("resize"+S+_n(d.width)+S+_n(d.height));' +
-                'else if(action==="resizeBy")_send("resizeBy"+S+_n(d.width)+S+_n(d.height));' +
-                'else if(action==="move")_send("move"+S+_n(d.x)+S+_n(d.y));' +
-                'else if(action==="moveBy")_send("moveBy"+S+_n(d.x)+S+_n(d.y));' +
-                'else if(action==="openExternal")_send("openExternal"+S+_n(d.url));' +
-                'else if(action==="close")_send("close");' +
-                '},' +
-                /*
-                 * All that is left of the bespoke namespace, and it is waiting
-                 * on step 6 rather than kept as an alias.
-                 *
-                 * Its standard spelling is window.open, which is now written
-                 * over below. setTitle used to sit beside it; that spelling is
-                 * an assignment to document.title and it reaches the native
-                 * window on all five lanes, so there is nothing left here to
-                 * alias it with either.
-                 */
-                'shell:{' +
-                'openExternal:function(url){window.neutrino.send("openExternal",{url:url});}' +
                 '}' +
                 '};' +
                 /*
@@ -5544,11 +5547,11 @@ exit $?;:<<'//</script></body></html>' #-->
                  * inventing one is the thing this file refuses to do.
                  */
                 'var _def=function(n,f){try{window[n]=f;}catch(_){}};' +
-                '_def("resizeTo",function(w,h){window.neutrino.send("resize",{width:w,height:h});});' +
-                '_def("resizeBy",function(w,h){window.neutrino.send("resizeBy",{width:w,height:h});});' +
-                '_def("moveTo",function(x,y){window.neutrino.send("move",{x:x,y:y});});' +
-                '_def("moveBy",function(x,y){window.neutrino.send("moveBy",{x:x,y:y});});' +
-                '_def("close",function(){window.neutrino.send("close");});' +
+                '_def("resizeTo",function(w,h){_act("resize",{width:w,height:h});});' +
+                '_def("resizeBy",function(w,h){_act("resizeBy",{width:w,height:h});});' +
+                '_def("moveTo",function(x,y){_act("move",{x:x,y:y});});' +
+                '_def("moveBy",function(x,y){_act("moveBy",{x:x,y:y});});' +
+                '_def("close",function(){_act("close");});' +
                 /*
                  * And the sixth, which is not like the other five: they were
                  * silent everywhere and this one is silent in one direction and
@@ -5636,7 +5639,7 @@ exit $?;:<<'//</script></body></html>' #-->
                 'var t=String(target==null?"":target).toLowerCase();' +
                 'if(t==="_self"||t==="_parent"||t==="_top"){return _eng(url,target);}' +
                 'if(!/^(https?|mailto):/i.test(u)){return _eng(url,target);}' +
-                'window.neutrino.send("openExternal",{url:u});' +
+                '_act("openExternal",{url:u});' +
                 'return null;' +
                 '});' +
                 '})();';

@@ -266,9 +266,8 @@ there is no value here that would be true everywhere. And `resizeTo` sizes the
 also what `--size` has always meant, so a window opened at `900x600` and one
 resized to `900x600` are the same window.
 
-`window.open` hands an **external** url to the machine's browser — the same
-thing `neutrino.shell.openExternal` has always done, under the name an app
-author already knows:
+`window.open` hands an **external** url to the machine's browser, under the name
+an app author already knows:
 
 ```javascript
 win.open("https://example.com");            // the user's browser
@@ -303,11 +302,12 @@ in your page's process, and three of the four engines already answer `null`.
 An offline build (`--tier=offline`) refuses all of it, because a url handed to
 the desktop's browser is the page reaching the network in another program.
 
-```javascript
-// No standard spelling, so these keep theirs.
-win.neutrino.shell.openExternal("https://example.com");
-win.neutrino.send("actionName", { key: "value" });
-```
+**There is no bespoke spelling for any of this.** `document.title`,
+`resizeTo`, `resizeBy`, `moveTo`, `moveBy`, `close` and `open` are the whole of
+what your page drives the window with, and they are the names your editor and
+`lib.dom` already know. What is left on `window.neutrino` is one reading and one
+label — `theme`, the desktop's palette, which no engine offers; and `transport`,
+naming the channel the host is listening on. Both are below.
 
 All coordinates use top-left origin on every platform (macOS coordinates are normalized internally).
 
@@ -428,6 +428,18 @@ switch on `theme.scheme`.
 **`theme` is `null` on a lane that could not read its toolkit.** Said out loud
 rather than filled in with white, so you can tell the difference between a light
 desktop and no answer.
+
+### Which channel the host is listening on
+
+```javascript
+win.neutrino.transport;   // "scriptmessage", "wkscriptmessage", "console",
+                          // "webmessage", "title" or "unwired"
+```
+
+The other half of `window.neutrino`, and the only reason it is named at all is
+that a test reporting the channel it used beats one inferring it. Your page never
+needs it: the verbs above go out on whichever channel this lane has, and feature
+detection would find the same answer.
 
 ---
 
