@@ -432,16 +432,23 @@ function Assert-GeometryAt($sample, $title, $expectedW, $expectedH, $tolerance) 
 
 # Frame against frame, which is the half of this that was always right:
 # GetWindowRect's Left/Top is the frame's outside corner and `move` sets
-# Form.Location, which is the same corner. A decoration cannot move this number
-# -- an undecorated Form asked for 0,0 is at 0,0 -- so the ten pixels here were
-# never paying for a title bar, and nothing has been found that they are paying
-# for. They stay for one round while the decorated and chromeless halves are
-# measured against each other: two runs reporting the same position is what
-# says this is decoration-independent, and it is the reading that lets the
-# number go to zero rather than an argument that it should.
+# Form.Location, which is the same corner. So a decoration cannot move this
+# number and the ten pixels were never paying for a title bar.
+#
+# Nor for anything else. Measured across three runs of this suite in one job --
+# windows-test and both windows-load replicas -- `moveTo(0,0)` put the frame at
+# `0,0` every time, and the per-state `seq` lines this file already printed had
+# been carrying that reading since before the tolerance was questioned. Zero,
+# and `-eq 0` rather than `-not`, because a caller asking for a tolerance of
+# zero and a caller asking for none are the same request and PowerShell reads
+# both as falsy.
+#
+# Windows is the platform where this is simply exact. macOS clamps a move to
+# the work area and the two x11 window managers disagree with each other about
+# what a move means at all; here the request is honoured.
 function Assert-PositionAt($sample, $title, $expectedX, $expectedY, $tolerance) {
     if (-not $sample) { return }
-    if (-not $tolerance) { $tolerance = 10 }
+    if (-not $tolerance) { $tolerance = 0 }
     $dx = [Math]::Abs($sample.Left - $expectedX)
     $dy = [Math]::Abs($sample.Top - $expectedY)
     if ($dx -le $tolerance -and $dy -le $tolerance) {
