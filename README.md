@@ -250,6 +250,15 @@ they navigate this window, and that navigation meets the same guard a
 `location` assignment meets — which already sends an external url to the
 browser.
 
+A **link** with a target — `<a href="…" target="_blank">` — is the engine's own
+path and not this one. On WebKitGTK, QtWebEngine and WebView2 the new window is
+refused and its url handed to the browser under the same `mayOpenExternal` rule,
+so a link behaves like the call. On macOS the window is refused and the url is
+**not** forwarded — the refusal is the framework's own and the launcher has no
+hook on that path. On WebKitGTK the engine only offers the path for a real
+click: a script synthesising one gets nothing, because
+`javascript-can-open-windows-automatically` is off.
+
 The return value is `null` for anything sent outward. Nothing here is a window
 in your page's process, and three of the four engines already answer `null`.
 

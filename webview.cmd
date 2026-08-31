@@ -689,6 +689,63 @@ Window {
             }
             root.ntRoute(decodeURIComponent(String(message).substring(12)))
         }
+        // A link with a target, which on this engine is a different signal from
+        // the one below and was reaching nothing.
+        //
+        // QtWebEngine raises it for <a target=_blank> and for window.open;
+        // navigationRequested is raised for neither, so the guard underneath
+        // this had never seen one. Doing nothing is already a refusal -- a
+        // request never handed to a view creates none -- so what this adds is
+        // the forwarding the two GTK drivers have always done with
+        // NEW_WINDOW_ACTION, and the line that says it happened.
+        //
+        // Connected by hand rather than declared as onNewWindowRequested, and
+        // the reason is a round this cost. The signal is newWindowRequested
+        // here and was newViewRequested in Qt 5; a declarative handler names
+        // the signal at *load* time, so the wrong name is not a hook that does
+        // nothing -- it is "Cannot assign to non-existent property" and the QML
+        // document does not load at all. Every suite on the lane then reports
+        // that no window ever appeared, which is a true sentence pointing
+        // nowhere near the cause. Connecting from script degrades instead: an
+        // engine with neither name gets a note and a window.
+        //
+        // Both names are tried and the one that took is reported, so the log
+        // carries which signal this engine actually has rather than which one
+        // this file assumed.
+        function ntConnectNewWindow() {
+            var names = ["newWindowRequested", "newViewRequested"]
+            for (var i = 0; i < names.length; i++) {
+                var sig = view[names[i]]
+                if (sig && typeof sig.connect === "function") {
+                    sig.connect(ntOnNewWindow)
+                    console.warn("neutrino: new windows arrive on " + names[i])
+                    return
+                }
+            }
+            console.warn("neutrino: this QtWebEngine raises no new-window signal this file knows;"
+                + " a link with a target will open nothing and go nowhere")
+        }
+
+        // mayOpenExternal and not isExternalUrl, the same as below: refusing a
+        // window and then handing its url to the desktop's browser is the page
+        // reaching the network without having asked, which is the one thing the
+        // offline tier exists to stop.
+        //
+        // userInitiated is carried and not acted on. It is the engine's own
+        // answer to whether a person did this, and it is the thing that makes a
+        // synthesised click and a real one different readings -- worth having
+        // in the log on the one lane that offers it, and not a rule, because no
+        // other lane can say it.
+        function ntOnNewWindow(request) {
+            var wanted = String(request.requestedUrl)
+            var byUser = "?"
+            try { byUser = String(request.userInitiated) } catch (e) { byUser = "?" }
+            console.warn("neutrino: refused a new window for " + wanted
+                + " (userInitiated=" + byUser + ")")
+            if (root.nt.mayOpenExternal(wanted)) {
+                Qt.openUrlExternally(request.requestedUrl)
+            }
+        }
         // The document is loaded once, from this file, and never navigates
         // again. Without this a link or a script assignment could replace it
         // with a remote origin, and that origin would then be holding the
@@ -726,6 +783,14 @@ Window {
             }
         }
         Component.onCompleted: {
+            // Inside a try, and that is the same lesson one line further on.
+            // Whatever goes wrong while wiring a hook must not stop the
+            // document from loading: this block is what puts the app on
+            // screen, and a throw here is a lane with no window in any suite
+            // and no line saying why.
+            try { ntConnectNewWindow() } catch (e) {
+                console.warn("neutrino: could not connect the new-window signal: " + e)
+            }
             view.loadHtml(root.nt.themedDocument(
                 root.nt.titledDocument(
                     root.nt.applyContentPolicy(
@@ -1790,6 +1855,11 @@ exit $?;:<<'//</script></body></html>' #-->
                 // and macOS's didCommitNavigation:.
                 static var armed : boolean = false;
                 static var refusals : ArrayList = new ArrayList();
+                // Urls a refused new window was heading for, for the loop to
+                // hand to the machine's browser. A second list rather than a
+                // flag on the first, because the two are drained through
+                // different calls and one of them is a note.
+                static var externals : ArrayList = new ArrayList();
                 var kind : String;
 
                 function Handle(sender : Object, args : Object) : void {
@@ -1830,6 +1900,22 @@ exit $?;:<<'//</script></body></html>' #-->
                         if (NeutrinoNavSink.setTrue(args, "Handled")) {
                             NeutrinoNavSink.refusals.Add("refused a new window for " +
                                 NeutrinoNavSink.shorten(going));
+                            // And forwarded, which is what the two GTK drivers
+                            // have always done with NEW_WINDOW_ACTION and this
+                            // one did not: refusing a `<a target=_blank>` and
+                            // then dropping it means a link that works in every
+                            // browser does nothing here and says nothing.
+                            //
+                            // Queued and not opened. mayOpenExternal is a
+                            // JScript global and this is a JScript.NET class,
+                            // which cannot call one -- the same reason the
+                            // message sink queues instead of calling back out.
+                            // So the string goes to the loop and the loop asks.
+                            //
+                            // Only on the branch where Handled took. If it did
+                            // not, the engine is opening its own window and
+                            // forwarding as well would open the url twice.
+                            NeutrinoNavSink.externals.Add(going);
                         } else {
                             NeutrinoNavSink.refusals.Add("could not refuse a new window for " +
                                 NeutrinoNavSink.shorten(going));
@@ -3368,6 +3454,60 @@ exit $?;:<<'//</script></body></html>' #-->
                      * succeeding and one that says it succeeded while failing
                      * read the same from any single lane.
                      */
+                    /*
+                     * And the other half of a page trying to leave -- a link
+                     * with a target, which is not a navigation of this view --
+                     * is not handled on this lane, and this is what was
+                     * measured rather than what was assumed.
+                     *
+                     * It is not a hole. WKUIDelegate.h: "If you do not
+                     * implement this method, the web view will cancel the
+                     * navigation." So the window is already refused. What the
+                     * other four lanes add on top -- saying so, and handing the
+                     * url to the desktop -- is what is missing here.
+                     *
+                     * The selector is not the one the essay below warns about,
+                     * and that much worked. -webView:decidePolicyForNavigation-
+                     * Action:decisionHandler: takes a block JXA cannot call;
+                     * this one takes four objects and returns one:
+                     *
+                     *   - (nullable WKWebView *)webView:(WKWebView *)webView
+                     *       createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration
+                     *       forNavigationAction:(WKNavigationAction *)navigationAction
+                     *       windowFeatures:(WKWindowFeatures *)windowFeatures;
+                     *
+                     * Registered as NeutrinoUIDelegate and attached to the
+                     * view's UIDelegate, it was called, and the url read
+                     * cleanly off navigationAction.request.URL:
+                     *
+                     *   refused a new window for about:blank
+                     *   returning nil for the refused window
+                     *
+                     * Both lines present, in that order, and then the process
+                     * ends. No exception, no further output, and stdwin's OPEN,
+                     * FS1 and CLOSE phases never observed -- three failures in a
+                     * suite that was green. The second line was added precisely
+                     * to split the two candidates, and it says the body ran to
+                     * the end: what does not survive is the *return*.
+                     *
+                     * `return null` is the reason. JXA turns a JS null into
+                     * NSNull rather than nil in an ObjC context -- visible in
+                     * this same lane's log, where the theme watcher raises
+                     * "-[NSNull length]: unrecognized selector" for the same
+                     * conversion -- so WebKit is handed an NSNull where a
+                     * WKWebView or nil was promised, and sends it messages.
+                     *
+                     * Every method in this file returns void, and this was the
+                     * first that would not. No spelling of nil that JXA can
+                     * return from a registerSubclass implementation is known
+                     * here, and this desk has no macOS to find one on. Two
+                     * rounds of CI went to learning the above; a third spent
+                     * guessing at a return value would be the thing this file's
+                     * Method section already refuses. The refusal works without
+                     * any of it, so what is left undone is a log line and a
+                     * forward, and it is written down instead of shipped.
+                     */
+
                     try {
                     ObjCRef.registerSubclass({
                         name: "NeutrinoNavDelegate",
@@ -6460,11 +6600,28 @@ exit $?;:<<'//</script></body></html>' #-->
          * Cancel and Handled are read the moment it returns -- so only the
          * telling is deferred to the loop.
          */
-        drainNavRefusals: function () {
+        drainNavRefusals: function (driver) {
             while (NeutrinoNavSink.refusals.Count > 0) {
                 var text = String(NeutrinoNavSink.refusals[0]);
                 NeutrinoNavSink.refusals.RemoveAt(0);
                 this.note(text);
+            }
+            // The guard's other half, and the tier check is here rather than in
+            // the handler because this is the side of the file that can ask.
+            // driver.openExternal asks again at the end of the line, which is
+            // the same belt-and-braces every other lane has: one check where
+            // the decision is made and one where the string becomes
+            // ShellExecute.
+            while (NeutrinoNavSink.externals.Count > 0) {
+                var url = String(NeutrinoNavSink.externals[0]);
+                NeutrinoNavSink.externals.RemoveAt(0);
+                if (driver && driver.openExternal && this.mayOpenExternal(url)) {
+                    try {
+                        driver.openExternal(url);
+                    } catch (e) {
+                        this.noteOnce("could not open the refused window's url: " + e);
+                    }
+                }
             }
         },
 
@@ -6867,7 +7024,7 @@ exit $?;:<<'//</script></body></html>' #-->
                                 }
                             }
                             if (coreWv2) {
-                                self.drainNavRefusals();
+                                self.drainNavRefusals(driver);
                             }
                             /*
                              * The theme watcher, and on this lane it is a
