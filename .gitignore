@@ -1,6 +1,8 @@
 /webview
+/test/neutrinotest.cmd
 /test/neutrinotest
 /netinstall/dist
+/test/neutrinoattack.cmd
 /test/neutrinoattack
 /test/neutrinotight.cmd
 /test/neutrinotight
