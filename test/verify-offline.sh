@@ -139,8 +139,8 @@ kill_apps() {
 
 # ------------------------------------------------- where openExternal lands
 #
-# `neutrino.shell.openExternal` ends at the desktop's URI handler, so on the X
-# lanes the handler is replaced with one that records the url and fetches it --
+# An external url handed to `window.open` ends at the desktop's URI handler, so
+# on the X lanes the handler is replaced with one that records it and fetches --
 # which puts both halves of this probe in one place, the target server's log.
 # Registered as the http scheme handler as well as put on PATH, because gjs asks
 # Gio and Qt asks QDesktopServices before either falls back to xdg-open.

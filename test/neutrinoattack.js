@@ -179,6 +179,13 @@ function checkFrame(next) {
     // is the answer -- read from the parent, which is the only realm that can
     // read it.
     //
+    // `window.resizeTo` is the spelling it attempts, and it is aimed at the
+    // preload's own override rather than at a bespoke name. It went through
+    // `neutrino.send` until that stopped being reachable from a page; the
+    // record on the wire is the same one either way, which is the point -- the
+    // frame is refused by the host's sender check and not by having been given
+    // a smaller API than the top document.
+    //
     // It used to attempt a title instead, and that stopped being a check the
     // day `document.title` became the spelling. A subframe's title is its own
     // document's on every engine and reaches no native window anywhere, so the
@@ -187,7 +194,7 @@ function checkFrame(next) {
     // title would be an escape and the verifier already fails on that string.
     var before = geometry();
     var escape = "<script>" +
-        "try{window.neutrino.send('resize',{width:333,height:333});}catch(e){}" +
+        "try{window.resizeTo(333,333);}catch(e){}" +
         "try{document.title='ATTACK-FRAME-ESCAPED';}catch(e){}" +
         "<\/script>";
     try {

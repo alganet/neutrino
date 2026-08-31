@@ -161,12 +161,13 @@ function report() {
 /*
  * The second act, and the one a content policy has no opinion about at all.
  *
- * `neutrino.shell.openExternal` is a documented, first-class part of the API
- * this file's preload injects into every page. It ends at the desktop's URI
- * handler on Linux, at NSWorkspace on macOS and at ShellExecute on Windows, and
- * there is no tier check anywhere near any of them -- PR 3's comment says as
- * much about the macOS tight tier in passing: "an http url still reaches the
- * browser, so shell.openExternal is unaffected".
+ * `window.open` with an external url is a documented, first-class part of what
+ * this file's preload gives every page. It ends at the desktop's URI handler on
+ * Linux, at NSWorkspace on macOS and at ShellExecute on Windows, and there is
+ * no tier check anywhere near any of them -- PR 3's comment says as much about
+ * the macOS tight tier in passing: "an http url still reaches the browser, so
+ * shell.openExternal is unaffected", which was that call's name at the time and
+ * is the same `openExternal` record either way.
  *
  * So a page in an offline build can still make the machine fetch a url of its
  * choosing, with whatever it wants in the query string. It simply does it in
@@ -183,7 +184,11 @@ function report() {
 function escape_() {
     var ext = "THREW";
     try {
-        win.neutrino.shell.openExternal(url("off-probe.html", "external"));
+        // The url decides, not the target: this is http, so the override sends
+        // it out rather than handing it to the engine. `null` back is the
+        // documented answer for anything sent outward and not a refusal --
+        // whether it left is the target server's log to say, not this call's.
+        win.open(url("off-probe.html", "external"));
         ext = "SENT";
     } catch (_) {}
     doc.title = "OFFLINE-ESCAPE pol=" + policyName() + " ext=" + ext + " END";
