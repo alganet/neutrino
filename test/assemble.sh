@@ -568,6 +568,56 @@ else
     report "node absent: the stamped config was not parsed"
 fi
 
+# The frame, which is the second config value with a shape and the first whose
+# wrong answers are all words. It is refused here rather than passed through
+# because every lane compares against `none` and keeps its frame for anything
+# else -- so a misspelling is not a build that fails, it is a build that comes
+# up with the title bar the flag asked to remove and says nothing at all.
+report "section: decorations"
+echo "=== the decorations are one of two words or they are refused ==="
+T="$(tree decorations)"
+for nt_ok in auto none; do
+    rm -f "$T/out.cmd"
+    bash "$T/build.sh" --decorations "$nt_ok" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+    eq "--decorations $nt_ok reaches the config" "$(conf "$T/out.cmd" decorations)" "$nt_ok"
+done
+# `false`, `off`, `no` and `0` are what somebody reaches for who is thinking of
+# a boolean; `frameless`, `chromeless` and `borderless` are what somebody
+# reaches for who is thinking of another launcher; `None` and `NONE` are the
+# case the background's `Auto` already stands for on the other flag.
+for nt_bad in 'false' 'off' 'no' '0' 'true' 'on' 'yes' '1' \
+              'frameless' 'chromeless' 'borderless' 'None' 'NONE' 'system' ''; do
+    rm -f "$T/out.cmd"
+    bash "$T/build.sh" --decorations "$nt_bad" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+    [ "$?" = "0" ] && fail "--decorations [$nt_bad] was accepted" \
+                   || pass "--decorations [${nt_bad:-empty}] is refused"
+    eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
+done
+bash "$T/build.sh" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+eq "a build that names no decorations keeps the template's" \
+   "$(conf "$T/out.cmd" decorations)" "$(conf "$T/webview.cmd" decorations)"
+
+# And what the template's is, asserted directly for the reason the background's
+# is: a template that quietly shipped `none` would open every unflagged build
+# without a title bar, and the line above would pass just as well.
+eq "and the template's is auto, so an unflagged build keeps its frame" \
+   "$(conf "$T/webview.cmd" decorations)" "auto"
+
+# The punctuation again, with the key that arrives after `background` -- which
+# is the position `background` itself was in when the comma bug was written, and
+# the position this key inherits. The assertion is here rather than folded into
+# the background's because what it guards is the *last* key in the object, and
+# that is now this one.
+bash "$T/build.sh" --title A --size 10x20 --background '#010203' --decorations none \
+     "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
+if command -v node >/dev/null 2>&1; then
+    cp "$T/out.cmd" "$T/out.js"
+    node --check "$T/out.js" >/dev/null 2>&1
+    eq "a config stamped in every key still parses as JavaScript" "$?" "0"
+else
+    report "node absent: the fully stamped config was not parsed"
+fi
+
 # The read-back, asserted the way every other check in this file is: against a
 # template it cannot apply to. A document line with no style to replace used to
 # be nothing at all -- awk matched, printed a composed line, and the build went

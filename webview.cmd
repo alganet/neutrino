@@ -581,6 +581,21 @@ Window {
     visible: true
     title: cfg.title
 
+    // Through the launcher's own predicate, the way every other value on this
+    // window is: nt is this file's JavaScript and it answers the question the
+    // other four lanes ask it.
+    //
+    // Qt.Window is named rather than left out. An unset flags property is not
+    // the same as one set to Qt.Window on every platform, and a frameless hint
+    // on its own is a window with no type; the pair is what Qt documents for a
+    // top-level that wants no frame.
+    //
+    // No backticks in this comment, and none anywhere in this document: the
+    // here-document that carries it is unquoted, so a backtick is a command
+    // the shell runs on the way past. parse.sh checks, which is how these
+    // three lines were caught.
+    flags: root.nt.undecorated() ? (Qt.Window | Qt.FramelessWindowHint) : Qt.Window
+
     // The two surfaces that are up before the document, the same pair every
     // other lane paints. A QML colour property reads #rrggbb itself, so this
     // is the string the launcher resolves -- the config's, when the build named
@@ -1364,6 +1379,11 @@ config = nt.object_get_property("config")
 title = config.object_get_property("title").to_string()
 width = config.object_get_property("width").to_int32()
 height = config.object_get_property("height").to_int32()
+# Through the shared predicate rather than by comparing the string here, which
+# is this lane's whole rule: the launcher's own JavaScript decides, and Python
+# asks it. A second spelling of `== "none"` on the one lane that does not have
+# to have one is exactly the drift the other four are protected from.
+decorated = not call("undecorated").to_boolean()
 
 
 # The desktop's palette, and the one thing this lane does reimplement: the walk
@@ -1531,6 +1551,7 @@ window = Gtk.Window(
     title=title,
     default_width=width,
     default_height=height,
+    decorated=decorated,
 )
 window.set_position(Gtk.WindowPosition.CENTER)
 window.connect("destroy", lambda _w: Gtk.main_quit())
@@ -2043,6 +2064,19 @@ exit $?;:<<'//</script></body></html>' #-->
          * author who wants one fixed colour on every machine says so with
          * --background and gets exactly that, on every machine, forever.
          *
+         * `decorations` is the fifth, and it is here because a frame is chosen
+         * when a window is constructed rather than adjusted afterwards: a style
+         * mask, a GtkWindow construct property, a QML `flags` value and a
+         * FormBorderStyle are each read once, at the call createWindow makes.
+         *
+         * `none` takes the title bar and the borders, and it takes the drag
+         * handle, the resize edge and the window manager's snapping with them,
+         * because those are things the frame was providing. An app that asks
+         * for it draws its own and moves itself with `moveBy` and `resizeBy`,
+         * which every lane already carries -- that is the whole of what is
+         * offered here, and the launcher adds no verb for it. `auto` is the
+         * frame the desktop would have given the window anyway.
+         *
          * Stamped by build.sh between the sentinels, the way the tier list is,
          * and for the same reason: one value, read by five lanes, with nothing
          * in the environment able to talk any of them out of it.
@@ -2052,7 +2086,8 @@ exit $?;:<<'//</script></body></html>' #-->
             title: "neutrino",
             width: 900,
             height: 600,
-            background: "auto"
+            background: "auto",
+            decorations: "auto"
         },
         //#CONFIG_END
 
@@ -2334,6 +2369,18 @@ exit $?;:<<'//</script></body></html>' #-->
          */
         followsTheme: function () {
             return !this.parseColor(this.config.background);
+        },
+
+        /*
+         * One question, asked by five drivers, so a sixth spelling of the same
+         * comparison cannot drift from the other five. The equality is against
+         * the one value that means it and not against anything falsy: `auto` is
+         * a value here, not an absence, and a config that somehow carried
+         * neither word keeps the frame rather than losing it -- removing a
+         * window's only handle is not the safe side of an unreadable value.
+         */
+        undecorated: function () {
+            return this.config.decorations === "none";
         },
 
         resolveBackground: function (theme) {
@@ -3266,6 +3313,9 @@ exit $?;:<<'//</script></body></html>' #-->
             var windowDelegateRef = null;
             var scriptHandlerRef = null;
             var navDelegateRef = null;
+            // Whether init got the NSWindow subclass registered. Read by
+            // createWindow, which is the only place that can act on it.
+            var macKeyableWindow = false;
             var pendingPreload = null;
             var pendingPageScript = null;
             var documentLoaded = false;
@@ -3319,6 +3369,48 @@ exit $?;:<<'//</script></body></html>' #-->
                             }
                         }
                     });
+
+                    /*
+                     * The one subclass here that is not an NSObject, and the
+                     * only reason it exists: AppKit answers NO to both of these
+                     * for a borderless window, so a window built with an empty
+                     * style mask cannot become key and the web view inside it
+                     * never sees a keystroke. There is no property to set and
+                     * no flag to raise -- the answer is a method, so overriding
+                     * it is the whole mechanism.
+                     *
+                     * Registered unconditionally rather than under the config,
+                     * because a class that fails to register should say so on
+                     * the launch that would have used it and not on some later
+                     * one; `undecorated` decides which class createWindow
+                     * allocates, not whether this one exists.
+                     *
+                     * Degraded and not fatal, by the rule createWebView's
+                     * message channel already follows on this lane: a
+                     * borderless window nothing can type into is inert, and a
+                     * launch with no window at all says less. The note names
+                     * the call that was missing.
+                     */
+                    macKeyableWindow = false;
+                    try {
+                        ObjCRef.registerSubclass({
+                            name: "NeutrinoKeyableWindow",
+                            superclass: "NSWindow",
+                            methods: {
+                                "canBecomeKeyWindow": {
+                                    types: ["bool", []],
+                                    implementation: function () { return true; }
+                                },
+                                "canBecomeMainWindow": {
+                                    types: ["bool", []],
+                                    implementation: function () { return true; }
+                                }
+                            }
+                        });
+                        macKeyableWindow = true;
+                    } catch (e) {
+                        self.note("no keyable window subclass: " + e);
+                    }
 
                     /*
                      * The theme watcher, and on this lane it has to be a real
@@ -3639,9 +3731,29 @@ exit $?;:<<'//</script></body></html>' #-->
                 },
                 createWindow: function (config) {
                     var frame = dollar.NSMakeRect(0, 0, config.width, config.height);
-                    var win = dollar.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
+                    /*
+                     * NSBorderlessWindowMask is zero, so this is the mask with
+                     * nothing in it rather than a mask with a bit cleared. The
+                     * three names are still spelled out on the decorated side
+                     * because they are the frame this launcher has always
+                     * opened, and a reader should not have to know what a
+                     * default mask contains to know what was asked for.
+                     *
+                     * The class is the other half. A borderless NSWindow that
+                     * is a plain NSWindow cannot become key; if the subclass
+                     * did not register, init has already said so, and this
+                     * opens the window anyway rather than opening nothing.
+                     */
+                    var mask = self.undecorated()
+                        ? dollar.NSBorderlessWindowMask
+                        : (dollar.NSTitledWindowMask | dollar.NSClosableWindowMask |
+                           dollar.NSResizableWindowMask);
+                    var windowClass = (self.undecorated() && macKeyableWindow)
+                        ? dollar.NeutrinoKeyableWindow
+                        : dollar.NSWindow;
+                    var win = windowClass.alloc.initWithContentRectStyleMaskBackingDefer(
                         frame,
-                        dollar.NSTitledWindowMask | dollar.NSClosableWindowMask | dollar.NSResizableWindowMask,
+                        mask,
                         dollar.NSBackingStoreBuffered,
                         false
                     );
@@ -3826,10 +3938,32 @@ exit $?;:<<'//</script></body></html>' #-->
                             var cv = win.contentView.frame;
                             inner = Math.round(cv.size.width) + "x" + Math.round(cv.size.height);
                         } catch (_) {}
+                        /*
+                         * Widened, not renumbered: this line carried the work
+                         * area's size and now carries its top-left corner too.
+                         * Appending to this file or widening a line is safe and
+                         * inserting into it is not -- verify-std.sh reads the
+                         * seven lines positionally as l1..l7, so a line added
+                         * in the middle silently reassigns every one below it.
+                         * Nothing reads l5 today, which is what makes this the
+                         * cheap line to widen.
+                         *
+                         * The conversion is here and not in the verifier
+                         * because toTopLeftY is here. `visibleFrame` is in
+                         * AppKit's bottom-left coordinates and its *top* edge
+                         * is what a window cannot be placed above -- the menu
+                         * bar is the thing the fifty-pixel position tolerance
+                         * in verify-macos.sh has been paying for. Deriving
+                         * that in bash would be a second copy of a coordinate
+                         * flip that already exists, and the two would be free
+                         * to disagree.
+                         */
                         var work = "?x?";
                         try {
                             var vf = dollar.NSScreen.mainScreen.visibleFrame;
-                            work = Math.round(vf.size.width) + "x" + Math.round(vf.size.height);
+                            work = Math.round(vf.size.width) + "x" + Math.round(vf.size.height) +
+                                "+" + Math.round(vf.origin.x) +
+                                "+" + Math.round(this.toTopLeftY(vf.origin.y, vf.size.height));
                         } catch (_) {}
                         var windows = "?";
                         try { windows = String(dollar.NSApp.windows.count); } catch (_) {}
@@ -4242,10 +4376,16 @@ exit $?;:<<'//</script></body></html>' #-->
                     }
                 },
                 createWindow: function (config) {
+                    // A construct property and not a set_decorated call after
+                    // the fact: GTK maps the decoration request onto the window
+                    // before it is realised, and a toplevel that is decorated
+                    // and then undecorated is one the window manager has
+                    // already framed once.
                     var win = new Gtk.Window({
                         title: config.title,
                         default_width: config.width,
-                        default_height: config.height
+                        default_height: config.height,
+                        decorated: !self.undecorated()
                     });
                     windowRef = win;
                     win.set_position(Gtk.WindowPosition.CENTER);
@@ -6812,6 +6952,17 @@ exit $?;:<<'//</script></body></html>' #-->
                 createWindow: function (config) {
                     var win = new SystemRef.Windows.Forms.Form();
                     win.Text = config.title;
+                    /*
+                     * Before ClientSize and not after it. A Form recomputes one
+                     * of the two sizes when its border style changes, and which
+                     * one it keeps is not a promise worth relying on -- setting
+                     * the frame first leaves ClientSize as the last word, which
+                     * is the quantity this lane is asked for and the quantity
+                     * every other lane sets.
+                     */
+                    if (self.undecorated()) {
+                        win.FormBorderStyle = SystemRef.Windows.Forms.FormBorderStyle.None;
+                    }
                     win.ClientSize = new SystemRef.Drawing.Size(config.width, config.height);
                     win.StartPosition = SystemRef.Windows.Forms.FormStartPosition.CenterScreen;
                     var winColor = self.makeWindowsColor(SystemRef, self.resolveBackground(self.theme));

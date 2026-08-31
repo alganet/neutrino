@@ -4,13 +4,14 @@
 #
 # build.sh - Neutrino polyglot assembler
 # Usage: ./build.sh [--tier=<list>] [--title=<str>] [--size=<WxH>]
-#                   [--background=<#rrggbb|auto>] [--style=<file>] [--body=<file>]
+#                   [--background=<#rrggbb|auto>] [--decorations=<auto|none>]
+#                   [--style=<file>] [--body=<file>]
 #                   <app.js> <output.cmd>
 #
 # Takes a JS file and embeds it into the runWeb() slot of webview.cmd,
 # producing a new polyglot .cmd file.
 #
-# The early shell -- --title, --size, --background, --style and --body.
+# The early shell -- --title, --size, --background, --decorations, --style and --body.
 #
 # What an app looks like before a line of its JavaScript has run. The style and
 # the body are markup on the template's document line, so they are in the first
@@ -61,12 +62,14 @@ TIER="default"
 NT_TITLE=""; NT_TITLE_SET=""
 NT_SIZE=""; NT_WIDTH=""; NT_HEIGHT=""; NT_SIZE_SET=""
 NT_BG=""; NT_BG_SET=""
+NT_DECOR=""; NT_DECOR_SET=""
 NT_STYLE_FILE=""; NT_STYLE_SET=""
 NT_BODY_FILE=""; NT_BODY_SET=""
 
 nt_usage() {
     echo "Usage: $0 [--tier=<list>] [--title=<str>] [--size=<WxH>]" >&2
-    echo "          [--background=<#rrggbb|auto>] [--style=<file>] [--body=<file>]" >&2
+    echo "          [--background=<#rrggbb|auto>] [--decorations=<auto|none>]" >&2
+    echo "          [--style=<file>] [--body=<file>]" >&2
     echo "          <app.js> <output.cmd>" >&2
 }
 
@@ -80,6 +83,8 @@ while [ $# -gt 0 ]; do
         --size)    NT_SIZE="${2:-}"; NT_SIZE_SET=1; shift 2 ;;
         --background=*) NT_BG="${1#--background=}"; NT_BG_SET=1; shift ;;
         --background)   NT_BG="${2:-}"; NT_BG_SET=1; shift 2 ;;
+        --decorations=*) NT_DECOR="${1#--decorations=}"; NT_DECOR_SET=1; shift ;;
+        --decorations)   NT_DECOR="${2:-}"; NT_DECOR_SET=1; shift 2 ;;
         --style=*) NT_STYLE_FILE="${1#--style=}"; NT_STYLE_SET=1; shift ;;
         --style)   NT_STYLE_FILE="${2:-}"; NT_STYLE_SET=1; shift 2 ;;
         --body=*)  NT_BODY_FILE="${1#--body=}"; NT_BODY_SET=1; shift ;;
@@ -284,6 +289,20 @@ if [ -n "$NT_BG_SET" ]; then
     esac
 fi
 
+# Two words and nothing else, refused here rather than at launch for the reason
+# the background above is: every lane compares against `none` and keeps its
+# frame for anything else, so a misspelling would ship a build that silently
+# ignored the flag it was given. `false`, `off`, `no` and `0` are in the refused
+# list by name because they are what somebody reaches for when they are thinking
+# of a boolean, and `frameless` and `chromeless` because they are what somebody
+# reaches for when they are thinking of another launcher.
+if [ -n "$NT_DECOR_SET" ]; then
+    case "$NT_DECOR" in
+        auto|none) ;;
+        *) echo "Error: --decorations wants auto or none, got '$NT_DECOR'" >&2; exit 1 ;;
+    esac
+fi
+
 if [ -n "$NT_STYLE_SET" ]; then
     NT_STYLE="$(nt_readpart style "$NT_STYLE_FILE")"
     nt_refuse "style from $NT_STYLE_FILE" "$NT_STYLE"
@@ -355,7 +374,7 @@ if [ "${#NT_DOCLINE}" -gt 65536 ]; then
     exit 1
 fi
 export NT_DOCLINE
-export NT_TITLE NT_WIDTH NT_HEIGHT NT_BG
+export NT_TITLE NT_WIDTH NT_HEIGHT NT_BG NT_DECOR
 
 # Written beside the output and moved into place only once the stamp has been
 # read back, so a build that fails leaves the previous artifact alone rather
@@ -409,6 +428,7 @@ trap 'rm -f "$TMP"' EXIT
         inconf && ENVIRON["NT_WIDTH"]  != "" && /^ *width: /      { stamp("width",  ENVIRON["NT_WIDTH"]);  next }
         inconf && ENVIRON["NT_HEIGHT"] != "" && /^ *height: /     { stamp("height", ENVIRON["NT_HEIGHT"]); next }
         inconf && ENVIRON["NT_BG"]     != "" && /^ *background: / { stamp("background", "\"" ENVIRON["NT_BG"] "\""); next }
+        inconf && ENVIRON["NT_DECOR"]  != "" && /^ *decorations: / { stamp("decorations", "\"" ENVIRON["NT_DECOR"] "\""); next }
 
         { print }
     ' > "$TMP"
@@ -461,7 +481,8 @@ nt_conf() {
     sed -n '/\/\/#CONFIG_START/,/\/\/#CONFIG_END/p' "$TMP" |
         sed -n "s/^ *$1: \"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}\$/\1/p" | head -1
 }
-for nt_pair in "title:$NT_TITLE" "width:$NT_WIDTH" "height:$NT_HEIGHT" "background:$NT_BG"; do
+for nt_pair in "title:$NT_TITLE" "width:$NT_WIDTH" "height:$NT_HEIGHT" "background:$NT_BG" \
+                "decorations:$NT_DECOR"; do
     nt_key="${nt_pair%%:*}"
     nt_want="${nt_pair#*:}"
     [ -n "$nt_want" ] || continue
