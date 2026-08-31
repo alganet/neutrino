@@ -25,6 +25,8 @@
 /test/neutrinoload
 /test/neutrinostdgeom.cmd
 /test/neutrinostdgeom
+/test/neutrinostdgeom-none.cmd
+/test/neutrinostdgeom-none
 /test/neutrinostddoc.cmd
 /test/neutrinostddoc
 /test/neutrinostdwin.cmd

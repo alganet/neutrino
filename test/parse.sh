@@ -845,7 +845,7 @@ eq("nothing of the shell region is above the doctype", html.indexOf("exit") < 0,
 // nothing else. `url` sat here unread for the length of the project; a key
 // nobody consumes is the shape this asserts against coming back.
 eq("config carries only what createWindow needs",
-   Object.keys(N.config).sort(), ["background", "height", "title", "width"]);
+   Object.keys(N.config).sort(), ["background", "decorations", "height", "title", "width"]);
 eq("the title is a non-empty string", typeof N.config.title === "string" && N.config.title.length > 0, true);
 eq("the size is two positive whole numbers",
    [N.config.width > 0 && N.config.width === Math.floor(N.config.width),
@@ -869,6 +869,23 @@ eq("the size is two positive whole numbers",
 // five lanes painting white with nothing said.
 eq("the background is a colour or it is `auto`",
    N.config.background === "auto" || N.parseColor(N.config.background) !== null, true);
+
+// The frame, on the same terms as the colour above: two spellings and no third,
+// asserted on the artifact rather than on which of the two the template ships.
+//
+// The predicate and not the string is what the five lanes ask, so the predicate
+// is what this asserts against. A build carrying a third word would leave
+// `undecorated` answering false for it -- a window that quietly kept its frame
+// after a flag asked for it to go, which is the flag failing silently and is
+// the reason build.sh refuses the word rather than passing it through.
+eq("the decorations are `auto` or `none`",
+   N.config.decorations === "auto" || N.config.decorations === "none", true);
+eq("and `undecorated` follows the value, both ways", [
+    (function () { var was = N.config.decorations; N.config.decorations = "none";
+                   var r = N.undecorated(); N.config.decorations = was; return r; })(),
+    (function () { var was = N.config.decorations; N.config.decorations = "auto";
+                   var r = N.undecorated(); N.config.decorations = was; return r; })()
+], [true, false]);
 var colors = [
     ["#000000", { red: 0, green: 0, blue: 0 }],
     ["#ffffff", { red: 1, green: 1, blue: 1 }],

@@ -82,15 +82,15 @@ What your app looks like *before* a line of its JavaScript has run.
 
 ```bash
 ./build.sh --title "My App" --size 1024x768 --background "#12141a" \
-           --style shell.css --body shell.html \
+           --decorations none --style shell.css --body shell.html \
            myapp.js myapp.cmd
 ```
 
 The style and the body are spliced into the polyglot's document line, so they
 are in the first paint — there is no frame in which the window is up and your
-markup is not. The title, the size and the background go into the config object
-instead, because the native window is created before there is a document to read
-them from. Each flag replaces its own part; the ones you leave out keep the
+markup is not. The title, the size, the background and the decorations go into
+the config object instead, because the native window is created before there is
+a document to read them from. Each flag replaces its own part; the ones you leave out keep the
 template's.
 
 Without this, an app draws itself from script, and every launch shows the
@@ -123,6 +123,44 @@ Measured on the same two GTK lanes: Adwaita gives `#ffffff`, Adwaita-dark gives
 flash on either kind of desktop without naming a colour at all — and an app that
 wants one fixed colour everywhere still says `--background "#12141a"` and gets
 exactly that, on every machine, through every theme change.
+
+**`--decorations none` takes the frame off.** No title bar, no borders, no
+resize edge — the window is the web view and nothing else. `auto` is the
+default and is the frame the desktop would have given it anyway.
+
+| Lane | How |
+|---|---|
+| gjs / cjs / PyGObject | `Gtk.Window(decorated=False)`, a construct property |
+| Qt | `Qt.Window \| Qt.FramelessWindowHint` |
+| macOS | `NSBorderlessWindowMask`, on an `NSWindow` subclass that can still become key |
+| Windows | `Form.FormBorderStyle = None` |
+
+**What you give up, and what you write instead.** The title bar was the drag
+handle, the borders were the resize edge, and the frame was what the window
+manager snapped and tiled and cascaded. All of that goes with it. Nothing in
+neutrino replaces them, and there is no `startDrag` verb — your app already has
+the two calls it needs:
+
+```javascript
+var win = eval("window");
+// a title bar of your own
+bar.onmousedown = function (down) {
+    var ox = down.screenX, oy = down.screenY;
+    function moved(e) { win.moveBy(e.screenX - ox, e.screenY - oy); ox = e.screenX; oy = e.screenY; }
+    function up() { win.removeEventListener("mousemove", moved); win.removeEventListener("mouseup", up); }
+    win.addEventListener("mousemove", moved);
+    win.addEventListener("mouseup", up);
+};
+```
+
+`-webkit-app-region: drag` is not the answer here. Measured on all four
+engines: the property is retained on QtWebEngine and WebView2 and dropped on
+WebKit — but retaining a property is the parser accepting it, not the embedder
+honouring it, and neither of those two embedders implements the behaviour.
+It is an Electron feature, and this is not Electron.
+
+A chromeless window also has no close button, so an app that removes the frame
+owns `window.close()` as well. Give the user something to press.
 
 **The one-line constraint, and the choice it gives you.** Both files are folded
 to a single line and spliced into a line that is simultaneously inside a
