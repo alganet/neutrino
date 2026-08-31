@@ -167,6 +167,57 @@ if ! node --check "$WORK/whole.js" 2>"$WORK/whole.err"; then
 fi
 echo "  PASS: the whole file still parses as JavaScript"
 
+# And the other half of the polyglot, which had no check at all until a round
+# where three lanes went red for one line of it.
+#
+# The file is a shell script as much as it is JavaScript, and the two hazards
+# are not the same hazard. The QML region is a here-document opened *unquoted*
+# -- it has to be, because the QML reads $qml_url out of this shell -- so a
+# backtick pair anywhere in it is a command substitution the shell runs at
+# launch. Five of them sat in QML comments for months, each running a word and
+# writing "command not found" to stderr, harmless. Then a comment quoted an
+# anchor tag with a target: the shell read "<a" and a trailing ">" as
+# redirections, and the artifact stopped parsing as a shell script at all. gjs
+# and windows-launch could not run the built .cmd, kde came up with no window,
+# and not one of the three failures was in the lane the comment was about.
+#
+# This is a shape and it is checked as one, the way the @cc_on block above is.
+# Asking a parser instead was the first attempt and it does not travel: on the
+# same corrupted file `sh -n` exits 2 where /bin/sh is dash and 0 where it is
+# bash, so the check would have been real on the Linux runners and decorative
+# on macOS. A rule about the file is true on every runner at once.
+QML_BEGIN='    cat >&8 <<QMLEOF'
+QML_BODY="$(awk -v b="$QML_BEGIN" 'index($0, b) { on = 1; next } on && /^QMLEOF$/ { exit } on' "$TARGET")"
+# The region has to have been found, or this passes by matching nothing -- the
+# same way a probe passes forever once the verb it attacked is deleted.
+if [ "$(printf '%s\n' "$QML_BODY" | wc -l)" -lt 50 ]; then
+    echo "parse.sh: the QML here-document was not found or is too short to be it" >&2
+    echo "          (the opener this looks for is: $QML_BEGIN)" >&2
+    exit 1
+fi
+if printf '%s' "$QML_BODY" | grep -q '`'; then
+    echo "parse.sh: a backtick in the QML here-document" >&2
+    printf '%s' "$QML_BODY" | grep -n '`' | sed 's/^/          /' >&2
+    echo "          That here-document is unquoted, so the shell runs what is" >&2
+    echo "          between backticks -- in a comment as much as anywhere else." >&2
+    exit 1
+fi
+echo "  PASS: nothing in the QML here-document is a command the shell would run"
+
+# And the parser, kept beside the shape because it catches everything else a
+# shell region can get wrong. It is allowed to be weak: where /bin/sh is bash it
+# will not see the defect above, which is the whole reason that one is a shape
+# check. Not a control on this, because the thing a control would prove is
+# already proven by the line above it running everywhere.
+if command -v sh >/dev/null 2>&1; then
+    if ! sh -n "$TARGET" 2>"$WORK/shell.err"; then
+        echo "parse.sh: the polyglot does not parse as a shell script" >&2
+        sed 's/^/          /' "$WORK/shell.err" >&2
+        exit 1
+    fi
+    echo "  PASS: the whole file still parses as a shell script"
+fi
+
 sed -n '/^    var NeutrinoWebview = {/,/^    };$/p' "$TARGET" > "$WORK/obj.js"
 echo "module.exports = NeutrinoWebview;" >> "$WORK/obj.js"
 

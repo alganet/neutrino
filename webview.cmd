@@ -479,6 +479,19 @@ run_qt() {
     rm -f "$qml_doc"
 
     qml_url="file://$(nt_qmlquote "$script_path")"
+    # Unquoted, and it has to be: the QML below reads $qml_url, which is this
+    # shell's variable and the only way the document learns where to fetch its
+    # own source from. So the shell expands what follows -- which means **no
+    # backticks in the QML region**, in a comment least of all.
+    #
+    # That is not a style rule. A backtick pair here is a command substitution
+    # run at launch, and the five that used to sit in the comments below were
+    # each running a word -- `window`, `base`, `title` -- and writing "command
+    # not found" to stderr on every start. Harmless, until a comment quoted
+    # `<a target=_blank>` and the shell read `<a` and a trailing `>` as
+    # redirections: syntax error, unexpected end of file, in the artifact
+    # itself. Three lanes went red for it and none of them was Qt's -- gjs and
+    # windows-launch could not parse the built .cmd at all.
     cat >&8 <<QMLEOF
 import QtQuick
 import QtWebEngine
@@ -532,7 +545,7 @@ Window {
         sysPalette.highlight, sysPalette.highlightedText, sysPalette.mid)
 
     // The parameters are named for the palette entries they carry rather than
-    // for the SystemPalette properties they came from -- `window` is a name
+    // for the SystemPalette properties they came from -- window is a name
     // with meaning in a QML document and this is not that window.
     function ntReadTheme(bgColor, fgColor, baseColor, textColor,
                          accentColor, accentTextColor, borderColor) {
@@ -569,9 +582,9 @@ Window {
     title: cfg.title
 
     // The two surfaces that are up before the document, the same pair every
-    // other lane paints. A QML colour property reads `#rrggbb` itself, so this
+    // other lane paints. A QML colour property reads #rrggbb itself, so this
     // is the string the launcher resolves -- the config's, when the build named
-    // one, and the desktop's `base` when it did not.
+    // one, and the desktop's base when it did not.
     //
     // A binding and not an assignment, which is the whole of this lane's
     // repaint: when the palette changes the window colour changes with it, and
@@ -627,11 +640,11 @@ Window {
         property bool preloadInjected: false
         property bool documentLoaded: false
         property bool contentLoaded: false
-        // This lane's half of the title hook. `title` is a WebEngineView
+        // This lane's half of the title hook. title is a WebEngineView
         // property that follows the loaded document, so the signal is the one
         // QML generates for it and nothing has to be connected by hand.
         //
-        // The assignment is what breaks the binding to `cfg.title` above, and
+        // The assignment is what breaks the binding to cfg.title above, and
         // that is the point: from the first title this document names, the
         // window is following the document. Until then the binding holds, and
         // the gate refuses the empty title a document that names nothing
