@@ -4009,6 +4009,27 @@ exit $?;:<<'//</script></body></html>' #-->
                         // it an edge, and latching a title before there is a
                         // document to judge it against would swallow that title
                         // for the rest of the run.
+                        //
+                        // hasCommittedDocument is one gate and acceptDocumentTitle
+                        // is a second, and the latch used to sit between them --
+                        // so a title refused by the second was latched as seen
+                        // and never offered again. That is the same defect this
+                        // comment was written about, one gate further down.
+                        //
+                        // Measured: `macos-stdwin` lost STD-WIN-OPEN-SELF in two
+                        // rounds out of four. The probe calls
+                        // open("ftp://neutrino.invalid/probe","_self"), which asks
+                        // the engine to navigate this view, and acceptDocumentTitle
+                        // refuses every title while the view is not showing the
+                        // launcher's own document. The refusal is right and it is
+                        // brief; the latch was what made it permanent, because the
+                        // next read equalled the last and there was no edge left.
+                        //
+                        // So only an accepted title is latched. A refused one is
+                        // re-judged on the next tick, which is what lets it land
+                        // once the view is back on its own document -- the gate is
+                        // a pure function of two reads and costs nothing to ask
+                        // again, and noteOnce keeps a standing refusal quiet.
                         if (webViewRef && self.hasCommittedDocument()) {
                             var raw = "";
                             try {
@@ -4017,9 +4038,9 @@ exit $?;:<<'//</script></body></html>' #-->
                                 raw = "";
                             }
                             if (raw !== lastDocumentTitle) {
-                                lastDocumentTitle = raw;
                                 var name = self.acceptDocumentTitle(currentUrl(), raw);
                                 if (name !== null) {
+                                    lastDocumentTitle = raw;
                                     this.setTitle(windowRef, name);
                                 }
                             }
@@ -7290,12 +7311,31 @@ exit $?;:<<'//</script></body></html>' #-->
                                 // this poll into an edge, so latching a title
                                 // that would be refused for arriving too early
                                 // would swallow it for the rest of the run.
+                                //
+                                // And that is true one gate further down as well.
+                                // `trustedRemembered` is not the only thing that
+                                // can refuse a title here: acceptDocumentTitle
+                                // refuses any title while the view is not showing
+                                // this launcher's own document, and the latch used
+                                // to be taken before it was asked -- so a title
+                                // refused once was recorded as seen and never
+                                // offered again. Measured on the macOS poll, which
+                                // had the identical shape and lost a probe state in
+                                // two rounds out of four; this lane has not been
+                                // seen to lose one, and is exposed the same way.
+                                //
+                                // A record is different and still latches where it
+                                // is handled. It is consumed rather than judged --
+                                // re-reading one would deliver the same message to
+                                // the page's channel twice, which is worse than
+                                // dropping it. Only the *name* branch waits for an
+                                // acceptance before it latches.
                                 if (titleProp && trustedRemembered) {
                                     var docTitle = String(titleProp.GetValue(coreWv2, null) || "");
                                     if (docTitle !== lastDocTitle) {
-                                        lastDocTitle = docTitle;
                                         var showing = self.readWebView2Source(coreWv2, sourceProp);
                                         if (docTitle.indexOf(self.recordPrefix) === 0) {
+                                            lastDocTitle = docTitle;
                                             var mine = (showing !== null) && self.isOwnDocument(showing);
                                             if (!messageCallback || webMessagesWired) {
                                                 // A record on a lane whose
@@ -7319,6 +7359,7 @@ exit $?;:<<'//</script></body></html>' #-->
                                             var name = self.acceptDocumentTitle(
                                                 showing === null ? "" : showing, docTitle);
                                             if (name !== null) {
+                                                lastDocTitle = docTitle;
                                                 driver.setTitle(win, name);
                                             }
                                         }
