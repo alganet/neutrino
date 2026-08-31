@@ -105,6 +105,8 @@ now_ms() { if [ "$HAVE_MS" = 1 ]; then date +%s%3N; else echo 0; fi; }
 
 X11_WID=""
 FE_L=0; FE_R=0; FE_T=0; FE_B=0
+# The first reading, held so the second one has something to disagree with.
+FE_FIRST=""
 
 # The window manager's own list of managed top-levels, and not `xdotool search`.
 #
@@ -144,24 +146,118 @@ x11_find() {
     return 1
 }
 
-# Read once, before the loop. Frame extents are a property of the frame the
-# window manager put around this window and do not change while it is up, so
-# reading them per turn would put an xprop in the hot path for a constant.
-x11_frame_extents() {
-    local line
+# Read before the loop and again after it. Frame extents are a property of the
+# frame the window manager put around this window and do not change while it is
+# up -- but "does not change" is the thing a suite that asserts on the extent
+# has to have measured rather than assumed, and reading a constant twice is two
+# xprop calls, not a call per turn. The hot path still has none.
+#
+# Three outcomes and not two. `FE_SRC` carries which one, because a chromeless
+# window and a window manager that does not answer produce the same four zeros
+# by two completely different routes -- one is the measurement this suite
+# exists to take and the other is silence wearing its clothes. A caller that
+# asserts an extent of zero has to be able to tell them apart, and the only
+# thing that can tell them apart is this variable.
+#
+#   read     the hint answered, and the four numbers below are what it said
+#   absent   nothing answered; the four numbers are a fallback, not a reading
+#   moved    it answered twice and disagreed with itself
+FE_SRC="absent"
+x11_read_extents() {
+    local line out=""
     line="$(xprop -id "$X11_WID" _NET_FRAME_EXTENTS 2>/dev/null)"
     case "$line" in
         *=*)
             line="${line#*= }"
-            FE_L="$(echo "$line" | cut -d, -f1 | tr -d ' ')"
-            FE_R="$(echo "$line" | cut -d, -f2 | tr -d ' ')"
-            FE_T="$(echo "$line" | cut -d, -f3 | tr -d ' ')"
-            FE_B="$(echo "$line" | cut -d, -f4 | tr -d ' ')"
+            out="$(echo "$line" | cut -d, -f1 | tr -d ' '),$(echo "$line" | cut -d, -f2 | tr -d ' '),$(echo "$line" | cut -d, -f3 | tr -d ' '),$(echo "$line" | cut -d, -f4 | tr -d ' ')"
             ;;
     esac
-    case "$FE_L$FE_R$FE_T$FE_B" in
-        *[!0-9]*|"") FE_L=0; FE_R=0; FE_T=0; FE_B=0; note "no _NET_FRAME_EXTENTS; outer is reported as inner" ;;
+    case "$out" in
+        *[!0-9,]*|""|,,,) echo "" ;;
+        *) echo "$out" ;;
     esac
+}
+
+# Whether the window manager put this window inside a frame at all, asked of
+# the window tree rather than of a hint.
+#
+# This is the question CI answered on the first round and it is not the one the
+# hint answers. metacity, measured: a decorated window carries
+# _NET_FRAME_EXTENTS `0,0,37,0`, and an undecorated one **does not carry the
+# property at all** -- so a chromeless extent can never be read from it, and
+# every zero it produces is the fallback. Reading the tree instead turns that
+# absence into a positive reading: a window whose parent is the root window is
+# a window nothing framed, and its frame is its client area by observation.
+#
+# It also fixes the origin. xwininfo reports "Relative upper-left" against the
+# parent, so for an unreparented window that is the absolute position and not
+# an offset into anything -- `abs - rel` came out `0,0` and the apparatus
+# control failed comparing 62,84 against it. A control that cannot pass is not
+# a control, and this one could not pass on any window without a frame.
+X11_PARENT=""; X11_ROOT=""
+x11_reparented() {
+    local tree
+    tree="$(xwininfo -id "$X11_WID" -tree 2>/dev/null)"
+    [ -n "$tree" ] || return 2
+    X11_PARENT="$(printf '%s' "$tree" | sed -n 's/.*Parent window id: *\(0x[0-9a-fA-F]*\).*/\1/p' | head -1)"
+    X11_ROOT="$(printf '%s' "$tree" | sed -n 's/.*Root window id: *\(0x[0-9a-fA-F]*\).*/\1/p' | head -1)"
+    [ -n "$X11_PARENT" ] && [ -n "$X11_ROOT" ] || return 2
+    [ "$((X11_PARENT))" != "$((X11_ROOT))" ]
+}
+
+x11_frame_extents() {
+    # Asked first, because its answer decides whether the hint's silence is a
+    # reading or a gap.
+    x11_reparented
+    case "$?" in
+        1)  FE_L=0; FE_R=0; FE_T=0; FE_B=0
+            FE_FIRST="0,0,0,0"
+            FE_SRC="root"
+            note "the window manager framed nothing: parent $X11_PARENT is the root window, so the frame is the client area"
+            return ;;
+        2)  note "could not read the window tree; falling back to the frame-extents hint" ;;
+    esac
+    FE_FIRST="$(x11_read_extents)"
+    if [ -z "$FE_FIRST" ]; then
+        FE_L=0; FE_R=0; FE_T=0; FE_B=0
+        FE_SRC="absent"
+        note "no _NET_FRAME_EXTENTS; outer is reported as inner"
+        return
+    fi
+    FE_L="$(echo "$FE_FIRST" | cut -d, -f1)"
+    FE_R="$(echo "$FE_FIRST" | cut -d, -f2)"
+    FE_T="$(echo "$FE_FIRST" | cut -d, -f3)"
+    FE_B="$(echo "$FE_FIRST" | cut -d, -f4)"
+    FE_SRC="read"
+}
+
+# The second read, after the loop. What it is for: the extent is derived from a
+# value this file reads once, so `extent(A) == extent(B) == extent(C)` across
+# the turns is true by construction on this platform and could not have failed
+# for any reason. That is an assertion that cannot fail for the reason it
+# exists. Reading the hint again at the end is what turns the constant into a
+# measured one, and a window that was reframed mid-run now says so.
+x11_recheck_extents() {
+    local second
+    # A window that was unreparented at the start and framed by the end is the
+    # same kind of finding as extents that moved, and it is the one this
+    # branch's whole reading rests on -- so it is asked, not skipped.
+    if [ "$FE_SRC" = root ]; then
+        if x11_reparented; then
+            FE_SRC="moved"
+            note "the window was unframed at the start of the run and framed by the end"
+        fi
+        return
+    fi
+    [ "$FE_SRC" = read ] || return
+    second="$(x11_read_extents)"
+    if [ -z "$second" ]; then
+        FE_SRC="moved"
+        note "the frame extents answered at the start and not at the end"
+    elif [ "$second" != "$FE_FIRST" ]; then
+        FE_SRC="moved"
+        note "the frame extents moved under the run: $FE_FIRST then $second"
+    fi
 }
 
 # The same offset, asked of X a second way. The frame's origin is conventionally
@@ -197,10 +293,22 @@ x11_reparent_offset() {
     ry="$(printf '%s' "$info" | sed -n 's/.*Relative upper-left Y: *\([0-9-]*\).*/\1/p' | head -1)"
     XW_ABS="${ax:-?},${ay:-?}"
     XW_REL="${rx:-?},${ry:-?}"
-    case "${rx:-x}${ry:-x}" in
-        *[!0-9-]*|"") ;;
-        *) REL_X="$rx"; REL_Y="$ry"; REL_SRC="xwininfo" ;;
-    esac
+    # Only where there is a frame to be offset inside. xwininfo reports the
+    # relative upper-left against the *parent*, so on an unreparented window
+    # that is the absolute position rather than an offset, and subtracting it
+    # puts every origin at 0,0 -- which is what failed the apparatus control on
+    # every GTK lane the first time a chromeless window was measured.
+    #
+    # `root` is not a degraded reading here. A window nothing reparented has an
+    # offset of zero inside its frame, and that is the answer, not a default.
+    if [ "$FE_SRC" = root ]; then
+        REL_X=0; REL_Y=0; REL_SRC="root"
+    else
+        case "${rx:-x}${ry:-x}" in
+            *[!0-9-]*|"") ;;
+            *) REL_X="$rx"; REL_Y="$ry"; REL_SRC="xwininfo" ;;
+        esac
+    fi
     # Two routes to the same corner, so the subtraction below can be checked
     # rather than trusted. xwininfo's absolute upper-left is the frame's outside
     # corner directly; xdotool's position is the client origin, which is that
@@ -334,6 +442,47 @@ check_apparatus() {
             note "sampler no reparent offset available; positions are raw and underived"
         fi
     fi
+    # The decoration, named. It is a difference between two columns this file
+    # has recorded on every lane since it was written, and until now nothing
+    # said so out loud -- which is how a fifty-pixel tolerance in the suite next
+    # door went on standing in for a number that was already being measured
+    # three feet away.
+    #
+    # Every distinct value across the run, not the first: a thickness that
+    # changed while the window was up is a finding, and printing one value would
+    # hide it. On x11 the pair below has to be read with `via=`, because there
+    # the outer column is derived from a hint read once and a zero extent can
+    # mean the hint said zero or that nothing answered at all.
+    # Only the rows the app had arrived in -- the same gate verify-std.ps1
+    # applies, and one rule rather than two. It is a no-op here, because this
+    # side finds its window by the prefix and so never records a turn before
+    # it; it is written anyway so the two files cannot drift into measuring
+    # different sets of rows.
+    local extents
+    extents="$(awk -F'\t' -v pre="$PREFIX" '
+        index($2, pre) != 1 { next }
+        $3 ~ /^[0-9]+x[0-9]+$/ && $5 ~ /^[0-9]+x[0-9]+$/ {
+            split($3, i, "x"); split($5, o, "x")
+            e = (o[1] - i[1]) "x" (o[2] - i[2])
+            if (!(e in seen)) { seen[e] = 1; out = out (out == "" ? "" : " ") e }
+        }
+        END { print out }
+    ' "$REC")"
+    if [ "$PLATFORM" = x11 ]; then
+        note "sampler extent ${extents:-none} via=$FE_SRC"
+    else
+        note "sampler extent ${extents:-none} via=live"
+    fi
+    # The frame origin at the probe's *first* state, under one name both
+    # platforms emit, so the differential has a position to compare without
+    # knowing which instrument took it.
+    #
+    # The first state and not the last, because the probe moves the window on
+    # purpose partway through: the only turn where the two halves are answering
+    # the same question is the one before either of them was asked to move.
+    local firstpos
+    firstpos="$(awk -F'\t' -v pre="$PREFIX" 'index($2, pre) == 1 { print $4; exit }' "$REC")"
+    note "sampler framepos ${firstpos:-none}"
     if [ "$rows" -lt 2 ]; then
         fail "the instrument recorded $rows transition(s); it saw no window change at all"
     fi
@@ -733,6 +882,10 @@ if [ -n "$REPLAY" ]; then
     cp "$REPLAY" "$REC"
     TURNS="$(wc -l < "$REC" | tr -d ' ')"
     echo "verify-std.sh: replaying $REPLAY -- apparatus checks are not a measurement here"
+    # A fourth value, and it is not one of the three the reader can return: no
+    # window was opened here, so the hint was neither read nor missing. Saying
+    # `absent` would be this file reporting a window manager it never asked.
+    FE_SRC="replay"
     check_apparatus
     case "$PROBE" in
         geom)  analyse_geom ;;
@@ -765,6 +918,11 @@ fi
 
 : > "$REC"
 record
+
+# After the loop, before anything is asserted. The extent every assertion below
+# reads was taken before the first turn; this is what says it was still true at
+# the last one.
+[ "$PLATFORM" = x11 ] && x11_recheck_extents
 
 check_apparatus
 case "$PROBE" in
