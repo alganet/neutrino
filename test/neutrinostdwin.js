@@ -246,24 +246,45 @@ function pGONE() {
     win.setTimeout(pOPEN, DWELL);
 }
 
-// about:blank, never a real url. `openExternal` on this platform ends at the
-// desktop's URI handler and would launch a browser into the middle of a lane;
-// what is being asked here is only what the engine does with the call.
+// Three shapes of the call, none of which the launcher routes anywhere.
 //
-// Marked -SELF: whether a *second native window* appeared is the outside half
-// and this harness does not count windows yet. That is the round after this,
-// and saying so is cheaper than a pair with one half missing.
+// What `window.open` does with an *external* url is not askable from in here.
+// It becomes a record, the host decides on it, and the desktop's URI handler
+// acts -- three things outside this document, none of which the page can
+// observe. That half is asserted where the wire is visible, in parse.sh,
+// against the built preload and with no engine at all. Putting a claim about it
+// here would be a phase reporting `null` and calling it a measurement.
+//
+// So this asks the two questions a page *can* answer. The no-argument call must
+// come back null, because it is the one shape the launcher answers itself: the
+// platform's reply is a new about:blank window, and until there is a second
+// window to open this file does nothing instead. That is a live assertion and
+// not a formality -- QtWebEngine's own `open` returns an object, so on that lane
+// this is the difference between the launcher's no-op and the engine's answer.
+// And every call must leave the document where it was.
+//
+// No url here can reach a browser, which is deliberate rather than tidy.
+// `openExternal` ends at the desktop's URI handler, so a real https in a probe
+// launches one into the middle of a lane -- measured, on the desk this was
+// written at, as a tab that opened while the probe was still running.
 function pOPEN() {
-    var ret = "threw";
-    var before = "";
-    try { before = String(win.location.href); } catch (_) {}
-    try {
-        var w = win.open("about:blank", "_blank");
-        ret = (w === null) ? "null" : (w === undefined ? "undefined" : typeof w);
-    } catch (e) { ret = "threw:" + String(e && e.name ? e.name : e).substring(0, 24); }
-    var after = "";
-    try { after = String(win.location.href); } catch (_) {}
-    put("STD-WIN-OPEN-SELF ret=" + ret + " href=" + (before === after ? "same" : "CHANGED"));
+    var out = "STD-WIN-OPEN-SELF";
+    var urls = [null, "about:blank", "ftp://neutrino.invalid/probe"];
+    var targets = [null, "_blank", "_self"];
+    var names = ["noargs", "blank", "self"];
+    for (var i = 0; i < names.length; i++) {
+        var before = "";
+        try { before = String(win.location.href); } catch (_) {}
+        var ret = "threw";
+        try {
+            var w = (urls[i] === null) ? win.open() : win.open(urls[i], targets[i]);
+            ret = (w === null) ? "null" : (w === undefined ? "undefined" : typeof w);
+        } catch (e) { ret = "threw:" + String(e && e.name ? e.name : e).substring(0, 24); }
+        var after = "";
+        try { after = String(win.location.href); } catch (_) {}
+        out += " " + names[i] + "=" + ret + "/" + (before === after ? "same" : "CHANGED");
+    }
+    put(out);
     win.setTimeout(pREGION, DWELL);
 }
 

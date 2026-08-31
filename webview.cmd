@@ -5225,18 +5225,13 @@ exit $?;:<<'//</script></body></html>' #-->
                 '},' +
                 /*
                  * All that is left of the bespoke namespace, and it is waiting
-                 * on a PR rather than kept as an alias.
+                 * on step 6 rather than kept as an alias.
                  *
-                 * Its standard spelling is window.open, which is not shimmed
-                 * here on purpose: test/neutrinonav.js asserts what the
-                 * *engine's* own new-window path does against the native guard,
-                 * and a shim would leave that probe passing while measuring the
-                 * shim.
-                 *
-                 * setTitle used to sit beside it. Its spelling is an assignment
-                 * to document.title, and that assignment now reaches the native
-                 * window on all five lanes -- so there is nothing left here to
-                 * alias it with.
+                 * Its standard spelling is window.open, which is now written
+                 * over below. setTitle used to sit beside it; that spelling is
+                 * an assignment to document.title and it reaches the native
+                 * window on all five lanes, so there is nothing left here to
+                 * alias it with either.
                  */
                 'shell:{' +
                 'openExternal:function(url){window.neutrino.send("openExternal",{url:url});}' +
@@ -5274,6 +5269,96 @@ exit $?;:<<'//</script></body></html>' #-->
                 '_def("moveTo",function(x,y){window.neutrino.send("move",{x:x,y:y});});' +
                 '_def("moveBy",function(x,y){window.neutrino.send("moveBy",{x:x,y:y});});' +
                 '_def("close",function(){window.neutrino.send("close");});' +
+                /*
+                 * And the sixth, which is not like the other five: they were
+                 * silent everywhere and this one is silent in one direction and
+                 * working in the other.
+                 *
+                 * Measured on WebKitGTK, one launch per row, with the driver's
+                 * own refusal note read off stderr beside the call's return:
+                 *
+                 *   open(u)            null    no policy decision reached
+                 *   open(u,"_blank")   null    no policy decision reached
+                 *   open(u,"name")     null    no policy decision reached
+                 *   open(u,"_self")    object  refused and forwarded
+                 *   <a target=_blank>  --      refused and forwarded
+                 *
+                 * Two paths inside the engine and this file was on one of them.
+                 * A link with a target raises `decide-policy` with
+                 * NEW_WINDOW_ACTION, which both GTK drivers already forward.
+                 * `window.open` raises the `create` signal instead, nothing is
+                 * connected to it, and the call returns null having reached no
+                 * guard here at all -- so the one spelling an app author would
+                 * reach for was the one spelling that did nothing.
+                 *
+                 * **What is routed is the url, not the target**, and that is
+                 * the whole of what this round claims. A url bound for the
+                 * machine's browser goes there; everything else is handed to
+                 * the engine exactly as it arrived.
+                 *
+                 * The alternative was to key on the target -- `_blank` and any
+                 * name to the browser, `_self` and its two siblings to the
+                 * engine -- and it is wrong in the direction that costs the
+                 * most later. `window.open("panel.html")` is an app asking for
+                 * a second window of its own, and the only thing that can hand
+                 * a page a real WindowProxy is the engine actually creating the
+                 * view: WebKitGTK's `create`, Qt's newViewRequested, WebView2's
+                 * NewWindowRequested, WKWebView's
+                 * createWebViewWithConfiguration:. An override that answered
+                 * every target would mean those signals are never raised at
+                 * all, and the second window becomes unreachable from inside
+                 * this file rather than merely unbuilt. So the default is the
+                 * engine's, and this steps in front of one case only.
+                 *
+                 * Nothing is opened for a call with no url. The web platform's
+                 * answer there is about:blank in a new window, which is the
+                 * second-window case and not this one; sending it as a record
+                 * would be `openExternal("")` for the host to refuse, which is
+                 * a no-op with a wire message in front of it. It is a no-op
+                 * without one until there is a window to open.
+                 *
+                 * The three targets that mean *this* window are still checked,
+                 * and before the url, because they are not an opening at all.
+                 * `_self` returns the window and navigates, and that navigation
+                 * meets the guard every location change meets -- which already
+                 * forwards an external url to the browser. Routing it here as
+                 * well would take a measured path away and give back a
+                 * different one. The match is case-insensitive: the target is a
+                 * keyword, and `_SELF` reaching the machine's browser is the
+                 * opposite of what it asked for.
+                 *
+                 * The scheme test here is a *routing* question and not a
+                 * security one, which is why it is allowed to be this small.
+                 * isExternalUrl still decides what may leave -- length, control
+                 * characters, the shape of the host -- and mayOpenExternal
+                 * still decides whether this build may let anything leave at
+                 * all. Both run on the host, on the record this sends. What
+                 * this picks is only which of two paths the call takes; a url
+                 * that gets the wrong one is refused at the other end either
+                 * way.
+                 *
+                 * null is returned rather than a window-shaped object. Three of
+                 * four engines already answer null here and QtWebEngine answers
+                 * an object; nothing this file can hand back is a window in this
+                 * page's process, because the url went to the machine's browser.
+                 * A truthful null beats a proxy that would answer questions
+                 * about a window that does not exist.
+                 *
+                 * The record is the one openExternal has always emitted, so an
+                 * offline build refuses this exactly as it refuses the bespoke
+                 * spelling. A spelling change, not a policy change.
+                 */
+                'var _open=window.open;' +
+                'var _eng=function(u,t){try{return _open.call(window,u,t);}catch(_){return null;}};' +
+                '_def("open",function(url,target){' +
+                'var u=(url==null)?"":String(url);' +
+                'if(u===""){return null;}' +
+                'var t=String(target==null?"":target).toLowerCase();' +
+                'if(t==="_self"||t==="_parent"||t==="_top"){return _eng(url,target);}' +
+                'if(!/^(https?|mailto):/i.test(u)){return _eng(url,target);}' +
+                'window.neutrino.send("openExternal",{url:u});' +
+                'return null;' +
+                '});' +
                 '})();';
         },
 

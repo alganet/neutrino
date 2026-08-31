@@ -228,6 +228,34 @@ there is no value here that would be true everywhere. And `resizeTo` sizes the
 also what `--size` has always meant, so a window opened at `900x600` and one
 resized to `900x600` are the same window.
 
+`window.open` hands an **external** url to the machine's browser — the same
+thing `neutrino.shell.openExternal` has always done, under the name an app
+author already knows:
+
+```javascript
+win.open("https://example.com");            // the user's browser
+win.open("https://example.com", "_blank");  // the same; the url decides, not the target
+```
+
+It routes on the **url**, not on the target. `http`, `https` and `mailto` go
+out; everything else is handed to the engine untouched, which today opens
+nothing and returns `null`. That is deliberate: a second window of your own is
+not built yet, and the only thing that can ever hand a page a real `WindowProxy`
+is the engine creating the view — so this steps in front of one case rather than
+answering every call and putting that window out of reach. `open()` with no url
+does nothing for the same reason.
+
+`_self`, `_parent` and `_top` are left to the engine. They are not an opening;
+they navigate this window, and that navigation meets the same guard a
+`location` assignment meets — which already sends an external url to the
+browser.
+
+The return value is `null` for anything sent outward. Nothing here is a window
+in your page's process, and three of the four engines already answer `null`.
+
+An offline build (`--tier=offline`) refuses all of it, because a url handed to
+the desktop's browser is the page reaching the network in another program.
+
 ```javascript
 // No standard spelling, so these keep theirs.
 win.neutrino.shell.openExternal("https://example.com");

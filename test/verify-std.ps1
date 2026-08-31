@@ -222,6 +222,36 @@ function Analyse-Win($rows) {
         if ($r) { Note "self $st $($r.Title -replace "^STD-WIN-$st-SELF ",'')" }
     }
 
+    # window.open, and the one shape of it the page can answer for. What an
+    # external url does is not askable from inside the document -- parse.sh
+    # asserts that half against the built preload with no engine. The
+    # no-argument call is the launcher's own no-op, and every shape must leave
+    # the document where it was. verify-std.sh carries the same two branches;
+    # one spelling changed in two verifiers is one change.
+    $op = Find-Row $rows "STD-WIN-OPEN-SELF"
+    if (-not $op) {
+        Fail "control open: STD-WIN-OPEN-SELF was never observed"
+    } else {
+        $on = ""
+        if ($op.Title -match ' noargs=(\S+)') { $on = $Matches[1] }
+        if ($on -eq "null/same") {
+            Note "control open noargs=$on verdict=NOOP"
+        } elseif ($on -eq "") {
+            Fail "control open: STD-WIN-OPEN-SELF carried no noargs reading"
+        } else {
+            Fail "control open noargs=$on, wanted null/same; window.open() is not the launcher's on this lane"
+        }
+        foreach ($v in @("blank", "self")) {
+            $ov = ""
+            if ($op.Title -match " $v=(\S+)") { $ov = $Matches[1] }
+            if ($ov -like "*/CHANGED") {
+                Fail "control open $v=$ov; a call meant to open a window took this document somewhere"
+            } elseif ($ov -ne "") {
+                Note "control open $v=$ov (the engine's own, left alone)"
+            }
+        }
+    }
+
     # The four. Before the launcher wrote over these, all four read NOOP on all
     # four engines. They are the shipped API now, so a NOOP here is a regression
     # and the control below says so.
