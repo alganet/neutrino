@@ -634,6 +634,7 @@ done
 # loads native code from, and a flag that turns the renderer sandbox off.
 for nt_probe in "testing:neutrino-title.txt" "testing:neutrino-trace.log" \
                 "testing:NEUTRINO_WEBVIEW2_LIB_DIR\")" "testing:no-sandbox" \
+                "testing:QTWEBENGINE_DISABLE_SANDBOX" \
                 "tight:sandbox-exec" "offline:default-src"; do
     nt_tier="${nt_probe%%:*}"; nt_text="${nt_probe#*:}"
     eq "the $nt_tier build carries [$nt_text]" \
