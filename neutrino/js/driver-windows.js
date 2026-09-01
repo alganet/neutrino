@@ -44,10 +44,10 @@
                 userDataDir = SystemRef.IO.Path.Combine(appFolder, "data");
 
                 // Before the package, because the package phase is one of
-                // the two halves a stalled launch has to be split into.
-                if (self.hasTier("testing")) {
-                    self.installWindowsTrace(SystemRef, appFolder);
-                }
+                // the two halves a stalled launch has to be split into. A
+                // release build's installWindowsTrace is an empty function --
+                // see js/windows-trace.js.
+                self.installWindowsTrace(SystemRef, appFolder);
                 self.trace("init: app folder " + appFolder);
 
                 var webView2LibDir = self.ensureWebView2Package(SystemRef, appFolder);
@@ -93,19 +93,12 @@
                 // JScript.NET, and this file has already been caught once
                 // by a name that means something to jsc and nothing to the
                 // other three -- see the quoted "close" below.
-                if (self.hasTier("testing")) {
-                    var fromEnv = SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH");
-                    // Tested against null and "" rather than for truth.
-                    // Every value here is a .NET String arriving through a
-                    // late-bound call, and whether an empty one is falsy is
-                    // a question the four engines do not have to answer the
-                    // same way. Nothing below asks.
-                    if (fromEnv != null && String(fromEnv) !== "") {
-                        if (!SystemRef.IO.File.Exists(fromEnv)) {
-                            throw new Error("neutrino: NEUTRINO_SCRIPT_PATH names no file: " + fromEnv);
-                        }
-                        return fromEnv;
-                    }
+                //
+                // A release build's scriptPathOverride returns null and reads
+                // no environment variable at all -- see js/windows-scriptpath.js.
+                var fromEnv = self.scriptPathOverride(SystemRef);
+                if (fromEnv) {
+                    return fromEnv;
                 }
                 return self.windowsLayout(SystemRef).script;
             },

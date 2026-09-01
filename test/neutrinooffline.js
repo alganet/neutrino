@@ -9,7 +9,7 @@
 // has is a string comparison in parse.sh. Whether a document carrying
 // `default-src 'none'` actually stops the app's own code from reaching a host
 // is a per-engine answer, and it is a live question rather than a formality --
-// the comment above applyContentPolicy says injected script is "exempt from the
+// the comment above the content policy says injected script is "exempt from the
 // policy the document carries", which is why the app runs at all under
 // `script-src` with no sources. If the exemption extends to what that script
 // then *loads*, the offline tier denies nothing at all.
@@ -56,10 +56,11 @@ function url(file, k) {
 }
 
 // Which of the two policies this document is actually carrying, read off the
-// document rather than assumed from the build. applyContentPolicy is a literal
-// string replace with no failure path: a build asked for the offline tier whose
-// document still says `script-src 'unsafe-eval'` first is the swap having
-// silently not happened, and that is a different finding from a policy that
+// document rather than assumed from the build. The policy is a part the offline
+// overlay includes, so what arrived is what was assembled -- but this still
+// reads it rather than trusting it: a build assembled with the overlay whose
+// document still says `script-src 'unsafe-eval'` first is the overlay not
+// having applied, and that is a different finding from a policy that
 // happened and did not hold.
 function policyName() {
     try {

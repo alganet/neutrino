@@ -24,7 +24,7 @@
 # and an app supplies its own by laying a directory over this one:
 #
 #   app.js         the body of runWeb, which is the app
-#   config.json    the window, and the tier list, laid in verbatim
+#   config.json    the window, laid in verbatim
 #   style.css      the early shell's stylesheet
 #   body.html      the early shell's markup
 #
@@ -32,6 +32,13 @@
 # more than one may be given -- later wins. Any part is overridable and not just
 # those four: an overlay carrying `js/policy.js` replaces the launcher's. That
 # is the author's business, because the author is the one shipping the artifact.
+#
+# The tiers are overlays too, and that is what they are for. `tier/testing`,
+# `tier/offline` and `tier/tight` under this directory each replace the few
+# parts their tier varies, so a release build does not carry the testing
+# scaffolding behind a flag -- it does not carry it. There is no tier stamp in
+# an artifact and nothing at run time asks which tier it is, because there is no
+# branch left to take.
 #
 # The default output has no comments in it. That is the whole point of the
 # split: a comment can be removed by a program that knows which language it is
@@ -246,7 +253,7 @@ fi
 #
 # Flat, one entry per line, every key present. There is no merge in this
 # program -- an overlay replaces config.json whole -- so a file naming only a
-# title would silently take the rest from nowhere. Requiring all six is what
+# title would silently take the rest from nowhere. Requiring all five is what
 # makes "the artifact carries a file somebody wrote" true.
 nt_checkconfig() {
     awk -v path="$1" '
@@ -258,10 +265,8 @@ nt_checkconfig() {
             exit 1
         }
         BEGIN {
-            split("tiers title width height background decorations", k, " ")
+            split("title width height background decorations", k, " ")
             for (i in k) known[k[i]] = 1
-            ntiers = split("default tight offline testing", t, " ")
-            for (i = 1; i <= ntiers; i++) tier[t[i]] = 1
         }
         # A line at a time, because that is the shape this file is written in
         # and a parser that accepted more would be accepting shapes the check
@@ -275,21 +280,6 @@ nt_checkconfig() {
             if (line == "}") { closed = 1; next }
             if (closed) bad("something follows the closing brace")
             if (!opened) bad("it does not open with {")
-
-            # This file is included twice: once into the JavaScript region as
-            # the config object, and once into the shell region as a here
-            # document the tier read seds. The second copy is what these two
-            # are about, and neither is escapable -- a title carrying either
-            # produces an artifact that still looks like a neutrino app.
-            #
-            # `*/` closes the block comment the whole shell region lives inside.
-            # `<!doctype` is worse: the launcher cuts its document from the
-            # first one in the file, the shell region is above the real one, and
-            # a doctype up here starts the document in the middle of the shell.
-            if (line ~ /\*\//)
-                bad("a value contains */, which ends the block comment the shell region lives inside")
-            if (tolower(line) ~ /<!doctype/)
-                bad("a value contains <!doctype, which is where the launcher would start the document")
 
             if (line !~ /^"[a-z]+": /) bad("not one \"key\": value entry: " line)
             key = line
@@ -314,23 +304,6 @@ nt_checkconfig() {
             if (val !~ /^".*"$/) bad(key " wants a string, got " val)
             s = substr(val, 2, length(val) - 2)
 
-            if (key == "tiers") {
-                if (s !~ /^[a-z]+(,[a-z]+)*$/) bad("tiers wants a comma-separated list, got \"" s "\"")
-                n = split(s, want, ",")
-                got = 0
-                for (i = 1; i <= n; i++) {
-                    if (!(want[i] in tier)) bad("unknown tier \"" want[i] "\" (want: default, tight, offline, testing)")
-                    if (want[i] in named) bad("names the tier \"" want[i] "\" twice")
-                    named[want[i]] = 1
-                    if (want[i] == "default") got = 1
-                }
-                # Added by nobody. build.sh used to put it in front of whatever
-                # it was handed, which meant the list in the artifact was not
-                # the list anyone wrote. A file that declares the confinement
-                # declares all of it.
-                if (!got) bad("tiers must name \"default\"; it is not optional")
-                next
-            }
             if (key == "title") {
                 if (s == "") bad("title cannot be empty; a window with no title is not a shell anyone asked for")
                 next
@@ -664,9 +637,17 @@ nt_shape() {
         nt_bad '<!doctype' \
             'is a second doctype, which the launcher refuses outright rather than guess which one the document starts at'
     fi
-    if LC_ALL=C grep -qi 'content-security-policy' "$nt_file.doc"; then
-        nt_bad 'Content-Security-Policy' \
-            'is a second copy of the header the offline tier swaps -- the swap takes the first, so this one would sit in the document unswapped and enforcing nothing'
+    # Exactly one, and not none: html/policy.html is a part of the document now
+    # and its line is in this region. A second would be the hazard -- a browser
+    # takes the intersection of every policy it is given, so two of them is a
+    # document enforcing something nobody wrote, and the offline overlay's is
+    # the one that would stop being what it says.
+    nt_pol="$(LC_ALL=C grep -ci 'content-security-policy' "$nt_file.doc" || true)"
+    if [ "$nt_pol" != "1" ]; then
+        echo "assemble.sh: the document carries $nt_pol content policies, wanted exactly 1" >&2
+        echo "             it is html/policy.html, and an overlay replaces it rather than adding one" >&2
+        rm -f "$nt_file.doc"
+        exit 1
     fi
     # Tabs and newlines are ordinary in markup now that the document is a region
     # rather than one line. Everything else in the C0 range is not: a stray NUL

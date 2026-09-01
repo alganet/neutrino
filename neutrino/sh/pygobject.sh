@@ -4,7 +4,7 @@
 # python3 with PyGObject is on far more Linux machines than any GI-capable
 # JavaScript interpreter is -- it is what the desktop's own tooling is written
 # in -- but this file is JavaScript, and a Python driver that re-derived
-# extractHtmlDocument, applyContentPolicy, parseMessage and mayOpenExternal
+# extractHtmlDocument, parseMessage and mayOpenExternal
 # would be a second copy of every decision the other three lanes share. Two
 # copies of a content policy is one copy that is wrong, and test/parse.sh
 # exists because this project has already paid for cross-engine divergence.

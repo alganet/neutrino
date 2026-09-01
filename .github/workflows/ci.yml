@@ -180,7 +180,7 @@ jobs:
           bash netinstall/test/run.sh
       # The offline tier, which nothing in this repository has ever built.
       # An offline build says it denies the page network access, and
-      # the whole mechanism is one meta tag applyContentPolicy swaps into the
+      # the whole mechanism is one meta tag the offline overlay includes into the
       # extracted document. Its only assertion is parse.sh comparing two
       # strings; no engine has ever loaded a document carrying it. This step is
       # the measurement, and it asserts what three probing rounds read: nine
@@ -1189,7 +1189,7 @@ jobs:
           dbus-run-session -- bash netinstall/test/run.sh
       # The offline tier, which nothing in this repository has ever built.
       # An offline build says it denies the page network access, and
-      # the whole mechanism is one meta tag applyContentPolicy swaps into the
+      # the whole mechanism is one meta tag the offline overlay includes into the
       # extracted document. Its only assertion is parse.sh comparing two
       # strings; no engine has ever loaded a document carrying it. This step is
       # the measurement, and it asserts what three probing rounds read: nine
@@ -2282,7 +2282,7 @@ jobs:
         run: cat ~/navlogs/nav.log
       # The offline tier, which nothing in this repository has ever built.
       # An offline build says it denies the page network access, and
-      # the whole mechanism is one meta tag applyContentPolicy swaps into the
+      # the whole mechanism is one meta tag the offline overlay includes into the
       # extracted document. Its only assertion is parse.sh comparing two
       # strings; no engine has ever loaded a document carrying it. This step is
       # the measurement, and it asserts what three probing rounds read: nine
@@ -2787,7 +2787,7 @@ jobs:
           exit $TEST_EXIT
       # The offline tier, which nothing in this repository has ever built.
       # An offline build says it denies the page network access, and
-      # the whole mechanism is one meta tag applyContentPolicy swaps into the
+      # the whole mechanism is one meta tag the offline overlay includes into the
       # extracted document. Its only assertion is parse.sh comparing two
       # strings; no engine has ever loaded a document carrying it. This step is
       # the measurement, and it asserts what three probing rounds read: nine

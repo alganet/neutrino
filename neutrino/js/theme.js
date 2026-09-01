@@ -1,7 +1,8 @@
     // The palette, in one place, because five readers and one normalizer
     // and one payload check all have to agree on it. A string rather than
     // an array literal walk: JScript.NET is the engine that has to compile
-    // this file, and hasTier already reads a set this way.
+    // this file, and a comma-separated set is how the launcher already
+    // spells one.
     NeutrinoWebview.themeKeys = "background,foreground,base,text,accent,accentText,border";
     NeutrinoWebview.themeSources = "gtk,qt,macos,windows";
 

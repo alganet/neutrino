@@ -46,7 +46,7 @@
         var source = driver.readFile(scriptPath);
         var html = this.themedDocument(
             this.titledDocument(
-                this.applyContentPolicy(this.extractHtmlDocument(source)),
+                this.extractHtmlDocument(source),
                 config.title),
             this.theme);
         var pageScript = this.extractPageScript(source);

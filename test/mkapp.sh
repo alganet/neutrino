@@ -14,6 +14,11 @@
 # ten directories with one file each to say so would be ten directories saying
 # nothing.
 #
+# --tier is overlay selection and nothing else now. There is no tier stamp in an
+# artifact and nothing at run time reads one: neutrino/tier/<name> replaces the
+# few parts that tier varies, so a testing build has the scaffolding in it and a
+# release build does not have it at all.
+#
 # So this builds the overlay instead. It writes app.js and config.json into a
 # temporary, and the flags above are the keys of config.json spelled as command
 # line arguments -- which is what build.sh took before the two builders became
@@ -105,25 +110,36 @@ nt_default() {
            -e "s/^ *\"$1\": \([^\",]*\),\{0,1\}\$/\1/p" "$DEFAULTS" | head -1
 }
 
-[ -n "$NT_TIERS" ] || NT_TIERS="$(nt_default tiers)"
 [ -n "$NT_TITLE" ] || NT_TITLE="$(nt_default title)"
 [ -n "$NT_WIDTH" ] || NT_WIDTH="$(nt_default width)"
 [ -n "$NT_HEIGHT" ] || NT_HEIGHT="$(nt_default height)"
 [ -n "$NT_BG" ] || NT_BG="$(nt_default background)"
 [ -n "$NT_DECOR" ] || NT_DECOR="$(nt_default decorations)"
 
-# "default" is not optional and assemble.sh refuses a list that leaves it out,
-# rather than adding it quietly. Adding it here is this program being sugar: a
-# caller writing --tier=testing means "testing as well", the way build.sh's flag
-# did, and the file that gets written says both.
-case ",$NT_TIERS," in *,default,*) ;; *) NT_TIERS="default,$NT_TIERS" ;; esac
+# A tier is an overlay under neutrino/tier, so --tier=testing,offline is two
+# more directories in the search path and nothing else. `default` names no
+# overlay: it is what a build with none of them is, and it is accepted so that
+# the ninety call sites that spell it do not have to change.
+NT_TIER_OVERLAYS=""
+for nt_t in $(printf '%s' "$NT_TIERS" | tr ',' ' '); do
+    case "$nt_t" in
+        default) continue ;;
+        testing|offline|tight) ;;
+        *) echo "mkapp.sh: unknown tier '$nt_t' (want: default, testing, offline, tight)" >&2; exit 1 ;;
+    esac
+    if [ ! -d "$SOURCE/tier/$nt_t" ]; then
+        echo "mkapp.sh: no overlay at $SOURCE/tier/$nt_t" >&2
+        exit 1
+    fi
+    NT_TIER_OVERLAYS="$NT_TIER_OVERLAYS$SOURCE/tier/$nt_t
+"
+done
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 cat > "$WORK/config.json" <<EOF
 {
-    "tiers": "$NT_TIERS",
     "title": "$NT_TITLE",
     "width": $NT_WIDTH,
     "height": $NT_HEIGHT,
@@ -137,6 +153,14 @@ cp "$APP_JS" "$WORK/app.js"
 # The generated overlay goes last so it wins: a --overlay named on the command
 # line supplies parts this one does not write, and the app is this one's.
 set -- --no-verify
+# Tiers first, so a --overlay named on the command line can still replace a part
+# one of them supplies.
+while IFS= read -r nt_d; do
+    [ -n "$nt_d" ] || continue
+    set -- "$@" --overlay "$nt_d"
+done <<EOF
+$NT_TIER_OVERLAYS
+EOF
 while IFS= read -r nt_d; do
     [ -n "$nt_d" ] || continue
     set -- "$@" --overlay "$nt_d"

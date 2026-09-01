@@ -427,7 +427,7 @@ html = call(
     "themedDocument",
     call(
         "titledDocument",
-        call("applyContentPolicy", call("extractHtmlDocument", js_string(source))),
+        call("extractHtmlDocument", js_string(source)),
         js_string(title),
     ),
     theme_state["value"],

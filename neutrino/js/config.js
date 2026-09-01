@@ -13,14 +13,6 @@
          * loadHTML, so these cannot come from the markup the way the style and
          * the body do -- there is no document yet when they are asked for.
          *
-         * `tiers` is the exception that proves the rule: it is not read by
-         * createWindow but by the shell region, which includes this same file
-         * as a here document of its own. Two languages, one file, included
-         * twice by one assembler -- so they cannot be built disagreeing, and
-         * neither of them consults the environment. It lives here because an
-         * app declares its own confinement, and the file that declares it is
-         * the file that ships.
-         *
          * `url` used to sit here and had not been read by anything since the
          * launcher stopped navigating to a remote page. It is gone rather than
          * kept, because a config entry nothing consumes reads as a feature.
@@ -70,7 +62,4 @@
 @@include config.json
     };
 
-    NeutrinoWebview.hasTier = function (name) {
-        return ("," + String(this.config.tiers) + ",").indexOf("," + name + ",") >= 0;
-    };
 
