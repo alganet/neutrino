@@ -25,6 +25,11 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 
+# Set once the window is found, read by Take-Screenshot, which runs later and
+# re-resolves it if it has gone stale. Declared here so the capture works even
+# when it happens before Wait-ForApp has run.
+$script:shotHwnd = [IntPtr]::Zero
+
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -137,15 +142,55 @@ function Report-PackageState {
     Write-Host "report: WebView2 package: $($files.Count) file(s), $bytes byte(s)"
 }
 
+# The app's own window, with its frame, and not the whole screen.
+#
+# verify-std.ps1 was changed to crop two rounds ago and this file was not, so
+# the two Windows verifiers photographed the same machine differently: every
+# other lane's sheet came down to 200-550 KB of cropped windows while
+# `windows-launch` stayed at 1.8 MB of desktop, wallpaper, taskbar and the
+# "Test Mode" watermark. A sheet is for comparing lanes, and two lanes framed
+# differently cannot be compared.
+#
+# GetWindowRect and not GetClientRect: the frame is part of what a launch
+# screenshot is showing. Falls back to the full screen and says which it did,
+# because 00-initial is taken the moment a window handle exists and that is
+# earlier than the window being on screen.
 function Take-Screenshot($name) {
     try {
         $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-        $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+        $x = $bounds.X; $y = $bounds.Y
+        $w = $bounds.Width; $h = $bounds.Height
+        $how = "the whole screen"
+        $waited = 0
+        while ($waited -lt 12) {
+            $hwnd = $script:shotHwnd
+            $r = New-Object WinAPI+RECT
+            if (-not ($hwnd -and $hwnd -ne [IntPtr]::Zero -and [WinAPI]::GetWindowRect($hwnd, [ref]$r))) {
+                $live = Get-Process -Name $AppName -ErrorAction SilentlyContinue |
+                        Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+                if ($live) { $hwnd = $live.MainWindowHandle; $script:shotHwnd = $hwnd }
+            }
+            if ($hwnd -and $hwnd -ne [IntPtr]::Zero -and [WinAPI]::GetWindowRect($hwnd, [ref]$r)) {
+                $rw = $r.Right - $r.Left
+                $rh = $r.Bottom - $r.Top
+                if ($rw -gt 0 -and $rh -gt 0 -and $rw -le 4096 -and $rh -le 4096) {
+                    $x = $r.Left; $y = $r.Top; $w = $rw; $h = $rh
+                    $how = "the app's own window and its frame"
+                    break
+                }
+            }
+            $waited++
+            Start-Sleep -Milliseconds 250
+        }
+        $bitmap = New-Object System.Drawing.Bitmap $w, $h
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-        $graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.Size)
+        $graphics.CopyFromScreen($x, $y, 0, 0, $bitmap.Size)
         $bitmap.Save("$ScreenshotDir\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
         $bitmap.Dispose(); $graphics.Dispose()
-    } catch {}
+        Write-Host "  shot ${name}: $how ($($w)x$($h) at $x,$y)"
+    } catch {
+        Write-Host "  shot ${name}: the capture threw: $($_.Exception.Message)"
+    }
 }
 
 function Wait-ForApp() {
@@ -163,6 +208,9 @@ function Wait-ForApp() {
             # different question, and re-reading the name every poll would
             # silently start reporting about it.
             $script:WatchPid = $p.Id
+            # Held for Take-Screenshot, which runs much later and re-resolves
+            # this if it has gone stale.
+            $script:shotHwnd = $p.MainWindowHandle
             Write-Host "report: watch[window] pid=$($p.Id) window at $(Watch-Elapsed)ms"
             return $p
         }

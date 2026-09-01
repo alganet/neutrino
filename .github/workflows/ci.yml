@@ -58,6 +58,11 @@ jobs:
       # the same thing for the same reason. Nothing shipped may do this; it is
       # root's decision, and a test is the only thing entitled to make it.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      # Before anything runs, so no step can start the machine's browser. See
+      # test/nobrowser.sh: `mayOpenExternal` ends at `xdg-open`, and on this
+      # image that is Google Chrome, whose terms-of-service window then sits on
+      # the display for the rest of the job and in every screenshot after it.
+      - run: bash test/nobrowser.sh
       - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
       # The engine walk, asserted with stub interpreters: no display, no
@@ -137,7 +142,7 @@ jobs:
           bash test/neutrinoattack.cmd > ~/attack.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
-          pkill -f neutrinoattack 2>/dev/null || true
+          bash test/reap.sh neutrinoattack ATTACK
           cat ~/attack-verify.log
           bash test/annotate.sh gjs-attack ~/attack-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
@@ -164,7 +169,7 @@ jobs:
           bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
-          pkill -f neutrinoearly 2>/dev/null || true
+          bash test/reap.sh neutrinoearly EARLY
           kill "$STALL_PID" 2>/dev/null || true
           kill "$PAGES_PID" 2>/dev/null || true
           cat ~/early-verify.log
@@ -483,6 +488,11 @@ jobs:
             { echo "cjs did not install; nothing below is a reading" >&2; exit 1; }
           echo "engine: $(command -v cjs)"
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      # Before anything runs, so no step can start the machine's browser. See
+      # test/nobrowser.sh: `mayOpenExternal` ends at `xdg-open`, and on this
+      # image that is Google Chrome, whose terms-of-service window then sits on
+      # the display for the rest of the job and in every screenshot after it.
+      - run: bash test/nobrowser.sh
       - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
       # The walk itself: no display, no toolkit, stub engines. It asserts what a
@@ -1047,6 +1057,11 @@ jobs:
           if ! command -v qml6 >/dev/null 2>&1 && ! command -v qml >/dev/null 2>&1 && ! command -v qmlscene6 >/dev/null 2>&1 && ! command -v qmlscene-qt6 >/dev/null 2>&1; then
             sudo apt install -y qml6 || sudo apt install -y qml-qt6 || sudo apt install -y qmlscene-qt6 || true
           fi
+      # Before anything runs, so no step can start the machine's browser. See
+      # test/nobrowser.sh: `mayOpenExternal` ends at `xdg-open`, and on this
+      # image that is Google Chrome, whose terms-of-service window then sits on
+      # the display for the rest of the job and in every screenshot after it.
+      - run: bash test/nobrowser.sh
       - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
       # The engine walk, asserted with stub interpreters: no display, no
@@ -1167,7 +1182,7 @@ jobs:
           bash test/neutrinoattack.cmd > ~/attack.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
-          pkill -f neutrinoattack 2>/dev/null || true
+          bash test/reap.sh neutrinoattack ATTACK
           cat ~/attack-verify.log
           bash test/annotate.sh kde-attack ~/attack-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
@@ -1198,7 +1213,7 @@ jobs:
           bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
-          pkill -f neutrinoearly 2>/dev/null || true
+          bash test/reap.sh neutrinoearly EARLY
           kill "$STALL_PID" 2>/dev/null || true
           kill "$PAGES_PID" 2>/dev/null || true
           cat ~/early-verify.log
@@ -2820,7 +2835,7 @@ jobs:
           bash test/neutrinoattack.cmd > ~/neutrino-attack.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
-          pkill -f neutrinoattack 2>/dev/null || true
+          bash test/reap.sh neutrinoattack ATTACK
           cat ~/attack-verify.log
           echo "=== app output ==="
           cat ~/neutrino-attack.log || true
@@ -2844,7 +2859,7 @@ jobs:
           bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
-          pkill -f neutrinoearly 2>/dev/null || true
+          bash test/reap.sh neutrinoearly EARLY
           kill "$STALL_PID" 2>/dev/null || true
           kill "$PAGES_PID" 2>/dev/null || true
           cat ~/early-verify.log

@@ -89,7 +89,25 @@ function engine() {
     if (ua.indexOf("QtWebEngine") !== -1) { return "QtWebEngine"; }
     if (ua.indexOf("Chrome") !== -1) { return "Chromium"; }
     if (ua.indexOf("Safari") !== -1) { return "WebKit"; }
-    return "unknown";
+    // WKWebView, which carries neither "Safari" nor any of the three above.
+    // Added from a measurement and not from a guess: the previous round made
+    // this branch print what it had actually read, and the macOS lane came back
+    // `unknown[Mozilla/5.0 Macintosh Intel Mac OS X 10157 Apple]` -- an
+    // AppleWebKit user agent with no product token on the end, because nothing
+    // sets applicationNameForUserAgent. Last of the WebKit tests, so the three
+    // engines above that also carry "AppleWebKit" have already been named.
+    if (ua.indexOf("AppleWebKit") !== -1) { return "WebKit"; }
+    // Not "unknown". The macOS lane has answered `eng=unknown` fifteen times a
+    // run for as long as this function has existed -- WKWebView's user agent
+    // does not carry any of the four names above -- and "unknown" is the one
+    // reply that cannot be acted on: it does not say whether the string was
+    // empty, or absent, or simply unrecognised. A slice of what was actually
+    // read turns the next run into the measurement that settles it.
+    //
+    // Safe to change: nothing in any verifier matches on `eng=`, so this is
+    // read by people and not by assertions.
+    return ua === "" ? "unknown-empty-ua"
+        : "unknown[" + ua.replace(/[^A-Za-z0-9.\/ ]/g, "").substring(0, 48) + "]";
 }
 
 // Everything the page believes about where it is. Every one of these is a

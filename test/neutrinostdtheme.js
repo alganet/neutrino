@@ -92,7 +92,25 @@ function engine() {
     if (ua.indexOf("QtWebEngine") !== -1) { return "QtWebEngine"; }
     if (ua.indexOf("Chrome") !== -1) { return "Chromium"; }
     if (ua.indexOf("Safari") !== -1) { return "WebKit"; }
-    return "unknown";
+    // WKWebView, which carries neither "Safari" nor any of the three above.
+    // Added from a measurement and not from a guess: the previous round made
+    // this branch print what it had actually read, and the macOS lane came back
+    // `unknown[Mozilla/5.0 Macintosh Intel Mac OS X 10157 Apple]` -- an
+    // AppleWebKit user agent with no product token on the end, because nothing
+    // sets applicationNameForUserAgent. Last of the WebKit tests, so the three
+    // engines above that also carry "AppleWebKit" have already been named.
+    if (ua.indexOf("AppleWebKit") !== -1) { return "WebKit"; }
+    // Not "unknown". The macOS lane has answered `eng=unknown` fifteen times a
+    // run for as long as this function has existed -- WKWebView's user agent
+    // does not carry any of the four names above -- and "unknown" is the one
+    // reply that cannot be acted on: it does not say whether the string was
+    // empty, or absent, or simply unrecognised. A slice of what was actually
+    // read turns the next run into the measurement that settles it.
+    //
+    // Safe to change: nothing in any verifier matches on `eng=`, so this is
+    // read by people and not by assertions.
+    return ua === "" ? "unknown-empty-ua"
+        : "unknown[" + ua.replace(/[^A-Za-z0-9.\/ ]/g, "").substring(0, 48) + "]";
 }
 
 // rgb(r, g, b) or rgba(...) to six hex digits, so a reading is comparable
@@ -208,8 +226,16 @@ function paint() {
         // picture: two screenshots of a flip have to differ at a glance, and a
         // page that stays white whatever the desktop does differs nowhere.
         var body = doc.body;
+        // The root element too, and not only the body. A body shorter than the
+        // viewport leaves the rest of the window painted by `html`, which is
+        // white by default: the dark half of the flip came back with a white
+        // band across the bottom of it, in a picture whose entire job is to
+        // show what colour the window is.
+        doc.documentElement.style.background = "var(--neutrino-Canvas, Canvas)";
         body.style.margin = "0";
+        body.style.minHeight = "100vh";
         body.style.padding = "14px 16px";
+        body.style.boxSizing = "border-box";
         body.style.background = "var(--neutrino-Canvas, Canvas)";
         body.style.color = "var(--neutrino-CanvasText, CanvasText)";
         body.style.font = "13px/1.5 system-ui, sans-serif";

@@ -3967,6 +3967,26 @@ exit $?;:<<'//</script></body></html>' #-->
                         } catch (_) {}
                         var windows = "?";
                         try { windows = String(dollar.NSApp.windows.count); } catch (_) {}
+                        /*
+                         * An eighth line, appended, which is the safe direction
+                         * this file's own note above describes.
+                         *
+                         * `windowNumber` is the CGWindowID, and it is here so a
+                         * screenshot on this platform can be of the app rather
+                         * than of the machine. `screencapture` with no target
+                         * photographs the whole display, and every picture the
+                         * macOS lane published in the last run carried a system
+                         * consent sheet across the middle of it -- one of them
+                         * carried nothing else at all. `screencapture -l` takes
+                         * this number and composites that window alone, so an
+                         * alert sitting on top of the app is simply not in the
+                         * frame.
+                         *
+                         * Scaffolding like the rest of writeStatus, behind the
+                         * same tier gate, and read by nothing that asserts.
+                         */
+                        var winNum = "?";
+                        try { winNum = String(win.windowNumber); } catch (_) {}
                         statusTicks = statusTicks + 1;
                         var status = title + "\n" +
                             Math.round(f.size.width) + "x" + Math.round(f.size.height) + "\n" +
@@ -3974,7 +3994,8 @@ exit $?;:<<'//</script></body></html>' #-->
                             inner + "\n" +
                             work + "\n" +
                             windows + "\n" +
-                            statusTicks;
+                            statusTicks + "\n" +
+                            winNum;
                         var statusPath = dollar.NSTemporaryDirectory().js + "neutrino-title.txt";
                         dollar.NSString.alloc.initWithUTF8String(status)
                             .writeToFileAtomicallyEncodingError(statusPath, true, 4, null);

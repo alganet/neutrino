@@ -961,7 +961,50 @@ shoot() {
             echo "  shot: the whole root window; the framed capture was not available"
         fi
     else
-        screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
+        # The app's own window, by CGWindowID, and not the display.
+        #
+        # `screencapture` with no target photographs everything on screen, and
+        # on this platform that has included a system consent sheet -- "bash is
+        # requesting to bypass the system private window picker" -- in all
+        # fourteen pictures of the last run. The first one was the sheet on an
+        # empty desktop and nothing else. It is a periodic macOS reminder shown
+        # to any process that captures the screen, there is no switch for it,
+        # and it cannot be clicked from here.
+        #
+        # `-l` composites one window, so an alert sitting on top of the app is
+        # not in the frame whether or not it is on screen. The number is line 8
+        # of the status file the launcher writes under the testing tier;
+        # `-o` drops the drop-shadow, which is desktop and not app.
+        #
+        # Falls back to the display and says which it did: the window probe
+        # closes its own window, a lane whose app never came up has no number to
+        # read, and a picture of the desktop is worth more than none as long as
+        # nobody mistakes it for the window.
+        WID="$(sed -n '8p' "$STATUS_FILE" 2>/dev/null)"
+        case "$WID" in
+            ''|*[!0-9]*)
+                screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
+                echo "  shot: the whole display; the launcher reported no window number" ;;
+            *)
+                # Retried for the reason verify-macos.sh's own copy gives: a
+                # window has a number before it is on screen, and the capture is
+                # what can tell the difference.
+                N=0
+                while [ "$N" -lt "${NT_SHOT_TRIES:-24}" ]; do
+                    if screencapture -x -o -l "$WID" "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null &&
+                       [ -s "$SHOT_DIR/$SHOT_NAME.png" ]; then
+                        break
+                    fi
+                    N=$((N + 1))
+                    sleep 0.25
+                done
+                if [ -s "$SHOT_DIR/$SHOT_NAME.png" ]; then
+                    echo "  shot: the probe's own window (CGWindowID $WID) after $((N * 250))ms"
+                else
+                    screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
+                    echo "  shot: the whole display; window $WID never became capturable"
+                fi ;;
+        esac
     fi
 }
 
