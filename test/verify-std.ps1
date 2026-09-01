@@ -38,6 +38,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
+# For Screen.PrimaryScreen: the capture below is of the whole desktop, and
+# the desktop's size is a thing to ask for rather than a constant to carry.
+Add-Type -AssemblyName System.Windows.Forms
 
 # Set once the window is found, read by Take-Screenshot. Script-scoped because
 # the two are called from different places and a parameter would have to be
@@ -87,36 +90,36 @@ function Get-Dwell() {
     return 1500
 }
 
-# The probe's own window, with its frame, and not the whole desktop.
+# The whole desktop, and not just the probe's own window.
 #
-# This grabbed a fixed 1280x800 of screen, so every picture carried the runner's
-# wallpaper, its taskbar, the "Windows Server 2025 Datacenter / Test Mode"
-# watermark and whatever console happened to be open behind the app -- one of
-# them a window of raw JSON, which is what a reader's eye lands on first. The
-# x11 half of this suite was changed to crop to the window in the same round;
-# leaving this one uncropped meant the same probe photographed differently
-# depending on the platform, and a reporting tool that does that is one nobody
-# can compare across lanes.
+# This cropped to the window for a round. The complaint that got it cropped was
+# that every picture carried the runner's wallpaper, its taskbar, the "Windows
+# Server 2025 Datacenter / Test Mode" watermark and whatever console happened to
+# be open behind the app -- one of them a window of raw JSON, which is what a
+# reader's eye lands on first.
 #
-# GetWindowRect and not GetClientRect, because the decoration pair is what these
-# pictures exist to compare and the client area is the half that does not differ.
+# All of that is true and none of it is a reason to crop. A sheet is read to
+# find out what the machine was doing, and a console full of JSON sitting over
+# the probe is a fact about the run, not noise to be framed out; a picture that
+# hides it makes the lane look tidier than it was. The window is still in the
+# shot, with its frame, which is what the decoration pair compares.
 #
-# Falls back to the full screen, and says which it did. A window that has gone
-# by the time the shutter fires -- which is the normal end of the `win` probe --
-# has no rect to read, and a picture of the desktop is worth more than no
-# picture as long as nobody mistakes it for the window.
+# It also drops the fixed 1280x800 this used to grab -- the desktop's real
+# bounds are one call away, and a hardcoded size that is wrong on a runner
+# quietly crops or letterboxes instead of saying so.
+#
+# The rect hunt stays, and is now only a wait plus a caption. It is re-resolved
+# from the live process rather than trusted from Wait-ForApp, because the handle
+# is taken when the window is first seen and the shutter fires much later: four
+# of seven captures in the run that added this had a stale handle and fell back
+# with "window up" in the same log. Knowing whether the window was actually on
+# screen when the shutter fired is the thing worth keeping from it, and the
+# normal end of the `win` probe -- which closes its own window on purpose -- is
+# the case where the honest answer is no.
 function Take-Screenshot($name) {
     try {
-        $x = 0; $y = 0; $w = 1280; $h = 800; $how = "the whole screen"
-        # Re-resolved here, not trusted from Wait-ForApp.
-        #
-        # The handle is taken when the window is first seen and the shutter
-        # fires much later; a handle that has gone stale in between fails
-        # GetWindowRect silently. Four of seven captures in the run that added
-        # this fell back to the full screen with "window up" in the same log,
-        # while the two theme-flip halves cropped correctly to 916x639. Asking
-        # the live process again costs one call and removes the difference.
-        #
+        $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $how = "the whole desktop; no window of the probe was up to wait for"
         # StdWinAPI+RECT: the struct is nested inside the class, which is the
         # spelling the two callers below already use.
         $waited = 0
@@ -132,20 +135,19 @@ function Take-Screenshot($name) {
                 $rw = $r.Right - $r.Left
                 $rh = $r.Bottom - $r.Top
                 if ($rw -gt 0 -and $rh -gt 0 -and $rw -le 4096 -and $rh -le 4096) {
-                    $x = $r.Left; $y = $r.Top; $w = $rw; $h = $rh
-                    $how = "the probe's own window and its frame after $($waited * 250)ms"
+                    $how = "the whole desktop, with the probe's window (${rw}x${rh} at $($r.Left),$($r.Top)) on it after $($waited * 250)ms"
                     break
                 }
             }
             $waited++
             Start-Sleep -Milliseconds 250
         }
-        $b = New-Object System.Drawing.Bitmap $w, $h
-        $g = [System.Drawing.Graphics]::FromImage($b)
-        $g.CopyFromScreen($x, $y, 0, 0, $b.Size)
-        $b.Save("$ScreenshotDir\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
-        $b.Dispose(); $g.Dispose()
-        Write-Host "  shot: $how ($($w)x$($h) at $x,$y)"
+        $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
+        $bmp.Save("$ScreenshotDir\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+        $bmp.Dispose(); $g.Dispose()
+        Write-Host "  shot: $how ($($b.Width)x$($b.Height) at $($b.X),$($b.Y))"
     } catch {
         Write-Host "  shot: the capture threw: $($_.Exception.Message)"
     }

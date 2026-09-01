@@ -921,6 +921,15 @@ analyse_theme() {
 # The others end on an `-END` state with the window still up, which the
 # `onscreen at capture` line beside each of them now says out loud.
 shoot() {
+    # Declared local, and not for tidiness. $PROBE is this script's probe name --
+    # geom, doc, win, theme -- and the shutter here briefly had a variable of its
+    # own by that name holding a path to a scratch PNG. The `win` lane is the one
+    # photographed before the record loop rather than after it, so everything
+    # downstream read the shutter's value: it failed its own analysis with "no
+    # analysis for probe '/var/.../neutrino-shot-probe.png'", then took a second
+    # picture -- of the desktop after the probe had closed its window -- over the
+    # first. A function called once can still be what breaks every line after it.
+    local ONSCREEN w WID SHOT_PROBE SHOT_SEEN N
     if [ "$PLATFORM" = x11 ]; then
         ONSCREEN=""
         for w in $(x11_toplevels); do
@@ -934,73 +943,68 @@ shoot() {
             "") echo "  onscreen: nothing is on screen" ;;
             *"]"*"]"*) echo "  onscreen: this desktop has more than one window on it" ;;
         esac
-        # The probe's own window, with the frame around it -- not the root.
+        # The whole root window, and not the probe's own.
         #
-        # Root capture photographs the desktop, and the desktop is not this
-        # lane's to control. `gjs` reported "Google Chrome and ChromeOS
-        # Additional Terms of Service" on seven of its eight captures in the
-        # first run that asked: the offline probe's openExternal control hands a
-        # url to the machine's browser, which is the point of that control, and
-        # Chrome's first-run dialog then sits over every picture the lane takes
-        # afterwards. A reader would take the top window for the subject.
+        # This lane cropped to the window for a while, and the reason was real:
+        # the desktop is not this lane's to control, and `gjs` reported "Google
+        # Chrome and ChromeOS Additional Terms of Service" on seven of its eight
+        # captures in the first run that asked -- the offline probe's
+        # openExternal control hands a url to the machine's browser, which is
+        # the point of that control, and Chrome's first-run dialog then sits
+        # over every picture the lane takes afterwards.
         #
-        # -frame keeps the title bar and border in shot, which the decoration
-        # pair exists to compare -- a client-area capture would make the
-        # decorated and chromeless halves identical pictures.
+        # Those windows have not gone anywhere; cropping only moved them out of
+        # the frame. A sheet is read to find out what the machine was doing, so
+        # the dialog belongs in the picture, where a reader can see it and name
+        # it -- and the `onscreen at capture` line above names it too, so no
+        # reader has to mistake the top window for the subject.
         #
-        # Falls back to the root, and says which it did: a lane with no
-        # compliant window manager has no frame to capture, and a picture of
-        # the wrong thing is better than no picture as long as it is labelled.
-        if [ -n "$X11_WID" ] &&
-           import -frame -window "$X11_WID" "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null &&
-           [ -s "$SHOT_DIR/$SHOT_NAME.png" ]; then
-            echo "  shot: the probe's own window and its frame (id $X11_WID)"
-        else
-            import -window root "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
-            echo "  shot: the whole root window; the framed capture was not available"
-        fi
+        # The frame comes along for free: a root capture holds the title bar and
+        # border that the decoration pair exists to compare, which is what
+        # `-frame` was buying before.
+        import -window root "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
+        echo "  shot: the whole root window"
     else
-        # The app's own window, by CGWindowID, and not the display.
+        # The whole display, and not just the probe's own window.
         #
-        # `screencapture` with no target photographs everything on screen, and
-        # on this platform that has included a system consent sheet -- "bash is
-        # requesting to bypass the system private window picker" -- in all
-        # fourteen pictures of the last run. The first one was the sheet on an
-        # empty desktop and nothing else. It is a periodic macOS reminder shown
-        # to any process that captures the screen, there is no switch for it,
-        # and it cannot be clicked from here.
+        # Same rule as the x11 half above and as verify-macos.sh, whose own copy
+        # of this carries the long version: a sheet is read to see the machine,
+        # and `screencapture -l` composites one window and shows nothing else.
+        # The system consent sheet -- "bash is requesting to bypass the system
+        # private window picker" -- is back in these frames with everything
+        # else on the desktop, which is the cost of photographing the desktop.
         #
-        # `-l` composites one window, so an alert sitting on top of the app is
-        # not in the frame whether or not it is on screen. The number is line 8
-        # of the status file the launcher writes under the testing tier;
-        # `-o` drops the drop-shadow, which is desktop and not app.
-        #
-        # Falls back to the display and says which it did: the window probe
-        # closes its own window, a lane whose app never came up has no number to
-        # read, and a picture of the desktop is worth more than none as long as
-        # nobody mistakes it for the window.
+        # The `-l` call survives as the shutter's wait, not as the picture. A
+        # window has a CGWindowID before it is composited, and compositing it is
+        # the one thing that can tell the difference; the probe writes to a
+        # scratch file nobody keeps and the display shot follows it. The number
+        # is line 8 of the status file the launcher writes under the testing
+        # tier, and a lane whose app never came up has none -- so the display
+        # shot is taken anyway, saying that nothing was waited for. The window
+        # probe closes its own window on purpose, which is that case too.
         WID="$(sed -n '8p' "$STATUS_FILE" 2>/dev/null)"
+        SHOT_PROBE="${TMPDIR:-/tmp}/neutrino-shot-probe.png"
         case "$WID" in
             ''|*[!0-9]*)
                 screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
-                echo "  shot: the whole display; the launcher reported no window number" ;;
+                echo "  shot: the whole display; the launcher reported no window number, so nothing was waited for" ;;
             *)
-                # Retried for the reason verify-macos.sh's own copy gives: a
-                # window has a number before it is on screen, and the capture is
-                # what can tell the difference.
                 N=0
+                SHOT_SEEN=""
                 while [ "$N" -lt "${NT_SHOT_TRIES:-24}" ]; do
-                    if screencapture -x -o -l "$WID" "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null &&
-                       [ -s "$SHOT_DIR/$SHOT_NAME.png" ]; then
+                    if screencapture -x -o -l "$WID" "$SHOT_PROBE" 2>/dev/null &&
+                       [ -s "$SHOT_PROBE" ]; then
+                        SHOT_SEEN=yes
                         break
                     fi
                     N=$((N + 1))
                     sleep 0.25
                 done
-                if [ -s "$SHOT_DIR/$SHOT_NAME.png" ]; then
-                    echo "  shot: the probe's own window (CGWindowID $WID) after $((N * 250))ms"
+                rm -f "$SHOT_PROBE"
+                screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
+                if [ -n "$SHOT_SEEN" ]; then
+                    echo "  shot: the whole display, with the probe's window (CGWindowID $WID) on it after $((N * 250))ms"
                 else
-                    screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
                     echo "  shot: the whole display; window $WID never became capturable"
                 fi ;;
         esac

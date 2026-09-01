@@ -3971,16 +3971,16 @@ exit $?;:<<'//</script></body></html>' #-->
                          * An eighth line, appended, which is the safe direction
                          * this file's own note above describes.
                          *
-                         * `windowNumber` is the CGWindowID, and it is here so a
-                         * screenshot on this platform can be of the app rather
-                         * than of the machine. `screencapture` with no target
-                         * photographs the whole display, and every picture the
-                         * macOS lane published in the last run carried a system
-                         * consent sheet across the middle of it -- one of them
-                         * carried nothing else at all. `screencapture -l` takes
-                         * this number and composites that window alone, so an
-                         * alert sitting on top of the app is simply not in the
-                         * frame.
+                         * `windowNumber` is the CGWindowID, and it is here so
+                         * the verifier can tell when this window reaches the
+                         * screen. The pictures are of the whole display -- the
+                         * machine is the subject, consent sheet and all -- but
+                         * a window has a number before it is composited, and
+                         * `screencapture -l` on that number is the one call
+                         * that fails until it is. So the shutter waits on it
+                         * and then photographs the display: `00-initial` was an
+                         * empty desktop until something on this side could say
+                         * when the window had arrived.
                          *
                          * Scaffolding like the rest of writeStatus, behind the
                          * same tier gate, and read by nothing that asserts.

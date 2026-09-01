@@ -217,8 +217,9 @@ h2 { font-size:13px; text-transform:uppercase; letter-spacing:.07em;
 figure { margin:0; background:var(--card); border:1px solid var(--line);
          border-radius:9px; overflow:hidden; }
 figure img { display:block; width:100%; height:auto; background:#0a0a0a; cursor:zoom-in; }
-/* Clicking a picture makes it span every column of the grid, which on any
-   normal window is wider than the 1024 or 1280 it was captured at. In flow and
+/* Clicking a picture makes it span every column of the grid, which is still
+   narrower than the desktop these are captured at -- the browser scales it
+   down, and the row it spans is where the detail is legible. In flow and
    not as a fixed overlay, because an overlay needs a second copy of the image
    and the pictures are the whole weight of this file: inlining each one twice
    put a 25-shot lane at 2.4 MB for 1.2 MB of pictures. */
