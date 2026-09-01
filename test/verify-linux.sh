@@ -43,17 +43,12 @@ WID_SRC_FILE="$(mktemp)"
 trap 'rm -f "$WID_SRC_FILE"' EXIT
 wid_src() { cat "$WID_SRC_FILE" 2>/dev/null || echo "?"; }
 
-# The window manager's own name, because where `moveTo` puts a frame is its
-# decision and the two this project runs under decide differently. Measured,
-# same request, same probe, one round:
-#
-#   metacity   moveTo(0,0) -> frame at 0,37   (extents 0,0,37,0)
-#   openbox    moveTo(0,0) -> frame at 0,0    (extents 1,1,25,1)
-#
-# So there is no rule to derive and nothing to be clever about: openbox honours
-# the request and metacity offsets it by its own title bar. WEBSTD.md has said
-# `moveTo` has no portable meaning and to assert per lane to measured values
-# since the round that found it, and this is that.
+# The window manager's own name. It used to decide what `assert_position` was
+# allowed to expect, against a table that said metacity offsets a move by its
+# own title bar and openbox honours it exactly. Neither of those was ever a
+# fact about a window manager -- see `assert_position`, which now asserts one
+# rule on both -- so what this is for is the report line: a lane meeting a
+# window manager nobody here has run says which one it was.
 wm_name() {
     local check
     check=$(xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | sed -n 's/.*# *\(0x[0-9a-fA-F]*\).*/\1/p' | head -1)
@@ -130,60 +125,113 @@ assert_geometry() {
     fi
 }
 
-# The frame origin, exactly, against what this window manager was measured to do.
+# The decoration's thickness, as the window manager publishes it: left, right,
+# top, bottom. It is the quantity the pictures agree with -- metacity's frame
+# reads `0,0,37,0` and its title bar measures 37 rows in 04-step3.png, openbox's
+# reads `1,1,20,5` and its border is one column wide.
+frame_extents() {
+    local wid="$1" line out=""
+    line="$(xprop -id "$wid" _NET_FRAME_EXTENTS 2>/dev/null)"
+    case "$line" in
+        *=*)
+            line="${line#*= }"
+            out="$(echo "$line" | cut -d, -f1 | tr -d ' '),$(echo "$line" | cut -d, -f2 | tr -d ' '),$(echo "$line" | cut -d, -f3 | tr -d ' '),$(echo "$line" | cut -d, -f4 | tr -d ' ')"
+            ;;
+    esac
+    case "$out" in
+        *[!0-9,]*|""|,,,) echo "" ;;
+        *) echo "$out" ;;
+    esac
+}
+
+# Whether anything framed this window at all, asked of the tree rather than of
+# the hint -- the same question verify-std.sh asks, for the same reason: a
+# missing hint is a reading only once something else says the window has no
+# frame. 0 framed, 1 nothing framed it, 2 the tree could not be read.
+framed() {
+    local wid="$1" tree parent rootw
+    tree="$(xwininfo -id "$wid" -tree 2>/dev/null)"
+    [ -n "$tree" ] || return 2
+    parent="$(printf '%s' "$tree" | sed -n 's/.*Parent window id: *\(0x[0-9a-fA-F]*\).*/\1/p' | head -1)"
+    rootw="$(printf '%s' "$tree" | sed -n 's/.*Root window id: *\(0x[0-9a-fA-F]*\).*/\1/p' | head -1)"
+    [ -n "$parent" ] && [ -n "$rootw" ] || return 2
+    [ "$((parent))" != "$((rootw))" ]
+}
+
+# The frame's outside corner -- the corner a person can see -- against the
+# position the app asked for. One rule, both window managers, no table.
 #
-# `gtk_window_move` positions the *frame*; xdotool's Position is the *client*
-# origin, and their difference is the reparenting offset -- 26,60 under metacity
-# and 1,20 under openbox. That difference is what the hundred pixels here were
-# paying for. The frame origin is derived from it, the way verify-std.sh has
-# derived it all along, and the derivation is what gets asserted.
+# The table this replaces said metacity offsets a move by its own title bar and
+# openbox honours it exactly, and it was derived as `xdotool's Position minus
+# xwininfo's Relative upper-left`. Every piece of that is the client corner
+# wearing a frame's name, and both sheets from run 33484835636 say so:
 #
-# An unmeasured window manager is a failure and not a default. It is the one
-# outcome this file cannot have an answer for: guessing 0,0 would pass silently
-# under openbox and fail confusingly under anything metacity-like. The reading
-# is printed either way, so the round that meets a new one can add its row.
+#   gjs, metacity, 04-step3.png -- decoration at 0,0, content at 0,37.
+#     raw=26,97 rel=26,60, so the old formula printed `frame origin = 0,37` and
+#     the table called that 37 metacity adding its title bar to the request.
+#     The frame is at 0,0, where the app asked for it. 0,37 is the client.
+#
+#   kde, openbox, 04-step3.png -- content at 0,0 and the decoration nowhere on
+#     the display. raw=1,20 rel=1,20, so the old formula printed `frame origin
+#     = 0,0` and passed a window whose title bar and left border are off the
+#     top-left of the screen. Extents `1,1,20,5` put that frame at -1,-20.
+#
+# xdotool's Position already carries the reparenting offset -- measured beside
+# xwininfo's absolute on both lanes, `88,181` against `62,121` under metacity
+# and `63,104` against `62,84` under openbox -- so subtracting the offset from
+# it lands back on the client corner every time. The two window managers were
+# never disagreeing about what a move means. The two *drivers* were, and the
+# table wrote one lane's defect down as a property of the other lane's window
+# manager, which is why this file passed the picture the fix was needed for.
+#
+# So: the client corner from xwininfo, the decoration's thickness from the
+# hint, and the frame is the first minus the second. Both routes are printed,
+# because the next round deserves the numbers and not the conclusion.
 assert_position() {
     local wid="$1" expected_x="$2" expected_y="$3"
-    local info pos actual_x actual_y rx ry derived="?"
+    local info pos raw="?" xw ax ay rx ry ext ext_src l t frame="?" wm fr
     info=$(xdotool getwindowgeometry "$wid" 2>/dev/null) || true
-    pos=$(echo "$info" | grep -oP 'Position: \K[0-9]+,[0-9]+') || true
-    actual_x="${pos%,*}"; actual_y="${pos#*,}"
-    local xw
+    pos=$(echo "$info" | grep -oP 'Position: \K-?[0-9]+,-?[0-9]+') || true
+    [ -n "$pos" ] && raw="$pos"
     xw=$(xwininfo -id "$wid" 2>/dev/null) || true
+    ax=$(printf '%s' "$xw" | sed -n 's/.*Absolute upper-left X: *\([0-9-]*\).*/\1/p' | head -1)
+    ay=$(printf '%s' "$xw" | sed -n 's/.*Absolute upper-left Y: *\([0-9-]*\).*/\1/p' | head -1)
     rx=$(printf '%s' "$xw" | sed -n 's/.*Relative upper-left X: *\([0-9-]*\).*/\1/p' | head -1)
     ry=$(printf '%s' "$xw" | sed -n 's/.*Relative upper-left Y: *\([0-9-]*\).*/\1/p' | head -1)
-    case "${rx:-x}${ry:-x}" in
-        *[!0-9-]*|"") ;;
-        *) derived="$(( actual_x - rx )),$(( actual_y - ry ))" ;;
-    esac
-    local wm; wm="$(wm_name)"
-    echo "report: position raw=${actual_x},${actual_y} rel=${rx:-?},${ry:-?} derived=${derived} wm=${wm} wid_src=$(wid_src)"
 
-    if [ "$derived" = "?" ]; then
-        echo "  FAIL: no reparent offset, so the frame origin cannot be derived; the raw client origin is ${actual_x},${actual_y}"
+    fr=0; framed "$wid" || fr=$?
+    case "$fr" in
+        1) ext="0,0,0,0"; ext_src="root" ;;
+        *)
+            ext="$(frame_extents "$wid")"
+            if [ -n "$ext" ]; then ext_src="hint"; else ext_src="absent"; fi
+            [ "$fr" = 2 ] && ext_src="${ext_src}-untreed"
+            ;;
+    esac
+
+    l=""; t=""
+    case "$ext" in
+        ?*) l="$(echo "$ext" | cut -d, -f1)"; t="$(echo "$ext" | cut -d, -f3)" ;;
+    esac
+    case "${ax:-x}${ay:-x}${l:-x}${t:-x}" in
+        *[!0-9-]*|"") ;;
+        *) frame="$(( ax - l )),$(( ay - t ))" ;;
+    esac
+
+    wm="$(wm_name)"
+    echo "report: position frame=${frame} client=${ax:-?},${ay:-?} extents=${ext:-none} via=${ext_src} rel=${rx:-?},${ry:-?} xdotool=${raw} wm=${wm} wid_src=$(wid_src)"
+
+    if [ "$frame" = "?" ]; then
+        echo "  FAIL: the frame's corner cannot be derived on this lane -- client=${ax:-?},${ay:-?} extents=${ext:-none} via=${ext_src}; every number below would be about a window nothing measured"
         FAILURES=$((FAILURES + 1))
         return
     fi
 
-    # The offset each window manager applies to a move request, measured. The
-    # request is added to it, so a probe that moves somewhere other than 0,0
-    # still reads off this table.
-    local off_x off_y
-    case "$wm" in
-        Metacity|metacity) off_x=0; off_y=37 ;;
-        Openbox|openbox)   off_x=0; off_y=0  ;;
-        *)
-            echo "  FAIL: window manager '${wm}' has not been measured here; moveTo(${expected_x},${expected_y}) put the frame at ${derived} -- add the row once that is confirmed to be what it always does"
-            FAILURES=$((FAILURES + 1))
-            return
-            ;;
-    esac
-
-    local want="$(( expected_x + off_x )),$(( expected_y + off_y ))"
-    if [ "$derived" = "$want" ]; then
-        echo "  PASS: frame origin = ${derived} (asked ${expected_x},${expected_y}; ${wm} offsets by ${off_x},${off_y})"
+    local want="${expected_x},${expected_y}"
+    if [ "$frame" = "$want" ]; then
+        echo "  PASS: frame origin = ${frame} (asked ${expected_x},${expected_y}; ${wm}, decoration ${l} left and ${t} above the content at ${ax},${ay})"
     else
-        echo "  FAIL: frame origin expected ${want} actual=${derived} under ${wm} (asked ${expected_x},${expected_y}); raw client origin ${actual_x},${actual_y}, reparent offset ${rx},${ry}"
+        echo "  FAIL: frame origin expected ${want} actual=${frame} under ${wm} (asked ${expected_x},${expected_y}); the content is at ${ax},${ay} with ${l} of decoration to its left and ${t} above it, so this move placed the content and not the window"
         FAILURES=$((FAILURES + 1))
     fi
 }

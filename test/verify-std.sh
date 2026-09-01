@@ -305,16 +305,23 @@ x11_recheck_extents() {
 # Once, before the loop. A reparenting offset does not change while a window is
 # up, and putting xwininfo in the hot path would cost a turn per frame for a
 # constant.
-# The offset actually used to derive a frame origin, and the evidence for it.
+# The offset, and the evidence that it is not the decoration.
 #
 # Measured, on a real window manager: `_NET_FRAME_EXTENTS` came back
 # `0, 0, 28, 0` while xwininfo's relative upper-left was `10, 36`. They are not
-# the same quantity and only one of them is the reparenting offset -- the hint
-# describes the decoration's thickness, and the offset is where the client
-# actually sits inside its frame. Round 1 derived positions from the extents and
-# disagreed with every engine by a constant; the sizes derived from the same
-# extents were right, which is the tell, because a size wants the thickness and
-# an origin wants the offset.
+# the same quantity -- the hint describes the decoration a person can see, and
+# the offset is where the client sits inside a frame window that can be larger
+# than that, because a frame carries invisible resize borders as well as a
+# title bar. The same disagreement is on the metacity lane, `0,0,37,0` against
+# `26,60`, and 04-step3.png settles which one the picture agrees with: the
+# title bar in it measures 37 rows.
+#
+# So an origin wants both, and wants them in order. The offset undoes xdotool
+# and lands on the client corner; the thickness comes off that and lands on the
+# frame's. Round 1 subtracted the extents alone from a number that already
+# needed the offset taken off it, got a constant wrong, and concluded the
+# extents were the wrong quantity for an origin. They were the wrong quantity
+# on their own.
 REL_X=0; REL_Y=0; REL_SRC="none"
 XW_ABS=""; XW_REL=""; XD_ABS=""
 x11_reparent_offset() {
@@ -394,16 +401,29 @@ record() {
             X=""; Y=""; WIDTH=""; HEIGHT=""
             eval "$(xdotool getwindowgeometry --shell "$X11_WID" 2>/dev/null)" 2>/dev/null
             inner="${WIDTH:-0}x${HEIGHT:-0}"
-            pos="$((${X:-0} - REL_X)),$((${Y:-0} - REL_Y))"
+            # Two subtractions and they take away different things. The first
+            # undoes xdotool, whose Position carries the reparenting offset
+            # already -- `88,181` where xwininfo's absolute says `62,121` under
+            # metacity, `63,104` against `62,84` under openbox -- and lands on
+            # the *client* corner. The second takes the decoration off it and
+            # lands on the frame's, which is the corner the other two platforms
+            # report and the one `framepos` hands to decodiff.sh.
+            #
+            # Only the first was here until this round, and the page said so:
+            # this loop and QtWebEngine disagreed by a constant "that the frame
+            # extents do not explain" on two of three x11 lanes. The extents
+            # explain it exactly. The engine was reporting the frame and this
+            # was reporting the client, and the constant between them was the
+            # title bar.
+            pos="$((${X:-0} - REL_X - FE_L)),$((${Y:-0} - REL_Y - FE_T))"
             outer="$(( ${WIDTH:-0} + FE_L + FE_R ))x$(( ${HEIGHT:-0} + FE_T + FE_B ))"
             # What X actually said, beside what this script made of it. Round 1
             # validated the size arithmetic -- computed outer matched
             # QtWebEngine's own outerWidth to the pixel on that lane -- and did
-            # not validate the position arithmetic: the page and this script
-            # disagreed by a constant that the frame extents do not explain, on
-            # two of three x11 lanes. A derived number and the number it was
-            # derived from are two different readings, and only one of them can
-            # be wrong; carrying both is how the next round says which.
+            # not validate the position arithmetic. A derived number and the
+            # number it was derived from are two different readings, and only
+            # one of them can be wrong; carrying both is how the next round
+            # says which.
             raw="${X:-0},${Y:-0}"
             tick="$turns"
         else
@@ -461,16 +481,25 @@ check_apparatus() {
     note "sampler platform=$PLATFORM turns=${TURNS:-0} transitions=$rows dwell_ms=$DWELL max_turn_gap_ms=$gap"
     if [ "$PLATFORM" = x11 ]; then
         note "sampler frame_extents l=$FE_L r=$FE_R t=$FE_T b=$FE_B wid=$X11_WID via=$X11_SRC"
-        # Printed beside them so the two formulas can be compared rather than
-        # one trusted. rel and (l,t) agreeing is what says the derived frame
-        # origin below is the conventional one.
-        local derived=""
+        # Two routes to the *client* corner, printed beside each other so the
+        # subtraction the loop makes can be checked rather than trusted:
+        # xwininfo's absolute upper-left is that corner directly, and xdotool's
+        # Position is the same corner with the reparenting offset added to it.
+        # They agreeing is what says `xdotool minus rel` is sound -- which is
+        # all it ever said. It is not a frame origin and calling it one is what
+        # let this file report a client corner as a frame for three rounds; the
+        # frame is that corner minus the decoration, and the line below prints
+        # both so neither can stand in for the other again.
+        local client="" framed=""
         case "$XD_ABS" in
-            *[0-9]*,*[0-9]*) derived="$(( ${XD_ABS%%,*} - REL_X )),$(( ${XD_ABS##*,} - REL_Y ))" ;;
+            *[0-9]*,*[0-9]*) client="$(( ${XD_ABS%%,*} - REL_X )),$(( ${XD_ABS##*,} - REL_Y ))" ;;
         esac
-        note "sampler origin rel=${XW_REL:-?} src=$REL_SRC xwininfo_abs=${XW_ABS:-?} xdotool_abs=${XD_ABS:-?} derived=${derived:-?}"
-        if [ -n "$XW_ABS" ] && [ -n "$derived" ] && [ "$XW_ABS" != "$derived" ]; then
-            fail "the frame origin differs by route (xwininfo says $XW_ABS, xdotool minus rel says $derived); every position below is the second route"
+        case "$client" in
+            *[0-9]*,*[0-9]*) framed="$(( ${client%%,*} - FE_L )),$(( ${client##*,} - FE_T ))" ;;
+        esac
+        note "sampler origin rel=${XW_REL:-?} src=$REL_SRC xwininfo_abs=${XW_ABS:-?} xdotool_abs=${XD_ABS:-?} client=${client:-?} frame=${framed:-?}"
+        if [ -n "$XW_ABS" ] && [ -n "$client" ] && [ "$XW_ABS" != "$client" ]; then
+            fail "the client corner differs by route (xwininfo says $XW_ABS, xdotool minus rel says $client); every position below is the second route"
         fi
         if [ "$REL_SRC" = none ]; then
             note "sampler no reparent offset available; positions are raw and underived"
@@ -509,7 +538,10 @@ check_apparatus() {
     fi
     # The frame origin at the probe's *first* state, under one name both
     # platforms emit, so the differential has a position to compare without
-    # knowing which instrument took it.
+    # knowing which instrument took it. It is a frame on all three of them as
+    # of this round: macOS reports one, Windows reports one, and x11 now takes
+    # the decoration off the client corner instead of handing decodiff.sh a
+    # client corner named `framepos`.
     #
     # The first state and not the last, because the probe moves the window on
     # purpose partway through: the only turn where the two halves are answering
