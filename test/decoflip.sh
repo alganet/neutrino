@@ -80,8 +80,12 @@ wait_gone() {
     return 1
 }
 
+# The third argument is what the picture is called. It is passed rather than
+# derived from the tag because `deco-b` says nothing to a reader looking at a
+# sheet, and because for three rounds both halves wrote one filename and the
+# decorated one was never shipped at all.
 run_half() {
-    local art="$1" tag="$2" pid rc=0
+    local art="$1" tag="$2" shot="$3" pid rc=0
     if [ ! -f "$art" ]; then
         echo "FAIL: no artifact at '$art'; the $tag half cannot run"
         return 1
@@ -89,7 +93,8 @@ run_half() {
     [ "$PLATFORM" = macos ] && rm -f "$STATUS"
     bash "$art" > "$LOGDIR/deco-$tag-app.log" 2>&1 &
     pid=$!
-    bash "$ROOT/test/verify-std.sh" geom "$SHOTS" > "$LOGDIR/deco-$tag.log" 2>&1 || rc=$?
+    NT_SHOT_NAME="frame-$shot" \
+        bash "$ROOT/test/verify-std.sh" geom "$SHOTS" > "$LOGDIR/deco-$tag.log" 2>&1 || rc=$?
     pkill -P "$pid" 2>/dev/null || true
     kill "$pid" 2>/dev/null || true
     note "half $tag artifact=$art verifier=$rc"
@@ -108,7 +113,7 @@ if prefix_up; then
     exit 1
 fi
 
-run_half "$DEC" a || { echo "report: totals decoflip failures=1"; exit 1; }
+run_half "$DEC" a decorated || { echo "report: totals decoflip failures=1"; exit 1; }
 
 if ! wait_gone; then
     echo "FAIL: the decorated half's window is still up; the chromeless half would read it"
@@ -117,7 +122,7 @@ if ! wait_gone; then
 fi
 note "the decorated half's window is gone; the chromeless half may start"
 
-run_half "$NONE" b || { echo "report: totals decoflip failures=1"; exit 1; }
+run_half "$NONE" b chromeless || { echo "report: totals decoflip failures=1"; exit 1; }
 
 DIFF_FAILURES=0
 bash "$ROOT/test/decodiff.sh" "$LOGDIR/deco-a.log" "$LOGDIR/deco-b.log" || DIFF_FAILURES=$?
