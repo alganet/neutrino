@@ -29,7 +29,11 @@ URL="http://127.0.0.1:$PORT/early-target.html"
 LOG="${1:-${TMPDIR:-/tmp}/neutrino-pages.log}"
 WAIT=30
 
-python3 -m http.server --bind 127.0.0.1 --directory "$HERE" "$PORT" > "$LOG" 2>&1 &
+# httpserve.py and not `-m http.server`: the module's own server_bind does a
+# reverse lookup on the address it just bound, which on macOS is what raises
+# "Allow Python to find devices on local networks?" over every picture the lane
+# takes afterwards. Same handler, same responses; see the file for the rest.
+python3 "$HERE/httpserve.py" --bind 127.0.0.1 --directory "$HERE" "$PORT" > "$LOG" 2>&1 &
 PID=$!
 
 waited=0

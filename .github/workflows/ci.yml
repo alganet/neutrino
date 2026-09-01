@@ -2991,6 +2991,16 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
+      # The same clearing the `macos` job does, for the same reason: this lane's
+      # frames carried the screen recording alert in the run where that lane's
+      # came out clean, which is as close to a controlled comparison as a CI
+      # matrix offers. See test/shotroom-macos.sh.
+      - name: the room the pictures are taken in
+        timeout-minutes: 3
+        continue-on-error: true
+        run: |
+          bash test/shotroom-macos.sh > ~/shotroom.log 2>&1 || true
+          cat ~/shotroom.log
       - name: netinstall suite
         timeout-minutes: 30
         run: |
