@@ -25,6 +25,17 @@ STATUS_FILE="${TMPDIR:-/tmp}/neutrino-title.txt"
 
 mkdir -p "$SCREENSHOT_DIR"
 
+# What is on this screen, and who owns it -- one line per window, named by the
+# process that owns it. The x11 verifiers have had this since the round that
+# turned three stray windows from a suspicion into names; this lane has been
+# reading its own pictures instead. Costs one osascript per shot, which is a few
+# hundred milliseconds spent outside the app's own clock.
+ONSCREEN_JS="$(dirname "$0")/onscreen-macos.js"
+onscreen_line() {
+    osascript -l JavaScript "$ONSCREEN_JS" 2>/dev/null |
+        sed 's/^/[/; s/$/]/' | tr '\n' ' '
+}
+
 # The whole display, and not just the app's window.
 #
 # `screencapture -l` composites a single window, which makes a tighter picture
@@ -55,30 +66,35 @@ mkdir -p "$SCREENSHOT_DIR"
 # appear is a finding about the app rather than about the shutter, and a
 # display shot taken with no window on it should not read like one taken with.
 screenshot() {
-    local wid probe n
+    local wid probe n how
     wid="$(sed -n '8p' "$STATUS_FILE" 2>/dev/null)"
     probe="${TMPDIR:-/tmp}/neutrino-shot-probe.png"
     case "$wid" in
         ''|*[!0-9]*)
-            screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
-            echo "  shot ${1}: the whole display; no window number yet, so nothing was waited for" ;;
+            how="the whole display; no window number yet, so nothing was waited for" ;;
         *)
             n=0
+            how="the whole display; window $wid never became capturable"
             while [ "$n" -lt "${NT_SHOT_TRIES:-24}" ]; do
                 if screencapture -x -o -l "$wid" "$probe" 2>/dev/null &&
                    [ -s "$probe" ]; then
-                    rm -f "$probe"
-                    screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
-                    echo "  shot ${1}: the whole display, with the app's window (CGWindowID $wid) on it after $((n * 250))ms"
-                    return 0
+                    how="the whole display, with the app's window (CGWindowID $wid) on it after $((n * 250))ms"
+                    break
                 fi
                 n=$((n + 1))
                 sleep 0.25
             done
-            rm -f "$probe"
-            screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
-            echo "  shot ${1}: the whole display; window $wid never became capturable" ;;
+            rm -f "$probe" ;;
     esac
+    # One shutter, at the end, whatever the wait decided. Three of them is how
+    # the cropped version was written and it is one more place for the two
+    # halves -- the picture and the sentence describing it -- to disagree.
+    screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
+    echo "  shot ${1}: $how"
+    # After the capture and not before it. On x11 this line is printed first,
+    # but there the shutter fires immediately; here it can wait seconds for a
+    # window, and the room at the end of that wait is the room in the picture.
+    echo "  onscreen at capture: $(onscreen_line)"
 }
 
 read_status_title() { sed -n '1p' "$STATUS_FILE" 2>/dev/null || echo ""; }
