@@ -108,7 +108,19 @@ $scriptAnchor = 'var BUILD = "X";'
 $navGuardNew = 'if (navMethod && pendingDocument) {'
 $navGuardOld = 'if (navMethod && SystemRef.IO.File.Exists(String(SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH") || ""))) {'
 $navCallNew = 'navMethod.Invoke(coreWv2, [pendingDocument]);'
-$navCallOld = 'navMethod.Invoke(coreWv2, [self.applyContentPolicy(self.extractHtmlDocument(SystemRef.IO.File.ReadAllText(SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH"))))]);'
+# The reconstruction lost its applyContentPolicy call, and that is a repair
+# rather than a change of subject. The offline tier used to swap the document's
+# content policy at run time, and the old spelling applied it here because here
+# is where it built the document. The policy is html/policy.html now, included
+# at assembly, so there is no such function in any build -- and a reconstruction
+# calling one throws before the window opens. Measured: `oldcontrol = none`,
+# `<no window title>`, and every reading below it comparing against nothing.
+#
+# What is being reproduced is untouched. The defect is that this went back to
+# the *file* for the document it was about to render, instead of using the one
+# already prepared; `extractHtmlDocument(ReadAllText(...))` is that, and the
+# policy call was never part of it.
+$navCallOld = 'navMethod.Invoke(coreWv2, [self.extractHtmlDocument(SystemRef.IO.File.ReadAllText(SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH")))]);'
 
 $appA = Join-Path $work "a.cmd"
 $appB = Join-Path $work "b.cmd"
