@@ -4,6 +4,34 @@
 
 name: CI
 on: [push]
+
+# Every ceiling in this file is derived, and there are two rules, because a step
+# timeout and a job timeout answer different questions.
+#
+# A step's ceiling sits above the internal budget of what it runs, not above the
+# time it usually takes. verify-std.sh waits 180s for a first window and records
+# for 90 (150 for the window probe); decoflip.sh and themeflip.sh spend that
+# twice, with a 30s wait between halves. So the geometry pair's floor is about
+# nine and a half minutes even though it takes fifteen seconds, and a ceiling
+# under that floor would kill the verifier in the middle of reporting *why* it
+# failed -- turning a diagnosable failure into an anonymous one, which is the
+# only outcome worse than a slow lane.
+#
+# Above that floor, tight. `stdwin` had twenty minutes for a step measured at
+# 151 seconds against a floor of six, and the cost of that headroom is paid by
+# the case it was meant for: `windows-content`'s decoration pair has wedged
+# twice, at 1215s and 1815s, each time held to the end of a ceiling far above
+# anything it could legitimately need. Fourteen minutes is above its floor and
+# less than half of what the last hang cost.
+#
+# A job's ceiling is not the sum of its steps. It answers "has this lane stopped"
+# rather than "is this step slow", so it sits above the lane's measured wall
+# clock with room for a slow runner, and every lane here measures between 11 and
+# 19 minutes.
+#
+# Measured on run 33446055662 and 33450686867, not guessed, and the two hangs
+# above are from 33363744511 and 33366711441.
+
 jobs:
   # Measured against a complete run rather than guessed: this lane took 12.0 min measured, and a netinstall step that may take 35.
   # Without a job ceiling the default is six hours, which is what a wedged step
@@ -12,7 +40,7 @@ jobs:
   # not got slower, it has stopped.
   gjs:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - run: |
@@ -143,7 +171,7 @@ jobs:
           bash test/annotate.sh gjs-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       - name: netinstall suite
-        timeout-minutes: 35
+        timeout-minutes: 25
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -215,7 +243,7 @@ jobs:
       # step is the unit of the annotation budget: 12 report lines each, three
       # annotations of the eight annotate.sh will pack.
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 14
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -234,7 +262,7 @@ jobs:
           bash test/annotate.sh gjs-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -267,7 +295,7 @@ jobs:
       # deliberately does not flip the desktop palette, so it reports what each
       # engine says and settles nothing about where the value came from.
       - if: always()
-        timeout-minutes: 20
+        timeout-minutes: 10
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -284,7 +312,7 @@ jobs:
           bash test/annotate.sh gjs-stdwin ~/stdwin.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -320,7 +348,7 @@ jobs:
       # This is the step that fails with the force taken out of webview.cmd,
       # which is the only reason it exists.
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -354,7 +382,7 @@ jobs:
       # green one reporting fifteen constants it never disturbed. Last in the
       # lane and gated, so that costs its own reading and nothing else.
       - if: always()
-        timeout-minutes: 25
+        timeout-minutes: 14
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -370,13 +398,29 @@ jobs:
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
           bash test/annotate.sh gjs-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # One artifact, one file: the lane's pictures and logs as a page that opens
+      # in a browser. What it replaces is a directory of PNGs in a zip, which
+      # made comparing the decorated frame against the chromeless one a matter
+      # of extracting both and remembering the first while looking at the
+      # second. The pictures are inlined, so there is nothing to fetch and
+      # nothing to run.
+      #
+      # continue-on-error, because this is a reporting tool. A lane that passed
+      # every control it has and goes red because the page builder tripped is
+      # reporting about itself, and the thing it was built to report on is the
+      # one nobody would then read.
+      - name: sheet
+        if: always()
+        continue-on-error: true
+        run: |
+          bash test/sheet.sh gjs ~/sheet/gjs.html \
+            "The suites=$HOME/screenshots" \
+            "netinstall=$HOME/netinstall-screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: gjs-screenshots
-          path: |
-            ~/screenshots/
-            ~/netinstall-screenshots/
+          name: gjs-sheet
+          path: ~/sheet/gjs.html
 
   # The rest of the engine walk, on one machine descending it.
   #
@@ -409,7 +453,7 @@ jobs:
   # not got slower, it has stopped.
   linux-engines:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
       - run: |
@@ -508,7 +552,7 @@ jobs:
       # step is the unit of the annotation budget: 12 report lines each, three
       # annotations of the eight annotate.sh will pack.
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 14
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -527,7 +571,7 @@ jobs:
           bash test/annotate.sh cjs-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -560,7 +604,7 @@ jobs:
       # deliberately does not flip the desktop palette, so it reports what each
       # engine says and settles nothing about where the value came from.
       - if: always()
-        timeout-minutes: 20
+        timeout-minutes: 10
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -577,7 +621,7 @@ jobs:
           bash test/annotate.sh cjs-stdwin ~/stdwin.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -613,7 +657,7 @@ jobs:
       # This is the step that fails with the force taken out of webview.cmd,
       # which is the only reason it exists.
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -647,7 +691,7 @@ jobs:
       # green one reporting fifteen constants it never disturbed. Last in the
       # lane and gated, so that costs its own reading and nothing else.
       - if: always()
-        timeout-minutes: 25
+        timeout-minutes: 14
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -663,17 +707,18 @@ jobs:
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
           bash test/annotate.sh cjs-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: cjs-screenshots
-          path: ~/screenshots/
       # Cleared between the two halves. Both verifiers write into the same
       # directory, and on two runners that did not matter; on one, the second
       # artifact would carry the first lane's frames and there would be no way
       # to tell from the artifact which engine drew them.
+      # Parked, not deleted. Both halves write into the same directory, so the
+      # cjs frames have to leave before the pygobject ones arrive -- but they
+      # are half of this job's evidence, and the sheet at the end carries both
+      # under their own headings rather than this job publishing two artifacts.
       - if: always()
-        run: rm -rf ~/screenshots
+        run: |
+          rm -rf ~/shots-cjs
+          mv ~/screenshots ~/shots-cjs 2>/dev/null || mkdir -p ~/shots-cjs
       - if: always()
         run: |
           sudo apt update
@@ -726,7 +771,7 @@ jobs:
           bash test/annotate.sh pygobject-lanes ~/lanes.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 25
+        timeout-minutes: 12
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -789,7 +834,7 @@ jobs:
       # step is the unit of the annotation budget: 12 report lines each, three
       # annotations of the eight annotate.sh will pack.
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 14
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -808,7 +853,7 @@ jobs:
           bash test/annotate.sh pygobject-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -841,7 +886,7 @@ jobs:
       # deliberately does not flip the desktop palette, so it reports what each
       # engine says and settles nothing about where the value came from.
       - if: always()
-        timeout-minutes: 20
+        timeout-minutes: 10
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -858,7 +903,7 @@ jobs:
           bash test/annotate.sh pygobject-stdwin ~/stdwin.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -894,7 +939,7 @@ jobs:
       # This is the step that fails with the force taken out of webview.cmd,
       # which is the only reason it exists.
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -928,7 +973,7 @@ jobs:
       # green one reporting fifteen constants it never disturbed. Last in the
       # lane and gated, so that costs its own reading and nothing else.
       - if: always()
-        timeout-minutes: 25
+        timeout-minutes: 14
         run: |
           export DISPLAY=:99
           export GDK_BACKEND=x11
@@ -944,11 +989,29 @@ jobs:
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
           bash test/annotate.sh pygobject-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # One artifact, one file: the lane's pictures and logs as a page that opens
+      # in a browser. What it replaces is a directory of PNGs in a zip, which
+      # made comparing the decorated frame against the chromeless one a matter
+      # of extracting both and remembering the first while looking at the
+      # second. The pictures are inlined, so there is nothing to fetch and
+      # nothing to run.
+      #
+      # continue-on-error, because this is a reporting tool. A lane that passed
+      # every control it has and goes red because the page builder tripped is
+      # reporting about itself, and the thing it was built to report on is the
+      # one nobody would then read.
+      - name: sheet
+        if: always()
+        continue-on-error: true
+        run: |
+          bash test/sheet.sh linux-engines ~/sheet/linux-engines.html \
+            "cjs=$HOME/shots-cjs" \
+            "PyGObject=$HOME/screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: pygobject-screenshots
-          path: ~/screenshots/
+          name: linux-engines-sheet
+          path: ~/sheet/linux-engines.html
 
   # Measured against a complete run rather than guessed: this lane took 12.6 min measured, and a netinstall step that may take 35.
   # Without a job ceiling the default is six hours, which is what a wedged step
@@ -957,7 +1020,7 @@ jobs:
   # not got slower, it has stopped.
   kde:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - run: |
@@ -1126,7 +1189,7 @@ jobs:
           bash test/annotate.sh kde-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       - name: netinstall suite
-        timeout-minutes: 35
+        timeout-minutes: 25
         run: |
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb
@@ -1208,7 +1271,7 @@ jobs:
       # step is the unit of the annotation budget: 12 report lines each, three
       # annotations of the eight annotate.sh will pack.
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 14
         run: |
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb
@@ -1231,7 +1294,7 @@ jobs:
           bash test/annotate.sh kde-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb
@@ -1268,7 +1331,7 @@ jobs:
       # deliberately does not flip the desktop palette, so it reports what each
       # engine says and settles nothing about where the value came from.
       - if: always()
-        timeout-minutes: 20
+        timeout-minutes: 10
         run: |
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb
@@ -1289,7 +1352,7 @@ jobs:
           bash test/annotate.sh kde-stdwin ~/stdwin.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb
@@ -1331,7 +1394,7 @@ jobs:
       # green one reporting fifteen constants it never disturbed. Last in the
       # lane and gated, so that costs its own reading and nothing else.
       - if: always()
-        timeout-minutes: 25
+        timeout-minutes: 14
         run: |
           export DISPLAY=:99
           export QT_QPA_PLATFORM=xcb
@@ -1351,13 +1414,29 @@ jobs:
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
           bash test/annotate.sh kde-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # One artifact, one file: the lane's pictures and logs as a page that opens
+      # in a browser. What it replaces is a directory of PNGs in a zip, which
+      # made comparing the decorated frame against the chromeless one a matter
+      # of extracting both and remembering the first while looking at the
+      # second. The pictures are inlined, so there is nothing to fetch and
+      # nothing to run.
+      #
+      # continue-on-error, because this is a reporting tool. A lane that passed
+      # every control it has and goes red because the page builder tripped is
+      # reporting about itself, and the thing it was built to report on is the
+      # one nobody would then read.
+      - name: sheet
+        if: always()
+        continue-on-error: true
+        run: |
+          bash test/sheet.sh kde ~/sheet/kde.html \
+            "The suites=$HOME/screenshots" \
+            "netinstall=$HOME/netinstall-screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: kde-screenshots
-          path: |
-            ~/screenshots/
-            ~/netinstall-screenshots/
+          name: kde-sheet
+          path: ~/sheet/kde.html
 
   # netinstall away from the desktop lanes: cross-compiled for six targets, and
 
@@ -1381,7 +1460,7 @@ jobs:
   # that has to survive the merge.
   bsd:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
@@ -1785,7 +1864,7 @@ jobs:
   # not got slower, it has stopped.
   windows-launch:
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - shell: bash
@@ -1923,7 +2002,7 @@ jobs:
         shell: bash
         run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinocache.cmd
       - if: always()
-        timeout-minutes: 30
+        timeout-minutes: 15
         shell: pwsh
         run: |
           & .\test\appcache.ps1 .\test\neutrinocache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
@@ -1945,7 +2024,7 @@ jobs:
           bash build.sh test/neutrinoloaders.js test/neutrinostandalone.cmd
           bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinostandalone-testing.cmd
       - if: always()
-        timeout-minutes: 30
+        timeout-minutes: 15
         shell: pwsh
         run: |
           & .\test\standalone.ps1 .\test\neutrinostandalone.cmd .\test\neutrinostandalone-testing.cmd *>&1 |
@@ -1974,7 +2053,7 @@ jobs:
       # asserts none lands before the process starts, so the day a Windows
       # change opens the window the suite goes red and names the mode and round.
       - if: always()
-        timeout-minutes: 30
+        timeout-minutes: 15
         shell: pwsh
         run: |
           & .\test\exerace.ps1 .\test\neutrinorace.cmd *>&1 | Tee-Object -FilePath "$HOME\exerace.log"
@@ -2078,7 +2157,7 @@ jobs:
           bash build.sh --tier=testing test/neutrinotest.js test/neutrinoload2.cmd
       - name: launch under load
         if: always()
-        timeout-minutes: 25
+        timeout-minutes: 15
         shell: pwsh
         run: |
           $env:NEUTRINO_WEBVIEW2_LIB_DIR = $null
@@ -2152,15 +2231,38 @@ jobs:
       # One upload for the lane. Six jobs meant six artifacts over the same
       # two globs in the same home directory, so every suite after the first
       # published the ones before it under its own name.
+      # One artifact, one file: the lane's pictures and logs as a page that opens
+      # in a browser. What it replaces is a directory of PNGs in a zip, which
+      # made comparing the decorated frame against the chromeless one a matter
+      # of extracting both and remembering the first while looking at the
+      # second. The pictures are inlined, so there is nothing to fetch and
+      # nothing to run.
+      #
+      # continue-on-error, because this is a reporting tool. A lane that passed
+      # every control it has and goes red because the page builder tripped is
+      # reporting about itself, and the thing it was built to report on is the
+      # one nobody would then read.
+      - name: sheet
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          # Gathered rather than globbed in place: this lane's pictures and logs
+          # sit loose in the profile directory beside everything else the
+          # runner keeps there, and a recursive find pointed at $HOME would
+          # sweep all of it.
+          mkdir -p ~/sheetsrc
+          cp ~/*.png ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          bash test/sheet.sh windows-launch ~/sheet/windows-launch.html \
+            "The suites=$HOME/sheetsrc" \
+            "Under load, replica 1=$HOME/load-shots-1" \
+            "Under load, replica 2=$HOME/load-shots-2" \
+            "netinstall=$HOME/netinstall-screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: windows-launch-screenshots
-          path: |
-            C:\Users\runneradmin\*.png
-            C:\Users\runneradmin\*.log
-            C:\Users\runneradmin\load-shots-*\
-            C:\Users\runneradmin\netinstall-screenshots\
+          name: windows-launch-sheet
+          path: ~/sheet/windows-launch.html
 
   # What the page is allowed to do, and what the driver does with a document
   # that is not the one it was handed: hostile page content, the navigation
@@ -2179,7 +2281,7 @@ jobs:
   # not got slower, it has stopped.
   windows-content:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - shell: bash
@@ -2230,7 +2332,7 @@ jobs:
         shell: bash
         run: bash build.sh --tier=offline test/neutrinonav.js test/neutrinonav.cmd
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 12
         shell: pwsh
         run: |
           & .\test\verify-nav.ps1 .\test\neutrinonav.cmd "$HOME\navlogs" *>&1 |
@@ -2268,7 +2370,7 @@ jobs:
           bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
           bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
       - if: always()
-        timeout-minutes: 30
+        timeout-minutes: 15
         shell: pwsh
         run: |
           & .\test\verify-offline.ps1 .\test\neutrinooffline-default.cmd .\test\neutrinooffline.cmd "$HOME\offlinelogs" *>&1 |
@@ -2301,7 +2403,7 @@ jobs:
         shell: bash
         run: bash build.sh --tier=testing test/neutrinodoc.js test/neutrinodoc.cmd
       - if: always()
-        timeout-minutes: 30
+        timeout-minutes: 20
         shell: pwsh
         run: |
           & .\test\docswap.ps1 .\test\neutrinodoc.cmd "$HOME\docswaplogs" *>&1 |
@@ -2368,7 +2470,7 @@ jobs:
       # may be fetching WebView2.
       - if: always()
         name: stdgeom (decorated and chromeless)
-        timeout-minutes: 30
+        timeout-minutes: 14
         shell: pwsh
         run: |
           & .\test\decoflip.ps1 -Decorated neutrinostdgeom -Chromeless neutrinostdgeom-none `
@@ -2385,7 +2487,7 @@ jobs:
         shell: bash
         run: bash test/annotate.sh windows-stdgeom ~/stdgeom.log 'report:|FAIL:'
       - if: always()
-        timeout-minutes: 20
+        timeout-minutes: 10
         shell: pwsh
         run: |
           .\test\neutrinostddoc.cmd
@@ -2422,7 +2524,7 @@ jobs:
           bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
       - if: always()
-        timeout-minutes: 25
+        timeout-minutes: 12
         shell: pwsh
         run: |
           .\test\neutrinostdwin.cmd
@@ -2436,7 +2538,7 @@ jobs:
         shell: bash
         run: bash test/annotate.sh windows-stdwin ~/stdwin.log 'report:|FAIL:'
       - if: always()
-        timeout-minutes: 20
+        timeout-minutes: 10
         shell: pwsh
         run: |
           .\test\neutrinostdtheme.cmd
@@ -2476,7 +2578,7 @@ jobs:
           bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
       - if: always()
-        timeout-minutes: 25
+        timeout-minutes: 16
         shell: pwsh
         run: |
           $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
@@ -2537,13 +2639,31 @@ jobs:
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
           bash test/annotate.sh windows-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # One artifact, one file: the lane's pictures and logs as a page that opens
+      # in a browser. What it replaces is a directory of PNGs in a zip, which
+      # made comparing the decorated frame against the chromeless one a matter
+      # of extracting both and remembering the first while looking at the
+      # second. The pictures are inlined, so there is nothing to fetch and
+      # nothing to run.
+      #
+      # continue-on-error, because this is a reporting tool. A lane that passed
+      # every control it has and goes red because the page builder tripped is
+      # reporting about itself, and the thing it was built to report on is the
+      # one nobody would then read.
+      - name: sheet
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p ~/sheetsrc
+          cp ~/*.png ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          bash test/sheet.sh windows-content ~/sheet/windows-content.html \
+            "The suites=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: windows-content-screenshots
-          path: |
-            C:\Users\runneradmin\*.png
-            C:\Users\runneradmin\*.log
+          name: windows-content-sheet
+          path: ~/sheet/windows-content.html
 
   # Everything this platform has to say about a running app: the core launch
 
@@ -2566,7 +2686,7 @@ jobs:
   # not got slower, it has stopped.
   macos:
     runs-on: macos-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
@@ -2661,7 +2781,7 @@ jobs:
       # of, since the testing tier is what puts --no-sandbox on the command
       # line. Neither tier touches the environment.
       - if: always()
-        timeout-minutes: 25
+        timeout-minutes: 12
         run: |
           bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
           TEST_EXIT=0
@@ -2723,7 +2843,7 @@ jobs:
       # that is this artifact with the refusal deleted and against the spelling
       # the fix replaced. Three launches of the same build, one line apart.
       - if: always()
-        timeout-minutes: 20
+        timeout-minutes: 12
         run: |
           bash build.sh --tier=testing test/neutrinoearly.js test/neutrinonavrefuse.cmd
           TEST_EXIT=0
@@ -2751,7 +2871,7 @@ jobs:
       # Last in the lane on purpose. A probing round is the round most likely to
       # be red, and a red probe should cost its own reading and nothing else.
       - if: always()
-        timeout-minutes: 20
+        timeout-minutes: 12
         run: |
           bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
           bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
@@ -2794,7 +2914,7 @@ jobs:
       # step is the unit of the annotation budget: 12 report lines each, three
       # annotations of the eight annotate.sh will pack.
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 14
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
@@ -2811,7 +2931,7 @@ jobs:
           bash test/annotate.sh macos-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
@@ -2842,7 +2962,7 @@ jobs:
       # deliberately does not flip the desktop palette, so it reports what each
       # engine says and settles nothing about where the value came from.
       - if: always()
-        timeout-minutes: 20
+        timeout-minutes: 10
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
@@ -2857,7 +2977,7 @@ jobs:
           bash test/annotate.sh macos-stdwin ~/stdwin.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
-        timeout-minutes: 15
+        timeout-minutes: 8
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
@@ -2893,7 +3013,7 @@ jobs:
       # green one reporting fifteen constants it never disturbed. Last in the
       # lane and gated, so that costs its own reading and nothing else.
       - if: always()
-        timeout-minutes: 25
+        timeout-minutes: 14
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
@@ -2907,12 +3027,28 @@ jobs:
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
           bash test/annotate.sh macos-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
+      # One artifact, one file: the lane's pictures and logs as a page that opens
+      # in a browser. What it replaces is a directory of PNGs in a zip, which
+      # made comparing the decorated frame against the chromeless one a matter
+      # of extracting both and remembering the first while looking at the
+      # second. The pictures are inlined, so there is nothing to fetch and
+      # nothing to run.
+      #
+      # continue-on-error, because this is a reporting tool. A lane that passed
+      # every control it has and goes red because the page builder tripped is
+      # reporting about itself, and the thing it was built to report on is the
+      # one nobody would then read.
+      - name: sheet
+        if: always()
+        continue-on-error: true
+        run: |
+          bash test/sheet.sh macos ~/sheet/macos.html \
+            "The suites=$HOME/screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: macos-screenshots
-          path: |
-            ~/screenshots/
+          name: macos-sheet
+          path: ~/sheet/macos.html
 
   # The netinstall suite, alone. It is the longest single reading in the whole
   # matrix -- about thirteen minutes of run.sh that nothing here can split --
@@ -2929,14 +3065,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: netinstall suite
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
           bash netinstall/test/run.sh
+      # One artifact, one file: the lane's pictures and logs as a page that opens
+      # in a browser. What it replaces is a directory of PNGs in a zip, which
+      # made comparing the decorated frame against the chromeless one a matter
+      # of extracting both and remembering the first while looking at the
+      # second. The pictures are inlined, so there is nothing to fetch and
+      # nothing to run.
+      #
+      # continue-on-error, because this is a reporting tool. A lane that passed
+      # every control it has and goes red because the page builder tripped is
+      # reporting about itself, and the thing it was built to report on is the
+      # one nobody would then read.
+      - name: sheet
+        if: always()
+        continue-on-error: true
+        run: |
+          bash test/sheet.sh macos-netinstall ~/sheet/macos-netinstall.html \
+            "The suites=$HOME/screenshots" \
+            "netinstall=$HOME/netinstall-screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: macos-netinstall-screenshots
-          path: |
-            ~/screenshots/
-            ~/netinstall-screenshots/
+          name: macos-netinstall-sheet
+          path: ~/sheet/macos-netinstall.html
