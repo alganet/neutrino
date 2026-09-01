@@ -74,7 +74,25 @@ subject() {
     esac
 }
 
-esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+# Quotes as well as angle brackets, because this escapes attribute values and
+# not only text. A shot called `quote"and<tag>.png` came through the stress
+# fixture as alt="quote"and&lt;tag&gt;": the attribute ended at the second quote
+# and the rest of the name became stray attributes. One function escapes both
+# contexts here, so it has to be safe in the stricter of the two.
+esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
+
+# Whether a file is really a PNG, by its signature and not by its name.
+#
+# The stress fixture put a zero-byte `empty.png` and a `corrupt.png` holding
+# plain text through this and both came out as figures, one of them as
+# `<img src="data:image/png;base64,">` -- a broken image with a caption under
+# it, shipped in silence. On a page whose whole purpose is to be looked at, a
+# picture that cannot render is worse than an absent one: it reads as a defect
+# in the app rather than in the file.
+is_png() {
+    [ -s "$1" ] || return 1
+    [ "$(head -c 8 "$1" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')" = "89504e470d0a1a0a" ]
+}
 
 # Collect the pictures and the logs separately: they are two kinds of thing and
 # the page treats them differently. A directory contributes everything under it,
@@ -257,11 +275,17 @@ fi
 # looking for one is not helped by having them interleaved.
 LAST_GROUP="__none__"
 IDX=0
+NOTPNG=""
 # On fd 3, not stdin. A helper in the body that reads standard input would
 # otherwise eat the rest of this list, which is exactly what the base64
 # fallback above was doing.
 while IFS="$(printf '\t')" read -r GROUP png <&3; do
     [ -f "$png" ] || continue
+    if ! is_png "$png"; then
+        NOTPNG="$NOTPNG$(basename "$png") -- $(wc -c < "$png" | tr -d ' ') bytes
+"
+        continue
+    fi
     if [ "$GROUP" != "$LAST_GROUP" ]; then
         [ "$LAST_GROUP" = "__none__" ] || echo '</div>'
         printf '<h2>%s</h2>\n<div class="grid">\n' "$(printf '%s' "$GROUP" | esc)"
@@ -276,6 +300,14 @@ while IFS="$(printf '\t')" read -r GROUP png <&3; do
         "$(printf '%s' "$BASE" | esc)" "$(subject "$BASE" | esc)" "$BYTES"
 done 3< "$SHOTS"
 [ "$LAST_GROUP" = "__none__" ] || echo '</div>'
+
+# Named, never dropped. A file a step meant to be a picture and that is not one
+# is a finding about that step, and silence here would hide it twice.
+if [ -n "$NOTPNG" ]; then
+    printf '<h2>Not pictures</h2>\n<p class="empty">Collected as screenshots, carrying no PNG signature:</p>\n<pre>'
+    printf '%s' "$NOTPNG" | esc
+    printf '</pre>\n'
+fi
 
 if [ "$N_ASSERT" != 0 ]; then
     printf '<h2>What this lane asserted</h2>\n'
@@ -331,7 +363,7 @@ echo '</main>'
         "$NSHOTS" "$NLOGS" "$N_ASSERT" "$N_DISTINCT" "$N_FAIL"
     printf '"asserted":['
     sort "$ASSERTS" | uniq -c | sort -rn |
-        sed -E -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
+        sed -E -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/</\\u003c/g' \
                -e 's/^ *([0-9]+) (.*)$/{"n":\1,"t":"\2"},/' |
         tr -d '\n' | sed -E 's/,$//'
     printf ']}\n</script>\n'
