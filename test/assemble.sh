@@ -490,6 +490,85 @@ bash "$T/build.sh" --tier=tight "$WORK/app-tiers.js" "$T/neutrino-apps/out.cmd" 
 eq "an output beside the tree still builds" "$?" "0"
 
 # =====================================================================
+# The output named as a directory
+# =====================================================================
+# `mv -f "$TMP" "$OUTPUT"` moves a file into a directory of that name, so an
+# output that already existed as one came out as `<dir>/<name>.tmp.<pid>`: not
+# at the path that was asked for, under a name that reads as leftover rubbish,
+# from a build that exited 0.
+report "section: output-as-directory"
+echo "=== a directory is not an artifact path ==="
+T="$(tree dirout)"
+mkdir -p "$T/adir"
+bash "$T/build.sh" "$WORK/app-plain.js" "$T/adir" > "$WORK/dirout.log" 2>&1
+eq "an output that is a directory is refused" "$([ "$?" -eq 0 ] && echo built || echo refused)" "refused"
+eq "and nothing was written into it" "$(ls -A "$T/adir" | wc -l | tr -d ' ')" "0"
+eq "and it says what an output is" \
+   "$(grep -c 'is a directory' "$WORK/dirout.log" | head -1)" "1"
+
+# =====================================================================
+# The other build.sh, and the source file it removed
+# =====================================================================
+# There are two programs called build.sh here and they take different things.
+# The one under test assembles an app -- `build.sh <app.js> <output.cmd>`. The
+# one in pages/ assembles the published site and takes at most one argument, the
+# directory to write it into, which it removes before it writes anything.
+#
+# So from inside pages/, `./build.sh demo.js demo.cmd` is the site builder with
+# `demo.js` as its output directory: it removed pages/demo.js and left an empty
+# directory where the sample app used to be, then failed on the app it could no
+# longer read. Measured twice, by somebody reading the other program's usage
+# line -- which is the shape of mistake a usage line cannot fix on its own,
+# because both programs answer to `./build.sh`.
+#
+# Asserted here rather than in a suite of its own because it is the same hazard
+# the three sections above cover: an output path that is somebody's source.
+report "section: pages"
+echo "=== the site builder does not remove what it was not given ==="
+PAGES="$ROOT/pages/build.sh"
+if [ ! -f "$PAGES" ]; then
+    fail "no pages/build.sh in this tree; nothing below is a reading"
+else
+    T="$(tree pages)"
+    mkdir -p "$T/site" "$T/notasite"
+    printf 'var app = 1;\n' > "$T/notasite/demo.js"
+    printf 'x\n' > "$T/afile"
+    # Measured rather than written down: what is asserted is that the bytes did
+    # not move, and a length in the assertion is a second thing to keep right.
+    PAGES_SRC="$(size "$T/notasite/demo.js")"
+    PAGES_FILE="$(size "$T/afile")"
+
+    pages_refuses() {
+        nt_what="$1"; shift
+        bash "$PAGES" "$@" > "$WORK/pages.log" 2>&1
+        if [ "$?" = "0" ]; then
+            fail "$nt_what was accepted"
+        elif ! grep -q '^error:' "$WORK/pages.log"; then
+            fail "$nt_what was refused without saying why"
+        else
+            pass "$nt_what is refused ($(sed -n '1s/^error: //p' "$WORK/pages.log"))"
+        fi
+    }
+
+    pages_refuses "the app build's two arguments" "$T/site" "out.cmd"
+    pages_refuses "an output that is a file"      "$T/afile"
+    pages_refuses "a directory holding source"    "$T/notasite"
+
+    eq "and the source it would have removed is still there" \
+       "$(size "$T/notasite/demo.js")" "$PAGES_SRC"
+    eq "and the file it would have removed is still there" \
+       "$(size "$T/afile")" "$PAGES_FILE"
+
+    # The control: an empty directory is a legitimate output and has to get past
+    # the guard. It cannot be run to completion on every lane -- the published
+    # binaries need zig -- so what is asserted is that the refusal above is
+    # about the path and not about every path.
+    bash "$PAGES" "$T/site" > "$WORK/pagesok.log" 2>&1
+    eq "an empty directory is not refused by the guard" \
+       "$(grep -c '^error: .*directory' "$WORK/pagesok.log" | head -1)" "0"
+fi
+
+# =====================================================================
 # The output named as the app
 # =====================================================================
 report "section: output-as-app"
