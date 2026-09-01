@@ -504,6 +504,21 @@ bash test/verify-linux.sh screenshots/
 
 Tests exercise `document.title`, `window.resizeTo` and `window.moveTo` with external scripts that poll window state and assert expected values. CI runs these automatically on all four platforms.
 
+### Reading a CI run
+
+Every job publishes one artifact holding one file: `<lane>.html`, a self-contained page with that lane's screenshots and verifier logs in it. Nothing to unpack beyond the zip GitHub wraps every artifact in, and nothing to fetch — the pictures are inlined, so it opens offline in a browser.
+
+The screenshots are the human verification step. Each is captioned with what it is a picture of, and the pairs the suite exists to compare — a decorated window against a chromeless one, a light desktop against a dark one — sit beside each other rather than in two different downloads.
+
+Each sheet also lists what its lane asserted, normalised and counted, and carries the same list as JSON. To ask which assertions are being made on more than one lane:
+
+```bash
+gh run download <run-id> -D /tmp/sheets
+python3 test/sheetdiff.py /tmp/sheets/*/*.html
+```
+
+That prints candidates, not a verdict: some repetition is the point. The engine walk asserts what an exit status means on four lanes deliberately, and `test/assemble.sh` runs on three because the three `sed`s are not the same program.
+
 ---
 
 ## Installing over the network
