@@ -156,6 +156,95 @@ function fontWidths() {
     return out;
 }
 
+// ------------------------------------------------------------------- the face
+//
+// Everything above reports through `document.title`, which is the right channel
+// for the instrument outside the window and useless to the human the screenshot
+// is for. Until this landed, the theme probe's picture was a blank white page
+// carrying "Welcome to neutrino" -- the early shell's own markup, identical on
+// the light half of a flip and the dark half, in every artifact this suite has
+// ever published. A reader could take the filename's word for which was which
+// and had no other way to check.
+//
+// So the page paints what the probe measured. The swatches are drawn with the
+// documented idiom, `var(--neutrino-Canvas, Canvas)`, which makes the picture a
+// demonstration of the delivery under test as well as a record of it: a lane
+// where the custom property never arrived shows the engine's own system colour
+// in the same square, and a lane where neither resolves shows the sentinel.
+//
+// Nothing here is asserted, and nothing here is read by anything that asserts.
+// These are the `-SELF` values this file already prints and never checks; the
+// title is still the whole of what verify-std.sh reads. Painted at step6 for
+// two reasons: every measurement above has finished, so this cannot disturb one,
+// and STD-THEME-END is the state the verifier photographs.
+var FACE_CSS_ROW = ["Canvas", "CanvasText", "ButtonFace", "ButtonText",
+                    "ButtonBorder", "Highlight", "HighlightText",
+                    "AccentColor", "AccentColorText", "Field", "FieldText",
+                    "GrayText", "LinkText"];
+
+function faceSwatch(label, css, big) {
+    var h = big ? "52px" : "30px";
+    var got = resolveColor(css);
+    return '<div style="flex:0 0 auto;width:132px;border:1px solid rgba(128,128,128,.45);' +
+        'border-radius:5px;overflow:hidden">' +
+        '<div style="height:' + h + ';background:' + css + '"></div>' +
+        '<div style="padding:3px 5px;font:11px/1.35 monospace">' + label +
+        '<br><span style="opacity:.65">' + got + '</span></div></div>';
+}
+
+function paint() {
+    try {
+        var scheme = "?", src = "?";
+        try {
+            var t = win.neutrino && win.neutrino.theme;
+            if (t) { scheme = String(t.scheme); src = String(t.source); }
+        } catch (_) {}
+        var mq = "?";
+        try {
+            mq = win.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        } catch (_) {}
+
+        // The page itself follows the palette, which is the whole point of the
+        // picture: two screenshots of a flip have to differ at a glance, and a
+        // page that stays white whatever the desktop does differs nowhere.
+        var body = doc.body;
+        body.style.margin = "0";
+        body.style.padding = "14px 16px";
+        body.style.background = "var(--neutrino-Canvas, Canvas)";
+        body.style.color = "var(--neutrino-CanvasText, CanvasText)";
+        body.style.font = "13px/1.5 system-ui, sans-serif";
+
+        var h = '<div style="font:600 15px/1.3 system-ui,sans-serif;margin-bottom:2px">' +
+            'THEME &middot; ' + engine() + '</div>' +
+            '<div style="font:12px/1.5 monospace;opacity:.75;margin-bottom:12px">' +
+            'launcher scheme=' + scheme + ' source=' + src +
+            ' &nbsp; media query=' + mq +
+            ' &nbsp; agreed=' + (scheme === mq ? "YES" : "NO") + '</div>';
+
+        h += '<div style="font:11px/1.4 monospace;opacity:.6;margin-bottom:5px">' +
+            'delivered by the launcher, as var(--neutrino-NAME, NAME)</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px">';
+        for (var i = 0; i < NT_PROPS.length; i++) {
+            h += faceSwatch(NT_PROPS[i],
+                "var(--neutrino-" + NT_PROPS[i] + ", " + NT_PROPS[i] + ")", 1);
+        }
+        h += '</div>';
+
+        h += '<div style="font:11px/1.4 monospace;opacity:.6;margin-bottom:5px">' +
+            'the engine\'s own &lt;system-color&gt; keywords</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:7px">';
+        for (var j = 0; j < FACE_CSS_ROW.length; j++) {
+            h += faceSwatch(FACE_CSS_ROW[j], FACE_CSS_ROW[j], 0);
+        }
+        h += '</div>';
+
+        body.innerHTML = h;
+    } catch (_) {
+        // A face that throws must not take the probe with it: every reading
+        // this app exists for has already left through the title by now.
+    }
+}
+
 function step1() {
     put("STD-THEME-CTL eng=" + engine());
     win.setTimeout(step2, DWELL);
@@ -283,7 +372,7 @@ function step5() {
     win.setTimeout(step6, DWELL);
 }
 
-function step6() { put("STD-THEME-END"); }
+function step6() { paint(); put("STD-THEME-END"); }
 
 function ready() {
     // `doc.body` and not `doc.documentElement`: the parser inserts `<html>`

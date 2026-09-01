@@ -116,6 +116,82 @@ function sample() {
     return out;
 }
 
+// ------------------------------------------------------------------- the face
+//
+// The same reason the theme probe has one, and one more that is specific to
+// this pair. Both halves of the decoration differential render the early
+// shell's "Welcome to neutrino" and nothing else, and the capture is now a
+// crop of the window rather than a photograph of the desktop -- so the only
+// thing separating `frame-decorated.png` from `frame-chromeless.png` in a
+// sheet is the presence of a title bar, and a reader with one of them in front
+// of them cannot tell a chromeless window from a decorated one whose bar was
+// cropped off. The page has to say which build it is.
+//
+// Painted at STD-GEOM-END, which is the state the verifier photographs, and
+// after every phase has reported. Nothing here is asserted: `outerWidth` and
+// the rest go out through the title as -PAIR values, and this reprints them
+// for the human rather than adding a reading.
+function faceRow(k, v) {
+    return '<tr><td style="padding:1px 12px 1px 0;opacity:.6">' + k +
+        '</td><td style="padding:1px 0">' + v + '</td></tr>';
+}
+
+function paint() {
+    try {
+        // Measured, not claimed. `decorations` is a host-side config key --
+        // `undecorated()` lives in the launcher and the page's `neutrino`
+        // object carries only {transport, theme, _theme} -- so there is nothing
+        // here to read it from. The first draft of this face queried a
+        // `neutrino-decorations` meta tag that does not exist and would have
+        // printed "auto" on both halves: a caption that is confidently wrong is
+        // worse on a verification sheet than no caption at all.
+        //
+        // Outer minus inner is what the frame costs, which is the thing the
+        // differential asserts and the one fact that distinguishes the halves.
+        var dw = "?", dh = "?", verdict = "unreadable";
+        try {
+            var ow = num(win.outerWidth), oh = num(win.outerHeight);
+            var iw = num(win.innerWidth), ih = num(win.innerHeight);
+            dw = String(ow - iw);
+            dh = String(oh - ih);
+            verdict = (ow - iw === 0 && oh - ih === 0)
+                ? "no frame measured -- this window is chromeless"
+                : "a frame of " + dw + " x " + dh + " around the viewport";
+        } catch (_) {}
+
+        var body = doc.body;
+        body.style.margin = "0";
+        body.style.padding = "12px 14px";
+        body.style.background = "var(--neutrino-Canvas, Canvas)";
+        body.style.color = "var(--neutrino-CanvasText, CanvasText)";
+        body.style.font = "13px/1.5 system-ui, sans-serif";
+        body.style.boxSizing = "border-box";
+        body.style.minHeight = "100vh";
+        // A ruled edge all the way round the viewport. On the chromeless build
+        // this line *is* the window's edge, which is the whole claim that half
+        // makes; on the decorated build there is a title bar and a border
+        // outside it. One picture each, and they are not confusable.
+        body.style.border = "2px dashed var(--neutrino-Highlight, Highlight)";
+
+        var h = '<div style="font:600 15px/1.3 system-ui,sans-serif">GEOMETRY &middot; ' +
+            engine() + '</div>' +
+            '<div style="font:600 13px/1.5 monospace;margin:6px 0 10px">' +
+            verdict + '</div>' +
+            '<table style="font:12px/1.5 monospace;border-collapse:collapse">';
+        h += faceRow("outer", num(win.outerWidth) + " x " + num(win.outerHeight));
+        h += faceRow("inner", num(win.innerWidth) + " x " + num(win.innerHeight));
+        h += faceRow("frame costs", dw + " x " + dh);
+        h += faceRow("screen at", num(win.screenX) + ", " + num(win.screenY));
+        h += faceRow("dpr", num(win.devicePixelRatio));
+        h += '</table>' +
+            '<div style="font:11px/1.4 monospace;opacity:.55;margin-top:10px">' +
+            'the dashed rule is the edge of the viewport</div>';
+        body.innerHTML = h;
+    } catch (_) {
+        // A face that throws must not take the probe with it.
+    }
+}
+
 function phaseA() {
     put("STD-GEOM-A-PAIR" + sample());
     win.setTimeout(phaseB, DWELL);
@@ -148,7 +224,7 @@ function phaseR() {
     try { tx = String(win.neutrino.transport); } catch (_) {}
     put("STD-GEOM-R-SELF eng=" + engine() + " nt0=" + NT0 + " rs0=" + RS0 +
         " tx=" + tx + " dwell=" + DWELL);
-    win.setTimeout(function () { put("STD-GEOM-END"); }, DWELL);
+    win.setTimeout(function () { paint(); put("STD-GEOM-END"); }, DWELL);
 }
 
 // The wait is for both, and it used to be for the API alone on the grounds that
