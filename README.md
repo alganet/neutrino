@@ -266,6 +266,12 @@ there is no value here that would be true everywhere. And `resizeTo` sizes the
 also what `--size` has always meant, so a window opened at `900x600` and one
 resized to `900x600` are the same window.
 
+`moveTo` is the other half of that pair and it goes the other way: it places the
+**frame**, so `moveTo(0, 0)` puts the window's outside corner — title bar
+included — in the corner of the screen, and the content lands below the
+decoration rather than under it. A size an app asks for is the size it draws in;
+a position it asks for is where the window appears.
+
 `window.open` hands an **external** url to the machine's browser, under the name
 an app author already knows:
 

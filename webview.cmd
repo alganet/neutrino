@@ -620,6 +620,88 @@ Window {
         return (new Function("NeutrinoQml", src + "; return NeutrinoWebview;"))(true)
     }
 
+    // The window's own chrome, measured, because this is the one lane that
+    // cannot ask for it.
+    //
+    // QML's Window.x and Window.y are QWindow::position, which Qt documents as
+    // the corner of the window *excluding* its frame -- and on x11 that is not
+    // a report, it is a request: qxcbwindow.cpp sets win_gravity to
+    // XCB_GRAVITY_STATIC unless the window's position policy is frame
+    // inclusive, so the window manager lands the client where it was asked and
+    // the decoration goes wherever it fits, which for moveTo(0,0) is off the
+    // top of the screen. QWindow::setFramePosition is the other half of that
+    // pair and it is C++ only: not a Q_PROPERTY, not a slot, not Q_INVOKABLE,
+    // so no QML document can reach it.
+    //
+    // Every other lane moves the frame -- gtk_window_move, NSWindow's
+    // setFrameDisplay, Form.Location -- so until this round moveTo meant one
+    // thing on four lanes and another on this one, and the kde sheet has been
+    // carrying the picture of it: 04-step3.png is a 500x400 window whose
+    // content starts at 0,0 with its title bar and left border off the screen,
+    // while the gjs sheet's same shot has the decoration at 0,0 and the
+    // content at 0,37.
+    //
+    // The margins come back from the engine because that is where they are
+    // reachable. window.screenX and window.screenY under QtWebEngine are
+    // QWindow::framePosition, so root.x minus screenX is QWindow::frameMargins
+    // by another road -- both sides of the subtraction are Qt's own numbers,
+    // and no window manager round trip sits between them. Measured on the
+    // openbox lane, decorated: client 62,84 against screenX 61,64, with
+    // _NET_FRAME_EXTENTS reading l=1 t=20. On the chromeless half of the same
+    // job both readings are 62,84 and this arithmetic produces the zero that
+    // is the right answer there.
+    //
+    // In an isolated world, so the page cannot answer for its own window. A
+    // document can already move the window wherever it likes -- that is the
+    // API -- but it should not be able to bend where every *other* move lands
+    // by redefining a property on its own global.
+    property int ntFrameL: 0
+    property int ntFrameT: 0
+
+    // Read once, when the first document commits, and not again: the frame's
+    // thickness does not change while a window is up -- verify-std.sh asserts
+    // exactly that and calls a run where it moved unreadable -- and a re-read
+    // taken while a move is still in flight would be two numbers from either
+    // side of it. It is taken before the preload goes in, so it is in hand
+    // before any page script exists to ask for a move.
+    function ntReadFrame() {
+        view.runJavaScript("[window.screenX,window.screenY]", root.ntWorld(),
+            function (p) {
+                if (!p || p.length !== 2) {
+                    console.warn("neutrino: the engine did not say where this"
+                        + " window's frame is; a move will place the content")
+                    return
+                }
+                var l = root.x - p[0]
+                var t = root.y - p[1]
+                if (!isFinite(l) || !isFinite(t) || l < 0 || t < 0
+                        || l > 200 || t > 200) {
+                    console.warn("neutrino: refused a frame margin of "
+                        + l + "," + t + "; a move will place the content")
+                    return
+                }
+                root.ntFrameL = l
+                root.ntFrameT = t
+                console.warn("neutrino: this frame measures l=" + l + " t=" + t)
+            })
+    }
+
+    // Named through the enum where the import provides it, and 1 where it does
+    // not. The number is the one Qt has always given ApplicationWorld, and the
+    // fallback is here rather than the bare enum because an unresolved name in
+    // a QML *expression* is a ReferenceError this catches, while the same name
+    // in a declared handler is a document that does not load at all -- the
+    // lesson newWindowRequested cost this file one round further down.
+    function ntWorld() {
+        var id
+        try {
+            id = WebEngineScript.ApplicationWorld
+        } catch (e) {
+            id = undefined
+        }
+        return (typeof id === "number") ? id : 1
+    }
+
     function ntRoute(raw) {
         var msg = root.nt.parseMessage(raw)
         if (!msg) {
@@ -627,11 +709,17 @@ Window {
             return
         }
         if (msg.action === "resize") { root.width = msg.width; root.height = msg.height }
-        else if (msg.action === "move") { root.x = msg.x; root.y = msg.y }
+        // The frame's corner, spelled in the units this lane's x and y speak.
+        else if (msg.action === "move") {
+            root.x = msg.x + root.ntFrameL
+            root.y = msg.y + root.ntFrameT
+        }
         // Relative, against the same properties the two above set. No reader
         // needed here: on this lane the window's geometry is the window's own
         // bindable state, which is why boot's generic pair is not what serves
-        // this driver.
+        // this driver. No frame arithmetic either, and that is not an omission:
+        // a delta moves the client and the frame by the same number, so the
+        // margins the absolute verb above adds would cancel here.
         else if (msg.action === "resizeBy") {
             root.width = Math.max(1, root.width + msg.width)
             root.height = Math.max(1, root.height + msg.height)
@@ -641,6 +729,14 @@ Window {
         else if (msg.action === "openExternal") Qt.openUrlExternally(msg.url)
     }
 
+    // The content is what gets centred here, and it is the one place on this
+    // lane where that is the honest answer: there is no document yet, so there
+    // is nothing to read the frame off, and the first window is on screen
+    // before anything can be asked. The window therefore opens a title bar's
+    // height above where the GTK lanes open theirs. Nothing asserts the
+    // opening position -- the suites assert where a move lands -- and a launch
+    // that jumped by twenty pixels once the page committed would be a worse
+    // thing to look at than a window centred on its content.
     Component.onCompleted: {
         root.width = cfg.width
         root.height = cfg.height
@@ -677,6 +773,10 @@ Window {
                     // Before the injection, not after: from the next line on
                     // there is page script in this view that can send.
                     root.nt.rememberTrustedView(view.url)
+                    // Also before it, and for the same reason spelled the
+                    // other way round: this is the last moment in the run when
+                    // nothing in the view can have moved the window yet.
+                    root.ntReadFrame()
                     // The API first, then the page's own code. Both are handed
                     // to the engine rather than carried by the document, which
                     // is what lets the document forbid script of its own.
