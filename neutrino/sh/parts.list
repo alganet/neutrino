@@ -1,0 +1,7 @@
+@@include sh/tiers.sh
+@@include sh/loaders.sh
+@@include sh/qt.sh
+@@include sh/webkit.sh
+@@include sh/macos.sh
+@@include sh/pygobject.sh
+@@include sh/dispatch.sh

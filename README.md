@@ -8,7 +8,7 @@ SPDX-License-Identifier: ISC
 
 `neutrino` is a single-file, cross-platform desktop launcher that opens a native window containing a web page. 
 
-It uses one polyglot entrypoint (`webview.cmd`) that runs on Windows, Linux, and macOS with no dependencies beyond what each OS provides.
+Every app it builds is one polyglot `.cmd` file that runs on Windows, Linux, and macOS with no dependencies beyond what each OS provides.
 
 <table align="center"><tr>
 <td><img width=300 src=assets/macos-screenshot.png></td>
@@ -48,7 +48,9 @@ policy, the message parser, the navigation rules and the external-URL check all 
 
 ## How it works
 
-`webview.cmd` is a polyglot file that is simultaneously valid as a Windows batch script, a Unix shell script, JavaScript, and an HTML document. Each platform runtime loads the same file, creates a native window, and renders the embedded HTML in a webview.
+A neutrino app is a polyglot file that is simultaneously valid as a Windows batch script, a Unix shell script, JavaScript, and an HTML document. Each platform runtime loads the same file, creates a native window, and renders the embedded HTML in a webview.
+
+The launcher that half of that file is made of lives in `neutrino/`, one language per file under a twenty-one line polyglot skeleton, and `build.sh` assembles it on every build. `neutrino/POLYGLOT.md` walks the skeleton line by line and says what each of the five readers makes of it.
 
 The embedded JavaScript includes the `NeutrinoWebview` object which detects the runtime environment and dispatches to a platform-specific driver. Each driver implements a common interface (`createWindow`, `createWebView`, `loadHTML`, etc.) called by a shared `boot()` orchestrator.
 
@@ -484,13 +486,17 @@ and exits non-zero.
 
 ## Run
 
+An app is the file `build.sh` writes, and running it is running that file.
+
 ```bash
+./build.sh myapp.js myapp.cmd
+
 # Linux / macOS
-chmod +x webview.cmd
-./webview.cmd
+chmod +x myapp.cmd
+./myapp.cmd
 
 # Windows
-webview.cmd
+myapp.cmd
 ```
 
 ---
@@ -541,8 +547,8 @@ netinstall to run one.
 
 ## Repository
 
-- `webview.cmd`: polyglot entrypoint and runtime
-- `build.sh`: polyglot assembler (JS + template -> .cmd)
+- `neutrino/`: the launcher, split by language under a polyglot skeleton -- see `neutrino/POLYGLOT.md`
+- `build.sh`: polyglot assembler (JS + assembled template -> .cmd)
 - `test/`: test harness and platform verification scripts
 - `netinstall/`: the name-addressed launcher, and its own suite
 - `pages/`: the demo site published at alganet.github.io/neutrino/

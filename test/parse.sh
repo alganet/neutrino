@@ -10,18 +10,28 @@
 # doing, because the adversarial app that exercises the same boundary end to end
 # needs a display, a real engine and about a minute per platform.
 #
-# The object is lifted out of webview.cmd itself rather than copied, so these
+# The object is lifted out of an artifact itself rather than copied, so these
 # assertions cannot pass against a stale duplicate of the code that ships.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="${1:-$ROOT/webview.cmd}"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# Named on the command line by every caller in CI, which is what makes this the
+# assertion on the thing that shipped rather than on the source it came from.
+# With no argument it assembles the launcher and asserts against that, which is
+# the useful default while working in neutrino/ -- there is no file in the tree
+# to fall back to any more.
+TARGET="${1:-}"
+if [ -z "$TARGET" ]; then
+    TARGET="$WORK/template.cmd"
+    bash "$ROOT/neutrino/assemble.sh" > "$TARGET"
+fi
 # Resolved before anything changes directory, because the assertions run from a
 # work directory and a relative path would quietly stop meaning the same file.
 TARGET="$(cd "$(dirname "$TARGET")" && pwd)/$(basename "$TARGET")"
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
 
 if ! command -v node >/dev/null 2>&1; then
     echo "parse.sh: node not found; cannot assert the splitter" >&2
@@ -125,7 +135,7 @@ echo "  PASS: the config sentinels build.sh stamps between are both there"
 # within 240s".
 #
 # Declarations only. Property access is a separate hazard with a separate
-# answer -- webview.cmd quotes "close" for it and says why beside the line --
+# answer -- the launcher quotes "close" for it and says why beside the line --
 # and widening this to every occurrence of these words would refuse the prose
 # that explains them, which is how the sentinel census went red on its own
 # first run.
@@ -218,7 +228,19 @@ if command -v sh >/dev/null 2>&1; then
     echo "  PASS: the whole file still parses as a shell script"
 fi
 
-sed -n '/^    var NeutrinoWebview = {/,/^    };$/p' "$TARGET" > "$WORK/obj.js"
+# The whole object: the literal that carries the two stamps, and the hundred and
+# twelve members assigned onto it after it. The range ends at the call that
+# starts the launcher, and that line is dropped rather than kept -- node is
+# being asked for the object, not for a window.
+#
+# The end anchor used to be the first line reading `    };`, back when the
+# object was one literal. The app is spliced into runWeb() and is inside this
+# range, so any app that closed an object literal at that indent ended the lift
+# early and what came out was the launcher cut in half. `NeutrinoWebview.run();`
+# is not a line an app writes by accident, which is the same check with a
+# stronger anchor rather than a rule the author has to remember.
+sed -n '/^    var NeutrinoWebview = {/,/^    NeutrinoWebview\.run();$/p' "$TARGET" |
+    sed '$d' > "$WORK/obj.js"
 echo "module.exports = NeutrinoWebview;" >> "$WORK/obj.js"
 
 if [ ! -s "$WORK/obj.js" ]; then
@@ -226,21 +248,15 @@ if [ ! -s "$WORK/obj.js" ]; then
     exit 1
 fi
 
-# The lift is a sed range that ends at the first line reading `    };`, and the
-# app's own source is inside that range -- it is spliced into runWeb(). So an
-# app that closes an object literal at this indent ends the range early, and
-# what comes out is the launcher cut in half.
-#
 # Without this the failure is node reporting "Unexpected end of input" against a
 # line number in a temporary directory, which names neither the app nor the
-# reason. Measured: adding one such line to test/neutrinotest.js produced
-# exactly that and nothing else. The check costs a line and the message is the
-# whole point of it.
+# reason. Measured on the old anchor: adding one `    };` line to
+# test/neutrinotest.js produced exactly that and nothing else.
 if command -v node >/dev/null 2>&1 && ! node --check "$WORK/obj.js" >/dev/null 2>&1; then
     echo "parse.sh: the lifted NeutrinoWebview does not parse" >&2
-    echo "          the usual cause is a line in the app reading exactly '    };'," >&2
-    echo "          which ends the sed range this lift uses -- close object" >&2
-    echo "          literals at another indent, or through a helper" >&2
+    echo "          the lift runs from 'var NeutrinoWebview = {' to the" >&2
+    echo "          'NeutrinoWebview.run();' that follows it; an app carrying" >&2
+    echo "          either of those lines ends it somewhere else" >&2
     exit 1
 fi
 

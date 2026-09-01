@@ -5,7 +5,7 @@
 # loaders.sh - the loader environment the standalone launch path hands its engine
 #
 # PR 9 denied the loader knobs a prefix admitted, in netinstall's env.c, and
-# said in the same breath that webview.cmd's own launch path was a different
+# said in the same breath that the launcher's own launch path was a different
 # threat model owed its own PR. This is that PR's suite.
 #
 # Before it, the launch path had exactly one piece of environment hygiene: the
@@ -27,7 +27,7 @@
 #           what a shape rule would take out of this lane's own environment
 #
 # And a fourth this file owes because it makes the claim: the sandbox
-# webview.cmd computes by running bubblewrap, of which it says the value is
+# the launcher computes by running bubblewrap, of which it says the value is
 # "never defaulted from the environment", must not be reachable from the
 # environment. Read off the process table -- bwrap exists under a launch or it
 # does not -- and not off a variable.
@@ -704,7 +704,7 @@ fi
 # The sandbox nobody meant to make settable
 # =====================================================================
 #
-# webview.cmd decides whether WebKitGTK gets its bubblewrap sandbox by running
+# the launcher decides whether WebKitGTK gets its bubblewrap sandbox by running
 # the mechanism rather than by looking for the parts it is made of, and says of
 # the result: "always assigned, never defaulted from the environment, so this is
 # a measurement being passed inward and not a switch anyone can set." Ground
@@ -848,7 +848,7 @@ fi
 # written is denied before anyone hears about it. This computes that set out of
 # the environment the lane really has and takes it away -- which is also the
 # only thing that can price the rule on a desktop that is not this runner.
-# The same two lists webview.cmd applies, and deliberately the same shape: a
+# The same two lists the launcher applies, and deliberately the same shape: a
 # namespace a toolkit owns, tested against a shape, with LD_ and DYLD_ taken
 # wholesale. XDG_ is not among them there and is not here -- a session sets
 # XDG_SESSION_PATH and XDG_SEAT_PATH, both of which match "PATH" and neither of
