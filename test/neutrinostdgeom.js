@@ -253,8 +253,28 @@ function phaseR() {
 // `<head>` exists is a no-op by the DOM's own rule and phase A went missing.
 // NT0 and RS0 above are read at the first statement and are unaffected by the
 // wait; they are what says which lane this is.
+// One dwell of head start before the first state, and it is scaffolding for the
+// instrument rather than anything about the geometry.
+//
+// The verifier attaches by finding a window, and a window exists before this
+// script has said anything in it. On Windows that gap is wide and variable --
+// `verify-std.ps1` compiles its interop types with Add-Type before it can poll
+// at all -- so the race is between this app reaching STD-GEOM-B-PAIR and the
+// recorder starting. Measured across four runs of `windows-content`: the
+// recorder caught A at 169ms, 959ms and 1103ms, and on the fourth it opened on
+// B with A already gone, which fails `analyse_geom`'s resize control because
+// there is nothing left to compare B against.
+//
+// Holding the window for one dwell before the first phase turns that margin
+// from "whatever the runner had left" into a dwell, on every platform. It moves
+// nothing that is asserted: the sequence, the sizes and the positions are the
+// same readings taken later, and no assertion here is about when A appears.
+//
+// The other three std probes have the same shape and have not shown the race.
+// They are left alone until they do, which is the only evidence that would say
+// what the right budget is for them.
 function ready() {
-    if (doc.body && win.neutrino) { phaseA(); }
+    if (doc.body && win.neutrino) { win.setTimeout(phaseA, DWELL); }
     else { win.setTimeout(ready, 16); }
 }
 
