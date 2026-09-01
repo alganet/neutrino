@@ -73,7 +73,6 @@ jobs:
           TEST_EXIT=0
           bash test/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
           cat ~/lanes.log
-          bash test/annotate.sh gjs-lanes ~/lanes.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
@@ -93,7 +92,6 @@ jobs:
           TEST_EXIT=0
           bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
           cat ~/assemble.log
-          bash test/annotate.sh gjs-assemble ~/assemble.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
       # The loader environment the standalone launch path hands its engine.
       # Every check here is against the same build with the fix cut out of it,
@@ -115,7 +113,6 @@ jobs:
           TEST_EXIT=0
           bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
           cat ~/loaders.log
-          bash test/annotate.sh gjs-loaders ~/loaders.log 'report:|FAIL:'
           exit $TEST_EXIT
       - run: |
           export DISPLAY=:99
@@ -144,7 +141,6 @@ jobs:
           bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
           bash test/reap.sh neutrinoattack ATTACK
           cat ~/attack-verify.log
-          bash test/annotate.sh gjs-attack ~/attack-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       # A page that navigates before its own load has finished. Built at the
       # default tier for the same reason the attack app is: this lane is what
@@ -173,7 +169,6 @@ jobs:
           kill "$STALL_PID" 2>/dev/null || true
           kill "$PAGES_PID" 2>/dev/null || true
           cat ~/early-verify.log
-          bash test/annotate.sh gjs-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       - name: netinstall suite
         timeout-minutes: 25
@@ -213,7 +208,6 @@ jobs:
           bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
             > ~/offline.log 2>&1 || TEST_EXIT=$?
           cat ~/offline.log
-          bash test/annotate.sh gjs-offline ~/offline.log 'report:|FAIL:'
           exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
@@ -244,9 +238,7 @@ jobs:
       # The two probes are separate steps and separate apps. The geometry app
       # is written never to close, so if the first step fails to reap it its
       # window is still up when the second begins -- which is why they search
-      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
-      # step is the unit of the annotation budget: 12 report lines each, three
-      # annotations of the eight annotate.sh will pack.
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix.
       - if: always()
         timeout-minutes: 14
         run: |
@@ -264,7 +256,6 @@ jobs:
           # this step's exit the way it always was.
           bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
           cat ~/deco-a.log ~/deco-b.log ~/stdgeom.log
-          bash test/annotate.sh gjs-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
@@ -281,7 +272,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stddoc.log
-          bash test/annotate.sh gjs-stddoc ~/stddoc.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
@@ -314,7 +304,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdwin.log
-          bash test/annotate.sh gjs-stdwin ~/stdwin.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
@@ -331,7 +320,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdtheme.log
-          bash test/annotate.sh gjs-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 3b: a desktop built so the media query is wrong about it.
       #
@@ -363,7 +351,6 @@ jobs:
           bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themescheme.log 2>&1 || TEST_EXIT=$?
           cat ~/themescheme.log
-          bash test/annotate.sh gjs-themescheme ~/themescheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 3: where each colour came from.
       #
@@ -397,11 +384,8 @@ jobs:
           TEST_EXIT=0
           bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themediff.log 2>&1 || TEST_EXIT=$?
-          # The two halves' own logs go to the step log and not to the
-          # annotation: annotate reads one file, so a raw dump cannot crowd out
-          # the digest even though both carry the report: prefix.
+          # Both halves' own logs, beside the differential that read them.
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
-          bash test/annotate.sh gjs-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which
@@ -502,7 +486,6 @@ jobs:
           TEST_EXIT=0
           bash test/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
           cat ~/lanes.log
-          bash test/annotate.sh cjs-lanes ~/lanes.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
       - timeout-minutes: 25
         run: |
@@ -515,7 +498,6 @@ jobs:
           TEST_EXIT=0
           bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
           cat ~/loaders.log
-          bash test/annotate.sh cjs-loaders ~/loaders.log 'report:|FAIL:'
           exit $TEST_EXIT
       - run: |
           export DISPLAY=:99
@@ -566,9 +548,7 @@ jobs:
       # The two probes are separate steps and separate apps. The geometry app
       # is written never to close, so if the first step fails to reap it its
       # window is still up when the second begins -- which is why they search
-      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
-      # step is the unit of the annotation budget: 12 report lines each, three
-      # annotations of the eight annotate.sh will pack.
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix.
       - if: always()
         timeout-minutes: 14
         run: |
@@ -586,7 +566,6 @@ jobs:
           # this step's exit the way it always was.
           bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
           cat ~/deco-a.log ~/deco-b.log ~/stdgeom.log
-          bash test/annotate.sh cjs-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
@@ -603,7 +582,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stddoc.log
-          bash test/annotate.sh cjs-stddoc ~/stddoc.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
@@ -636,7 +614,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdwin.log
-          bash test/annotate.sh cjs-stdwin ~/stdwin.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
@@ -653,7 +630,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdtheme.log
-          bash test/annotate.sh cjs-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 3b: a desktop built so the media query is wrong about it.
       #
@@ -685,7 +661,6 @@ jobs:
           bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themescheme.log 2>&1 || TEST_EXIT=$?
           cat ~/themescheme.log
-          bash test/annotate.sh cjs-themescheme ~/themescheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 3: where each colour came from.
       #
@@ -719,11 +694,8 @@ jobs:
           TEST_EXIT=0
           bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themediff.log 2>&1 || TEST_EXIT=$?
-          # The two halves' own logs go to the step log and not to the
-          # annotation: annotate reads one file, so a raw dump cannot crowd out
-          # the digest even though both carry the report: prefix.
+          # Both halves' own logs, beside the differential that read them.
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
-          bash test/annotate.sh cjs-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Cleared between the two halves. Both verifiers write into the same
       # directory, and on two runners that did not matter; on one, the second
@@ -786,7 +758,6 @@ jobs:
           TEST_EXIT=0
           bash test/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
           cat ~/lanes.log
-          bash test/annotate.sh pygobject-lanes ~/lanes.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 12
@@ -800,7 +771,6 @@ jobs:
           TEST_EXIT=0
           bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
           cat ~/loaders.log
-          bash test/annotate.sh pygobject-loaders ~/loaders.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         run: |
@@ -848,9 +818,7 @@ jobs:
       # The two probes are separate steps and separate apps. The geometry app
       # is written never to close, so if the first step fails to reap it its
       # window is still up when the second begins -- which is why they search
-      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
-      # step is the unit of the annotation budget: 12 report lines each, three
-      # annotations of the eight annotate.sh will pack.
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix.
       - if: always()
         timeout-minutes: 14
         run: |
@@ -868,7 +836,6 @@ jobs:
           # this step's exit the way it always was.
           bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
           cat ~/deco-a.log ~/deco-b.log ~/stdgeom.log
-          bash test/annotate.sh pygobject-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
@@ -885,7 +852,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stddoc.log
-          bash test/annotate.sh pygobject-stddoc ~/stddoc.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
@@ -918,7 +884,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdwin.log
-          bash test/annotate.sh pygobject-stdwin ~/stdwin.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
@@ -935,7 +900,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdtheme.log
-          bash test/annotate.sh pygobject-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 3b: a desktop built so the media query is wrong about it.
       #
@@ -967,7 +931,6 @@ jobs:
           bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themescheme.log 2>&1 || TEST_EXIT=$?
           cat ~/themescheme.log
-          bash test/annotate.sh pygobject-themescheme ~/themescheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 3: where each colour came from.
       #
@@ -1001,11 +964,8 @@ jobs:
           TEST_EXIT=0
           bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themediff.log 2>&1 || TEST_EXIT=$?
-          # The two halves' own logs go to the step log and not to the
-          # annotation: annotate reads one file, so a raw dump cannot crowd out
-          # the digest even though both carry the report: prefix.
+          # Both halves' own logs, beside the differential that read them.
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
-          bash test/annotate.sh pygobject-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which
@@ -1072,7 +1032,6 @@ jobs:
           TEST_EXIT=0
           bash test/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
           cat ~/lanes.log
-          bash test/annotate.sh kde-lanes ~/lanes.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
@@ -1092,7 +1051,6 @@ jobs:
           TEST_EXIT=0
           bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
           cat ~/assemble.log
-          bash test/annotate.sh kde-assemble ~/assemble.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
       # The Qt launch path's document, which no longer has a name. Every check
       # is one that fails against the commit before it, and the payloads it
@@ -1119,7 +1077,6 @@ jobs:
           TEST_EXIT=0
           bash test/appdir.sh test/neutrinoappdir.cmd > ~/appdir.log 2>&1 || TEST_EXIT=$?
           cat ~/appdir.log
-          bash test/annotate.sh kde-appdir ~/appdir.log 'report:|FAIL:'
           exit $TEST_EXIT
       # The loader environment the standalone launch path hands its engine.
       # Every check here is against the same build with the fix cut out of it,
@@ -1145,7 +1102,6 @@ jobs:
           TEST_EXIT=0
           bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
           cat ~/loaders.log
-          bash test/annotate.sh kde-loaders ~/loaders.log 'report:|FAIL:'
           exit $TEST_EXIT
       - run: |
           export DISPLAY=:99
@@ -1184,7 +1140,6 @@ jobs:
           bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
           bash test/reap.sh neutrinoattack ATTACK
           cat ~/attack-verify.log
-          bash test/annotate.sh kde-attack ~/attack-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       # A page that navigates before its own load has finished. Built at the
       # default tier for the same reason the attack app is: this lane is what
@@ -1217,7 +1172,6 @@ jobs:
           kill "$STALL_PID" 2>/dev/null || true
           kill "$PAGES_PID" 2>/dev/null || true
           cat ~/early-verify.log
-          bash test/annotate.sh kde-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       - name: netinstall suite
         timeout-minutes: 25
@@ -1267,7 +1221,6 @@ jobs:
           bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
             > ~/offline.log 2>&1 || TEST_EXIT=$?
           cat ~/offline.log
-          bash test/annotate.sh kde-offline ~/offline.log 'report:|FAIL:'
           exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
@@ -1298,9 +1251,7 @@ jobs:
       # The two probes are separate steps and separate apps. The geometry app
       # is written never to close, so if the first step fails to reap it its
       # window is still up when the second begins -- which is why they search
-      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
-      # step is the unit of the annotation budget: 12 report lines each, three
-      # annotations of the eight annotate.sh will pack.
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix.
       - if: always()
         timeout-minutes: 14
         run: |
@@ -1322,7 +1273,6 @@ jobs:
           # this step's exit the way it always was.
           bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
           cat ~/deco-a.log ~/deco-b.log ~/stdgeom.log
-          bash test/annotate.sh kde-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
@@ -1343,7 +1293,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stddoc.log
-          bash test/annotate.sh kde-stddoc ~/stddoc.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
@@ -1380,7 +1329,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdwin.log
-          bash test/annotate.sh kde-stdwin ~/stdwin.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
@@ -1401,7 +1349,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdtheme.log
-          bash test/annotate.sh kde-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 3: where each colour came from.
       #
@@ -1439,11 +1386,8 @@ jobs:
           TEST_EXIT=0
           bash test/themeflip.sh qt test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themediff.log 2>&1 || TEST_EXIT=$?
-          # The two halves' own logs go to the step log and not to the
-          # annotation: annotate reads one file, so a raw dump cannot crowd out
-          # the digest even though both carry the report: prefix.
+          # Both halves' own logs, beside the differential that read them.
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
-          bash test/annotate.sh kde-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which
@@ -1570,9 +1514,10 @@ jobs:
           prepare: |
             pkg_add -I bash curl wget || true
             pkg_add -I python3 || pkg_add -I python%3 || true
-          # The log comes back rather than going to the job log: reading a job
-          # log needs a token and reading annotations does not, which is the
-          # same reason annotate.sh exists for the webview lanes.
+          # The log comes back rather than being written inside the guest and
+          # left there. It is copied out and printed by a step of its own, which
+          # is why the `suite log` steps below are the one place in this file
+          # that still exist only to `cat` something.
           #
           # `&& rc=0 || rc=$?` and not a bare `$?`: vmactions pipes this script
           # to `sh` behind a literal `set -eu` (index.js, `const fullCmd`), and
@@ -1586,14 +1531,22 @@ jobs:
             bash netinstall/test/run.sh > openbsd-suite.log 2>&1 && rc=0 || rc=$?
             echo "$rc" > openbsd-suite.rc
             exit 0
-      # `report:` is in the pattern because a suite's nt_result never leaves this
-      # lane on its own: the `::warning` it writes is written inside the VM,
-      # where GitHub is not listening, and arrives here as a line in a log file.
-      # Anchored to the plain echo so the smuggled `::warning` copy of the same
-      # line is not annotated twice.
-      - name: results
+      # One step, one cat, per guest.
+      #
+      # These were four steps apiece, each running annotate.sh over the same
+      # suite log with a different grep -- results, readings, errors, totals --
+      # because annotations were the only channel that reached a reader without
+      # a token, and each bucket had its own cap to spend. `gh` reads the job
+      # log directly now, so the four greps collapse into the thing they were
+      # all approximating: the log itself, printed once.
+      #
+      # This is the one lane where that log has no other route out. It is
+      # written inside a guest VM and copied back, so nothing else in the job
+      # prints it -- which is why these steps become `cat` rather than
+      # disappearing with the rest.
+      - name: suite log
         if: always()
-        run: bash test/annotate.sh openbsd openbsd-suite.log 'FAIL:|failure\(s\)|SKIP|^ +report:'
+        run: cat openbsd-suite.log
       - name: outcome
         if: always()
         run: |
@@ -1613,11 +1566,10 @@ jobs:
       # PR 11 parked these with "a lane written blind is worse", and the blind
       # arms are already in the tree. These two lanes ask.
       #
-      # bsdfloor.sh runs first and gets an annotate step of its own. It asserts
-      # nothing and always exits 0, which is what lets it go in front of a
-      # suite whose whole question is whether anything downstream of it can
-      # build at all; the cap is per step, so its readings do not compete with
-      # the suite's.
+      # bsdfloor.sh runs first and is printed by a step of its own. It asserts
+      # nothing and always exits 0, which is what lets it go in front of a suite
+      # whose whole question is whether anything downstream of it can build at
+      # all.
       - if: always()
         name: netinstall suite
         id: freebsd_vm
@@ -1655,37 +1607,23 @@ jobs:
             exit 0
       - name: probe results
         if: always()
-        run: bash test/annotate.sh freebsd-probe freebsd-probe.log '^ +report:|^ +FAIL:|SKIP:'
+        run: cat freebsd-probe.log
       - name: packages
         if: always()
-        run: bash test/annotate.sh freebsd-pkg freebsd-pkg.log 'missing|not found|rror|^tool '
+        run: cat freebsd-pkg.log
       # Three steps over the suite log, because the cap is per step and round 2
       # dropped four chunks from the middle of the failures alone. Anchored to
       # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
       # sentence twice, once for a reader and once as an ::error, and matching
       # both halved the number of distinct failures that fit.
-      - name: results
+      - name: suite log
         if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh freebsd freebsd-suite.log '^ +FAIL:'
-      - name: readings
-        if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh freebsd-readings freebsd-suite.log 'SKIP|^ +report:'
+        run: cat freebsd-suite.log
       # Most of what this lane counts as failures are suites exiting 2 without
       # printing a FAIL line at all -- a setup that did not come up, not an
       # assertion that did not hold. Those two are different problems and the
       # results step above cannot see the first one.
-      - name: errors
-        if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh freebsd-errors freebsd-suite.log 'not found|No such file|Traceback|Permission denied|never came up|cannot create|^### |^ +(interpreter|still running|poller|it said)'
-      - name: totals
-        if: always()
-        run: bash test/annotate.sh freebsd-totals freebsd-suite.log '^### Total|[.]sh. [0-9]+ failure'
+
       # bsdfloor gates three answers of its own now -- that the branch compiles,
       # which sysctl spelling this kernel answers, and whether the no-new-privs
       # floor is one -- so its rc counts. `absent` when it never got as far as
@@ -1697,7 +1635,6 @@ jobs:
           [ "${{ steps.freebsd_vm.outcome }}" = "success" ] ||
             echo "::error title=freebsd::the vm step itself did not complete"
           probe="$(cat freebsd-probe.rc 2>/dev/null || echo absent)"
-          echo "::warning title=freebsd::probe rc=$probe"
           [ "$probe" = "0" ] ||
             echo "::error title=freebsd::bsdfloor reported $probe failure(s)"
           suite="$(cat freebsd-suite.rc 2>/dev/null || echo 1)"
@@ -1827,44 +1764,29 @@ jobs:
             exit 0
       - name: probe results
         if: always()
-        run: bash test/annotate.sh netbsd-probe netbsd-probe.log '^ +report:|^ +FAIL:|SKIP:'
+        run: cat netbsd-probe.log
       - name: packages
         if: always()
-        run: bash test/annotate.sh netbsd-pkg netbsd-pkg.log 'missing|not found|rror|^tool |^release |^repo |^pkg_add |^PKG_PATH|^no pkg'
+        run: cat netbsd-pkg.log
       # Three steps over the suite log, because the cap is per step and round 2
       # dropped four chunks from the middle of the failures alone. Anchored to
       # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
       # sentence twice, once for a reader and once as an ::error, and matching
       # both halved the number of distinct failures that fit.
-      - name: results
+      - name: suite log
         if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh netbsd netbsd-suite.log '^ +FAIL:'
-      - name: readings
-        if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh netbsd-readings netbsd-suite.log 'SKIP|^ +report:'
+        run: cat netbsd-suite.log
       # Most of what this lane counts as failures are suites exiting 2 without
       # printing a FAIL line at all -- a setup that did not come up, not an
       # assertion that did not hold. Those two are different problems and the
       # results step above cannot see the first one.
-      - name: errors
-        if: always()
-        env:
-          NT_ANNOTATE_PER: "12"
-        run: bash test/annotate.sh netbsd-errors netbsd-suite.log 'not found|No such file|Traceback|Permission denied|never came up|cannot create|^### |^ +(interpreter|still running|poller|it said)'
-      - name: totals
-        if: always()
-        run: bash test/annotate.sh netbsd-totals netbsd-suite.log '^### Total|[.]sh. [0-9]+ failure'
+
       - name: outcome
         if: always()
         run: |
           [ "${{ steps.netbsd_vm.outcome }}" = "success" ] ||
             echo "::error title=netbsd::the vm step itself did not complete"
           probe="$(cat netbsd-probe.rc 2>/dev/null || echo absent)"
-          echo "::warning title=netbsd::probe rc=$probe"
           [ "$probe" = "0" ] ||
             echo "::error title=netbsd::bsdfloor reported $probe failure(s)"
           suite="$(cat netbsd-suite.rc 2>/dev/null || echo 1)"
@@ -1929,7 +1851,6 @@ jobs:
           TEST_EXIT=0
           bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
           cat ~/assemble.log
-          bash test/annotate.sh windows-assemble ~/assemble.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
       # The Windows driver's own file and process I/O. Beside assemble.sh for
       # the same reason: it reads webview.cmd and compiles small programs, needs
@@ -1944,9 +1865,6 @@ jobs:
         run: |
           & .\test\winexec.ps1 webview.cmd *>&1 | Tee-Object -FilePath "$HOME\winexec.log"
           exit $LASTEXITCODE
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-winexec ~/winexec.log 'report:|FAIL:'
       # The monolith launched a webview (appcache) before the neutrinotest
       # verify, so the WebView2 runtime's one-time cold init was already done.
       # The verify below is first in this lane, so it is the cold launch, and
@@ -2003,8 +1921,8 @@ jobs:
                   Tee-Object -FilePath "$HOME\windows-verify.log" -Append
               $testExit = 1
           }
-          # The launcher's own account, appended to the verifier's so one
-          # annotate carries both. This step went red twice saying only that it
+          # The launcher's own account, appended to the verifier's so one log
+          # carries both. This step went red twice saying only that it
           # had reached "Step 0" -- which is a section header and not a pass --
           # and the app's side of it was in a file nothing read. A refusal
           # writes `neutrino: ...` here before any window exists.
@@ -2017,22 +1935,6 @@ jobs:
           }
           Get-Process | Where-Object { $_.MainWindowTitle -ne "" } | Where-Object { $_.MainWindowTitle -like "*neutrino*" -or $_.MainWindowTitle -like "*STEP*" -or $_.MainWindowTitle -like "*TESTS DONE*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
-      # Carries the verifier's result out where a token cannot read the job
-      # log. It once went red saying only that -- for four PRs it had no
-      # annotate at all, and when it failed the suites that used to follow it in
-      # the old single windows lane were skipped and reported missing logs. The
-      # suites behind it are gated `if: always()` now, so a red verify no
-      # longer takes them with it -- and the reading still has to leave by
-      # annotation, because nothing here can read a job log without a token.
-      - if: always()
-        shell: bash
-        env:
-          # The verifier's watch adds about a dozen `report:` lines to a log
-          # that already fills the default forty, and the watch is the reading
-          # this round exists for -- at the default this step would drop its
-          # middle, which is exactly where the title census sits.
-          NT_ANNOTATE_PER: "8"
-        run: bash test/annotate.sh windows-test ~/windows-verify.log "PASS:|FAIL:|report:|^=== |^neutrino:"
       # The exe the batch region runs, which is now the one it just compiled.
       # Same finding as kde-appdir in a different mechanism: there the launcher
       # wrote the program every launch into a directory anyone could rewrite,
@@ -2046,9 +1948,6 @@ jobs:
         run: |
           & .\test\appcache.ps1 .\test\neutrinocache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
           exit $LASTEXITCODE
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-appcache ~/appcache.log 'report:|FAIL:'
       # The document the exe renders, and who gets to name it. It used to come
       # from NEUTRINO_SCRIPT_PATH, which the batch region set and netinstall's
       # allowlist passed through intact; getScriptPath derives it from the
@@ -2069,9 +1968,6 @@ jobs:
           & .\test\standalone.ps1 .\test\neutrinostandalone.cmd .\test\neutrinostandalone-testing.cmd *>&1 |
               Tee-Object -FilePath "$HOME\standalone.log"
           exit $LASTEXITCODE
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-standalone ~/standalone.log 'report:|FAIL:|failure\(s\)'
       # It launches the app some forty times over three probing modes, and the
       # first version of it was half an hour that nobody could overlap. Ninety
       # seconds now, which is what makes it a step again rather than a job.
@@ -2102,9 +1998,6 @@ jobs:
           Get-Process -Name "neutrinorace" -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $raceExit
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-exerace ~/exerace.log 'report:|FAIL:|failure\(s\)'
       # A failed initialisation has to end, and has to leave a record. Both
       # halves were measured absent before this: the driver sat holding a modal
       # box ninety seconds after the download threw, and its app folder held
@@ -2128,9 +2021,6 @@ jobs:
           Get-Process -Name "neutrinoerr" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
       - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-winerr ~/winerr-verify.log 'report:|PASS:|FAIL:|failure\(s\)'
-      - if: always()
         uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
@@ -2151,9 +2041,9 @@ jobs:
           # its own timeout-minutes, measured at 37 minutes against a bound of
           # 20, and the rest of the lane never starts. A file has no reader to
           # wait on. The log is echoed afterwards by a process that does exit,
-          # which is also what puts nt_result's ::warning lines back in front of
-          # the runner -- redirecting without that would take the annotations
-          # away with the hang.
+          # which is also what puts nt_result's lines back in front of the
+          # runner -- redirecting without that would take the readings away
+          # with the hang.
           #
           # PR 20 wrote this lesson down for a probe that piped the launcher.
           # This is the step on this lane that never got it.
@@ -2258,15 +2148,6 @@ jobs:
             if ($r -ne 0) { $rc = $r }
           }
           exit $rc
-      - if: always()
-        shell: bash
-        env:
-          NT_ANNOTATE_PER: "8"
-        run: |
-          for replica in 1 2; do
-            bash test/annotate.sh "windows-load-$replica" \
-              ~/load-verify-"$replica".log 'report:|PASS:|FAIL:|failure\(s\)'
-          done
       # One upload for the lane. Six jobs meant six artifacts over the same
       # two globs in the same home directory, so every suite after the first
       # published the ones before it under its own name.
@@ -2333,14 +2214,6 @@ jobs:
           $testExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "ATTACK *" } | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
-      # The report line, carried out where it can be read without a token. This
-      # was a Select-String written into the step above, the fifth hand-rolled
-      # annotator in a file with four lanes; annotate.sh is what the other four
-      # call and it produces a byte-identical annotation here -- measured, on
-      # the same log, in the same run. What it adds is the cases the inline form
-      # could not express, and they are exactly the ones a red lane produces: a
-      # log that is not there, and a log that matched nothing.
-      #
       # A note this lane was carrying and should not: `postnav=PENDING
       # nav=PENDING` here is not the earliest of several reports, and the
       # Select-Object -First 8 was not truncating anything. verify-attack.ps1
@@ -2348,9 +2221,6 @@ jobs:
       # comment that the settled report is not expected to arrive on this
       # platform because there is no navigation refusal to refuse with.
       # Measured: matched=1 reports=1.
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-attack ~/attack-verify.log 'report:|FAIL:'
       # The navigation lane. The Windows driver subscribes to NavigationStarting
       # and NewWindowRequested now, and this is the suite that says so: against
       # a target that answers, the driver without a guard reported
@@ -2382,7 +2252,7 @@ jobs:
           exit $navExit
       - if: always()
         shell: bash
-        run: bash test/annotate.sh windows-nav ~/navlogs/nav.log 'report:|FAIL:'
+        run: cat ~/navlogs/nav.log
       # The offline tier, which nothing in this repository has ever built.
       # `build.sh --tier=offline` says it denies the page network access, and
       # the whole mechanism is one meta tag applyContentPolicy swaps into the
@@ -2420,7 +2290,7 @@ jobs:
           exit $offExit
       - if: always()
         shell: bash
-        run: bash test/annotate.sh windows-offline ~/offlinelogs/offline.log 'report:|FAIL:'
+        run: cat ~/offlinelogs/offline.log
       # PR 26, and the only lane it applies to. `boot` extracts the document,
       # applies the content policy and hands the result to `driver.loadHTML`;
       # this driver used to drop that argument, navigate to about:blank, and
@@ -2453,7 +2323,7 @@ jobs:
           exit $swapExit
       - if: always()
         shell: bash
-        run: bash test/annotate.sh windows-docswap ~/docswaplogs/docswap.log 'report:|FAIL:'
+        run: cat ~/docswaplogs/docswap.log
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
       # Two questions were opened here. Whether an app can be written against
@@ -2483,9 +2353,7 @@ jobs:
       # The two probes are separate steps and separate apps. The geometry app
       # is written never to close, so if the first step fails to reap it its
       # window is still up when the second begins -- which is why they search
-      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
-      # step is the unit of the annotation budget: 12 report lines each, three
-      # annotations of the eight annotate.sh will pack.
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix.
       - if: always()
         shell: bash
         run: |
@@ -2523,9 +2391,6 @@ jobs:
           }
           exit $e
       - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-stdgeom ~/stdgeom.log 'report:|FAIL:'
-      - if: always()
         timeout-minutes: 10
         shell: pwsh
         run: |
@@ -2536,9 +2401,6 @@ jobs:
           Get-Process -Name neutrinostddoc -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $e
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-stddoc ~/stddoc.log 'report:|FAIL:'
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -2574,9 +2436,6 @@ jobs:
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $e
       - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-stdwin ~/stdwin.log 'report:|FAIL:'
-      - if: always()
         timeout-minutes: 10
         shell: pwsh
         run: |
@@ -2587,9 +2446,6 @@ jobs:
           Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $e
-      - if: always()
-        shell: bash
-        run: bash test/annotate.sh windows-stdtheme ~/stdtheme.log 'report:|FAIL:'
       # Round 3: where each colour came from.
       #
       # The single-launch theme step above says what an engine reports and
@@ -2671,12 +2527,11 @@ jobs:
         shell: bash
         run: |
           TEST_EXIT=0
-          # The knob readings first, so the annotation carries them beside the
-          # verdict they explain rather than in a step log nobody can fetch.
+          # The knob readings first, so the differential below is read beside
+          # the two states it is a differential of.
           cat ~/flip-knobs.log > ~/themediff.log 2>/dev/null || true
           bash test/themediff.sh ~/flip-a.log ~/flip-b.log >> ~/themediff.log 2>&1 || TEST_EXIT=$?
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
-          bash test/annotate.sh windows-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which
@@ -2697,7 +2552,10 @@ jobs:
           mkdir -p ~/sheetsrc
           cp ~/*.png ~/*.log ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh windows-content ~/sheet/windows-content.html \
-            "The suites=$HOME/sheetsrc"
+            "The suites=$HOME/sheetsrc" \
+            "docswap=$HOME/docswaplogs" \
+            "nav=$HOME/navlogs" \
+            "offline=$HOME/offlinelogs"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -2748,7 +2606,6 @@ jobs:
           TEST_EXIT=0
           bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
           cat ~/assemble.log
-          bash test/annotate.sh macos-assemble ~/assemble.log 'report:|FAIL:|failure\(s\)'
           exit $TEST_EXIT
       # The last step in any lane with no way to be read, and it cost a merge.
       # It went red publishing nothing at all: verify-macos.sh exits before its
@@ -2757,10 +2614,8 @@ jobs:
       # catted into the job log and carried no further. Same treatment as the
       # other five, and the timeout the netinstall step has had all along.
       #
-      # One annotate for both halves. The app's output is appended rather than
-      # dumped into a step of its own, and matched on the `neutrino:` prefix the
-      # launcher speaks in -- a raw dump is unbounded by construction and this
-      # is not one.
+      # The app's output is appended to the verifier's log rather than dumped
+      # into a step of its own, so one file carries both sides of the launch.
       - timeout-minutes: 20
         run: |
           echo "=== Launching app ==="
@@ -2787,7 +2642,6 @@ jobs:
             echo "=== the app's own account ==="
             cat ~/neutrino-stdout.log 2>/dev/null || true
           } >> ~/macos-verify.log
-          bash test/annotate.sh macos-test ~/macos-verify.log 'PASS:|FAIL:|report:|^=== |^neutrino:'
           exit $TEST_EXIT
       # The tight tier: webview.cmd confining its own process, whether or not
       # netinstall launched it. Asserted from both sides -- the webview has to
@@ -2798,16 +2652,12 @@ jobs:
           # This lane reported to its job log and called nothing that carried
           # the result out, so a red tight tier said FAILURES=0 is false and
           # nothing finer -- the gap PR 7 and PR 8 both parked here. The third
-          # argument is not optional: this verifier speaks in PASS/FAIL and
-          # annotate.sh's stock `report:|FAIL:` pattern matches nothing at all
-          # in its output. Measured, on the real log: 43 lines, 18 of them
-          # caught by the pattern below and none by the default, packing into
-          # four annotations against a cap of eight.
+          # verifier speaks in PASS/FAIL rather than in `report:` lines, which
+          # is worth knowing when reading its log beside the others.
           TIGHT_EXIT=0
           bash test/verify-macos-tight.sh test/neutrinotight.cmd ~/screenshots \
             > ~/tight.log 2>&1 || TIGHT_EXIT=$?
           cat ~/tight.log
-          bash test/annotate.sh macos-tight ~/tight.log 'PASS:|FAIL:|failure\(s\)'
           exit $TIGHT_EXIT
       # The loader environment the standalone launch path hands its engine.
       # Every check here is against the same build with the fix cut out of it,
@@ -2826,7 +2676,6 @@ jobs:
           TEST_EXIT=0
           bash test/loaders.sh test/neutrinoloaders.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
           cat ~/loaders.log
-          bash test/annotate.sh macos-loaders ~/loaders.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         run: |
@@ -2839,7 +2688,6 @@ jobs:
           cat ~/attack-verify.log
           echo "=== app output ==="
           cat ~/neutrino-attack.log || true
-          bash test/annotate.sh macos-attack ~/attack-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Recorded here rather than asserted: this driver has no navigation
       # delegate to arm at all, which is PR 6's business. The testing tier is
@@ -2865,7 +2713,6 @@ jobs:
           cat ~/early-verify.log
           echo "=== app output ==="
           cat ~/early.log || true
-          bash test/annotate.sh macos-early ~/early-verify.log 'report:|FAIL:'
           exit $TEST_EXIT
       # The navigation guard PR 6 built, and the account it gives of itself.
       #
@@ -2888,7 +2735,6 @@ jobs:
           TEST_EXIT=0
           bash test/navrefuse.sh test/neutrinonavrefuse.cmd > ~/navrefuse.log 2>&1 || TEST_EXIT=$?
           cat ~/navrefuse.log
-          bash test/annotate.sh macos-navrefuse ~/navrefuse.log 'report:|FAIL:|PASS:|NOTE:'
           exit $TEST_EXIT
       # The offline tier, which nothing in this repository has ever built.
       # `build.sh --tier=offline` says it denies the page network access, and
@@ -2918,7 +2764,6 @@ jobs:
           bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
             > ~/offline.log 2>&1 || TEST_EXIT=$?
           cat ~/offline.log
-          bash test/annotate.sh macos-offline ~/offline.log 'report:|FAIL:'
           exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
@@ -2949,9 +2794,7 @@ jobs:
       # The two probes are separate steps and separate apps. The geometry app
       # is written never to close, so if the first step fails to reap it its
       # window is still up when the second begins -- which is why they search
-      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix. And a
-      # step is the unit of the annotation budget: 12 report lines each, three
-      # annotations of the eight annotate.sh will pack.
+      # for `^STD-GEOM-` and `^STD-DOC-` and not for a shared prefix.
       - if: always()
         timeout-minutes: 14
         run: |
@@ -2967,7 +2810,6 @@ jobs:
           # this step's exit the way it always was.
           bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots > ~/stdgeom.log 2>&1 || TEST_EXIT=$?
           cat ~/deco-a.log ~/deco-b.log ~/stdgeom.log
-          bash test/annotate.sh macos-stdgeom ~/stdgeom.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
@@ -2982,7 +2824,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stddoc.log
-          bash test/annotate.sh macos-stddoc ~/stddoc.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
@@ -3013,7 +2854,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdwin.log
-          bash test/annotate.sh macos-stdwin ~/stdwin.log 'report:|FAIL:'
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
@@ -3028,7 +2868,6 @@ jobs:
           pkill -P "$APP_PID" 2>/dev/null || true
           kill "$APP_PID" 2>/dev/null || true
           cat ~/stdtheme.log
-          bash test/annotate.sh macos-stdtheme ~/stdtheme.log 'report:|FAIL:'
           exit $TEST_EXIT
       # Round 3: where each colour came from.
       #
@@ -3060,11 +2899,8 @@ jobs:
           TEST_EXIT=0
           bash test/themeflip.sh macos test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themediff.log 2>&1 || TEST_EXIT=$?
-          # The two halves' own logs go to the step log and not to the
-          # annotation: annotate reads one file, so a raw dump cannot crowd out
-          # the digest even though both carry the report: prefix.
+          # Both halves' own logs, beside the differential that read them.
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
-          bash test/annotate.sh macos-themediff ~/themediff.log 'report:|FAIL:'
           exit $TEST_EXIT
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which

@@ -25,10 +25,10 @@
 # gives up on a jar it cannot write without failing the transfer, so the file's
 # presence is the fetch child's write reach and nothing else.
 #
-# Readings leave through test/annotate.sh rather than one annotation each:
-# GitHub keeps ten warnings per step, the netinstall step is already over that,
-# and a measurement nobody can read is not a measurement. Failures go out as
-# errors, which have a bucket of their own.
+# Readings are collected into one file and printed at the end rather than
+# emitted line by line, which keeps a measurement and its neighbours together in
+# the log. Failures go out as `::error` annotations, which is the one annotation
+# this tree still uses.
 
 set -uo pipefail
 
@@ -48,7 +48,6 @@ for v in TIGHT FAILCLOSED SESSION OPENSESSION; do
         eval "$v=\"\$(cd \"\$(dirname \"$b\")\" && pwd)/\$(basename \"$b\")\""
 done
 . "$(dirname "$0")/lib.sh"
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 WORK="$(mktemp -d)"
 SERVE="$WORK/serve"
@@ -57,8 +56,7 @@ export NEUTRINO_HOME="$WORK/home"
 
 FAILURES=0
 
-# One line per measurement, packed into annotations at the end. nt_result would
-# spend one of the step's ten warnings on each.
+# One line per measurement, printed together at the end.
 RESULTS="$WORK/results.log"
 : > "$RESULTS"
 probe() {
@@ -464,7 +462,7 @@ fi
 # will not produce one on its own.
 if [ -z "$SESSION" ] || [ "$(uname -s)" != "Linux" ]; then
     probe "session states: SKIPPED (no strict+session binary, or not linux)"
-    bash "$ROOT/test/annotate.sh" phases "$RESULTS" 'probe:'
+    cat "$RESULTS"
     echo "=== Results: $FAILURES failure(s) ==="
     exit $FAILURES
 fi
@@ -539,7 +537,7 @@ nt_tier_closes() {
 }
 if ! nt_userns nt_tier_closes; then
     probe "session states: UNMEASURED -- the tier cannot close here ($(half_info))"
-    bash "$ROOT/test/annotate.sh" phases "$RESULTS" 'probe:'
+    cat "$RESULTS"
     echo "=== Results: $FAILURES failure(s) ==="
     exit $FAILURES
 fi
@@ -634,6 +632,6 @@ for STEP in seal pid map; do
     esac
 done
 
-bash "$ROOT/test/annotate.sh" phases "$RESULTS" 'probe:'
+cat "$RESULTS"
 echo "=== Results: $FAILURES failure(s) ==="
 exit $FAILURES

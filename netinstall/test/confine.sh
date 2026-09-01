@@ -655,8 +655,8 @@ nt_result "report: confine payload rc=$OUT_RC lines=$(grep -c . <<<"$OUT") finis
 # The tail, and netinstall's own warnings filtered out of it. Round 4 reported
 # the head and spent the whole 260 characters on `warning: running unconfined`,
 # which the confinement line above already says -- while the payload's own last
-# words, which are the reading, were past the cut. Same rule annotate.sh states
-# for chunks: the answer is at the end.
+# words, which are the reading, were past the cut. Same rule the sheet's log
+# blocks follow: when something has to be trimmed, the answer is at the end.
 NT_PAYLOAD_ERR="$(grep -av '^netinstall:' "$WORK/err" 2>/dev/null |
                   tail -4 | tr '\n' ' ' | tr -d '[:cntrl:]')"
 [ -n "$NT_PAYLOAD_ERR" ] || NT_PAYLOAD_ERR="<nothing the app itself said>"

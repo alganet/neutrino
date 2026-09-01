@@ -30,7 +30,7 @@
 #      binary executed afterwards does not come back root", with the same exec
 #      without the flag as the control.
 #
-# Readings leave as `report:` lines; the lane's annotate step carries them out.
+# Readings leave as `report:` lines; the lane prints the log they land in.
 
 set -uo pipefail
 

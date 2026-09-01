@@ -241,7 +241,6 @@ function Wait-ForApp() {
 function Assert-WebView2Package($artifact, $packageRoot) {
     if (-not (Test-Path -LiteralPath $packageRoot)) {
         Write-Host "  FAIL: no package directory at $packageRoot"
-        Write-Host "::warning title=windows-package::no package directory at $packageRoot"
         $script:Failures++
         return
     }
@@ -261,7 +260,6 @@ function Assert-WebView2Package($artifact, $packageRoot) {
     }
     if ($start -lt 0 -or $stop -lt 0) {
         Write-Host "  FAIL: could not lift the pinned member list out of $artifact"
-        Write-Host "::warning title=windows-package::could not lift the pinned member list"
         $script:Failures++
         return
     }
@@ -289,7 +287,6 @@ function Assert-WebView2Package($artifact, $packageRoot) {
     # checked and fail on zero.
     if ($expected.Count -eq 0) {
         Write-Host "  FAIL: the artifact pins no package members at all"
-        Write-Host "::warning title=windows-package::the artifact pins no package members at all"
         $script:Failures++
         return
     }
@@ -297,14 +294,12 @@ function Assert-WebView2Package($artifact, $packageRoot) {
     foreach ($rel in $expected.Keys) {
         if (-not $onDisk.ContainsKey($rel)) {
             Write-Host "  FAIL: pinned member missing from the package: $rel"
-            Write-Host "::warning title=windows-package::pinned member missing: $rel"
             $script:Failures++
             continue
         }
         $got = (Get-FileHash -LiteralPath $onDisk[$rel] -Algorithm SHA256).Hash.ToLower()
         if ($got -ne $expected[$rel]) {
             Write-Host "  FAIL: $rel hashes to $got, pinned as $($expected[$rel])"
-            Write-Host "::warning title=windows-package::$rel does not match its pin"
             $script:Failures++
         } else {
             Write-Host "  PASS: $rel matches its pin"
@@ -314,7 +309,6 @@ function Assert-WebView2Package($artifact, $packageRoot) {
     foreach ($rel in $onDisk.Keys) {
         if (-not $expected.ContainsKey($rel)) {
             Write-Host "  FAIL: the unpack wrote something nothing pinned: $rel"
-            Write-Host "::warning title=windows-package::unpinned file in the package directory: $rel"
             $script:Failures++
         }
     }
@@ -438,10 +432,8 @@ function Assert-Reached($record, $title) {
         }
         if ($first) {
             Write-Host "  FAIL: never observed the title '$title'; the record opens on '$($first.Title)' at $($first.At)ms, so the watch may have started after this step"
-            Write-Host "::warning title=windows-sequence::never observed '$title'; record opens on '$($first.Title)' at $($first.At)ms"
         } else {
             Write-Host "  FAIL: never observed the title '$title'; the record is empty"
-            Write-Host "::warning title=windows-sequence::never observed the title '$title'"
         }
         $script:Failures++
     }
@@ -550,7 +542,6 @@ foreach ($line in (Get-Content -LiteralPath $Artifact)) {
 Write-Host "=== The sampler kept up with the app ==="
 if ($dwell -le 0) {
     Write-Host "  FAIL: could not read the step dwell out of $Artifact"
-    Write-Host "::warning title=windows-sequence::could not read the step dwell out of the artifact"
     $script:Failures++
     $dwell = 1000
 }
@@ -559,7 +550,6 @@ if ($record.MaxGap -lt $dwell) {
     Write-Host "  PASS: the slowest turn ($($record.MaxGap)ms) is inside the ${dwell}ms dwell"
 } else {
     Write-Host "  FAIL: the slowest turn ($($record.MaxGap)ms) is not inside the ${dwell}ms dwell -- a state could have been missed"
-    Write-Host "::warning title=windows-sequence::sampler max gap $($record.MaxGap)ms against a ${dwell}ms dwell"
     $script:Failures++
 }
 

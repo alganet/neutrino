@@ -53,7 +53,7 @@ SHOT_DIR="${2:-$HOME/screenshots}"
 # know.
 SHOT_NAME="${NT_SHOT_NAME:-std-$PROBE}"
 # Round zero. An instrument added in a hurry is code, and it gets run before it
-# is pushed -- a one-line annotate call with an unterminated quote once cost a
+# is pushed -- a one-line reporting call with an unterminated quote once cost a
 # whole round. With a record captured from a previous run (or written by hand)
 # this exercises every assertion below with no display, no engine and no window,
 # which is the only way the analysis half can be tried on a desk that has none.
@@ -438,8 +438,8 @@ record() {
 # Every distinct title the loop saw, in order, with what was measured beside it.
 field() { awk -F'\t' -v n="$1" -v want="$2" '$2 ~ want { print $n; exit }' "$REC"; }
 # State names only. The full titles are in the record dumped at the end; a
-# sequence line that repeats a whole -SELF payload spends annotation budget
-# saying twice what the self line beside it already said once.
+# sequence line that repeats a whole -SELF payload says twice what the self line
+# beside it already said once.
 titles() { awk -F'\t' '{ print $2 }' "$REC" | awk '{ print $1 }' | tr '\n' ' '; }
 
 # The gap between two recorded transitions is what says whether this loop was
@@ -926,10 +926,9 @@ shoot() {
         for w in $(x11_toplevels); do
             ONSCREEN="$ONSCREEN[$(xdotool getwindowname "$((w))" 2>/dev/null)] "
         done
-        # Plain echo and not note(): `report:` is what annotate.sh packs into
-        # annotations, GitHub keeps fifty of those per job, and this lane
-        # already loses its last step's to that cap. A diagnostic may not spend
-        # the budget the results are competing for.
+        # Plain echo and not note(): `report:` marks the lines a reader scans
+        # for a result, and this is a diagnostic about the room rather than a
+        # reading from the probe.
         echo "  onscreen at capture: ${ONSCREEN:-<none>}"
         case "$ONSCREEN" in
             "") echo "  onscreen: nothing is on screen" ;;
@@ -1072,8 +1071,8 @@ esac
 
 # After the loop, never inside it -- a full-screen PNG encode is exactly the
 # slow thing this file's header forbids in the sampling loop. The full record
-# goes to the log and the artifact; only the digest above carries the report:
-# prefix annotate.sh reads.
+# goes to the log and the artifact; the digest above is what carries the
+# `report:` prefix a reader scans for.
 [ "$PROBE" = win ] || shoot
 echo "--- recorded transitions (ms / title / inner / pos / outer / tick / raw) ---"
 cat "$REC"

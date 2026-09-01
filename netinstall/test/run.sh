@@ -63,13 +63,15 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 # job-ui is an investigation, not a gate, and it costs ten minutes of windows CI
 # per run. It answered its question -- see the README -- so it is opt-in now.
 #
-# pinfloor runs first, and the position is the point: GitHub keeps ten
-# annotations per level per step and drops the rest without saying so, and this
-# step already emits more results than that. A measurement taken last is a
-# measurement nobody outside the runner gets to read.
+# pinfloor runs first. The position used to be the point -- annotations were
+# capped and dropped silently, so a measurement taken last was one nobody
+# outside the runner could read -- and that reason has gone with the
+# annotations: the whole log is fetchable now and order costs a reader nothing.
+# It stays in front because a floor that fails should fail before the suites
+# resting on it, which was always the better half of the argument.
 #
-# envlen and writable sit behind them and their reports fall past the cap, which
-# is where env.sh and confine.sh already are. That is what being asserted rather than
+# envlen and writable sit behind them, which is where env.sh and confine.sh
+# already are. That is what being asserted rather than
 # reported buys: a green tick is its whole answer, and its report lines are for
 # whoever is already reading the log. Each of them was in front for exactly one
 # round, to put its own after-values on the record once -- envlen for PR 15 and
@@ -199,9 +201,8 @@ for t in $SUITES; do
     [ "$RC" -eq 124 ] && { echo "  $t.sh: timed out"; RC=1; }
     [ "$RC" -eq 0 ] || { echo "  $t.sh: $RC failure(s)"; [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=netinstall::$t.sh reported $RC failure(s)"; }
     # A finish marker per suite, so a hang localises to one suite instead of
-    # taking the whole step down anonymously. In the summary rather than an
-    # annotation: eight of these were crowding out the results they were meant
-    # to help find, and annotations are capped per step.
+    # taking the whole step down anonymously. It goes to the step summary, which
+    # renders on the run page and has no cap.
     SUITE_SECS=$((SECONDS - SUITE_T0))
     TIMINGS="$TIMINGS$(printf '%5ds  %s\n' "$SUITE_SECS" "$t.sh")
 "

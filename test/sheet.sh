@@ -132,8 +132,7 @@ NLOGS="$(wc -l < "$LOGS" | tr -d ' ')"
 #
 # The suites speak in `PASS:`, `FAIL:` and `SKIP` lines and report their
 # readings with `report:`. Those go to the job log, where they are readable one
-# lane at a time by whoever thinks to look, and to annotations, which GitHub
-# caps at fifty a job and silently drops past. Neither surface lets anyone ask
+# lane at a time by whoever thinks to look. That surface does not let anyone ask
 # the question this repository actually has open: which of these assertions is
 # being made on four lanes when one would do.
 #
@@ -166,7 +165,7 @@ while IFS= read -r log <&3; do
     nr="$(count '(^|[[:space:]])report:' "$log")"
     printf '%s\t%s\t%s\t%s\t%s\n' "$(basename "$log")" "$np" "$nf" "$ns" "$nr" >> "$PERLOG"
     # Two passes over the prefixes, not one. A suite that reports through
-    # annotate.sh writes `report: PASS: the page asked for a window`, so a
+    # some suites write `report: PASS: the page asked for a window`, so a
     # single strip leaves `report: PASS:` on the front and the same assertion
     # made on two lanes -- one prefixed, one not -- would not compare equal.
     # Two passes is enough for every spelling in this tree and is portable in a
@@ -338,9 +337,9 @@ if [ "$NLOGS" != 0 ]; then
         # Bounded, and from the end. A verifier log is a few hundred lines and
         # belongs here whole; appcache.ps1 has produced twenty thousand, and
         # sixteen of those would be more of this file than the pictures are.
-        # The tail rather than the head for the reason annotate.sh gives: the
-        # settled marks and the totals are the last lines, and dropping from the
-        # end throws away exactly the part worth reading.
+        # The tail rather than the head: the settled marks and the totals are
+        # the last lines, and dropping from the end throws away exactly the part
+        # worth reading.
         tail -c 60000 "$log" | esc
         echo '</pre></details>'
     done 3< "$LOGS"
