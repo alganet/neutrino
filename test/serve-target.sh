@@ -16,8 +16,8 @@
 # measuring nothing.
 #
 # Prints the server's pid on stdout so the caller can kill it. Everything else
-# goes to stderr, and a failure to come up is annotated as well as printed,
-# because the step that calls this dies before it reaches its own annotate call.
+# goes to stderr, including the diagnostic written when it never comes up: the
+# step that calls this dies before it reaches whatever it meant to print.
 #
 # Usage: PID="$(bash test/serve-target.sh [logfile])"
 
@@ -56,6 +56,5 @@ done
 } > "$LOG.diag"
 
 cat "$LOG.diag" >&2
-bash "$HERE/annotate.sh" early-target "$LOG.diag" 'FAIL:' >&2
 kill "$PID" 2>/dev/null || true
 exit 1

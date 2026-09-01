@@ -32,7 +32,6 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 . "$(dirname "$0")/lib.sh"
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 WORK="$(mktemp -d)"
 SERVE="$WORK/serve"
@@ -329,6 +328,6 @@ kill "$HPID" 2>/dev/null
 # a silence.
 probe "mechanism: ${MECH:-<none reported>}"
 
-bash "$ROOT/test/annotate.sh" splash "$RESULTS" 'probe:'
+cat "$RESULTS"
 echo "=== Results: $FAILURES failure(s) ==="
 exit $FAILURES

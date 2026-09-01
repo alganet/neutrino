@@ -130,10 +130,10 @@ if [ "$NT_WINDOWS" = "1" ]; then
     RC=$?
     cat "$WORK/verify-windows.log"
     if [ "$RC" -ne 0 ]; then
-        # The verifier's own account, out where annotate can read it. e2e used
-        # to surface only the count, so a red here named nothing and the detail
-        # -- which half stalled, the WebView2 package or the window -- sat in
-        # the job log a token is needed to read. Emitted as errors, not notices:
+        # The verifier's own account, not just its count. e2e used to surface
+        # only the number, so a red here named nothing and the detail -- which
+        # half stalled, the WebView2 package or the window -- was left behind.
+        # Emitted as errors, not notices:
         # the whole netinstall suite shares one step, its ten-notice bucket is
         # full of findings long before e2e runs, and these lines were dropped.
         # The error bucket is near empty -- only actual failures reach it.

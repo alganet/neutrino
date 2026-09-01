@@ -65,9 +65,8 @@ nt_serve() {
     for i in $(seq 1 100); do
         curl -fsS "$NEUTRINO_TEST_ORIGIN/" >/dev/null 2>&1 && {
             rm -f "$log"
-            # No `report:` prefix: the bsd lanes annotate on that, GitHub keeps
-            # fifty annotations per job, and a line emitted once per suite would
-            # spend a fifth of the budget on the fixture rather than the result.
+            # No `report:` prefix: that marks the lines a reader scans for a
+            # result, and how long a fixture took to bind is not one.
             echo "  nt_serve up port=$port polls=$i secs=$((SECONDS - t0))"
             return 0
         }
@@ -93,8 +92,13 @@ nt_as() {
     echo "$dir/$spec$NT_EXE"
 }
 
-# Prints a failure and, on GitHub, also emits it as an annotation so the
-# message is readable from the checks API without downloading the log.
+# Prints a failure and, on GitHub, also emits it as an annotation.
+#
+# This one stays while the readings around it go. An annotation on a failure is
+# not a workaround for anything -- it is how a red check says what went wrong on
+# the run page, without opening a log -- and it is cheap because failures are
+# rare. It is also the reason the readings had to leave: they were crowding it
+# out of a thirty-annotation budget.
 nt_fail() {
     echo "  FAIL: $*"
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
@@ -113,25 +117,28 @@ nt_summary() {
     fi
 }
 
-# A measurement that has to survive the trip out of CI. The notice bucket is
-# capped at ten per step and the suite fills it long before the interesting
-# lines arrive, so results go out as warnings, which nothing else here uses.
-# Findings, not problems -- but a finding nobody can read is not a finding.
+# A measurement that has to survive the trip out of CI.
+#
+# It used to go out as a `::warning` as well, because for a long stretch there
+# was no `gh` and no token here: the checks API served annotations and nothing
+# else, so a reading that was not an annotation could not be read at all. That
+# is no longer true -- the job log is fetchable directly and every assertion
+# also reaches the lane's sheet -- and the annotation had a real cost. GitHub
+# returns thirty per job and drops the rest silently, oldest first, and this
+# function alone could fill that. Six of seven lanes were pinned at exactly
+# thirty, which meant a genuine `::error` from nt_fail was liable to be one of
+# the ones discarded.
+#
+# The step summary stays: it has no cap and renders on the run page.
 nt_result() {
     echo "  $*"
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
         echo "$*" >> "$GITHUB_STEP_SUMMARY"
     fi
-    if [ -n "${GITHUB_ACTIONS:-}" ]; then
-        echo "::warning title=netinstall::$(basename "${0:-suite}"): $*"
-    fi
 }
 
 nt_note() {
     echo "  $*"
-    if [ -n "${GITHUB_ACTIONS:-}" ]; then
-        echo "::notice title=netinstall::$(basename "${0:-suite}"): $*"
-    fi
 }
 
 # Runs a command under a wall-clock bound where coreutils timeout exists.

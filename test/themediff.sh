@@ -100,8 +100,8 @@ if [ "$moved_nt" -eq 0 ]; then
     # The `report: knob` lines the flip wrote are what tells the two apart:
     # a readback that shows the state it asked for makes this the engine's
     # read, and one that does not makes it the knob's. Named here because the
-    # verdict and its cause are annotated separately and the reader has to be
-    # sent from one to the other.
+    # verdict and its cause are separate lines and the reader has to be sent
+    # from one to the other.
     fail "control the flip did not take: the toolkit palette is identical either side of it, so nothing below distinguishes an engine constant from a desktop value -- compare the 'report: knob' readbacks: if they moved, the engine did not read the desktop; if they did not, the knob is what failed"
 else
     note "control the flip took: $moved_nt/7 toolkit colours moved"

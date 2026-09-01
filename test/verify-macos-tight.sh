@@ -51,8 +51,8 @@ mkdir -p "$APP_DIR"
 rm -f "$STALE_FILE" "${TMPDIR:-/tmp}/neutrino-title.txt"
 bash "$APP_CMD" > "${TMPDIR:-/tmp}/neutrino-tight.log" 2>&1 &
 # The call below writes verify-macos.sh's own PASS lines and its own
-# "=== Results: N failure(s) ===" into this script's output, and the annotated
-# report therefore carries two result lines. Green they are indistinguishable;
+# "=== Results: N failure(s) ===" into this script's output, so the log carries
+# two result lines. Green they are indistinguishable;
 # red, a reader cannot tell which verifier failed. So this script's three are
 # labelled [tight] and the unlabelled one is verify-macos.sh's.
 if bash "$(dirname "$0")/verify-macos.sh" "$SHOTS"; then

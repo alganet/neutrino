@@ -43,7 +43,7 @@
 # every low integrity process on the machine already holds, and the RESTRICTED
 # ace is authority nothing holds unless it asked to be restricted.
 #
-# Readings leave through annotate.sh: ten warnings per step, and this suite
+# Readings are collected and printed together at the end: this suite
 # produces more measurements than that.
 
 set -uo pipefail
@@ -461,6 +461,6 @@ if [ -n "$CURLBIN" ]; then
     probe "I wrestricted+opendesk: $(grep -o 'OPENDESK=[A-Z]*\|SPAWN=[A-Z]*\|CHILDRC=[0-9]*' <<<"$IOUT" | tr '\n' ' ')bytes=$IBYTES"
 fi
 
-bash "$ROOT/test/annotate.sh" lowfetch "$RESULTS" 'probe:'
+cat "$RESULTS"
 echo "=== Results: $FAILURES failure(s) ==="
 exit $FAILURES
