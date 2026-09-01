@@ -106,9 +106,20 @@ esac
 [ "${NEUTRINO_LOWFETCH_PROBE:-}" = "1" ] && SUITES="$SUITES lowfetch"
 [ "${NEUTRINO_JOB_UI_BISECT:-}" = "1" ] && SUITES="$SUITES job-ui"
 
+# Where the wall clock went, per suite, in the order they ran.
+#
+# The whole suite costs 5 minutes on ubuntu and 14.5 on macos, and until this
+# was measured the difference was attributed to the runner being slower. It is
+# not: fifteen suites that take under two seconds on Linux take thirty-seven
+# apiece on macOS, and thirteen of those thirty-seven are spent before the suite
+# prints its first line. A per-suite number is what turns "macOS is slow" into a
+# name, and it costs one variable.
+TIMINGS=""
+
 for t in $SUITES; do
     echo
     echo "### $t.sh"
+    SUITE_T0=$SECONDS
     case "$t" in
         names) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-release$NT_EXE" ;;
         confine-strict) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-strict$NT_EXE" ;;
@@ -191,10 +202,19 @@ for t in $SUITES; do
     # taking the whole step down anonymously. In the summary rather than an
     # annotation: eight of these were crowding out the results they were meant
     # to help find, and annotations are capped per step.
-    nt_summary "$t.sh finished rc=$RC"
+    SUITE_SECS=$((SECONDS - SUITE_T0))
+    TIMINGS="$TIMINGS$(printf '%5ds  %s\n' "$SUITE_SECS" "$t.sh")
+"
+    nt_summary "$t.sh finished rc=$RC in ${SUITE_SECS}s"
     FAILURES=$((FAILURES + RC))
 done
 
+# Sorted, because the question this answers is "what is the expensive one" and
+# a reader should not have to scan a list in run order to find out. The run
+# order is above, one line per suite, for whoever wants it.
+echo
+echo "### Where the time went"
+printf '%s' "$TIMINGS" | sort -rn
 echo
 echo "### Total: $FAILURES failure(s)"
 exit $FAILURES

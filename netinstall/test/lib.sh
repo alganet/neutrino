@@ -50,11 +50,27 @@ nt_serve() {
     # whether the interpreter is missing, the module is absent, or the bind was
     # refused.
     log="${TMPDIR:-/tmp}/nt-serve-$$-$port.log"
+    local t0=$SECONDS
     ( cd "$dir" && exec "$py" -m http.server "$port" --bind 127.0.0.1 ) >"$log" 2>&1 &
     NT_SERVER_PID=$!
     export NEUTRINO_TEST_ORIGIN="http://127.0.0.1:$port"
+    # How long the fixture took to answer, and after how many polls. Two
+    # readings and not one: the macOS lane spends about thirty-seven seconds per
+    # suite that the Linux lane spends none of, and the two candidates are a
+    # server slow to bind -- which shows up as a high poll count -- and a poller
+    # slow to give up on each attempt, which shows up as a long wall time at a
+    # low count. A single elapsed number cannot tell those apart, and this loop
+    # is bounded at a hundred tries either way, so the difference is the whole
+    # question.
     for i in $(seq 1 100); do
-        curl -fsS "$NEUTRINO_TEST_ORIGIN/" >/dev/null 2>&1 && { rm -f "$log"; return 0; }
+        curl -fsS "$NEUTRINO_TEST_ORIGIN/" >/dev/null 2>&1 && {
+            rm -f "$log"
+            # No `report:` prefix: the bsd lanes annotate on that, GitHub keeps
+            # fifty annotations per job, and a line emitted once per suite would
+            # spend a fifth of the budget on the fixture rather than the result.
+            echo "  nt_serve up port=$port polls=$i secs=$((SECONDS - t0))"
+            return 0
+        }
         sleep 0.1
     done
     {
