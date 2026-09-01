@@ -25,17 +25,6 @@ STATUS_FILE="${TMPDIR:-/tmp}/neutrino-title.txt"
 
 mkdir -p "$SCREENSHOT_DIR"
 
-# What is on this screen, and who owns it -- one line per window, named by the
-# process that owns it. The x11 verifiers have had this since the round that
-# turned three stray windows from a suspicion into names; this lane has been
-# reading its own pictures instead. Costs one osascript per shot, which is a few
-# hundred milliseconds spent outside the app's own clock.
-ONSCREEN_JS="$(dirname "$0")/onscreen-macos.js"
-onscreen_line() {
-    osascript -l JavaScript "$ONSCREEN_JS" 2>/dev/null |
-        sed 's/^/[/; s/$/]/' | tr '\n' ' '
-}
-
 # The whole display, and not just the app's window.
 #
 # `screencapture -l` composites a single window, which makes a tighter picture
@@ -91,10 +80,6 @@ screenshot() {
     # halves -- the picture and the sentence describing it -- to disagree.
     screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
     echo "  shot ${1}: $how"
-    # After the capture and not before it. On x11 this line is printed first,
-    # but there the shutter fires immediately; here it can wait seconds for a
-    # window, and the room at the end of that wait is the room in the picture.
-    echo "  onscreen at capture: $(onscreen_line)"
 }
 
 read_status_title() { sed -n '1p' "$STATUS_FILE" 2>/dev/null || echo ""; }

@@ -10,6 +10,11 @@ case "$(uname -s)" in
 esac
 export NT_WINDOWS NT_EXE
 
+# The suite's own web server, two directories up. Resolved from this file rather
+# than from $0 because every script here sources lib.sh from a different place.
+NT_HTTPSERVE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)/test/httpserve.py"
+export NT_HTTPSERVE
+
 nt_python() {
     if command -v python3 >/dev/null 2>&1; then
         echo python3
@@ -51,7 +56,21 @@ nt_serve() {
     # refused.
     log="${TMPDIR:-/tmp}/nt-serve-$$-$port.log"
     local t0=$SECONDS
-    ( cd "$dir" && exec "$py" -m http.server "$port" --bind 127.0.0.1 ) >"$log" 2>&1 &
+    # test/httpserve.py and not `-m http.server`: the module looks up what
+    # loopback is called every time it binds, macOS counts that as looking for
+    # devices on the local network, and the runner then asks a question nobody
+    # is there to answer. The numbers this function already prints are what
+    # named it -- `polls=6 secs=36` on macOS against nothing on linux, six
+    # seconds a request in a loop that sleeps a tenth of a second.
+    if [ -f "$NT_HTTPSERVE" ]; then
+        ( cd "$dir" && exec "$py" "$NT_HTTPSERVE" "$port" --bind 127.0.0.1 ) >"$log" 2>&1 &
+    else
+        # A netinstall tree without the repository's test/ beside it. Worth a
+        # line rather than a failure: the module still serves, it just asks the
+        # question again on macOS.
+        echo "  nt_serve: no $NT_HTTPSERVE; falling back to -m http.server" >&2
+        ( cd "$dir" && exec "$py" -m http.server "$port" --bind 127.0.0.1 ) >"$log" 2>&1 &
+    fi
     NT_SERVER_PID=$!
     export NEUTRINO_TEST_ORIGIN="http://127.0.0.1:$port"
     # How long the fixture took to answer, and after how many polls. Two

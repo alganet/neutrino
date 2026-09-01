@@ -1003,12 +1003,13 @@ shoot() {
         esac
         screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
         echo "  shot: $SHOT_HOW"
-        # The x11 half prints this before its shutter and this one after it,
-        # for the reason verify-macos.sh's copy gives: that shutter can wait
-        # seconds for a window, and the room at the end of the wait is the room
-        # in the picture. Same line, same name, so a reader can still put the
-        # two lanes side by side.
-        echo "  onscreen at capture: $(osascript -l JavaScript "$(dirname "$0")/onscreen-macos.js" 2>/dev/null | sed 's/^/[/; s/$/]/' | tr '\n' ' ')"
+        # No `onscreen at capture` line on this half. The x11 branch above gets
+        # one from xdotool, which answers; the macOS probe is blind unless the
+        # asking process holds the screen recording permission, and it printed
+        # "nothing is on screen" beside fourteen pictures with windows in them.
+        # A diagnostic that is wrong in the same direction every time is worse
+        # than none, and shotroom-macos.sh keeps the probe where the answer can
+        # be checked against the file it prints beside it.
     fi
 }
 

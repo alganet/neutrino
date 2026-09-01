@@ -35,7 +35,16 @@ function run() {
     }
 
     if (!wins) { return 'unreadable: the window list came back nil'; }
-    if (!wins.length) { return 'nothing is on screen'; }
+    if (!wins.length) {
+        // Not "nothing is on screen". Measured: this came back empty on every
+        // shot of a run whose pictures show the app window, the Dock, the menu
+        // bar and two system dialogs. Since macOS 14 the window list is
+        // filtered to the caller's own windows unless the caller holds the
+        // screen recording permission, and osascript here holds none -- the
+        // grant on this runner belongs to the agent that spawns the shell.
+        // So an empty list is a statement about this process, not the desktop.
+        return 'no windows this process is allowed to see';
+    }
 
     var lines = [];
     for (var i = 0; i < wins.length; i++) {
