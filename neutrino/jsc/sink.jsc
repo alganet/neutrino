@@ -1,0 +1,210 @@
+            import System;
+            import System.IO;
+            import System.Collections;
+            import System.Drawing;
+            import System.Windows.Forms;
+            import System.Reflection;
+
+            // Line comments only in here. This whole block is itself a block
+            // comment to every engine but jsc, and JavaScript has no nested
+            // block comments -- an inner close would end the outer one and
+            // spill JScript.NET syntax into three engines that cannot read it.
+            //
+            // The only reason this class exists is that CoreWebView2's
+            // WebMessageReceived wants a delegate, and the delegate's type
+            // comes from an assembly loaded at run time, so it cannot be named
+            // here. Delegate.CreateDelegate binds a method to a delegate type
+            // discovered at run time, and accepts a method whose parameters are
+            // wider than the delegate's -- Object is wider than every event
+            // args type there is -- so a method typed this way binds to
+            // EventHandler of anything.
+            //
+            // It queues the arguments rather than calling back out. A .NET
+            // static is not reachable from page script, so unlike a title the
+            // queue cannot be written by the document, and draining it from the
+            // existing loop avoids asking whether a JScript class method may
+            // call a JScript global -- the one part of this that would fail at
+            // compile time rather than at run time.
+            class NeutrinoWebMessageSink {
+                static var queue : ArrayList = new ArrayList();
+                function Handle(sender : Object, args : Object) : void {
+                    NeutrinoWebMessageSink.queue.Add(args);
+                }
+            }
+
+            // The navigation policy, and it cannot use the queue above.
+            // Cancel and Handled are read by the engine the moment the handler
+            // returns, so a decision drained from a loop is a decision taken
+            // after the navigation has already gone -- the one place in this
+            // file where the work has to happen inside the handler.
+            //
+            // What it needs from the driver is therefore statics the loop sets
+            // rather than a callback it calls: `armed` is the documentLoaded
+            // gate the gjs, Qt and macOS guards all use, and the refusals are
+            // drained by the loop so the note is written by the side of this
+            // file that can write one.
+            //
+            // Measured, on the pinned runtime the driver loads: every event is
+            // an EventHandler`1 so one Handle binds to all of them;
+            // NavigationStartingEventArgs.Cancel and
+            // NewWindowRequestedEventArgs.Handled are both writable; and
+            // NavigationStarting fires for the driver's own load twice, as
+            // about:blank and then as the data: url NavigateToString makes --
+            // which is why the gate exists and why the url alone cannot be the
+            // rule. Source stays about:blank throughout.
+            class NeutrinoNavSink {
+                // Set by the driver's loop the moment it has issued its own
+                // NavigateToString. Everything below keys off it: the first
+                // navigation after it is the app's own document, and the
+                // commit of that document is what arms the guard.
+                static var navIssued : boolean = false;
+                // The url the driver's own NavigateToString produced, as the
+                // engine spells it, fragment stripped. Not guessed: a data: url
+                // is what NavigateToString makes here, and the view's Source
+                // stays about:blank throughout, so the only place this can be
+                // learned is the navigation event itself.
+                static var ownDocument : String = "";
+                // The documentLoaded gate the gjs, Qt and macOS guards all use.
+                // Armed from inside the engine at the commit of the document
+                // this file loaded -- the Windows spelling of gjs's COMMITTED
+                // and macOS's didCommitNavigation:.
+                static var armed : boolean = false;
+                static var refusals : ArrayList = new ArrayList();
+                // Urls a refused new window was heading for, for the loop to
+                // hand to the machine's browser. A second list rather than a
+                // flag on the first, because the two are drained through
+                // different calls and one of them is a note.
+                static var externals : ArrayList = new ArrayList();
+                var kind : String;
+
+                function Handle(sender : Object, args : Object) : void {
+                    if (this.kind == "commit") {
+                        // On ownDocument and not on navIssued, so there is no
+                        // ordering to get right. The about:blank the control is
+                        // created with commits too, and if that commit landed
+                        // after the flag were set the gate would arm one
+                        // navigation early -- and the navigation it would then
+                        // refuse is the app's own document. Keyed this way the
+                        // gate cannot arm before the load it is meant to arm at,
+                        // whatever order the engine fires these in.
+                        if (NeutrinoNavSink.ownDocument != "") {
+                            NeutrinoNavSink.armed = true;
+                        }
+                        return;
+                    }
+                    var going : String = NeutrinoNavSink.uriOf(args);
+                    if (this.kind == "navstart" && !NeutrinoNavSink.armed) {
+                        // The app's own document, on its way in. Remembered the
+                        // way rememberTrustedView remembers one: the first wins
+                        // and only the first, at the load this file started and
+                        // before any page script exists to send anything.
+                        if (NeutrinoNavSink.navIssued && NeutrinoNavSink.ownDocument == "") {
+                            NeutrinoNavSink.ownDocument = NeutrinoNavSink.identity(going);
+                        }
+                        return;
+                    }
+                    if (!NeutrinoNavSink.armed) {
+                        return;
+                    }
+                    if (this.kind == "newwindow") {
+                        // Every one of them. A window opened from the app's
+                        // document is a second view with no driver behind it,
+                        // and the shipped build was measured handing one a real
+                        // window: popup_arrived=YES opened=HANDLE, and the frame
+                        // it got wore a forged __NEUTRINO__ title.
+                        if (NeutrinoNavSink.setTrue(args, "Handled")) {
+                            NeutrinoNavSink.refusals.Add("refused a new window for " +
+                                NeutrinoNavSink.shorten(going));
+                            // And forwarded, which is what the two GTK drivers
+                            // have always done with NEW_WINDOW_ACTION and this
+                            // one did not: refusing a `<a target=_blank>` and
+                            // then dropping it means a link that works in every
+                            // browser does nothing here and says nothing.
+                            //
+                            // Queued and not opened. mayOpenExternal is a
+                            // JScript global and this is a JScript.NET class,
+                            // which cannot call one -- the same reason the
+                            // message sink queues instead of calling back out.
+                            // So the string goes to the loop and the loop asks.
+                            //
+                            // Only on the branch where Handled took. If it did
+                            // not, the engine is opening its own window and
+                            // forwarding as well would open the url twice.
+                            NeutrinoNavSink.externals.Add(going);
+                        } else {
+                            NeutrinoNavSink.refusals.Add("could not refuse a new window for " +
+                                NeutrinoNavSink.shorten(going));
+                        }
+                        return;
+                    }
+                    if (NeutrinoNavSink.isOwn(going)) {
+                        return;
+                    }
+                    if (NeutrinoNavSink.setTrue(args, "Cancel")) {
+                        NeutrinoNavSink.refusals.Add("refused navigation to " +
+                            NeutrinoNavSink.shorten(going));
+                    } else {
+                        NeutrinoNavSink.refusals.Add("could not refuse navigation to " +
+                            NeutrinoNavSink.shorten(going));
+                    }
+                }
+
+                // isOwnDocument's rule and viewIdentity's, spelled out again
+                // because a JScript.NET class cannot call a JScript global --
+                // the same reason the message sink queues instead of calling
+                // back out. If either of those changes this has to change with
+                // it, which is why they are named here.
+                //
+                // The fragment is not part of the answer, and on this engine
+                // that is not a nicety. The document this driver loads is a
+                // data: url, so an app moving between screens with
+                // location.hash produces a navigation to that same url with a
+                // fragment on it -- a guard comparing whole strings would
+                // refuse the app's own screen changes and report each one.
+                static function identity(uri : String) : String {
+                    var cut : int = uri.IndexOf("#");
+                    return cut < 0 ? uri : uri.Substring(0, cut);
+                }
+
+                static function isOwn(uri : String) : boolean {
+                    var id : String = NeutrinoNavSink.identity(uri);
+                    if (id == "" || id == "about:blank") {
+                        return true;
+                    }
+                    return NeutrinoNavSink.ownDocument != "" &&
+                        id == NeutrinoNavSink.ownDocument;
+                }
+
+                static function uriOf(args : Object) : String {
+                    try {
+                        var p : PropertyInfo = args.GetType().GetProperty("Uri");
+                        if (p == null) {
+                            return "";
+                        }
+                        var v : Object = p.GetValue(args, null);
+                        return v == null ? "" : String(v);
+                    } catch (e) {
+                        return "";
+                    }
+                }
+
+                // For the note only. A data: url is longer than an annotation
+                // and the part that identifies it is the scheme; the comparison
+                // above is made on the whole string.
+                static function shorten(uri : String) : String {
+                    return uri.Length > 120 ? uri.Substring(0, 120) + "..." : uri;
+                }
+
+                static function setTrue(args : Object, name : String) : boolean {
+                    try {
+                        var p : PropertyInfo = args.GetType().GetProperty(name);
+                        if (p == null || !p.CanWrite) {
+                            return false;
+                        }
+                        p.SetValue(args, true, null);
+                        return true;
+                    } catch (e) {
+                        return false;
+                    }
+                }
+            }

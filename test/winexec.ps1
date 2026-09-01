@@ -27,7 +27,7 @@
 #
 # What this asserts:
 #
-#   refs      webview.cmd's own jsc line names both compression assemblies,
+#   refs      the artifact's own jsc line names both compression assemblies,
 #             and an extraction built with exactly that line's /r list works
 #   names     no ProcessStartInfo in the file runs a program by name
 #   tree      no recursive Directory.Delete, and reparse points are tested for
@@ -43,7 +43,7 @@
 # "it would have failed before" is measured on every push rather than claimed,
 # and the day a platform moves underneath it the suite says which half.
 #
-# Two of the six are spelling assertions on webview.cmd rather than on its
+# Two of the six are spelling assertions on the artifact rather than on its
 # behaviour, and that is deliberate: what `delete` and `inproc` measure is a
 # platform fact -- how this framework treats a junction, and what a missing
 # reference does to a late-bound call -- and what the source assertions say is
@@ -61,7 +61,7 @@
 # programs it compiles, because a suite that starts a window is one that can
 # outlive its step -- which is what cost PR 24 a runner.
 #
-# Usage: winexec.ps1 [webview.cmd]
+# Usage: winexec.ps1 [built.cmd]
 
 $ErrorActionPreference = "Continue"
 
@@ -72,10 +72,12 @@ function Section($m) { Write-Output "report: === $m" }
 
 Write-Output "=== winexec: the program the driver runs, and the tree it deletes ==="
 
+# A built artifact and not a file in the repository: the launcher is neutrino/
+# now, assembled on every build, so what these assertions read is what shipped.
 $webview = $args[0]
-if (-not $webview) { $webview = "webview.cmd" }
+if (-not $webview) { $webview = "test\neutrinotest.cmd" }
 if (-not (Test-Path $webview)) {
-    Fail "no webview.cmd at '$webview'; nothing below is a reading"
+    Fail "no built artifact at '$webview'; nothing below is a reading"
     Write-Output "=== winexec: $failures failure(s) ==="
     exit 1
 }
@@ -359,7 +361,7 @@ Section "inproc - the extraction, with and without the references"
 #
 # The driver's own reach into the framework: no import of the namespace, every
 # call late-bound through the object eval("System") returns, compiled with the
-# reference list read out of webview.cmd above.
+# reference list read out of the artifact above.
 
 $nestedZip = Join-Path $work "nested.zip"
 $entryName = "lib/net462/member.txt"

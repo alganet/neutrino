@@ -1,7 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+// SPDX-License-Identifier: ISC
+
 /*
- * SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
- * SPDX-License-Identifier: ISC
- *
  * The sample app published at https://alganet.github.io/neutrino/demo.cmd. It
  * opens a window and names the runtime it woke up on, which is the one thing a
  * screenshot cannot fake.
@@ -21,9 +21,11 @@
  * WKWebView, and the oldest of them has neither arrow functions nor template
  * literals.
  *
- * Top-level closing braces are not indented four spaces here: test/parse.sh
- * lifts the NeutrinoWebview object out of a built .cmd with a sed range ending
- * at /^    };$/, and an app whose own code contains that line truncates it.
+ * An app may not carry a line reading `NeutrinoWebview.run();`: test/parse.sh
+ * lifts the launcher's object out of a built .cmd with a sed range that ends
+ * there, and the app is spliced inside that range. It used to end at the first
+ * `    };` instead, which was a rule about this file's indentation; the anchor
+ * now is a line nobody writes by accident.
  */
 var win = eval("window");
 var doc = eval("document");

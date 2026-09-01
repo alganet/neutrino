@@ -5,11 +5,19 @@
 # build.sh - Neutrino polyglot assembler
 # Usage: ./build.sh [--tier=<list>] [--title=<str>] [--size=<WxH>]
 #                   [--background=<#rrggbb|auto>] [--decorations=<auto|none>]
-#                   [--style=<file>] [--body=<file>]
+#                   [--style=<file>] [--body=<file>] [--comments]
 #                   <app.js> <output.cmd>
 #
-# Takes a JS file and embeds it into the runWeb() slot of webview.cmd,
+# Takes a JS file and embeds it into the runWeb() slot of the launcher,
 # producing a new polyglot .cmd file.
+#
+# The launcher is not a file any more. neutrino/ holds it in one language per
+# file with a polyglot skeleton over the top, and neutrino/assemble.sh puts the
+# template together on every build -- see neutrino/POLYGLOT.md. What that split
+# buys is the strip: a comment can be removed by a program that knows which
+# language it is reading, and the artifact that ships is a little over half the
+# size of its source. --comments turns the strip off, which is what to reach for
+# when a lane is failing and the artifact has to be read.
 #
 # The early shell -- --title, --size, --background, --decorations, --style and --body.
 #
@@ -65,11 +73,12 @@ NT_BG=""; NT_BG_SET=""
 NT_DECOR=""; NT_DECOR_SET=""
 NT_STYLE_FILE=""; NT_STYLE_SET=""
 NT_BODY_FILE=""; NT_BODY_SET=""
+NT_COMMENTS=""
 
 nt_usage() {
     echo "Usage: $0 [--tier=<list>] [--title=<str>] [--size=<WxH>]" >&2
     echo "          [--background=<#rrggbb|auto>] [--decorations=<auto|none>]" >&2
-    echo "          [--style=<file>] [--body=<file>]" >&2
+    echo "          [--style=<file>] [--body=<file>] [--comments]" >&2
     echo "          <app.js> <output.cmd>" >&2
 }
 
@@ -89,6 +98,7 @@ while [ $# -gt 0 ]; do
         --style)   NT_STYLE_FILE="${2:-}"; NT_STYLE_SET=1; shift 2 ;;
         --body=*)  NT_BODY_FILE="${1#--body=}"; NT_BODY_SET=1; shift ;;
         --body)    NT_BODY_FILE="${2:-}"; NT_BODY_SET=1; shift 2 ;;
+        --comments) NT_COMMENTS=1; shift ;;
         --)        shift; break ;;
         -*)        echo "Error: unknown option $1" >&2; nt_usage; exit 1 ;;
         *)         break ;;
@@ -102,42 +112,61 @@ fi
 
 APP_JS="$1"
 OUTPUT="$2"
-TEMPLATE="$(cd "$(dirname "$0")" && pwd)/webview.cmd"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+SOURCE="$ROOT/neutrino"
+ASSEMBLE="$SOURCE/assemble.sh"
 
 if [ ! -f "$APP_JS" ]; then
     echo "Error: $APP_JS not found" >&2
     exit 1
 fi
 
-if [ ! -f "$TEMPLATE" ]; then
-    echo "Error: $TEMPLATE not found" >&2
+if [ ! -f "$ASSEMBLE" ]; then
+    echo "Error: $ASSEMBLE not found" >&2
     exit 1
 fi
 
-# The output may not be either input, and this is checked before anything is
-# opened because by then it is already too late.
+# The output may not be an input, and this is checked before anything is opened
+# because by then it is already too late.
 #
-# `> "$OUTPUT"` is set up before the pipeline below reads the template, so
-# naming the template as the output truncated it and the build spliced nothing.
-# It exited 0: the stamp check at the bottom read the first `tiers:` line in the
-# output, and an app carrying one of its own supplied it. Measured on all four
-# lanes -- `webview.cmd` 116 bytes, exit 0. With an app that carries no such
-# line it exits 1 instead and the `rm` that follows deletes the template as
-# well. Both destroy it; one of them says so.
+# The template used to be a file beside this one, and naming it as the output
+# truncated it: `> "$OUTPUT"` was set up before the pipeline read it, so the
+# build spliced nothing and exited 0 -- the stamp check at the bottom read the
+# first `tiers:` line in the output, and an app carrying one of its own supplied
+# it. Measured on all four lanes, `webview.cmd` 116 bytes, exit 0. With an app
+# that carries no such line it exited 1 instead and the `rm` that followed
+# deleted the template as well. Both destroyed it; one of them said so.
 #
-# Naming the app as the output is the same opening in a worse shape. The
-# redirection belongs to the `sed` on the right of the pipeline and the `cat` on
-# the left runs beside it, so the assembler reads back what it has already
+# The template is assembled into a temporary now, so that exact name cannot be
+# given any more -- but the source it is assembled from is a directory of files
+# with the same opening in it, and it is a worse one: a build that truncates
+# neutrino/js/message.js leaves nothing to reassemble from and no earlier
+# artifact to compare against. So the whole tree is refused as an output rather
+# than the one name that used to be the template.
+#
+# Naming the app as the output was the same opening in a worse shape. The
+# redirection belonged to the `sed` on the right of the pipeline and the `cat`
+# on the left ran beside it, so the assembler read back what it had already
 # written -- a 116-byte app came out 213225 bytes on three lanes and 164073 on
 # the fourth, from the same inputs.
 #
 # `-ef` is a comparison of what the two names resolve to and not of the strings,
-# which is what makes `./webview.cmd` and `webview.cmd` one file. Measured
-# supported on GNU bash 5.2, 5.3 under MINGW64, and the 3.2.57 macOS ships.
-if [ -e "$OUTPUT" ] && { [ "$OUTPUT" -ef "$TEMPLATE" ] || [ "$OUTPUT" -ef "$APP_JS" ]; }; then
+# which is what makes `./app.js` and `app.js` one file. Measured supported on
+# GNU bash 5.2, 5.3 under MINGW64, and the 3.2.57 macOS ships.
+if [ -e "$OUTPUT" ] && [ "$OUTPUT" -ef "$APP_JS" ]; then
     echo "Error: the output is one of the inputs; it would be destroyed before it was read" >&2
     exit 1
 fi
+
+# Resolved rather than compared as text, for the reason `-ef` is used above: a
+# relative path, a symlinked checkout and `neutrino/../neutrino` are all the
+# same directory and only one of them looks like it.
+NT_OUTDIR="$(cd "$(dirname "$OUTPUT")" 2>/dev/null && pwd)" || NT_OUTDIR=""
+case "${NT_OUTDIR:-/}/" in
+    "$SOURCE"/*)
+        echo "Error: the output is inside $SOURCE; that tree is what this build reads" >&2
+        exit 1 ;;
+esac
 
 # "default" is not optional, so it is added rather than required, and a tier
 # named something this build does not understand is a typo that would otherwise
@@ -313,6 +342,54 @@ if [ -n "$NT_BODY_SET" ]; then
     nt_refuse "body from $NT_BODY_FILE" "$NT_BODY"
 fi
 
+# The three temporaries every build makes, named and trapped together so that
+# nothing this program writes outlives a failure. All three sit beside the
+# output rather than in a temporary directory, because that is the one place
+# already known to be writable and on the same filesystem as the artifact.
+TEMPLATE="$OUTPUT.tpl.$$"
+NT_APP="$OUTPUT.app.$$"
+TMP="$OUTPUT.tmp.$$"
+trap 'rm -f "$TEMPLATE" "$NT_APP" "$TMP"' EXIT
+
+# The launcher, put together out of neutrino/ on every build. It used to be a
+# file in the repository and it is a directory of one-language parts now, so
+# what used to be "read the template" is "assemble it" -- and the assembly is
+# where the comments come off, which is why the artifact is a little over half
+# the size it was for the same program.
+#
+# Nothing is cached between builds. The whole assembly is one awk pass over
+# thirty-eight files, and a cache would be a second place for a stale launcher
+# to live.
+#
+# --no-verify because the checks assemble.sh can run on its own output -- the
+# shell region through `bash -n`, the JavaScript through `node --check`, the
+# shim through `compile()` -- are a property of neutrino/ and not of the app
+# being spliced into it. They answer the same way for every build from one tree,
+# so they run once, from test/assemble.sh, rather than on every build; run
+# `neutrino/assemble.sh` with no arguments to take them by hand.
+if [ -n "$NT_COMMENTS" ]; then
+    bash "$ASSEMBLE" --no-verify --comments > "$TEMPLATE"
+else
+    bash "$ASSEMBLE" --no-verify > "$TEMPLATE"
+fi
+
+# The app goes through the same strip the launcher does, because the app is in
+# the artifact and prose in it ships to the engine exactly as prose in here
+# would. It is whole-line only and it steps over template literals, so what it
+# can remove is a line that is nothing but a comment -- see assemble.sh.
+#
+# --comments takes both, since an artifact worth reading is one where the app
+# reads too.
+if [ -n "$NT_COMMENTS" ]; then
+    # Unix endings even here, for the reason assemble.sh normalises the launcher
+    # -- see the carriage-return note in that file. Without it a CRLF checkout
+    # produces an artifact whose launcher has one kind of ending and whose app
+    # has another.
+    tr -d '\r' < "$APP_JS" > "$NT_APP"
+else
+    bash "$ASSEMBLE" --strip "$APP_JS" > "$NT_APP"
+fi
+
 # The template says where each of its regions begins and ends, and every one of
 # those sentinels has to be there exactly once before anything is spliced. A
 # missing //#RUNWEB_START is not a build that fails: `sed -n '1,/x/p'` prints the
@@ -322,7 +399,7 @@ fi
 for nt_mark in RUNWEB_START RUNWEB_END TIER_START TIER_END CONFIG_START CONFIG_END; do
     nt_count="$(grep -c "//#$nt_mark" "$TEMPLATE" | head -1)"
     if [ "$nt_count" != "1" ]; then
-        echo "Error: $TEMPLATE has $nt_count //#$nt_mark markers, wanted exactly 1" >&2
+        echo "Error: the launcher assembled from $SOURCE has $nt_count //#$nt_mark markers, wanted exactly 1" >&2
         exit 1
     fi
 done
@@ -332,9 +409,9 @@ done
 #
 # The prefix -- doctype, charset and the content policy -- is carried over
 # verbatim rather than written out here. It has to be: the offline tier is one
-# string replace against `defaultContentPolicy` in webview.cmd, so a policy
-# spelled a second time in this file is one that can drift, and the drift shows
-# up as a build that refuses at launch rather than at assembly.
+# string replace against `defaultContentPolicy` in neutrino/js/policy.js, so a
+# policy spelled a second time in this file is one that can drift, and the drift
+# shows up as a build that refuses at launch rather than at assembly.
 nt_docparts() {
     awk '
         !done && /^<!doctype html><html>/ {
@@ -351,7 +428,7 @@ nt_docparts() {
 }
 
 if ! nt_doc="$(nt_docparts "$TEMPLATE")"; then
-    echo "Error: $TEMPLATE has no document line this can take apart" >&2
+    echo "Error: the launcher assembled from $SOURCE has no document line this can take apart" >&2
     echo "       wanted one line: <!doctype html><html>...<style>...</style></head><body>..." >&2
     exit 1
 fi
@@ -376,12 +453,9 @@ fi
 export NT_DOCLINE
 export NT_TITLE NT_WIDTH NT_HEIGHT NT_BG NT_DECOR
 
-# Written beside the output and moved into place only once the stamp has been
-# read back, so a build that fails leaves the previous artifact alone rather
-# than a half-written one with the same name.
-TMP="$OUTPUT.tmp.$$"
-trap 'rm -f "$TMP"' EXIT
-
+# $TMP is written and moved into place only once the stamp has been read back,
+# so a build that fails leaves the previous artifact alone rather than a
+# half-written one with the same name.
 # The substitution is bounded by the tier sentinels. Without the range it
 # rewrote every line in the stream shaped like the stamp, and the app's own
 # source is in that stream: an app carrying `tiers: "offline,tight",` came out
@@ -390,7 +464,7 @@ trap 'rm -f "$TMP"' EXIT
 # same on GNU sed and on the BSD sed macOS ships.
 {
     sed -n '1,/\/\/#RUNWEB_START/p' "$TEMPLATE"
-    cat "$APP_JS"
+    cat "$NT_APP"
     sed -n '/\/\/#RUNWEB_END/,$p' "$TEMPLATE"
 } | sed '/\/\/#TIER_START/,/\/\/#TIER_END/s|^\( *\)tiers: "[a-z,]*",|\1tiers: "'"$TIER"'",|' \
   | awk '
@@ -506,4 +580,12 @@ for nt_mark in RUNWEB_START RUNWEB_END TIER_START TIER_END CONFIG_START CONFIG_E
 done
 
 mv -f "$TMP" "$OUTPUT"
-trap - EXIT
+
+# The trap is left armed on the way out, and that is the fix for a leak rather
+# than an oversight. It used to be cleared here, back when $TMP was the only
+# temporary and the `mv` above had already consumed it. There are three now, and
+# clearing the trap left the template and the stripped app sitting beside the
+# artifact under names nobody would think to delete -- 153 KB and the app's own
+# source, published to the website by pages/build.sh, which copies whatever is
+# in its output directory. `rm -f` on a name the `mv` has already taken is a
+# no-op, so there is nothing to clear it for.

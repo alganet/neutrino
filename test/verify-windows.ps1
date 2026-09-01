@@ -427,13 +427,23 @@ function Assert-WebView2Package($artifact, $packageRoot) {
     # lane never saw it: its checkout path has no short name to expand.
     $packageRoot = (Get-Item -LiteralPath $packageRoot).FullName
 
+    # The whole object: the literal that carries the two stamps, and the members
+    # assigned onto it after it. The end anchor is the call that starts the
+    # launcher, and the line itself is left out -- node is being asked for the
+    # member list, not for a window.
+    #
+    # It used to end at the first `    };`, back when the object was one
+    # literal. That range now stops at the end of the literal and lifts a
+    # NeutrinoWebview with no webView2Members on it at all, which is a member
+    # list of zero -- caught by the count below rather than by this loop, and
+    # that is the only reason the change was visible.
     $lines = Get-Content -LiteralPath $artifact
     $start = -1; $stop = -1
     for ($i = 0; $i -lt $lines.Count; $i++) {
         if ($start -lt 0 -and $lines[$i] -eq '    var NeutrinoWebview = {') { $start = $i; continue }
-        if ($start -ge 0 -and $lines[$i] -eq '    };') { $stop = $i; break }
+        if ($start -ge 0 -and $lines[$i] -eq '    NeutrinoWebview.run();') { $stop = $i - 1; break }
     }
-    if ($start -lt 0 -or $stop -lt 0) {
+    if ($start -lt 0 -or $stop -lt $start) {
         Write-Host "  FAIL: could not lift the pinned member list out of $artifact"
         $script:Failures++
         return

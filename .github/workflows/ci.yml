@@ -338,7 +338,7 @@ jobs:
       # image, so themescheme.sh writes the theme it needs and asserts that it
       # loaded before it asserts anything about the query.
       #
-      # This is the step that fails with the force taken out of webview.cmd,
+      # This is the step that fails with the force taken out of the launcher,
       # which is the only reason it exists.
       - if: always()
         timeout-minutes: 8
@@ -648,7 +648,7 @@ jobs:
       # image, so themescheme.sh writes the theme it needs and asserts that it
       # loaded before it asserts anything about the query.
       #
-      # This is the step that fails with the force taken out of webview.cmd,
+      # This is the step that fails with the force taken out of the launcher,
       # which is the only reason it exists.
       - if: always()
         timeout-minutes: 8
@@ -918,7 +918,7 @@ jobs:
       # image, so themescheme.sh writes the theme it needs and asserts that it
       # loaded before it asserts anything about the query.
       #
-      # This is the step that fails with the force taken out of webview.cmd,
+      # This is the step that fails with the force taken out of the launcher,
       # which is the only reason it exists.
       - if: always()
         timeout-minutes: 8
@@ -1853,17 +1853,22 @@ jobs:
           cat ~/assemble.log
           exit $TEST_EXIT
       # The Windows driver's own file and process I/O. Beside assemble.sh for
-      # the same reason: it reads webview.cmd and compiles small programs, needs
-      # no display and no artifact, and what it asserts is a spelling plus two
+      # the same reason: it reads a built artifact and compiles small programs,
+      # needs no display of its own, and what it asserts is a spelling plus two
       # platform facts -- how CreateProcess resolves a bare program name, and
       # what this framework does to a junction. It launches no app and no
       # window, so nothing it starts can outlive the step.
+      #
+      # Pointed at the artifact built two steps above rather than at a file in
+      # the repository. The launcher is neutrino/ now and there is no single
+      # file to read; the artifact is also the better target, since what ships
+      # is what these assertions are about.
       #
       # Windows only, because the mechanisms are.
       - timeout-minutes: 10
         shell: pwsh
         run: |
-          & .\test\winexec.ps1 webview.cmd *>&1 | Tee-Object -FilePath "$HOME\winexec.log"
+          & .\test\winexec.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\winexec.log"
           exit $LASTEXITCODE
       # The monolith launched a webview (appcache) before the neutrinotest
       # verify, so the WebView2 runtime's one-time cold init was already done.
@@ -2032,8 +2037,8 @@ jobs:
         shell: bash
         run: |
           bash build.sh test/neutrinotest.js test/neutrinoerr.cmd
-          sed -i 's/webView2PinnedVersion: "[^"]*"/webView2PinnedVersion: "0.0.0-neutrino-does-not-exist"/' test/neutrinoerr.cmd
-          grep -q 'webView2PinnedVersion: "0.0.0-neutrino-does-not-exist"' test/neutrinoerr.cmd
+          sed -i 's/\(webView2PinnedVersion[ :=]*\)"[^"]*"/\1"0.0.0-neutrino-does-not-exist"/' test/neutrinoerr.cmd
+          grep -q 'webView2PinnedVersion[ :=]*"0.0.0-neutrino-does-not-exist"' test/neutrinoerr.cmd
       - if: always()
         timeout-minutes: 10
         shell: pwsh

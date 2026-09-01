@@ -177,7 +177,7 @@ function describe(name) {
     } catch (_) { return "threw"; }
     if (!d) { return "none"; }
     // Bracketed, not dotted. `get` and `set` are how JScript.NET spells a
-    // property accessor, and webview.cmd already quotes "close" for the same
+    // property accessor, and the launcher already quotes "close" for the same
     // family of reasons -- jsc is stricter than the other four engines about
     // names that look like they might mean something.
     return "w" + (d["writable"] || d["set"] ? 1 : 0) + "c" + (d["configurable"] ? 1 : 0) +

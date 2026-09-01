@@ -227,7 +227,7 @@ else
     cp /bin/true "$XDG_DATA_HOME/probe-exec" 2>/dev/null && chmod +x "$XDG_DATA_HOME/probe-exec" 2>/dev/null
     if "$XDG_DATA_HOME/probe-exec" 2>/dev/null; then echo "EXEC_OWN_DIR"; else echo "EXEC_BLOCKED"; fi
 fi
-# What webview.cmd asks at launch, asked from where the app will ask it. Round 1
+# What the launcher asks at launch, asked from where the app will ask it. Round 1
 # measured the WebKit injected bundle loading through netinstall and staying
 # silent without it, which only makes sense if the confinement is what turned
 # WebKitGTK's own bubblewrap off -- and that is a measurement, not an inference,
@@ -485,7 +485,7 @@ if [ "$NT_HAVE_APP" = "1" ]; then
     if bash "$ROOT/build.sh" --tier=testing "$ROOT/test/neutrinotest.js" \
             "$SERVE/neutrinotest.cmd" >/dev/null 2>&1 &&
        [ -s "$SERVE/neutrinotest.cmd" ]; then
-        # With webview.cmd's own loader scrub cut out of it, and both launches
+        # With the launcher's own loader scrub cut out of it, and both launches
         # get the same file so the pair still differ by netinstall alone.
         #
         # That scrub removes these knobs before any engine starts, which would
@@ -493,7 +493,7 @@ if [ "$NT_HAVE_APP" = "1" ]; then
         # control would stop honouring the knob, so the section would report
         # itself unmeasured; and the netinstall launch would be denied twice,
         # so this suite would go on passing after an env.c regression. What is
-        # under test here is env.c's allowlist. webview.cmd's rule is asserted
+        # under test here is env.c's allowlist. The launcher's rule is asserted
         # by test/loaders.sh, against a control patched exactly this way.
         awk '/^nt_scrub_loaders$/ { next } { print }' \
             "$SERVE/neutrinotest.cmd" > "$SERVE/neutrinotest.patched" &&

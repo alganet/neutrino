@@ -215,7 +215,7 @@ nt_linux_gijs() {
     return 1
 }
 
-# Mirrors find_qt_runtime in webview.cmd: on Ubuntu the Qt runner is not on
+# Mirrors find_qt_runtime in neutrino/sh/qt.sh: on Ubuntu the Qt runner is not on
 # PATH, it sits at an absolute path, and the distributions that do that do not
 # agree on which one. Miss it and a "no runtime" fallback launches a GUI app it
 # expected to exit immediately.

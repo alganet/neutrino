@@ -1,0 +1,130 @@
+    /*
+     * The build's title, put where a browser would look for it.
+     *
+     * Every engine here reports the loaded document's title, and an app
+     * whose markup names nothing therefore reports nothing -- which would
+     * make the first title-changed signal of every launch an instruction to
+     * blank the window's name. Naming the document is what stops that being
+     * a special case: the first signal now carries the title the window was
+     * already created with, so it changes nothing, and every signal after
+     * it is the app's own.
+     *
+     * It also makes the read side true. An app that assigns
+     * `document.title` expects to be able to read it back, and before this
+     * the answer was the empty string until the app itself wrote one.
+     *
+     * A document that named itself keeps its name, and the window takes it:
+     * that is what `<title>` means everywhere else, and an author who wrote
+     * one meant it more recently than whoever passed `--title`.
+     *
+     * Escaped for markup rather than trusted. `build.sh` refuses a title
+     * carrying a quote, a backslash or a control character, because it is
+     * stamped into a JavaScript string literal -- `<` and `&` were never
+     * its problem and are this one's.
+     */
+    /*
+     * The palette as a stylesheet, or null where there is no palette to
+     * write. `:root` because these have to inherit into everything the app
+     * draws, and one declaration per key in the fixed order above.
+     *
+     * Nothing here can escape the element it lands in: every value matched
+     * the anchored hex check in themeColorList and every property name is a
+     * substring of a constant in this file. There is no path from a
+     * toolkit's answer to markup.
+     */
+    NeutrinoWebview.themeCssText = function (theme) {
+        var values = this.themeColorList(theme);
+        if (!values) {
+            return null;
+        }
+        var names = String(this.systemColorNames).split(",");
+        var parts = [];
+        for (var i = 0; i < names.length; i++) {
+            parts[parts.length] = "--neutrino-" + names[i] + ":" + values[i];
+        }
+        return ":root{" + parts.join(";") + "}";
+    };
+
+    /*
+     * The launch palette, delivered as markup rather than as a script that
+     * runs at document start.
+     *
+     * The measured mechanism for an *update* is
+     * `documentElement.style.setProperty`, which works and reads back on
+     * all four engines, and that is what `_theme` uses. The launch is a
+     * different question and it is the one the flash exists in: the values
+     * have to be there before the first paint, and a document-start script
+     * has an element to set them on only if the parser has produced one.
+     * `document.title` taught this file that lesson at the cost of a round
+     * -- on WebView2 the page script's first statement runs at `loading`,
+     * with no `<head>` yet -- and a stylesheet in the markup has no such
+     * moment. It is parsed with the document that carries it.
+     *
+     * Permitted under both tiers, by the policy this file writes: the
+     * default tier restricts no styles at all, and the offline tier's
+     * carries `style-src 'unsafe-inline'`, which is what an inline
+     * `<style>` needs and what an external one is denied.
+     *
+     * Placed immediately before the document's own `<style>`, and both
+     * halves of that are load-bearing.
+     *
+     * *Before* the author's stylesheet, because an author who writes
+     * `:root{--neutrino-Canvas:#123}` means it, and two `:root` rules of
+     * equal specificity are decided by which comes last. Overriding the
+     * desktop is the app's to do and this must not be the thing that stops
+     * it.
+     *
+     * *After* the head's meta elements, because one of them is the content
+     * policy, and a policy governs what follows it in the document rather
+     * than what precedes it. Injecting at the top of the head would put the
+     * launcher's own stylesheet outside the policy the launcher wrote,
+     * which is a small hole and an embarrassing one.
+     *
+     * A document with no `<style>` of its own gets the rule at the end of
+     * the head, which is the same anchor titledDocument uses. That loses
+     * the author-wins property and keeps the policy one; a document with no
+     * stylesheet has no author declarations to lose to.
+     *
+     * A lane that read no palette gets no rule, which is the whole point of
+     * naming the properties after the keywords: `var(--neutrino-Canvas,
+     * Canvas)` then falls through to the engine's own system colour.
+     */
+    NeutrinoWebview.themedDocument = function (html, theme) {
+        var text = String(html);
+        var css = this.themeCssText(theme);
+        if (!css) {
+            return text;
+        }
+        var head = text.indexOf("</head>");
+        if (head < 0) {
+            this.noteOnce("this document has no <head>, so the palette is " +
+                "on window.neutrino.theme and not in its stylesheet");
+            return text;
+        }
+        var at = text.substring(0, head).indexOf("<style");
+        if (at < 0) {
+            at = head;
+        }
+        return text.substring(0, at) + "<style>" + css + "</style>" +
+            text.substring(at);
+    };
+
+    NeutrinoWebview.titledDocument = function (html, title) {
+        var text = String(html);
+        var name = String(title == null ? "" : title);
+        if (name === "" || /<title[\s>]/i.test(text)) {
+            return text;
+        }
+        var head = text.indexOf("</head>");
+        if (head < 0) {
+            this.noteOnce("this document has no <head>, so the window keeps " +
+                "its own name whatever the page calls itself");
+            return text;
+        }
+        var escaped = name.replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        return text.substring(0, head) + "<title>" + escaped + "</title>" +
+            text.substring(head);
+    };
+
