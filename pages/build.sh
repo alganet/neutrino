@@ -18,19 +18,20 @@ ROOT="$(cd "$HERE/.." && pwd)"
 # One optional argument, the directory to write the site into, and the checking
 # below is not ceremony: the next thing this script does is `rm -rf` it.
 #
-# There are two programs called build.sh in this repository and they take
-# different things. The one above assembles an app -- `build.sh <app.js>
-# <output.cmd>` -- and this one assembles the site. From inside pages/,
-# `./build.sh demo.js demo.cmd` is this program with `demo.js` as its output
-# directory, and it removed pages/demo.js and left an empty directory in its
-# place. Measured, twice, by somebody reading the other one's usage line.
+# This one assembles the site; an app is assembled by neutrino/assemble.sh.
+# There used to be a second build.sh at the root that did that, and from inside
+# pages/ `./build.sh demo.js demo.cmd` was this program with `demo.js` as its
+# output directory -- it removed pages/demo.js and left an empty directory in
+# its place. Measured, twice, by somebody reading the other one's usage line.
+# The name collision is gone, but the shape of the mistake is not: a caller who
+# passes an app here is a caller who will pass a directory to `rm -rf`.
 #
 # So a second argument is refused rather than ignored, and it says which program
 # the caller probably meant.
 nt_usage() {
     echo "Usage: $0 [<output-directory>]" >&2
     echo "       writes the published site; the default is $ROOT/_site" >&2
-    echo "       to build an app instead, that is $ROOT/build.sh <app.js> <out.cmd>" >&2
+    echo "       to build an app instead, that is $ROOT/neutrino/assemble.sh <out.cmd>" >&2
 }
 
 if [ $# -gt 1 ]; then
@@ -103,18 +104,16 @@ mkdir -p "$OUT"
 # The size was a resize() the app used to send on startup, which meant every
 # launch opened at 900x600 and jumped.
 #
-# The background is demo.css's, said a second time because it is not CSS: it
-# paints the native window and the view, both of which are up before there is a
-# document and neither of which a stylesheet can reach. Measured on WebKitGTK
-# under a default desktop, with the load held back: #F6F5F4 without it.
+# All of that is pages/demo/ now -- app.js, config.json, style.css, body.html --
+# laid over neutrino/ by the assembler. There are no flags here to fall out of
+# step with the app: the values live in the app's own directory.
+#
+# The background in config.json is style.css's, said a second time because it is
+# not CSS: it paints the native window and the view, both of which are up before
+# there is a document and neither of which a stylesheet can reach. Measured on
+# WebKitGTK under a default desktop, with the load held back: #F6F5F4 without it.
 echo "Building the sample app"
-bash "$ROOT/build.sh" \
-    --title "neutrino" \
-    --size 520x300 \
-    --background "#12141a" \
-    --style "$HERE/demo.css" \
-    --body "$HERE/demo.html" \
-    "$HERE/demo.js" "$OUT/$APP.cmd"
+bash "$ROOT/neutrino/assemble.sh" --overlay "$HERE/demo" "$OUT/$APP.cmd"
 
 # netinstall/build.sh falls back to a host-only build when zig is missing, and
 # says so on stderr rather than failing. Publishing on top of that fallback is

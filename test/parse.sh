@@ -96,29 +96,27 @@ if [ -z "$DELIM_OPEN" ] || [ "$DELIM_OPEN" != "$DELIM_CLOSE" ]; then
 fi
 echo "  PASS: the here-document delimiter is the line that closes the document"
 
-# One line, and it has to stay one line. The style and the body an author builds
-# in are spliced into it whole, so a newline anywhere in there puts the body
-# below the cut and the launcher loads a document without it -- silently, since
-# the halves still split and the policy is still in the head.
+# The document opens its own body, and it opens it exactly once.
+#
+# It used to have to be one physical line, because the style and the body were
+# spliced into it whole and a newline anywhere in there put the body below the
+# cut -- silently, since the halves still split and the policy was still in the
+# head. They are ordinary `@@include`d parts now and the document is a region
+# rather than a line, which is why an app's stylesheet can be a stylesheet. What
+# still has to hold is the order: doctype, then the style element, then the tag
+# that opens the body, all of them above the seam the halves are cut on.
 if [ "$(grep -c '^<!doctype html><html>' "$TARGET")" != "1" ]; then
-    echo "parse.sh: the document line is not there exactly once" >&2
+    echo "parse.sh: the document does not open exactly once" >&2
     exit 1
 fi
-if ! grep -q '^<!doctype html><html>.*<style>.*</style></head><body>' "$TARGET"; then
-    echo "parse.sh: the document line does not open its own body" >&2
-    echo "          wanted: <!doctype html><html>...<style>...</style></head><body>..." >&2
+DOC_BODY="$(grep -n '^</style></head><body>$' "$TARGET" | head -1 | cut -d: -f1)"
+if [ -z "$DOC_BODY" ] || [ "$DOC_BODY" -lt "$DOC_LINE" ] || [ "$DOC_BODY" -gt "$DOC_TAG" ]; then
+    echo "parse.sh: the document does not open its own body between its doctype and its script" >&2
+    echo "          doctype at line ${DOC_LINE:-none}, </style></head><body> at ${DOC_BODY:-none}," >&2
+    echo "          script tag at ${DOC_TAG:-none}" >&2
     exit 1
 fi
-echo "  PASS: the document line opens the body build.sh splices into"
-
-for nt_mark in CONFIG_START CONFIG_END; do
-    if [ "$(grep -c "//#$nt_mark" "$TARGET")" != "1" ]; then
-        echo "parse.sh: the //#$nt_mark sentinel is not there exactly once" >&2
-        echo "          build.sh stamps the title and the size between them" >&2
-        exit 1
-    fi
-done
-echo "  PASS: the config sentinels build.sh stamps between are both there"
+echo "  PASS: the document opens the body the app's markup is included into"
 
 # The names jsc.exe will not let an app use.
 #
@@ -145,18 +143,24 @@ NT_JSC_RESERVED="$NT_JSC_RESERVED|import|int|interface|internal|long|native|pack
 NT_JSC_RESERVED="$NT_JSC_RESERVED|private|protected|public|sbyte|short|static|super"
 NT_JSC_RESERVED="$NT_JSC_RESERVED|synchronized|throws|transient|uint|ulong|ushort|volatile"
 
-# The app's own source, and not the launcher's: the range between the sentinels
-# build.sh splices into. An unbuilt template has nothing in there and passes.
-sed -n '/\/\/#RUNWEB_START/,/\/\/#RUNWEB_END/p' "$TARGET" > "$WORK/app.js"
+# The whole JavaScript region, and not the app's part of it.
+#
+# This used to cut the app out from between a pair of `//#` markers, because the
+# app was spliced in and the markers were where it landed. Nothing is spliced
+# and there are no markers, and it turns out the narrower question was the wrong
+# one anyway: jsc.exe compiles this whole region, so a declaration the launcher
+# grew would fail exactly the same way and this would not have seen it. The
+# launcher declares none today, which is what makes widening it free.
+sed -n '/^<script type=text\/javascript>/,$p' "$TARGET" > "$WORK/app.js"
 NT_BAD="$(grep -nE "\b(var|function)[[:space:]]+($NT_JSC_RESERVED)\b" "$WORK/app.js" || true)"
 if [ -n "$NT_BAD" ]; then
-    echo "parse.sh: the app declares a name jsc.exe reserves" >&2
+    echo "parse.sh: the javascript declares a name jsc.exe reserves" >&2
     printf '%s\n' "$NT_BAD" | sed 's/^/          /' >&2
-    echo "          valid JavaScript everywhere else; on Windows the app will not compile" >&2
+    echo "          valid JavaScript everywhere else; on Windows it will not compile" >&2
     echo "          and the lane reports only that no window ever appeared" >&2
     exit 1
 fi
-echo "  PASS: the app declares no name jsc.exe reserves"
+echo "  PASS: nothing in the javascript declares a name jsc.exe reserves"
 
 # The same hazard, everywhere else in the file, caught by its consequence
 # rather than by its shape. Everything from the first line to the <script> tag
@@ -270,7 +274,7 @@ var failures = 0;
 // with. Without this an offline build fails the openExternal cases below by
 // behaving exactly as it is supposed to, and the tier's behaviour is asserted
 // on its own terms further down.
-N.tiers = "default";
+N.config.tiers = "default";
 
 function eq(name, got, want) {
     var ok = JSON.stringify(got) === JSON.stringify(want);
@@ -468,14 +472,16 @@ console.log("the build's name goes into the document it loads");
 var bare = "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>x</body></html>";
 eq("a document that named nothing is named",
    N.titledDocument(bare, "My App").indexOf("<title>My App</title></head>") > 0, true);
-// An author who wrote one meant it more recently than whoever passed --title,
-// and that is what <title> means everywhere else.
+// An author who wrote one meant it more recently than whoever wrote the title
+// in config.json, and that is what <title> means everywhere else.
 eq("a document that named itself keeps its name",
    N.titledDocument("<html><head><title>Mine</title></head><body></body></html>", "My App"),
    "<html><head><title>Mine</title></head><body></body></html>");
-// build.sh refuses a title carrying a quote, a backslash or a control
-// character, because it is stamped into a JavaScript string literal. `<` and
-// `&` were never its problem and they are this one's.
+// The title arrives as a JSON string and JSON escapes what a JavaScript string
+// literal escapes, so a quote or a backslash in it is already the author's
+// problem and already solved. build.sh refused both, because it was stamping
+// raw text into a literal. `<` and `&` were never that problem and they are
+// this one's.
 eq("the name is escaped for markup",
    N.titledDocument(bare, "a<b&c").indexOf("<title>a&lt;b&amp;c</title>") > 0, true);
 eq("a document with no head keeps whatever it has",
@@ -854,11 +860,14 @@ eq("and closes it at the end", html.slice(-14), "</body></html>");
 eq("the document carries a style", /<style>[\s\S]*<\/style><\/head><body>/.test(html), true);
 eq("nothing of the shell region is above the doctype", html.indexOf("exit") < 0, true);
 
-// What the native window needs before there is a document to read it from, and
-// nothing else. `url` sat here unread for the length of the project; a key
-// nobody consumes is the shape this asserts against coming back.
-eq("config carries only what createWindow needs",
-   Object.keys(N.config).sort(), ["background", "decorations", "height", "title", "width"]);
+// What the native window needs before there is a document to read it from,
+// plus the tier list, and nothing else. `url` sat here unread for the length of
+// the project; a key nobody consumes is the shape this asserts against coming
+// back -- and config.json is the app's own file, so a key it grows is a key
+// that ships whether or not anything reads it.
+eq("config carries only what createWindow needs, and the tiers",
+   Object.keys(N.config).sort(),
+   ["background", "decorations", "height", "tiers", "title", "width"]);
 eq("the title is a non-empty string", typeof N.config.title === "string" && N.config.title.length > 0, true);
 eq("the size is two positive whole numbers",
    [N.config.width > 0 && N.config.width === Math.floor(N.config.width),
@@ -889,8 +898,8 @@ eq("the background is a colour or it is `auto`",
 // The predicate and not the string is what the five lanes ask, so the predicate
 // is what this asserts against. A build carrying a third word would leave
 // `undecorated` answering false for it -- a window that quietly kept its frame
-// after a flag asked for it to go, which is the flag failing silently and is
-// the reason build.sh refuses the word rather than passing it through.
+// after config.json asked for it to go, which is the value failing silently and
+// is the reason assemble.sh refuses the word rather than passing it through.
 eq("the decorations are `auto` or `none`",
    N.config.decorations === "auto" || N.config.decorations === "none", true);
 eq("and `undecorated` follows the value, both ways", [
@@ -1241,9 +1250,9 @@ eq("a document with no stylesheet gets it at the end of the head",
    N.themedDocument(bare, theme).indexOf("</style></head>") > 0, true);
 eq("a document with no head keeps what it has",
    N.themedDocument("<body>x</body>", theme), "<body>x</body>");
-N.tiers = "default,offline";
+N.config.tiers = "default,offline";
 eq("offline tier gets the offline policy", policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
-N.tiers = "default";
+N.config.tiers = "default";
 eq("default tier leaves the document alone", policyOf(N.applyContentPolicy(html)), N.defaultContentPolicy);
 
 // The shapes this launcher refuses, and the reason they are assertions rather
@@ -1321,13 +1330,13 @@ refuses("an empty source", "");
 console.log("");
 console.log("the offline tier refuses a document it cannot make offline");
 var NOPOLICY = '<!doctype html><html><head></head>';
-N.tiers = "default,offline";
+N.config.tiers = "default,offline";
 var refusedNoPolicy = false;
 try { N.applyContentPolicy(NOPOLICY); } catch (e) { refusedNoPolicy = true; }
 eq("a document with no policy to replace is refused", refusedNoPolicy, true);
 eq("and one that has it is still swapped",
    policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
-N.tiers = "default";
+N.config.tiers = "default";
 // The boundary: the default tier has nothing to swap and must not start caring.
 eq("the default tier still passes a policy-less document through",
    N.applyContentPolicy(NOPOLICY), NOPOLICY);
@@ -1350,7 +1359,7 @@ function may(url) {
     return N.mayOpenExternal(url);
 }
 eq("the default tier opens an external url", may("https://example.com/x"), true);
-N.tiers = "default,offline";
+N.config.tiers = "default,offline";
 eq("the offline tier does not", may("https://example.com/x"), false);
 eq("and the message never becomes an action",
    N.parseMessage("openExternal" + S + "https://example.com/x"), null);
@@ -1358,7 +1367,7 @@ eq("the scheme allowlist is unchanged by the tier",
    N.isExternalUrl("https://example.com/x"), true);
 eq("a scheme outside the allowlist is refused in the offline tier",
    may("file:///etc/passwd"), false);
-N.tiers = "default";
+N.config.tiers = "default";
 eq("and in the default tier, which is the half that was already true",
    may("file:///etc/passwd"), false);
 

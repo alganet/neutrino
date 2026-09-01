@@ -50,7 +50,7 @@ policy, the message parser, the navigation rules and the external-URL check all 
 
 A neutrino app is a polyglot file that is simultaneously valid as a Windows batch script, a Unix shell script, JavaScript, and an HTML document. Each platform runtime loads the same file, creates a native window, and renders the embedded HTML in a webview.
 
-The launcher that half of that file is made of lives in `neutrino/`, one language per file under a twenty-one line polyglot skeleton, and `build.sh` assembles it on every build. `neutrino/POLYGLOT.md` walks the skeleton line by line and says what each of the five readers makes of it.
+The launcher that half of that file is made of lives in `neutrino/`, one language per file under a twenty-one line polyglot skeleton, and `neutrino/assemble.sh` puts it together on every build. `neutrino/POLYGLOT.md` walks the skeleton line by line and says what each of the five readers makes of it.
 
 The embedded JavaScript includes the `NeutrinoWebview` object which detects the runtime environment and dispatches to a platform-specific driver. Each driver implements a common interface (`createWindow`, `createWebView`, `loadHTML`, etc.) called by a shared `boot()` orchestrator.
 
@@ -66,13 +66,24 @@ Variables that carry data or a mode rather than a file are untouched: `DISPLAY`,
 
 ## Building apps
 
-Use `build.sh` to embed your JavaScript into a neutrino polyglot:
+An app is a directory laid over `neutrino/`. Put your JavaScript in `app.js`
+and hand the directory to the assembler:
 
 ```bash
-./build.sh myapp.js myapp.cmd
+mkdir myapp
+cp somewhere/myapp.js myapp/app.js
+./neutrino/assemble.sh --overlay myapp myapp.cmd
 ```
 
-This replaces the `runWeb()` body (between `//#RUNWEB_START` and `//#RUNWEB_END` markers) with your JS file. The resulting `.cmd` file is a self-contained app that runs on all platforms.
+`assemble.sh` builds the polyglot out of `neutrino/`, one `@@include` at a time,
+and looks in your directory first for every part it needs. `app.js` is the part
+that becomes the `runWeb()` body, so yours goes in and the launcher's greeting
+does not. The resulting `.cmd` file is a self-contained app that runs on all
+platforms.
+
+There is no separate splicing step and no template file. An overlay part either
+replaces the launcher's or it does not exist, which is why a build that produces
+an artifact produces the one you asked for.
 
 Your JS runs in the browser context with access to `document`, `window`, and the `window.neutrino` API.
 
@@ -82,23 +93,45 @@ Your JS runs in the browser context with access to `document`, `window`, and the
 
 What your app looks like *before* a line of its JavaScript has run.
 
-```bash
-./build.sh --title "My App" --size 1024x768 --background "#12141a" \
-           --decorations none --style shell.css --body shell.html \
-           myapp.js myapp.cmd
+Three more parts, beside `app.js` in the same directory:
+
+```
+myapp/
+  app.js         your code, the body of runWeb()
+  config.json    the window, and the tier list
+  style.css      the early shell's stylesheet
+  body.html      the early shell's markup
 ```
 
-The style and the body are spliced into the polyglot's document line, so they
-are in the first paint — there is no frame in which the window is up and your
-markup is not. The title, the size, the background and the decorations go into
-the config object instead, because the native window is created before there is
-a document to read them from. Each flag replaces its own part; the ones you leave out keep the
-template's.
+```json
+{
+    "tiers": "default",
+    "title": "My App",
+    "width": 1024,
+    "height": 768,
+    "background": "#12141a",
+    "decorations": "none"
+}
+```
+
+The style and the body are included into the polyglot's document, so they are in
+the first paint — there is no frame in which the window is up and your markup is
+not. Write them across as many lines as you like; they are ordinary files.
+
+`config.json` is laid into the launcher's config object verbatim, because JSON
+*is* a JavaScript object literal. Nothing rewrites it, so what the artifact
+carries is the file you wrote. The values are read before there is a document,
+which is why the window's title, size, background and frame live here and not in
+your markup.
+
+Leave a part out and you get the launcher's. Write `config.json` and you write
+all six keys — there is no merge, and a file that named only a title would take
+the rest from nowhere.
 
 Without this, an app draws itself from script, and every launch shows the
 launcher's own document first — the shape that made the sample app blink.
 
-**`--background` is not CSS.** Two surfaces are up before your document, and
+**`background` is not CSS.** Two surfaces are up before your document, and
 neither can be reached from a stylesheet: the native window, and the view inside
 it. Measured on WebKitGTK with the load held back, under a default desktop, the
 window is `#F6F5F4` — the GTK theme's bare background — and the view adds about
@@ -117,16 +150,16 @@ colour instead of out of the desktop's.
 deliberately separate from your stylesheet — this is the colour of the frame your
 app has not arrived in yet, not a rule in your CSS.
 
-**Leave it out and the colour comes from the desktop.** `auto` is what a build
-that names no background carries, and it means the launcher reads the palette off
+**Say `auto` and the colour comes from the desktop.** `auto` is what the
+launcher's own `config.json` carries, and it means the launcher reads the palette off
 the running toolkit and paints both surfaces the desktop's own content colour.
 Measured on the same two GTK lanes: Adwaita gives `#ffffff`, Adwaita-dark gives
 `#2d2d2d`, Mint-L-Dark gives `#404040`. So an app that follows the OS gets no
 flash on either kind of desktop without naming a colour at all — and an app that
-wants one fixed colour everywhere still says `--background "#12141a"` and gets
+wants one fixed colour everywhere still says `"background": "#12141a"` and gets
 exactly that, on every machine, through every theme change.
 
-**`--decorations none` takes the frame off.** No title bar, no borders, no
+**`"decorations": "none"` takes the frame off.** No title bar, no borders, no
 resize edge — the window is the web view and nothing else. `auto` is the
 default and is the frame the desktop would have given it anyway.
 
@@ -164,11 +197,14 @@ It is an Electron feature, and this is not Electron.
 A chromeless window also has no close button, so an app that removes the frame
 owns `window.close()` as well. Give the user something to press.
 
-**The one-line constraint, and the choice it gives you.** Both files are folded
-to a single line and spliced into a line that is simultaneously inside a
-JavaScript block comment, inside a shell here-document, and the line both halves
-of the file are cut from. CSS comments are removed for you. Four sequences are
-refused rather than escaped, and the error says what each one would have done:
+**What the early shell may not carry.** `style.css` and `body.html` are included
+into a region that is simultaneously inside a JavaScript block comment, inside a
+shell here-document, and the span both halves of the file are cut from. Write
+them across as many lines as you like — that region is not one line, and nothing
+is folded. CSS comments are removed for you, whether or not you asked for them
+to be, because the pair that closes one also closes the comment the whole region
+lives inside. Four sequences are refused rather than escaped, and the error says
+what each one would have done:
 
 | Refused | Because |
 |---|---|
@@ -177,13 +213,12 @@ refused rather than escaped, and the error says what each one would have done:
 | `<!doctype` | is a second doctype, which the launcher refuses |
 | `Content-Security-Policy` | is a second policy, which would sit in the document enforcing nothing |
 
-So the early shell is deliberately small, and you have a choice rather than a
-limit. Write an app that fits these rules — isomorphic ES5, one-lineable CSS and
-HTML — and it loads with nothing to wait for. Or keep the shell to the frame
-your app appears in, and build the rest from script once the engine is up, where
-none of these rules apply. The sample app does the second: `pages/demo.css` and
-`pages/demo.html` are the whole window, and `pages/demo.js` fills in the two
-words that only the runtime knows.
+So you have a choice rather than a limit. Put the whole window in the early
+shell and it loads with nothing to wait for. Or keep the shell to the frame your
+app appears in and build the rest from script once the engine is up, where none
+of these rules apply. The sample app does the first: `pages/demo/style.css` and
+`pages/demo/body.html` are the whole window, and `pages/demo/app.js` fills in
+the two words that only the runtime knows.
 
 ---
 
@@ -234,7 +269,7 @@ the value and the native window never moves.** So the launcher connects the
 signal each engine raises when a document's title changes (`notify::title`,
 `onTitleChanged`, `WKWebView.title`, `DocumentTitleChanged`) and puts the value
 on the window. A `<title>` in your markup works for the same reason, and your
-build's `--title` is put into the document if you wrote none, so reading
+build's `title` is put into the document if you wrote none, so reading
 `document.title` back gives you the name your window already has.
 
 Only the document this launcher loaded can name the window. A page that somehow
@@ -265,7 +300,7 @@ three setting it true while the window stays up and one leaving it false, and
 there is no value here that would be true everywhere. And `resizeTo` sizes the
 **content area**, not the frame, on every platform: `resizeTo(800, 600)` leaves
 `innerWidth` at 800 and `outerWidth` at whatever the decoration adds. That is
-also what `--size` has always meant, so a window opened at `900x600` and one
+also what `width` and `height` have always meant, so a window opened at `900x600` and one
 resized to `900x600` are the same window.
 
 `moveTo` is the other half of that pair and it goes the other way: it places the
@@ -307,7 +342,7 @@ click: a script synthesising one gets nothing, because
 The return value is `null` for anything sent outward. Nothing here is a window
 in your page's process, and three of the four engines already answer `null`.
 
-An offline build (`--tier=offline`) refuses all of it, because a url handed to
+An offline build (`"tiers": "default,offline"`) refuses all of it, because a url handed to
 the desktop's browser is the page reaching the network in another program.
 
 **There is no bespoke spelling for any of this.** `document.title`,
@@ -417,7 +452,7 @@ win.addEventListener("neutrino:themechange", function (e) {
 handler may read either, and the custom properties are rewritten on the same
 update — through `documentElement.style.setProperty`, which is measured working
 on all four engines. A reference you captured earlier keeps the palette it
-had. If your build left `--background` out, the two native surfaces are repainted
+had. If your build's background is `auto`, the two native surfaces are repainted
 to match at the same time; if you named a colour, they are never repainted.
 
 | Lane | Palette | Change signal |
@@ -486,10 +521,10 @@ and exits non-zero.
 
 ## Run
 
-An app is the file `build.sh` writes, and running it is running that file.
+An app is the file `assemble.sh` writes, and running it is running that file.
 
 ```bash
-./build.sh myapp.js myapp.cmd
+./neutrino/assemble.sh --overlay myapp myapp.cmd
 
 # Linux / macOS
 chmod +x myapp.cmd
@@ -506,8 +541,9 @@ myapp.cmd
 The test suite verifies IPC works end-to-end on all platforms:
 
 ```bash
-# Build the test app
-./build.sh test/neutrinotest.js test/neutrinotest.cmd
+# Build the test app. mkapp.sh writes the overlay a one-file app would
+# otherwise be a directory for, and is what this suite builds with.
+bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
 
 # Run with verification (Linux, requires xdotool)
 bash test/neutrinotest.cmd &
@@ -548,7 +584,7 @@ netinstall to run one.
 ## Repository
 
 - `neutrino/`: the launcher, split by language under a polyglot skeleton -- see `neutrino/POLYGLOT.md`
-- `build.sh`: polyglot assembler (JS + assembled template -> .cmd)
+- `neutrino/assemble.sh`: the assembler (neutrino/ + your overlay -> .cmd)
 - `test/`: test harness and platform verification scripts
 - `netinstall/`: the name-addressed launcher, and its own suite
 - `pages/`: the demo site published at alganet.github.io/neutrino/

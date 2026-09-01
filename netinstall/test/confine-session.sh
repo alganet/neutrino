@@ -223,7 +223,7 @@ esac
 
 echo "=== Can a real webview still start under it? ==="
 if [ -n "${DISPLAY:-}" ] && nt_linux_runtime; then
-    bash "$ROOT/build.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
+    bash "$ROOT/test/mkapp.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
     GSPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
     GAPP="$(nt_as "$BIN" "$GSPEC" "$WORK/bin")"
     "$GAPP" > "$WORK/app.log" 2>&1 &
