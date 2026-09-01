@@ -405,7 +405,22 @@ function ready() {
     // before `<head>`, so documentElement is true inside the window where a
     // `document.title` write -- which is how this suite reports -- does nothing
     // at all. Waiting for the body is waiting for `</head>` to have been passed.
-    if (win.neutrino && doc.body) { step1(); }
+    // One dwell of head start before the first state, for the reason
+    // neutrinostdgeom.js gives at length: the verifier attaches by finding a
+    // window, a window exists before this script has said anything in it, and
+    // on Windows that gap is wide enough to lose.
+    //
+    // geom lost it, at a margin of 169ms. This probe has been measured thinner:
+    // across four runs of `windows-content` its recorder waited 159, 410, 471,
+    // 503, 519, 525, 526, 564, 881, 968, 1056 and 1702ms for STD-THEME-CTL, and
+    // 159ms is one scheduling slice from the failure geom actually had. Missing
+    // CTL fails `control ctl was never observed` the same way missing A failed
+    // the resize control.
+    //
+    // doc and win are left alone: their thinnest margins across the same runs
+    // are 503ms and 763ms, three to four times this one, and nothing yet says
+    // what the right budget for them would be.
+    if (win.neutrino && doc.body) { win.setTimeout(step1, DWELL); }
     else { win.setTimeout(ready, 16); }
 }
 
