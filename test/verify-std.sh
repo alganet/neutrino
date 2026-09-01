@@ -929,7 +929,7 @@ shoot() {
     # analysis for probe '/var/.../neutrino-shot-probe.png'", then took a second
     # picture -- of the desktop after the probe had closed its window -- over the
     # first. A function called once can still be what breaks every line after it.
-    local ONSCREEN w WID SHOT_PROBE SHOT_SEEN N
+    local ONSCREEN w WID SHOT_PROBE SHOT_HOW N
     if [ "$PLATFORM" = x11 ]; then
         ONSCREEN=""
         for w in $(x11_toplevels); do
@@ -986,28 +986,29 @@ shoot() {
         SHOT_PROBE="${TMPDIR:-/tmp}/neutrino-shot-probe.png"
         case "$WID" in
             ''|*[!0-9]*)
-                screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
-                echo "  shot: the whole display; the launcher reported no window number, so nothing was waited for" ;;
+                SHOT_HOW="the whole display; the launcher reported no window number, so nothing was waited for" ;;
             *)
                 N=0
-                SHOT_SEEN=""
+                SHOT_HOW="the whole display; window $WID never became capturable"
                 while [ "$N" -lt "${NT_SHOT_TRIES:-24}" ]; do
                     if screencapture -x -o -l "$WID" "$SHOT_PROBE" 2>/dev/null &&
                        [ -s "$SHOT_PROBE" ]; then
-                        SHOT_SEEN=yes
+                        SHOT_HOW="the whole display, with the probe's window (CGWindowID $WID) on it after $((N * 250))ms"
                         break
                     fi
                     N=$((N + 1))
                     sleep 0.25
                 done
-                rm -f "$SHOT_PROBE"
-                screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
-                if [ -n "$SHOT_SEEN" ]; then
-                    echo "  shot: the whole display, with the probe's window (CGWindowID $WID) on it after $((N * 250))ms"
-                else
-                    echo "  shot: the whole display; window $WID never became capturable"
-                fi ;;
+                rm -f "$SHOT_PROBE" ;;
         esac
+        screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
+        echo "  shot: $SHOT_HOW"
+        # The x11 half prints this before its shutter and this one after it,
+        # for the reason verify-macos.sh's copy gives: that shutter can wait
+        # seconds for a window, and the room at the end of the wait is the room
+        # in the picture. Same line, same name, so a reader can still put the
+        # two lanes side by side.
+        echo "  onscreen at capture: $(osascript -l JavaScript "$(dirname "$0")/onscreen-macos.js" 2>/dev/null | sed 's/^/[/; s/$/]/' | tr '\n' ' ')"
     fi
 }
 

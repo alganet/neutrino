@@ -2629,6 +2629,28 @@ jobs:
           bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
           cat ~/assemble.log
           exit $TEST_EXIT
+      # The room, before anything is photographed in it.
+      #
+      # Every picture this lane published in the last run carried the macOS
+      # re-authorisation alert -- "bash is requesting to bypass the system
+      # private window picker" -- centred on the display, over the app. It is
+      # raised by the first capture of the job and never times out, so one alert
+      # sits in all fourteen frames. Cropping to the window used to hide it, and
+      # hiding it is what the pictures stopped doing.
+      #
+      # This step is an experiment and not a control: it names the process that
+      # presents the alert, tries the two things that might dismiss it, and
+      # prints what happened at each stage. It cannot fail the lane -- the
+      # script exits 0 whatever it finds -- and its whole output is a reading
+      # for the next round. Before the launch, because the point is to have the
+      # room settled before the first shutter, and because its own throwaway
+      # capture is then the one that provokes the alert rather than `00-initial`.
+      - name: the room the pictures are taken in
+        timeout-minutes: 3
+        continue-on-error: true
+        run: |
+          bash test/shotroom-macos.sh > ~/shotroom.log 2>&1 || true
+          cat ~/shotroom.log
       # The last step in any lane with no way to be read, and it cost a merge.
       # It went red publishing nothing at all: verify-macos.sh exits before its
       # first screenshot when the window does not appear, so the artifact upload
