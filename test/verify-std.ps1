@@ -558,6 +558,7 @@ function Analyse-Doc($rows) {
 
 Write-Host "verify-std.ps1: probe=$Probe platform=windows"
 $dwell = Get-Dwell
+$shotName = if ($ShotName) { $ShotName } else { "std-$Probe" }
 
 if ($Replay) {
     if (-not (Test-Path -LiteralPath $Replay)) { Fail "no record at '$Replay'"; Finish }
@@ -573,6 +574,15 @@ if ($Replay) {
 } else {
     $proc = Wait-ForApp
     if (-not $proc) { Finish }
+    # `win` is photographed here, with its window up, and every other probe
+    # after the analysis. That is what the probes do rather than a preference:
+    # the window probe's last state is STD-WIN-CLOSE-PAIR, where it closes its
+    # own window on purpose because close() is one of the verbs under test. A
+    # shutter that fires after the analysis photographs an empty desktop, and
+    # std-win.png has been a blank rectangle in every artifact on every lane
+    # since that probe landed -- which survived because nobody opens a directory
+    # of PNGs to look at one they did not come for.
+    if ($Probe -eq "win") { Take-Screenshot $shotName }
     $rec = Record $proc $RunTimeout
 }
 
@@ -585,8 +595,9 @@ switch ($Probe) {
     default { Fail "no analysis for probe '$Probe'" }
 }
 
-# After the loop, never inside it.
-if (-not $Replay) { Take-Screenshot $(if ($ShotName) { $ShotName } else { "std-$Probe" }) }
+# After the loop, never inside it -- a full-screen bitmap encode is exactly the
+# slow thing this file's header forbids in the sampling loop.
+if (-not $Replay -and $Probe -ne "win") { Take-Screenshot $shotName }
 Write-Host "--- recorded transitions (ms / title / inner / pos / outer / tick) ---"
 foreach ($r in $rec.Rows) {
     Write-Host "$($r.At)`t$($r.Title)`t$($r.Inner)`t$($r.Pos)`t$($r.Outer)`t$($r.Tick)"
