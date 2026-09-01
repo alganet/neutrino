@@ -17,7 +17,29 @@ param(
     # verifier against a build with a different name. Both callers that exist
     # today install an app called neutrinotest, so this is the value they were
     # already getting.
-    [string]$AppName = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)
+    [string]$AppName = [System.IO.Path]::GetFileNameWithoutExtension($Artifact),
+    # Start the app here, rather than being pointed at one already running.
+    #
+    # The app gives its audience an eleven-second head start before its first
+    # step, and neutrinotest.js's own comment records that number being raised
+    # from three to eight to eleven, each time because this verifier arrived
+    # after a state had been and gone. What it is racing is this script's cold
+    # start: two assembly loads and an `Add-Type` that shells out to the C#
+    # compiler, all of it before the first poll. That is not a bounded quantity.
+    # Measured on two runs of the same commit, from the compiler's last warning
+    # to `=== Waiting for window ===`: 4.1s on one runner and 15.4s on another
+    # forty minutes later. The second one found the app at STEP1 and failed on
+    # a step it had performed correctly, unwatched.
+    #
+    # A constant cannot win that race, and raising it a fourth time would buy
+    # one more runner rather than the property. So the order is fixed instead:
+    # with -Launch every expensive thing happens first and the app is started
+    # afterwards, by the process that is about to watch it. The head start then
+    # pays for the runner's scheduling, which is what it was for.
+    #
+    # Off by default. The netinstall suites install the app into their own HOME
+    # and launch it themselves, which is part of what they are testing.
+    [switch]$Launch
 )
 
 $ErrorActionPreference = "Stop"
@@ -140,6 +162,11 @@ public class WinAPI {
 # means this number stopped being interesting -- raising it was the wrong fix
 # twice, at 120 and again at 240, because nothing that was waiting was ever
 # going to arrive.
+#
+# Under -Launch it now covers the compile as well, since the app is started from
+# in here: about four seconds of jsc on a warm runner and fifteen on a cold one,
+# against a bound that has watched a window take 143 without reaching it. What
+# the number buys is unchanged; what it measures starts earlier.
 $FirstTimeout = 240
 $PollInterval = 500
 # The sampler's turn. Ten looks a second against a state the app holds for one,
@@ -231,9 +258,48 @@ function Fail-Now($message) {
     # skipped this would throw away the only account of a run that got far
     # enough to photograph something and then stopped.
     Save-Frames
+    Report-Launch
     Write-Host ""
     Write-Host "=== Results: $script:Failures failure(s) ==="
     exit $script:Failures
+}
+
+# The batch region's own account, when this script started it.
+#
+# Under -Launch the compiler's warnings and any refusal from the launcher go to
+# a file instead of to the step's stdout, so they have to be read back or the
+# lane loses diagnostics it used to print inline. Read after the window is up,
+# and again from Fail-Now -- a wait that gave up is exactly when the reason is
+# most likely to be in here.
+# Opened with the share mode spelled out rather than through Get-Content,
+# because these files are still open for writing when they are read. The batch
+# STARTs a detached exe which inherits the redirected handles, so both stay held
+# for as long as the app lives -- and the app under test is written never to
+# close. Asking for FileShare.ReadWrite says the reader tolerates that writer;
+# leaving the mode to a default is leaving it to whatever the default happens to
+# be, on the one read whose account is worth having.
+$script:LaunchReported = $false
+function Report-Launch {
+    if (-not $Launch -or $script:LaunchReported) { return }
+    $script:LaunchReported = $true
+    foreach ($f in @($launchLog, $launchErr)) {
+        if (-not $f -or -not (Test-Path -LiteralPath $f)) { continue }
+        $text = ""
+        try {
+            $fs = [System.IO.File]::Open($f, [System.IO.FileMode]::Open,
+                                             [System.IO.FileAccess]::Read,
+                                             [System.IO.FileShare]::ReadWrite)
+            $sr = New-Object System.IO.StreamReader($fs)
+            $text = $sr.ReadToEnd()
+            $sr.Dispose(); $fs.Dispose()
+        } catch {
+            Write-Host "report: launch: $(Split-Path -Leaf $f) could not be read: $($_.Exception.Message)"
+            continue
+        }
+        foreach ($line in ($text -split "`r?`n")) {
+            if ($line.Trim()) { Write-Host "report: launch: $($line.Trim())" }
+        }
+    }
 }
 
 # What the driver had managed to fetch when a wait gave up. Every failure so far
@@ -698,11 +764,37 @@ function Assert-PositionAt($sample, $title, $expectedX, $expectedY, $tolerance) 
 
 # --- Test steps ---
 
+# Last thing before the watch, which is the whole point of it being here at all.
+#
+# Start-Process and not the launcher inline, for the reason the load step gives
+# in the workflow: the batch region STARTs a detached exe that inherits the
+# standard handles, and with this step's stdout on the other end it holds the
+# runner's pipe open for as long as the app lives -- which is how a netinstall
+# step once ran 37 minutes against a bound of 20. A file has no reader to wait
+# on, so the batch's own output goes to one and is read back below.
+#
+# -WorkingDirectory explicitly: Start-Process takes the child's directory from
+# [Environment]::CurrentDirectory and not from $PWD.
+if ($Launch) {
+    # Two files and both named `.log`, so the lane's sheet step -- which
+    # gathers `~/*.log` -- picks up the launcher's account along with the
+    # verifier's. Separate paths because Start-Process refuses to point both
+    # redirections at one file.
+    $launchLog = Join-Path $ScreenshotDir "launch-$AppName-out.log"
+    $launchErr = Join-Path $ScreenshotDir "launch-$AppName-err.log"
+    Write-Host "=== Launching $Artifact ==="
+    Start-Process -FilePath "cmd.exe" -WorkingDirectory (Get-Location).Path `
+        -ArgumentList "/c", $Artifact -WindowStyle Hidden `
+        -RedirectStandardOutput $launchLog -RedirectStandardError $launchErr |
+        Out-Null
+}
+
 Write-Host "=== Waiting for window ==="
 # By process, not by title: whether a window appeared has nothing to do with
 # which scripted step the app happens to be on, and matching the initial title
 # made this fail whenever the app got ahead of the verifier.
 $proc = Wait-ForApp
+Report-Launch
 Take-Screenshot "00-initial"
 
 Write-Host "=== Recording the app's sequence ==="
