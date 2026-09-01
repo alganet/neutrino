@@ -94,9 +94,6 @@ nt_scrub_loaders() {
     unset nt_name nt_names
 }
 
-# Read before the scrub takes it, and used only by a testing build. CI cannot
-# start Chromium in its container without it, and a release build has no way to
-# reach this: the tier is stamped into the file, not taken from the caller.
-neutrino_qt_disable_sandbox="${QTWEBENGINE_DISABLE_SANDBOX:-}"
+@@include sh/qt-sandbox-env.sh
 nt_scrub_loaders
 
