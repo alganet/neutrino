@@ -39,6 +39,11 @@ param(
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 
+# Set once the window is found, read by Take-Screenshot. Script-scoped because
+# the two are called from different places and a parameter would have to be
+# threaded through the whole main flow to reach one of them.
+$script:shotHwnd = [IntPtr]::Zero
+
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -82,14 +87,68 @@ function Get-Dwell() {
     return 1500
 }
 
+# The probe's own window, with its frame, and not the whole desktop.
+#
+# This grabbed a fixed 1280x800 of screen, so every picture carried the runner's
+# wallpaper, its taskbar, the "Windows Server 2025 Datacenter / Test Mode"
+# watermark and whatever console happened to be open behind the app -- one of
+# them a window of raw JSON, which is what a reader's eye lands on first. The
+# x11 half of this suite was changed to crop to the window in the same round;
+# leaving this one uncropped meant the same probe photographed differently
+# depending on the platform, and a reporting tool that does that is one nobody
+# can compare across lanes.
+#
+# GetWindowRect and not GetClientRect, because the decoration pair is what these
+# pictures exist to compare and the client area is the half that does not differ.
+#
+# Falls back to the full screen, and says which it did. A window that has gone
+# by the time the shutter fires -- which is the normal end of the `win` probe --
+# has no rect to read, and a picture of the desktop is worth more than no
+# picture as long as nobody mistakes it for the window.
 function Take-Screenshot($name) {
     try {
-        $b = New-Object System.Drawing.Bitmap 1280, 800
+        $x = 0; $y = 0; $w = 1280; $h = 800; $how = "the whole screen"
+        # Re-resolved here, not trusted from Wait-ForApp.
+        #
+        # The handle is taken when the window is first seen and the shutter
+        # fires much later; a handle that has gone stale in between fails
+        # GetWindowRect silently. Four of seven captures in the run that added
+        # this fell back to the full screen with "window up" in the same log,
+        # while the two theme-flip halves cropped correctly to 916x639. Asking
+        # the live process again costs one call and removes the difference.
+        #
+        # StdWinAPI+RECT: the struct is nested inside the class, which is the
+        # spelling the two callers below already use.
+        $waited = 0
+        while ($waited -lt 24) {
+            $hwnd = $script:shotHwnd
+            $r = New-Object StdWinAPI+RECT
+            if (-not ($hwnd -and $hwnd -ne [IntPtr]::Zero -and [StdWinAPI]::GetWindowRect($hwnd, [ref]$r))) {
+                $live = Get-Process -Name $AppName -ErrorAction SilentlyContinue |
+                        Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+                if ($live) { $hwnd = $live.MainWindowHandle; $script:shotHwnd = $hwnd }
+            }
+            if ($hwnd -and $hwnd -ne [IntPtr]::Zero -and [StdWinAPI]::GetWindowRect($hwnd, [ref]$r)) {
+                $rw = $r.Right - $r.Left
+                $rh = $r.Bottom - $r.Top
+                if ($rw -gt 0 -and $rh -gt 0 -and $rw -le 4096 -and $rh -le 4096) {
+                    $x = $r.Left; $y = $r.Top; $w = $rw; $h = $rh
+                    $how = "the probe's own window and its frame after $($waited * 250)ms"
+                    break
+                }
+            }
+            $waited++
+            Start-Sleep -Milliseconds 250
+        }
+        $b = New-Object System.Drawing.Bitmap $w, $h
         $g = [System.Drawing.Graphics]::FromImage($b)
-        $g.CopyFromScreen(0, 0, 0, 0, $b.Size)
+        $g.CopyFromScreen($x, $y, 0, 0, $b.Size)
         $b.Save("$ScreenshotDir\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
         $b.Dispose(); $g.Dispose()
-    } catch {}
+        Write-Host "  shot: $how ($($w)x$($h) at $x,$y)"
+    } catch {
+        Write-Host "  shot: the capture threw: $($_.Exception.Message)"
+    }
 }
 
 # What the launcher had to say when a wait gives up. Written because this
@@ -136,7 +195,11 @@ function Wait-ForApp() {
     do {
         $p = Get-Process -Name $AppName -ErrorAction SilentlyContinue |
              Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-        if ($p) { Note "watch pid=$($p.Id) window up"; return $p }
+        if ($p) {
+            Note "watch pid=$($p.Id) window up"
+            $script:shotHwnd = $p.MainWindowHandle
+            return $p
+        }
         Start-Sleep -Milliseconds 200
     } while ((Get-Date) -lt $deadline)
     Fail "no window from '$AppName' within ${FirstTimeout}s"

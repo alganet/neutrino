@@ -25,8 +25,58 @@ STATUS_FILE="${TMPDIR:-/tmp}/neutrino-title.txt"
 
 mkdir -p "$SCREENSHOT_DIR"
 
+# The app's own window, by CGWindowID, and not the display.
+#
+# `screencapture` with no target photographs everything on screen, and on this
+# platform that has meant a system consent sheet -- "bash is requesting to
+# bypass the system private window picker" -- across the middle of every picture
+# this lane published. `00-initial.png` in the last run was that sheet on an
+# empty desktop and nothing else. It is a periodic macOS reminder shown to any
+# process that captures the screen; there is no switch for it and it cannot be
+# clicked from here.
+#
+# `-l` composites one window, so an alert on top of the app is not in the frame.
+# The number is line 8 of the status file the launcher writes under the testing
+# tier, and `-o` drops the shadow, which belongs to the desktop and not the app.
+#
+# Falls back to the display and says which it did: this verifier takes its first
+# picture before the app is necessarily up, and a labelled picture of the
+# desktop is worth more than none.
+# Retried, briefly, before falling back.
+#
+# `screencapture -l` fails while the window has a number but is not yet on
+# screen, and that is not a hypothetical: `00-initial` reported "window 30 could
+# not be captured" on both macOS lanes in the run that introduced this, while
+# every later shot in the same lane succeeded. The verifier calls that moment
+# "Window found" because the launcher has written a title to the status file --
+# which it does from its clock tick, before the window is composited.
+#
+# So this is the missing wait, and it is a better one than a sleep: the window
+# is capturable exactly when it is on screen, so the thing being waited for and
+# the thing being measured are the same event. Bounded, and it reports how long
+# it waited, because a window that takes seconds to appear is a finding about
+# the app rather than about the shutter.
 screenshot() {
-    screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
+    local wid
+    wid="$(sed -n '8p' "$STATUS_FILE" 2>/dev/null)"
+    case "$wid" in
+        ''|*[!0-9]*)
+            screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
+            echo "  shot ${1}: the whole display; no window number yet" ;;
+        *)
+            local n=0
+            while [ "$n" -lt "${NT_SHOT_TRIES:-24}" ]; do
+                if screencapture -x -o -l "$wid" "$SCREENSHOT_DIR/${1}.png" 2>/dev/null &&
+                   [ -s "$SCREENSHOT_DIR/${1}.png" ]; then
+                    echo "  shot ${1}: the app's own window (CGWindowID $wid) after $((n * 250))ms"
+                    return 0
+                fi
+                n=$((n + 1))
+                sleep 0.25
+            done
+            screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
+            echo "  shot ${1}: the whole display; window $wid never became capturable" ;;
+    esac
 }
 
 read_status_title() { sed -n '1p' "$STATUS_FILE" 2>/dev/null || echo ""; }
