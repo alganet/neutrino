@@ -25,55 +25,57 @@ STATUS_FILE="${TMPDIR:-/tmp}/neutrino-title.txt"
 
 mkdir -p "$SCREENSHOT_DIR"
 
-# The app's own window, by CGWindowID, and not the display.
+# The whole display, and not just the app's window.
 #
-# `screencapture` with no target photographs everything on screen, and on this
-# platform that has meant a system consent sheet -- "bash is requesting to
-# bypass the system private window picker" -- across the middle of every picture
-# this lane published. `00-initial.png` in the last run was that sheet on an
-# empty desktop and nothing else. It is a periodic macOS reminder shown to any
-# process that captures the screen; there is no switch for it and it cannot be
-# clicked from here.
+# `screencapture -l` composites a single window, which makes a tighter picture
+# and a much smaller file, and it is not what these sheets are for. What a
+# reader wants out of a CI screenshot is the machine: what else was on the
+# desktop, what was sitting on top of the app, whether something opened behind
+# it. A frame cropped to the window cannot answer any of that, and that answer
+# is usually the reason somebody opened the sheet in the first place.
 #
-# `-l` composites one window, so an alert on top of the app is not in the frame.
-# The number is line 8 of the status file the launcher writes under the testing
-# tier, and `-o` drops the shadow, which belongs to the desktop and not the app.
+# The known cost is back in the frame: the system consent sheet -- "bash is
+# requesting to bypass the system private window picker" -- a periodic macOS
+# reminder shown to any process that captures the screen, which cannot be
+# switched off and cannot be clicked from a runner. It is a thing on the
+# desktop, and photographing the desktop means photographing it too.
 #
-# Falls back to the display and says which it did: this verifier takes its first
-# picture before the app is necessarily up, and a labelled picture of the
-# desktop is worth more than none.
-# Retried, briefly, before falling back.
+# What survives from the cropped version is its wait, which was the better half
+# of it. `screencapture -l` fails while a window has a number but is not yet
+# composited, and this verifier calls that moment "Window found" because the
+# launcher writes a title from its clock tick, before the window is on screen:
+# `00-initial` reported "window 30 could not be captured" on both macOS lanes in
+# the run that found this, while every later shot in the same lane succeeded.
+# So the `-l` call stays, as a probe rather than as the photograph -- it
+# composites the window into a scratch file nobody keeps, and the display shot
+# is taken once that has worked. The thing waited for and the thing measured
+# are still one event, and the picture is now of the whole machine.
 #
-# `screencapture -l` fails while the window has a number but is not yet on
-# screen, and that is not a hypothetical: `00-initial` reported "window 30 could
-# not be captured" on both macOS lanes in the run that introduced this, while
-# every later shot in the same lane succeeded. The verifier calls that moment
-# "Window found" because the launcher has written a title to the status file --
-# which it does from its clock tick, before the window is composited.
-#
-# So this is the missing wait, and it is a better one than a sleep: the window
-# is capturable exactly when it is on screen, so the thing being waited for and
-# the thing being measured are the same event. Bounded, and it reports how long
-# it waited, because a window that takes seconds to appear is a finding about
-# the app rather than about the shutter.
+# Says which it did, and how long it waited. A window that takes seconds to
+# appear is a finding about the app rather than about the shutter, and a
+# display shot taken with no window on it should not read like one taken with.
 screenshot() {
-    local wid
+    local wid probe n
     wid="$(sed -n '8p' "$STATUS_FILE" 2>/dev/null)"
+    probe="${TMPDIR:-/tmp}/neutrino-shot-probe.png"
     case "$wid" in
         ''|*[!0-9]*)
             screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
-            echo "  shot ${1}: the whole display; no window number yet" ;;
+            echo "  shot ${1}: the whole display; no window number yet, so nothing was waited for" ;;
         *)
-            local n=0
+            n=0
             while [ "$n" -lt "${NT_SHOT_TRIES:-24}" ]; do
-                if screencapture -x -o -l "$wid" "$SCREENSHOT_DIR/${1}.png" 2>/dev/null &&
-                   [ -s "$SCREENSHOT_DIR/${1}.png" ]; then
-                    echo "  shot ${1}: the app's own window (CGWindowID $wid) after $((n * 250))ms"
+                if screencapture -x -o -l "$wid" "$probe" 2>/dev/null &&
+                   [ -s "$probe" ]; then
+                    rm -f "$probe"
+                    screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
+                    echo "  shot ${1}: the whole display, with the app's window (CGWindowID $wid) on it after $((n * 250))ms"
                     return 0
                 fi
                 n=$((n + 1))
                 sleep 0.25
             done
+            rm -f "$probe"
             screencapture -x "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
             echo "  shot ${1}: the whole display; window $wid never became capturable" ;;
     esac

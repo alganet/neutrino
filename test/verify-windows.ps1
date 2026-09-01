@@ -52,6 +52,10 @@ Add-Type -AssemblyName System.Windows.Forms
 # when it happens before Wait-ForApp has run.
 $script:shotHwnd = [IntPtr]::Zero
 
+# Read once. The screen does not move, and the sampling loop must not spend a
+# turn asking about it -- see Grab-Frame below for what "not in a turn" buys.
+$script:ScreenBounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+
 # The pixels now, the PNG later.
 #
 # Everything this file says about its own sampling loop comes down to one rule:
@@ -318,31 +322,26 @@ function Report-PackageState {
     Write-Host "report: WebView2 package: $($files.Count) file(s), $bytes byte(s)"
 }
 
-# The app's own window, with its frame, and not the whole screen.
+# The whole screen, and not just the app's window.
 #
-# verify-std.ps1 was changed to crop two rounds ago and this file was not, so
-# the two Windows verifiers photographed the same machine differently: every
-# other lane's sheet came down to 200-550 KB of cropped windows while
-# `windows-launch` stayed at 1.8 MB of desktop, wallpaper, taskbar and the
-# "Test Mode" watermark. A sheet is for comparing lanes, and two lanes framed
-# differently cannot be compared.
+# This file cropped for a round, to match verify-std.ps1 and to bring a sheet
+# down from 1.8 MB of desktop to a few hundred KB of window. The saving was
+# real and it was the wrong trade: the desktop, the taskbar and the "Test Mode"
+# watermark are what tell a reader which machine took the picture and what else
+# was happening on it, and a window cropped out of its screen cannot say
+# whether something was sitting on top of it. Bigger artifacts are the price,
+# and they are worth it.
 #
-# GetWindowRect and not GetClientRect: the frame is part of what a launch
-# screenshot is showing. Falls back to the full screen and says which it did,
-# because 00-initial is taken the moment a window handle exists and that is
-# earlier than the window being on screen.
-#
-# This is the shutter for the pictures taken outside the sampling loop, and all
-# it owns is finding the rect -- it hunts for a live window and will wait three
-# seconds for one, which is exactly the kind of thing that must not happen in a
-# turn. The loop reads its own rect inline and calls Grab-Frame straight. Both
-# queue rather than write: see Grab-Frame above for why the encode is not here.
+# The rect hunt stays, and is now only a wait. A handle exists before the window
+# is on screen -- `00-initial` is taken the moment one exists -- so this looks
+# for a live window and will give it three seconds, then photographs the screen
+# either way and says in the log which of the two it got. That is exactly the
+# kind of hunting that must not happen inside a turn, which is why the sampling
+# loop below does not call this: it grabs the screen straight.
 function Take-Screenshot($name) {
     try {
         $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-        $x = $bounds.X; $y = $bounds.Y
-        $w = $bounds.Width; $h = $bounds.Height
-        $how = "the whole screen"
+        $how = "the whole screen; no window of the app was up to wait for"
         $waited = 0
         while ($waited -lt 12) {
             $hwnd = $script:shotHwnd
@@ -356,15 +355,14 @@ function Take-Screenshot($name) {
                 $rw = $r.Right - $r.Left
                 $rh = $r.Bottom - $r.Top
                 if ($rw -gt 0 -and $rh -gt 0 -and $rw -le 4096 -and $rh -le 4096) {
-                    $x = $r.Left; $y = $r.Top; $w = $rw; $h = $rh
-                    $how = "the app's own window and its frame"
+                    $how = "the whole screen, with the app's window (${rw}x${rh} at $($r.Left),$($r.Top)) on it after $($waited * 250)ms"
                     break
                 }
             }
             $waited++
             Start-Sleep -Milliseconds 250
         }
-        Grab-Frame $name $x $y $w $h $how
+        Grab-Frame $name $bounds.X $bounds.Y $bounds.Width $bounds.Height $how
     } catch {
         Write-Host "  shot ${name}: the capture threw: $($_.Exception.Message)"
     }
@@ -628,28 +626,14 @@ function Watch-Sequence($proc, $seconds) {
         # Outside the title branch on purpose: that turn is too early, and the
         # next title change is far too late.
         #
-        # The rect is read again here rather than taken from the sample, because
-        # this fires a few hundred milliseconds after that reading and the crop
-        # has to frame the pixels actually being copied. The sample keeps the
-        # geometry the assertions run on; this is the geometry of a photograph.
+        # No rect is read here. The picture is of the screen, so the geometry
+        # the shutter needs is the screen's and it does not change between
+        # turns; the rect this used to re-read was only ever the crop. The
+        # sample keeps the geometry the assertions run on, which is a different
+        # reading taken for a different reason.
         if ($pendingShot -and (Get-Date) -ge $pendingDue) {
-            $pr = New-Object WinAPI+RECT
-            $pw = 0; $ph = 0
-            if ([WinAPI]::GetWindowRect($proc.MainWindowHandle, [ref]$pr)) {
-                $pw = $pr.Right - $pr.Left
-                $ph = $pr.Bottom - $pr.Top
-            }
-            if ($pw -gt 0 -and $ph -gt 0 -and $pw -le 4096 -and $ph -le 4096) {
-                Grab-Frame $pendingShot $pr.Left $pr.Top $pw $ph `
-                    "the app's own window and its frame"
-            } else {
-                # Take-Screenshot's fallback and its confession, minus the
-                # waiting: a picture of the wrong thing beats none as long as it
-                # says which it is, and a turn is not the place to hunt.
-                $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-                Grab-Frame $pendingShot $b.X $b.Y $b.Width $b.Height `
-                    "the whole screen; the window rect read ${pw}x${ph}"
-            }
+            Grab-Frame $pendingShot $script:ScreenBounds.X $script:ScreenBounds.Y `
+                $script:ScreenBounds.Width $script:ScreenBounds.Height "the whole screen"
             $pendingShot = $null
             if ($done) { break }
         }

@@ -13,6 +13,11 @@ FAILURES=0
 
 mkdir -p "$SCREENSHOT_DIR"
 
+# The root window: the whole desktop, with the app somewhere on it. Every
+# verifier here frames its pictures that way, so a sheet can be read across
+# lanes and so anything sitting on top of the app is in the shot rather than
+# cropped out of it. This lane never did anything else; verify-macos.sh and the
+# two Windows halves carry the long version of why they stopped.
 screenshot() {
     import -window root "$SCREENSHOT_DIR/${1}.png" 2>/dev/null || true
 }
