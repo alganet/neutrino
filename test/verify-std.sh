@@ -907,6 +907,64 @@ analyse_theme() {
     [ -n "$(field 2 '^STD-THEME-END')" ] || fail "control end was never observed; the app did not finish its sequence"
 }
 
+# The picture, and when to take it.
+#
+# `win` is photographed as soon as its window is up and settled; every other
+# probe after the record loop. That is not a preference, it is what the probes
+# do: the window probe's last state is `STD-WIN-CLOSE-PAIR`, where it closes its
+# own window on purpose, because `close()` is one of the standard verbs under
+# test. A shutter that fires after the analysis therefore photographs an empty
+# desktop, and `std-win.png` has been a 1024x768 black rectangle in every
+# artifact on every lane since that probe landed. It survived because nobody
+# opens a directory of PNGs to look at one they did not come for.
+#
+# The others end on an `-END` state with the window still up, which the
+# `onscreen at capture` line beside each of them now says out loud.
+shoot() {
+    if [ "$PLATFORM" = x11 ]; then
+        ONSCREEN=""
+        for w in $(x11_toplevels); do
+            ONSCREEN="$ONSCREEN[$(xdotool getwindowname "$((w))" 2>/dev/null)] "
+        done
+        # Plain echo and not note(): `report:` is what annotate.sh packs into
+        # annotations, GitHub keeps fifty of those per job, and this lane
+        # already loses its last step's to that cap. A diagnostic may not spend
+        # the budget the results are competing for.
+        echo "  onscreen at capture: ${ONSCREEN:-<none>}"
+        case "$ONSCREEN" in
+            "") echo "  onscreen: nothing is on screen" ;;
+            *"]"*"]"*) echo "  onscreen: this desktop has more than one window on it" ;;
+        esac
+        # The probe's own window, with the frame around it -- not the root.
+        #
+        # Root capture photographs the desktop, and the desktop is not this
+        # lane's to control. `gjs` reported "Google Chrome and ChromeOS
+        # Additional Terms of Service" on seven of its eight captures in the
+        # first run that asked: the offline probe's openExternal control hands a
+        # url to the machine's browser, which is the point of that control, and
+        # Chrome's first-run dialog then sits over every picture the lane takes
+        # afterwards. A reader would take the top window for the subject.
+        #
+        # -frame keeps the title bar and border in shot, which the decoration
+        # pair exists to compare -- a client-area capture would make the
+        # decorated and chromeless halves identical pictures.
+        #
+        # Falls back to the root, and says which it did: a lane with no
+        # compliant window manager has no frame to capture, and a picture of
+        # the wrong thing is better than no picture as long as it is labelled.
+        if [ -n "$X11_WID" ] &&
+           import -frame -window "$X11_WID" "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null &&
+           [ -s "$SHOT_DIR/$SHOT_NAME.png" ]; then
+            echo "  shot: the probe's own window and its frame (id $X11_WID)"
+        else
+            import -window root "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
+            echo "  shot: the whole root window; the framed capture was not available"
+        fi
+    else
+        screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
+    fi
+}
+
 # ----------------------------------------------------------------------- main
 
 echo "verify-std.sh: probe=$PROBE platform=$PLATFORM dwell=${DWELL}ms"
@@ -950,6 +1008,8 @@ else
     fi
 fi
 
+[ "$PROBE" = win ] && shoot
+
 : > "$REC"
 record
 
@@ -967,41 +1027,11 @@ case "$PROBE" in
     *)     fail "no analysis for probe '$PROBE'" ;;
 esac
 
-# Who else is on screen, named, immediately before the shutter.
-#
-# The picture is `import -window root`, so it is a photograph of the desktop and
-# not of the app. Two lanes' geometry shots in the last green run carry a window
-# titled `EARLY at=held tx=console ready=complete DONE` -- left behind by a step
-# that ran six steps earlier and was reaped with `pkill -f`, which returns
-# before the window goes -- stacked over a netinstall dialog left by the step
-# after that, with the probe's own window somewhere underneath. Nothing in the
-# artifact said so, and a reader would have taken the top window for the subject.
-#
-# This does not clean up: a verifier that kills windows it did not start is a
-# verifier that can destroy the evidence of the leak. It names them, so the
-# round that does the cleaning knows what it is cleaning.
-if [ "$PLATFORM" = x11 ]; then
-    ONSCREEN=""
-    for w in $(x11_toplevels); do
-        ONSCREEN="$ONSCREEN[$(xdotool getwindowname "$((w))" 2>/dev/null)] "
-    done
-    # Plain echo and not note(): `report:` is what annotate.sh packs into
-    # annotations, GitHub keeps fifty of those per job, and this lane already
-    # loses its last step's to that cap. A diagnostic may not spend the budget
-    # the results are competing for.
-    echo "  onscreen at capture: ${ONSCREEN:-<none>}"
-    case "$ONSCREEN" in
-        *"]"*"]"*) echo "  onscreen: more than one window is in this shot" ;;
-    esac
-fi
-
-# After the loop, never inside it. The full record goes to the log and the
-# artifact; only the digest above carries the report: prefix annotate.sh reads.
-if [ "$PLATFORM" = x11 ]; then
-    import -window root "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
-else
-    screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
-fi
+# After the loop, never inside it -- a full-screen PNG encode is exactly the
+# slow thing this file's header forbids in the sampling loop. The full record
+# goes to the log and the artifact; only the digest above carries the report:
+# prefix annotate.sh reads.
+[ "$PROBE" = win ] || shoot
 echo "--- recorded transitions (ms / title / inner / pos / outer / tick / raw) ---"
 cat "$REC"
 
