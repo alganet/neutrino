@@ -107,6 +107,64 @@ done
 
 NSHOTS="$(wc -l < "$SHOTS" | tr -d ' ')"
 NLOGS="$(wc -l < "$LOGS" | tr -d ' ')"
+
+# ------------------------------------------------------------------- the digest
+#
+# What the lane asserted, before what it looks like.
+#
+# The suites speak in `PASS:`, `FAIL:` and `SKIP` lines and report their
+# readings with `report:`. Those go to the job log, where they are readable one
+# lane at a time by whoever thinks to look, and to annotations, which GitHub
+# caps at fifty a job and silently drops past. Neither surface lets anyone ask
+# the question this repository actually has open: which of these assertions is
+# being made on four lanes when one would do.
+#
+# So each sheet carries its own lane's assertions, normalised -- prefix removed,
+# every run of digits folded to `#`, whitespace collapsed -- and counted. Within
+# one sheet that already shows repetition: an assertion that appears three times
+# is one the lane is making three times. Across sheets it is a diff, which is
+# why the same list is emitted again as JSON at the end of the page. Two lanes'
+# digests intersected are the redundant set, and nothing before this round could
+# produce that list at all.
+#
+# Normalising the digits is what makes the comparison possible and is also the
+# one thing that could make it lie: two assertions differing only in a number
+# collapse to one row here. That is the right trade for finding duplicates
+# across lanes and the wrong one for reading a single result, so the raw lines
+# stay in the logs below, whole.
+ASSERTS="$(mktemp)"; PERLOG="$(mktemp)"
+trap 'rm -f "$SHOTS" "$LOGS" "$ASSERTS" "$PERLOG"' EXIT
+
+while IFS= read -r log <&3; do
+    [ -f "$log" ] || continue
+    # `|| true` and not `|| echo 0`. grep -c prints its count *and* exits 1 when
+    # that count is zero, so the obvious spelling appended a second line and
+    # every field after the first log became a two-line string: the digest table
+    # came out with sixty rows for sixteen logs, most of them named "0".
+    count() { c="$(grep -acE "$1" "$2" 2>/dev/null || true)"; printf '%s' "${c:-0}"; }
+    np="$(count '(^|[[:space:]])PASS:' "$log")"
+    nf="$(count '(^|[[:space:]])FAIL:' "$log")"
+    ns="$(count '(^|[[:space:]])SKIP' "$log")"
+    nr="$(count '(^|[[:space:]])report:' "$log")"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$(basename "$log")" "$np" "$nf" "$ns" "$nr" >> "$PERLOG"
+    # Two passes over the prefixes, not one. A suite that reports through
+    # annotate.sh writes `report: PASS: the page asked for a window`, so a
+    # single strip leaves `report: PASS:` on the front and the same assertion
+    # made on two lanes -- one prefixed, one not -- would not compare equal.
+    # Two passes is enough for every spelling in this tree and is portable in a
+    # way a sed label loop is not.
+    grep -ahE '(^|[[:space:]])(PASS|FAIL|SKIP):' "$log" 2>/dev/null |
+        sed -E -e 's/^[[:space:]]*//' -e 's/^(report|PASS|FAIL|SKIP):[[:space:]]*//' |
+        sed -E -e 's/^(report|PASS|FAIL|SKIP):[[:space:]]*//' \
+               -e 's/[0-9]+/#/g' \
+               -e 's/[[:space:]]+/ /g' \
+               -e 's/[[:space:]]*$//' |
+        tr -d '\000-\010\013\014\016-\037' >> "$ASSERTS"
+done 3< "$LOGS"
+
+N_ASSERT="$(wc -l < "$ASSERTS" | tr -d ' ')"
+N_FAIL="$(awk -F'\t' '{n+=$3} END{print n+0}' "$PERLOG" 2>/dev/null || echo 0)"
+N_DISTINCT="$(sort -u "$ASSERTS" 2>/dev/null | wc -l | tr -d ' ')"
 echo "  sheet: lane=$LANE shots=$NSHOTS logs=$NLOGS -> $OUT"
 
 mkdir -p "$(dirname "$OUT")"
@@ -161,11 +219,17 @@ summary { padding:9px 12px; cursor:pointer; font-family:ui-monospace,Menlo,Conso
 pre { margin:0; padding:12px; overflow-x:auto; font-size:11.5px; line-height:1.5;
       border-top:1px solid var(--line); }
 .empty { color:var(--muted); font-style:italic; }
+table.digest { border-collapse:collapse; font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;
+               margin-bottom:10px; }
+table.digest th { text-align:left; font-weight:600; color:var(--muted);
+                  padding:3px 14px 3px 0; border-bottom:1px solid var(--line); }
+table.digest td { padding:2px 14px 2px 0; border-bottom:1px solid var(--line); }
+table.digest td.bad { color:#d23; font-weight:700; }
 </style>
 <header>
   <h1>$LANE</h1>
   <div class="meta">
-    $NSHOTS picture(s), $NLOGS log(s)
+    $NSHOTS picture(s), $NLOGS log(s), $N_ASSERT assertion(s), $N_FAIL failed
 HTMLHEAD
 
 if [ -n "${GITHUB_SHA:-}" ]; then
@@ -213,6 +277,26 @@ while IFS="$(printf '\t')" read -r GROUP png <&3; do
 done 3< "$SHOTS"
 [ "$LAST_GROUP" = "__none__" ] || echo '</div>'
 
+if [ "$N_ASSERT" != 0 ]; then
+    printf '<h2>What this lane asserted</h2>\n'
+    printf '<table class="digest"><thead><tr><th>log</th><th>pass</th><th>fail</th><th>skip</th><th>readings</th></tr></thead><tbody>\n'
+    while IFS="$(printf '\t')" read -r nm np nf ns nr <&3; do
+        cls=""
+        [ "$nf" != 0 ] && cls=' class="bad"'
+        printf '<tr><td>%s</td><td>%s</td><td%s>%s</td><td>%s</td><td>%s</td></tr>\n' \
+            "$(printf '%s' "$nm" | esc)" "$np" "$cls" "$nf" "$ns" "$nr"
+    done 3< "$PERLOG"
+    printf '</tbody></table>\n'
+
+    # Sorted by count, because the question this answers is "what is this lane
+    # doing more than once" and the answer is at the top of that order.
+    printf '<details><summary>every assertion, normalised &mdash; %s distinct of %s</summary><pre>' \
+        "$N_DISTINCT" "$N_ASSERT"
+    sort "$ASSERTS" | uniq -c | sort -rn |
+        sed -E 's/^ *([0-9]+) /\1\t/' | esc
+    printf '</pre></details>\n'
+fi
+
 if [ "$NLOGS" != 0 ]; then
     echo '<h2>Logs</h2>'
     while IFS= read -r log <&3; do
@@ -232,5 +316,26 @@ fi
 
 echo '</main>'
 } > "$OUT"
+
+# The same list again, for a reader that is not a person.
+#
+# A sheet answers for one lane; the redundancy question is about the set of
+# them, and the only way to intersect eight lanes is to have eight machine
+# -readable lists. Emitted last and inside a script block so it is invisible on
+# the page and one `sed` away from whoever wants it.
+{
+    printf '<script type="application/json" id="nt-digest">\n{'
+    printf '"lane":"%s","sha":"%s","run":"%s",' \
+        "$LANE" "${GITHUB_SHA:-}" "${GITHUB_RUN_ID:-}"
+    printf '"shots":%s,"logs":%s,"assertions":%s,"distinct":%s,"failures":%s,' \
+        "$NSHOTS" "$NLOGS" "$N_ASSERT" "$N_DISTINCT" "$N_FAIL"
+    printf '"asserted":['
+    sort "$ASSERTS" | uniq -c | sort -rn |
+        sed -E -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
+               -e 's/^ *([0-9]+) (.*)$/{"n":\1,"t":"\2"},/' |
+        tr -d '\n' | sed -E 's/,$//'
+    printf ']}\n</script>\n'
+} >> "$OUT"
+
 
 echo "  sheet: $(wc -c < "$OUT" | tr -d ' ') bytes written"

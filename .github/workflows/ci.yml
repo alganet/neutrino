@@ -413,9 +413,17 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
+          # The verifier logs, gathered. They sit loose in the home directory --
+          # ~/stdgeom.log, ~/themediff.log, ~/deco-a.log and a dozen more -- so
+          # every sheet this lane has published carried "logs=0" while the
+          # Windows ones carried sixteen. A sheet that cannot show what the lane
+          # asserted cannot be read for what the lane asserted twice.
+          mkdir -p ~/sheetsrc
+          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh gjs ~/sheet/gjs.html \
             "The suites=$HOME/screenshots" \
-            "netinstall=$HOME/netinstall-screenshots"
+            "netinstall=$HOME/netinstall-screenshots" \
+            "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -1004,9 +1012,17 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
+          # The verifier logs, gathered. They sit loose in the home directory --
+          # ~/stdgeom.log, ~/themediff.log, ~/deco-a.log and a dozen more -- so
+          # every sheet this lane has published carried "logs=0" while the
+          # Windows ones carried sixteen. A sheet that cannot show what the lane
+          # asserted cannot be read for what the lane asserted twice.
+          mkdir -p ~/sheetsrc
+          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh linux-engines ~/sheet/linux-engines.html \
             "cjs=$HOME/shots-cjs" \
-            "PyGObject=$HOME/screenshots"
+            "PyGObject=$HOME/screenshots" \
+            "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -1429,9 +1445,17 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
+          # The verifier logs, gathered. They sit loose in the home directory --
+          # ~/stdgeom.log, ~/themediff.log, ~/deco-a.log and a dozen more -- so
+          # every sheet this lane has published carried "logs=0" while the
+          # Windows ones carried sixteen. A sheet that cannot show what the lane
+          # asserted cannot be read for what the lane asserted twice.
+          mkdir -p ~/sheetsrc
+          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh kde ~/sheet/kde.html \
             "The suites=$HOME/screenshots" \
-            "netinstall=$HOME/netinstall-screenshots"
+            "netinstall=$HOME/netinstall-screenshots" \
+            "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -3042,8 +3066,16 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
+          # The verifier logs, gathered. They sit loose in the home directory --
+          # ~/stdgeom.log, ~/themediff.log, ~/deco-a.log and a dozen more -- so
+          # every sheet this lane has published carried "logs=0" while the
+          # Windows ones carried sixteen. A sheet that cannot show what the lane
+          # asserted cannot be read for what the lane asserted twice.
+          mkdir -p ~/sheetsrc
+          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh macos ~/sheet/macos.html \
-            "The suites=$HOME/screenshots"
+            "The suites=$HOME/screenshots" \
+            "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -3084,9 +3116,17 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
+          # The verifier logs, gathered. They sit loose in the home directory --
+          # ~/stdgeom.log, ~/themediff.log, ~/deco-a.log and a dozen more -- so
+          # every sheet this lane has published carried "logs=0" while the
+          # Windows ones carried sixteen. A sheet that cannot show what the lane
+          # asserted cannot be read for what the lane asserted twice.
+          mkdir -p ~/sheetsrc
+          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh macos-netinstall ~/sheet/macos-netinstall.html \
             "The suites=$HOME/screenshots" \
-            "netinstall=$HOME/netinstall-screenshots"
+            "netinstall=$HOME/netinstall-screenshots" \
+            "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
