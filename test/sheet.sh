@@ -56,10 +56,14 @@ subject() {
     case "$1" in
         00-initial)   echo "The window as it first appears" ;;
         01-step0)     echo "Walk: the app has started and reported in" ;;
-        02-step1)     echo "Walk: step 1" ;;
-        03-step2)     echo "Walk: step 2" ;;
-        04-step3)     echo "Walk: step 3" ;;
+        02-step1)     echo "Walk: document.title assigned -- the native title should have followed" ;;
+        03-step2)     echo "Walk: after resizeTo(500, 400)" ;;
+        04-step3)     echo "Walk: after moveTo(0, 0)" ;;
         05-theme)     echo "The desktop palette, as the app read it" ;;
+        # Both spellings, because `05-done` is what windows-launch called this
+        # for as long as it was the only lane with two pictures instead of
+        # seven. It writes `06-done` like everywhere else now; the old name
+        # stays so an artifact from before that round still opens captioned.
         05-done|06-done) echo "Walk: finished" ;;
         frame-decorated)  echo "Default frame -- title bar and border drawn by the window manager" ;;
         frame-chromeless) echo "Built with --decorations none -- no title bar, no border" ;;

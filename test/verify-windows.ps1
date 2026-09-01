@@ -30,6 +30,91 @@ Add-Type -AssemblyName System.Windows.Forms
 # when it happens before Wait-ForApp has run.
 $script:shotHwnd = [IntPtr]::Zero
 
+# The pixels now, the PNG later.
+#
+# Everything this file says about its own sampling loop comes down to one rule:
+# nothing slow happens inside it. A state the app holds for two seconds is lost
+# to a turn that takes longer than that, and the single operation here expensive
+# enough to do it is encoding a full-screen bitmap to PNG -- about 1.4 s on a
+# busy runner. That is the whole reason this lane took two pictures where every
+# other takes seven: `00-initial` before the loop, one more after it, and
+# nothing in between, because in between was the loop.
+#
+# So the two halves are separated. CopyFromScreen is a blit off the screen DC
+# and costs single-digit milliseconds; Save() is the encode and the disk write
+# and costs the 1.4 s. The blit runs in a turn, while the state it photographs
+# is still the one on screen; the bitmaps are written after the walk is over,
+# when nothing is waiting on them.
+#
+# What that buys is the parity this lane never had. verify-linux.sh and
+# verify-macos.sh photograph all seven states -- the window as it appears, the
+# four scripted steps, the palette reading, the finish -- so the resize and the
+# move that the assertions at the bottom of this file have always covered in
+# numbers had no picture on the one platform where those numbers are exact.
+#
+# The cost is carried honestly rather than hidden. The grab happens inside the
+# turn, so it is inside the gap the apparatus control below measures: a blit
+# slow enough to threaten the dwell fails that control instead of sneaking past
+# it. Six bitmaps at 1024x768 is about 18 MB held until the walk ends, which is
+# the price of not encoding them one at a time while the app is moving.
+$script:Frames = New-Object System.Collections.ArrayList
+
+function Grab-Frame($name, $x, $y, $w, $h, $how) {
+    $t0 = Get-Date
+    $bitmap = $null
+    try {
+        $bitmap = New-Object System.Drawing.Bitmap $w, $h
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($x, $y, 0, 0, $bitmap.Size)
+        $graphics.Dispose()
+    } catch {
+        $bitmap = $null
+        $how = "the grab threw: $($_.Exception.Message)"
+    }
+    [void]$script:Frames.Add([pscustomobject]@{
+        Name   = $name
+        Bitmap = $bitmap
+        How    = $how
+        X = $x; Y = $y; W = $w; H = $h
+        GrabMs = [int]((Get-Date) - $t0).TotalMilliseconds
+    })
+}
+
+# Whether a state has already been photographed. The sampler sees a title on
+# every turn it is current for, not once, and a second grab of the same name
+# would overwrite the first with a later picture of the same thing while paying
+# the blit again.
+function Have-Frame($name) {
+    foreach ($f in $script:Frames) { if ($f.Name -eq $name) { return $true } }
+    return $false
+}
+
+# Written once, after the walk, in the order they were taken -- with the grab
+# cost beside each, which is the number the paragraphs above make a claim about
+# and therefore the number a reader should be able to check.
+function Save-Frames() {
+    if ($script:Frames.Count -eq 0) { return }
+    $slowest = 0
+    $taken = $script:Frames.Count
+    foreach ($f in $script:Frames) {
+        if ($f.GrabMs -gt $slowest) { $slowest = $f.GrabMs }
+        if (-not $f.Bitmap) {
+            Write-Host "  shot $($f.Name): $($f.How)"
+            continue
+        }
+        try {
+            $f.Bitmap.Save("$ScreenshotDir\$($f.Name).png",
+                           [System.Drawing.Imaging.ImageFormat]::Png)
+            Write-Host "  shot $($f.Name): $($f.How) ($($f.W)x$($f.H) at $($f.X),$($f.Y), grabbed in $($f.GrabMs)ms)"
+        } catch {
+            Write-Host "  shot $($f.Name): the save threw: $($_.Exception.Message)"
+        }
+        $f.Bitmap.Dispose()
+    }
+    $script:Frames.Clear()
+    Write-Host "report: frames n=$taken slowest_grab_ms=$slowest"
+}
+
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -61,6 +146,25 @@ $PollInterval = 500
 # so a state has to be missed ten times over before it is lost -- and the suite
 # asserts the slowest turn it actually managed rather than trusting this number.
 $SampleInterval = 100
+# How long a state is left to arrive on screen before it is photographed.
+#
+# The app assigns its page text and its document title in the same tick, and the
+# title is what this suite watches -- so a shutter firing on the turn the title
+# changed can catch the frame before the text the picture is *of* has painted.
+# 02-step1, 05-theme and 06-done are all that kind of state; 03-step2 and
+# 04-step3 are not, because the resize and the move happened a whole step
+# earlier and the title only announces them.
+#
+# The unix verifiers never had to choose this number. They poll for a title with
+# a sleep in the loop and then spawn `import` or `screencapture`, so a few
+# hundred milliseconds pass whether anyone meant them to or not. Here the delay
+# has to be picked, and picking it is better than inheriting it.
+#
+# 400ms: four of the sampler's own turns, a fifth of the 2000ms the app holds
+# each state for, and nowhere near the boundary where the next one starts.
+# Nothing sleeps for it -- the shot is queued with a due time and taken by
+# whichever turn comes after it, so it costs the walk nothing.
+$ShotSettle = 400
 $Failures = 0
 
 New-Item -ItemType Directory -Force -Path $ScreenshotDir | Out-Null
@@ -121,6 +225,12 @@ function Report-Watch($what) {
 function Fail-Now($message) {
     Write-Host "FAIL: $message"
     $script:Failures++
+    # Whatever was grabbed and not yet written. Nothing reaches here holding
+    # frames today -- the only caller gives up before the first shutter -- but
+    # the pictures live in memory until the walk ends now, and an exit that
+    # skipped this would throw away the only account of a run that got far
+    # enough to photograph something and then stopped.
+    Save-Frames
     Write-Host ""
     Write-Host "=== Results: $script:Failures failure(s) ==="
     exit $script:Failures
@@ -155,6 +265,12 @@ function Report-PackageState {
 # screenshot is showing. Falls back to the full screen and says which it did,
 # because 00-initial is taken the moment a window handle exists and that is
 # earlier than the window being on screen.
+#
+# This is the shutter for the pictures taken outside the sampling loop, and all
+# it owns is finding the rect -- it hunts for a live window and will wait three
+# seconds for one, which is exactly the kind of thing that must not happen in a
+# turn. The loop reads its own rect inline and calls Grab-Frame straight. Both
+# queue rather than write: see Grab-Frame above for why the encode is not here.
 function Take-Screenshot($name) {
     try {
         $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -182,12 +298,7 @@ function Take-Screenshot($name) {
             $waited++
             Start-Sleep -Milliseconds 250
         }
-        $bitmap = New-Object System.Drawing.Bitmap $w, $h
-        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-        $graphics.CopyFromScreen($x, $y, 0, 0, $bitmap.Size)
-        $bitmap.Save("$ScreenshotDir\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
-        $bitmap.Dispose(); $graphics.Dispose()
-        Write-Host "  shot ${name}: $how ($($w)x$($h) at $x,$y)"
+        Grab-Frame $name $x $y $w $h $how
     } catch {
         Write-Host "  shot ${name}: the capture threw: $($_.Exception.Message)"
     }
@@ -338,6 +449,36 @@ function Assert-WebView2Package($artifact, $packageRoot) {
 # And the sampler asks one process for one property. The old poll called
 # Get-Process with no arguments and touched MainWindowTitle on every process on
 # the machine, which is what made a turn expensive enough to lose a state in.
+#
+# The pictures follow the geometry, and for the same reason: a state is only
+# photographable while it is current. What made that impossible until now was
+# the PNG encode, and it is no longer in the turn -- Grab-Frame takes the pixels
+# and Save-Frames writes them once the walk is over.
+
+# Which state each picture is a picture of.
+#
+# The names are verify-linux.sh's and verify-macos.sh's, character for
+# character, because the sheet exists to lay the lanes beside each other and a
+# Windows `03-step2` spelled any other way is a row that cannot be compared.
+# `06-done` and not `05-done`: this lane numbered its last shot a digit below
+# every other one, nothing recorded why, and sheet.sh quietly captioned both
+# spellings -- which is how a divergence survives, by being handled.
+#
+# THEMEBAD sits beside THEMEOK because the picture is the entire point of that
+# state. The app writes the palette it just judged onto the page, so the shot is
+# the only place the actual colours can be read after the fact, and a lane that
+# read no palette at all is the one worth looking at hardest. The assertion
+# still wants THEMEOK; the camera does not care which verdict it was.
+$script:ShotFor = @{
+    "STEP0"            = "01-step0"
+    "STEP1-Test Title" = "02-step1"
+    "STEP2"            = "03-step2"
+    "STEP3"            = "04-step3"
+    "THEMEOK"          = "05-theme"
+    "THEMEBAD"         = "05-theme"
+    "TESTS DONE"       = "06-done"
+}
+
 function Watch-Sequence($proc, $seconds) {
     $deadline = (Get-Date).AddSeconds($seconds)
     $samples = New-Object System.Collections.ArrayList
@@ -345,6 +486,14 @@ function Watch-Sequence($proc, $seconds) {
     $maxGap = 0
     $turns = 0
     $prevTurn = Get-Date
+    # One shot in flight at a time, and the finish held open until it is taken.
+    # States are two seconds apart and the settle is a fifth of that, so a
+    # second one cannot come due before the first is spent; if the app ever
+    # walked faster than its own dwell the newer state would replace the older
+    # here, which is the same thing the sampler itself would do with the title.
+    $pendingShot = $null
+    $pendingDue = Get-Date
+    $done = $false
     while ((Get-Date) -lt $deadline) {
         $turns++
         $now = Get-Date
@@ -391,8 +540,54 @@ function Watch-Sequence($proc, $seconds) {
             })
             $s = $samples[$samples.Count - 1]
             Write-Host "report: seq $($s.At)ms '$title' inner $($s.Width)x$($s.Height) outer $($s.OuterW)x$($s.OuterH) extent $($s.OuterW - $s.Width)x$($s.OuterH - $s.Height) at $($s.Left),$($s.Top)"
-            if ($title -like "*TESTS DONE*") { break }
+
+            # The picture of this state -- queued here, taken a settle later.
+            #
+            # The `-like` widening is the break condition's, kept identical:
+            # `TESTS DONE` is the one title this loop has always matched
+            # loosely, and the finish has to be photographed under whichever
+            # spelling the break fires on or the last picture is taken outside
+            # the loop with the window already closed.
+            $shot = $script:ShotFor[$title]
+            if ($title -like "*TESTS DONE*") { $shot = "06-done"; $done = $true }
+            if ($shot -and -not (Have-Frame $shot)) {
+                $pendingShot = $shot
+                $pendingDue = (Get-Date).AddMilliseconds($ShotSettle)
+            } elseif ($done) {
+                break
+            }
         }
+
+        # Whatever state was seen a moment ago and has now had its settle.
+        # Outside the title branch on purpose: that turn is too early, and the
+        # next title change is far too late.
+        #
+        # The rect is read again here rather than taken from the sample, because
+        # this fires a few hundred milliseconds after that reading and the crop
+        # has to frame the pixels actually being copied. The sample keeps the
+        # geometry the assertions run on; this is the geometry of a photograph.
+        if ($pendingShot -and (Get-Date) -ge $pendingDue) {
+            $pr = New-Object WinAPI+RECT
+            $pw = 0; $ph = 0
+            if ([WinAPI]::GetWindowRect($proc.MainWindowHandle, [ref]$pr)) {
+                $pw = $pr.Right - $pr.Left
+                $ph = $pr.Bottom - $pr.Top
+            }
+            if ($pw -gt 0 -and $ph -gt 0 -and $pw -le 4096 -and $ph -le 4096) {
+                Grab-Frame $pendingShot $pr.Left $pr.Top $pw $ph `
+                    "the app's own window and its frame"
+            } else {
+                # Take-Screenshot's fallback and its confession, minus the
+                # waiting: a picture of the wrong thing beats none as long as it
+                # says which it is, and a turn is not the place to hunt.
+                $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                Grab-Frame $pendingShot $b.X $b.Y $b.Width $b.Height `
+                    "the whole screen; the window rect read ${pw}x${ph}"
+            }
+            $pendingShot = $null
+            if ($done) { break }
+        }
+
         Start-Sleep -Milliseconds $SampleInterval
     }
     return [pscustomobject]@{
@@ -413,14 +608,16 @@ function Find-Sample($record, $title) {
 # readings, and this used to report both as the second one.
 #
 # The record starts when the sequence loop starts, which is after the window
-# exists and after `00-initial` is encoded -- about 1.4 s on a busy runner. An
-# app that got through two titles inside that gap leaves a record whose *first*
-# entry is already past the one being asked about, and "never observed 'STEP0'"
-# then reads as the app having failed to do something it did before anyone was
-# looking. So when the missing title is behind the first thing recorded, this
-# says which of the two it is. The app now holds three seconds before its first
-# step, so the case should not arise; if it does, the sentence names the
-# instrument instead of accusing the app.
+# exists and after `00-initial` has been taken. That used to be an encode --
+# about 1.4 s on a busy runner -- and is a blit now, because Grab-Frame defers
+# every PNG to the end of the walk; the gap is smaller than this paragraph was
+# written against, and it is not zero. An app that got through two titles inside
+# it leaves a record whose *first* entry is already past the one being asked
+# about, and "never observed 'STEP0'" then reads as the app having failed to do
+# something it did before anyone was looking. So when the missing title is
+# behind the first thing recorded, this says which of the two it is. The app now
+# holds three seconds before its first step, so the case should not arise; if it
+# does, the sentence names the instrument instead of accusing the app.
 function Assert-Reached($record, $title) {
     $s = Find-Sample $record $title
     if ($s) {
@@ -512,10 +709,20 @@ Write-Host "=== Recording the app's sequence ==="
 # One loop over both halves. Everything between the Form appearing and the first
 # title is the WebView2 package being fetched and unpacked, which is why the
 # budget is what it is; from the first title on, the app walks its steps a
-# second apart. Nothing slow happens in here, and the sample gap asserted below
-# is what says so.
+# second apart. Nothing slow happens in here -- the per-state pictures are blits
+# and their encodes are below -- and the sample gap asserted further down is
+# what says so rather than this sentence.
 $record = Watch-Sequence $proc $FirstTimeout
-Take-Screenshot "05-done"
+# The finish, if the walk did not reach it. Inside the loop `06-done` is taken
+# on the turn that sees TESTS DONE, with the window still up; out here the app
+# has had two seconds to close itself on purpose, and what this photographs is
+# a desktop. That is the picture verify-std.ps1's own header calls a blank
+# rectangle nobody opens a directory to look at -- so it is the fallback and not
+# the rule, kept because a run that timed out or died mid-walk should still
+# publish a picture of wherever it stopped.
+if (-not (Have-Frame "06-done")) { Take-Screenshot "06-done" }
+# Now, with the app finished and nothing being sampled, the encodes.
+Save-Frames
 Report-Watch "sequence"
 
 # The property the old design violated, asserted directly rather than left to
