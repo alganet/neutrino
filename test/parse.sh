@@ -269,12 +269,16 @@ var N = require("./obj.js");
 var S = String.fromCharCode(31);
 var failures = 0;
 
-// The splitter's own assertions are about the splitter, so they are taken at a
-// known tier rather than at whichever one the artifact under test was stamped
-// with. Without this an offline build fails the openExternal cases below by
-// behaving exactly as it is supposed to, and the tier's behaviour is asserted
-// on its own terms further down.
-N.config.tiers = "default";
+// The splitter's own assertions are about the splitter, so they are taken with
+// external urls allowed rather than at whatever this artifact happens to have
+// been built with. Without this an offline build fails the openExternal cases
+// below by behaving exactly as it is supposed to.
+//
+// It used to be spelled `N.config.tiers = "default"`. There is no tier to set:
+// what varies is a part, `externalAllowed`, so what the build answers is read
+// once here and put back before the section that asserts on it.
+var BUILD_ALLOWS_EXTERNAL = N.externalAllowed();
+N.externalAllowed = function () { return true; };
 
 function eq(name, got, want) {
     var ok = JSON.stringify(got) === JSON.stringify(want);
@@ -847,7 +851,13 @@ eq("a page script was extracted", pageScript.length > 1000, true);
 var pageScriptParses = true;
 try { new vm.Script(pageScript); } catch (e) { pageScriptParses = false; }
 eq("the page script parses as javascript", pageScriptParses, true);
-eq("default tier gets the default policy", policyOf(html), N.defaultContentPolicy);
+// The document carries exactly one policy, and it came from html/policy.html
+// rather than from a function that rewrote the document at launch. Which policy
+// depends on whether this artifact was built with the offline overlay, so what
+// is asserted here is the shape; test/assemble.sh builds both and compares.
+eq("the document carries a content policy", (policyOf(html) || "").length > 0, true);
+eq("and exactly one of them",
+   (html.match(/Content-Security-Policy/g) || []).length, 1);
 
 // The early shell. The document the engine loads is the document in the file
 // now, rather than the head cut with an empty body appended, and that is the
@@ -860,14 +870,15 @@ eq("and closes it at the end", html.slice(-14), "</body></html>");
 eq("the document carries a style", /<style>[\s\S]*<\/style><\/head><body>/.test(html), true);
 eq("nothing of the shell region is above the doctype", html.indexOf("exit") < 0, true);
 
-// What the native window needs before there is a document to read it from,
-// plus the tier list, and nothing else. `url` sat here unread for the length of
-// the project; a key nobody consumes is the shape this asserts against coming
-// back -- and config.json is the app's own file, so a key it grows is a key
-// that ships whether or not anything reads it.
-eq("config carries only what createWindow needs, and the tiers",
+// What the native window needs before there is a document to read it from, and
+// nothing else. `url` sat here unread for the length of the project, and
+// `tiers` followed it out when a tier became a set of parts; a key nobody
+// consumes is the shape this asserts against coming back, and config.json is
+// the app's own file, so a key it grows is a key that ships whether or not
+// anything reads it.
+eq("config carries only what createWindow needs",
    Object.keys(N.config).sort(),
-   ["background", "decorations", "height", "tiers", "title", "width"]);
+   ["background", "decorations", "height", "title", "width"]);
 eq("the title is a non-empty string", typeof N.config.title === "string" && N.config.title.length > 0, true);
 eq("the size is two positive whole numbers",
    [N.config.width > 0 && N.config.width === Math.floor(N.config.width),
@@ -1224,7 +1235,7 @@ console.log("and the launch palette rides in the document, not in a script");
 // element to set them on at that moment is a per-engine answer this project
 // has already been caught by once.
 var CSSDOC = '<!doctype html><html><head>' +
-             '<meta http-equiv="Content-Security-Policy" content="' + N.defaultContentPolicy + '">' +
+             '<meta http-equiv="Content-Security-Policy" content="script-src \'unsafe-eval\'">' +
              '<style>p{color:red}</style></head><body><p>x</p></body></html>';
 var themed = N.themedDocument(CSSDOC, theme);
 eq("the rule carries every key", N.themeCssText(theme),
@@ -1250,10 +1261,6 @@ eq("a document with no stylesheet gets it at the end of the head",
    N.themedDocument(bare, theme).indexOf("</style></head>") > 0, true);
 eq("a document with no head keeps what it has",
    N.themedDocument("<body>x</body>", theme), "<body>x</body>");
-N.config.tiers = "default,offline";
-eq("offline tier gets the offline policy", policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
-N.config.tiers = "default";
-eq("default tier leaves the document alone", policyOf(N.applyContentPolicy(html)), N.defaultContentPolicy);
 
 // The shapes this launcher refuses, and the reason they are assertions rather
 // than a probe: both functions are pure, so what an engine would do with a
@@ -1266,7 +1273,7 @@ console.log("");
 console.log("a source this launcher cannot split is refused, and says why");
 
 var DOC = '<!doctype html><html><head>' +
-          '<meta http-equiv="Content-Security-Policy" content="' + N.defaultContentPolicy + '">' +
+          '<meta http-equiv="Content-Security-Policy" content="script-src \'unsafe-eval\'">' +
           '<style>p{color:red}</style></head><body><p>the early shell</p>';
 var TAG = '\n<script type=text/javascript>';
 var CODE = '\nvar x = 1;\n';
@@ -1324,52 +1331,38 @@ refuses("nothing opening a script after the doctype", 'shell <script> region\n' 
 refuses("nothing closing the page script", 'shell region\n' + DOC + TAG + CODE);
 refuses("an empty source", "");
 
-// The offline tier is one string replace and it used to have no failure path:
-// a document that did not carry the policy came back unchanged, so a build that
-// says it denies the network shipped the policy that permits it.
+// The route a content policy cannot express. `openExternal` hands a url to the
+// machine's browser, which is the page reaching the network in another program;
+// it was measured going out that way on all four engines, by the API call and
+// by a navigation gjs and Qt refuse and then forward.
+//
+// It used to be asserted by flipping a tier on the loaded object and calling
+// twice. There is no tier to flip: `externalAllowed` is a part, the offline
+// overlay's returns false, and which one an artifact has is decided at
+// assembly. So this asserts that the two agree for whichever build it is
+// reading, and test/assemble.sh builds both and asserts they differ.
 console.log("");
-console.log("the offline tier refuses a document it cannot make offline");
-var NOPOLICY = '<!doctype html><html><head></head>';
-N.config.tiers = "default,offline";
-var refusedNoPolicy = false;
-try { N.applyContentPolicy(NOPOLICY); } catch (e) { refusedNoPolicy = true; }
-eq("a document with no policy to replace is refused", refusedNoPolicy, true);
-eq("and one that has it is still swapped",
-   policyOf(N.applyContentPolicy(html)), N.offlineContentPolicy);
-N.config.tiers = "default";
-// The boundary: the default tier has nothing to swap and must not start caring.
-eq("the default tier still passes a policy-less document through",
-   N.applyContentPolicy(NOPOLICY), NOPOLICY);
-
-// The half of the offline tier a content policy cannot express. `openExternal`
-// hands a url to the machine's browser, which is the page reaching the network
-// in another program; it was measured going out that way on all four engines
-// before this, by the API call and by a navigation gjs and Qt refuse and then
-// forward. Asserted here as well as end to end because this runs on every push
-// with no display behind it, and because both halves matter: the tier has to
-// close it, and the default tier has to still open a link.
-console.log("");
-console.log("the offline tier closes the route a content policy cannot see");
-// Asked before it is called, because a build without it makes every line below
-// a TypeError -- which is a failure, and an unreadable one. Run against the
-// commit before this PR it reads exactly this way and nothing else breaks.
+console.log("what the build allows, mayOpenExternal allows");
+// The build's own answer back, in place of the one forced at the top.
+N.externalAllowed = function () { return BUILD_ALLOWS_EXTERNAL; };
 eq("the build has a mayOpenExternal at all", typeof N.mayOpenExternal, "function");
+eq("and an externalAllowed to answer it", typeof N.externalAllowed, "function");
 function may(url) {
     if (typeof N.mayOpenExternal !== "function") return "<no mayOpenExternal>";
     return N.mayOpenExternal(url);
 }
-eq("the default tier opens an external url", may("https://example.com/x"), true);
-N.config.tiers = "default,offline";
-eq("the offline tier does not", may("https://example.com/x"), false);
-eq("and the message never becomes an action",
-   N.parseMessage("openExternal" + S + "https://example.com/x"), null);
-eq("the scheme allowlist is unchanged by the tier",
+eq("an external url follows this build's answer",
+   may("https://example.com/x"), N.externalAllowed());
+// Tier-independent, both of them: the allowlist is about the scheme and the
+// message is refused for a url no build would open.
+eq("the scheme allowlist is not the tier",
    N.isExternalUrl("https://example.com/x"), true);
-eq("a scheme outside the allowlist is refused in the offline tier",
+eq("a scheme outside the allowlist is refused whatever the build",
    may("file:///etc/passwd"), false);
-N.config.tiers = "default";
-eq("and in the default tier, which is the half that was already true",
-   may("file:///etc/passwd"), false);
+if (!N.externalAllowed()) {
+    eq("and in an offline build the message never becomes an action",
+       N.parseMessage("openExternal" + S + "https://example.com/x"), null);
+}
 
 if (failures > 0) {
     console.log("");

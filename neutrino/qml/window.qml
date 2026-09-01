@@ -413,8 +413,7 @@ Window {
             }
             view.loadHtml(root.nt.themedDocument(
                 root.nt.titledDocument(
-                    root.nt.applyContentPolicy(
-                        root.nt.extractHtmlDocument(root.ntSource)),
+                    root.nt.extractHtmlDocument(root.ntSource),
                     cfg.title),
                 root.ntTheme))
         }

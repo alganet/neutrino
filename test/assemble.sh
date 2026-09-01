@@ -126,7 +126,6 @@ echo "=== the assembler builds, with and without an overlay ==="
 T="$(tree plain)"
 bash "$T/neutrino/assemble.sh" "$T/bare.cmd" > "$WORK/plain.log" 2>&1
 eq "a build with no overlay succeeds" "$?" "0"
-eq "and carries the tree's default tier" "$(conf "$T/bare.cmd" tiers)" "$(default_of tiers)"
 
 bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/app.cmd" > "$WORK/app.log" 2>&1
 eq "a build with an app overlay succeeds" "$?" "0"
@@ -143,8 +142,6 @@ eq "an app carrying a tiers: line builds" "$?" "0"
 eq "and its line is untouched" \
    "$(sed -n '/^    NeutrinoWebview.runWeb = function () {$/,/^    };$/s/^ *tiers: "\(.*\)",$/\1/p' "$T/tiers.cmd" | head -1)" \
    "offline,tight"
-eq "and the artifact's own stamp is the tree's" \
-   "$(conf "$T/tiers.cmd" tiers)" "$(default_of tiers)"
 
 # =====================================================================
 # Which root a part comes from
@@ -610,131 +607,83 @@ else
 fi
 
 # =====================================================================
-# The tier list, and how the shell comes to have it
+# A tier is a set of parts
 # =====================================================================
-# There used to be four `//#` sentinels in the artifact and a section here about
-# keeping them intact. They were splice targets: a second program stamped the
-# tier list into the JavaScript region, so the shell had to search the built
-# file for it and had to be told where to stop looking.
+# There used to be four `//#` sentinels in the artifact, a tier list stamped
+# into the config object, a `sed` that read it back at every launch, and nine
+# runtime conditionals that consulted it. All of that is gone and none of it was
+# replaced: neutrino/tier/<name> is an overlay, so a tier is decided by which
+# parts an artifact was assembled from.
 #
-# Nothing is stamped. sh/tiers.sh includes config.json as a here document of its
-# own, the way sh/qt.sh includes qml/window.qml, so the shell has the value
-# rather than going to look for it -- and the JavaScript region has the same
-# file, included by the same assembler in the same pass. What that removes is
-# not a check but the reason for one.
+# What that buys is the thing a stamp could not. A release build does not carry
+# the testing scaffolding behind a flag -- it does not carry it, so there is no
+# flag to get wrong, nothing to read at launch, and nothing an artifact can be
+# talked into. These assertions are about presence and absence for that reason.
 report "section: tiers"
-echo "=== the shell and the javascript carry one file, included twice ==="
+echo "=== a release build does not carry what a tier build does ==="
 T="$(tree tiers)"
-nt_d="$(confdir tiers)"
-cat > "$nt_d/config.json" <<'EOF'
-{
-    "tiers": "default,tight,offline",
-    "title": "S",
-    "width": 900,
-    "height": 600,
-    "background": "auto",
-    "decorations": "auto"
-}
-EOF
-bash "$T/neutrino/assemble.sh" --overlay "$nt_d" --overlay "$APP_TIERS" "$T/out.cmd" >/dev/null 2>&1
-eq "a build with a full tier list succeeds" "$?" "0"
-
-eq "the artifact carries no // # markers at all" \
-   "$(grep -c '//#' "$T/out.cmd" || true)" "0"
-
-# The two copies, read the way each language reaches its own. The shell's is the
-# here document; the JavaScript's is the config object. They are one file, so
-# this is asserting the assembler put the same bytes in both places.
-nt_shellcopy() {
-    sed -n "/<<'NEUTRINO_CONFIG_JSON'/,/^NEUTRINO_CONFIG_JSON\$/p" "$1" |
-        sed -e '1d' -e '$d'
-}
-nt_jscopy() {
-    sed -n '/^        config:$/,/^}$/p' "$1" | sed -e '1d'
-}
-if [ -z "$(nt_shellcopy "$T/out.cmd")" ]; then
-    fail "no here document in the shell region; the two readings below measured nothing"
-else
-    if [ "$(nt_shellcopy "$T/out.cmd")" = "$(nt_jscopy "$T/out.cmd")" ]; then
-        pass "the shell's copy and the JavaScript's are the same bytes"
-    else
-        fail "the two copies of config.json differ"
-    fi
-fi
-
-# And the app cannot reach either of them. This is the defect the sentinels
-# existed for, asserted the other way round: the app carries a line shaped like
-# the stamp, and the shell never looks at a file the app is in.
-eq "the tier list the shell reads is the config's" \
-   "$(nt_shellcopy "$T/out.cmd" | sed -n 's/^ *"tiers": "\([a-z,]*\)".*$/\1/p' | head -1)" \
-   "default,tight,offline"
-
-# The shell's sed and the assembler's validator are two programs in two
-# languages reading one format, and the shape they accept has to be the same
-# shape. It was not: the validator trims a tab as readily as a space, the sed
-# was anchored `^ *`, and a config.json indented with tabs therefore validated,
-# assembled, and read as nothing -- which is `has_tier` answering false for
-# every tier a build had named. Asserted on both indents, and on the value
-# rather than on the exit status, because a build that refuses and a build that
-# reads an empty list both leave the tier unapplied.
-nt_tierof() {
-    nt_shellcopy "$1" | sed -n 's/^[[:space:]]*"tiers": "\([a-z,]*\)".*$/\1/p' | head -1
-}
-for nt_indent in spaces tabs; do
-    nt_d="$(confdir indent)"
-    if [ "$nt_indent" = tabs ]; then nt_pad="$(printf '\t')"; else nt_pad="    "; fi
-    {
-        printf '{\n'
-        printf '%s"tiers": "default,tight",\n' "$nt_pad"
-        printf '%s"title": "S",\n' "$nt_pad"
-        printf '%s"width": 900,\n' "$nt_pad"
-        printf '%s"height": 600,\n' "$nt_pad"
-        printf '%s"background": "auto",\n' "$nt_pad"
-        printf '%s"decorations": "auto"\n' "$nt_pad"
-        printf '}\n'
-    } > "$nt_d/config.json"
-    rm -f "$T/indent.cmd"
-    bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/indent.cmd" >/dev/null 2>&1
-    eq "a config indented with $nt_indent builds" "$?" "0"
-    eq "and the shell reads its tier list ($nt_indent)" \
-       "$(nt_tierof "$T/indent.cmd")" "default,tight"
+bash "$T/neutrino/assemble.sh" "$T/release.cmd" >/dev/null 2>&1
+eq "a release build assembles" "$?" "0"
+for nt_tier in testing offline tight; do
+    bash "$T/neutrino/assemble.sh" --overlay "$T/neutrino/tier/$nt_tier" "$T/$nt_tier.cmd" >/dev/null 2>&1
+    eq "the $nt_tier overlay assembles" "$?" "0"
 done
 
-# config.json is in the shell region now, which is inside the block comment the
-# whole file opens with and above the doctype the document is cut from. Two
-# sequences it therefore may not carry, and neither is escapable.
-badconf_shape() {
-    nt_name="$1"; nt_d="$(confdir shape)"
-    cat > "$nt_d/config.json"
-    rm -f "$T/shape.cmd"
-    bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/shape.cmd" > "$WORK/shape.log" 2>&1
-    if [ "$?" = "0" ]; then
-        fail "$nt_name was accepted"
-    else
-        pass "$nt_name is refused"
-    fi
-    eq "and no artifact is left behind ($nt_name)" "$(size "$T/shape.cmd")" "missing"
+# One probe per tier, named for the thing that must not be in a shipped app: a
+# file it writes beside itself, an environment variable that redirects where it
+# loads native code from, and a flag that turns the renderer sandbox off.
+for nt_probe in "testing:neutrino-title.txt" "testing:neutrino-trace.log" \
+                "testing:NEUTRINO_WEBVIEW2_LIB_DIR\")" "testing:no-sandbox" \
+                "tight:sandbox-exec" "offline:default-src"; do
+    nt_tier="${nt_probe%%:*}"; nt_text="${nt_probe#*:}"
+    eq "the $nt_tier build carries [$nt_text]" \
+       "$([ "$(grep -cF -- "$nt_text" "$T/$nt_tier.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
+    eq "and the release build does not" \
+       "$(grep -cF -- "$nt_text" "$T/release.cmd" || true)" "0"
+done
+
+# And the release build is smaller for it, which is the same fact said as a
+# number. Not asserted to a size -- what is asserted is the direction.
+for nt_tier in testing offline tight; do
+    eq "the release build is smaller than the $nt_tier one" \
+       "$([ "$(size "$T/release.cmd")" -lt "$(size "$T/$nt_tier.cmd")" ] && echo smaller || echo not-smaller)" \
+       "smaller"
+done
+
+# The offline overlay is a different document, not a document rewritten at
+# launch. It used to be a string replace performed by every lane on every start,
+# with a failure path of its own: a document that did not carry the string being
+# replaced came back unchanged, shipping the permissive policy under a build
+# that said it denied the network.
+nt_policy() {
+    sed -n '/^<!doctype html><html>/,/^<script type=text\/javascript>/p' "$1" |
+        sed -n 's/.*content="\([^"]*\)".*/\1/p' | head -1
 }
-badconf_shape "a title closing the block comment" <<'EOF'
-{
-    "tiers": "default",
-    "title": "done */ here",
-    "width": 900,
-    "height": 600,
-    "background": "auto",
-    "decorations": "auto"
-}
-EOF
-badconf_shape "a title naming a doctype" <<'EOF'
-{
-    "tiers": "default",
-    "title": "about <!doctype html>",
-    "width": 900,
-    "height": 600,
-    "background": "auto",
-    "decorations": "auto"
-}
-EOF
+eq "the release document carries the permissive policy" \
+   "$(nt_policy "$T/release.cmd" | grep -c "^script-src 'unsafe-eval'" || true)" "1"
+eq "the offline document carries the denying one" \
+   "$(nt_policy "$T/offline.cmd" | grep -c "^default-src 'none'" || true)" "1"
+eq "and neither carries a second policy" \
+   "$(grep -c 'Content-Security-Policy' "$T/offline.cmd" || true)" "1"
+eq "and nothing rewrites the document at launch" \
+   "$(grep -c 'applyContentPolicy' "$T/offline.cmd" || true)" "0"
+
+# The other half of the offline overlay, which no content policy can express: a
+# url handed to the machine's browser is the page reaching the network in
+# another program.
+for nt_pair in "release:true" "offline:false"; do
+    nt_which="${nt_pair%%:*}"; nt_want="${nt_pair#*:}"
+    eq "the $nt_which build's externalAllowed answers $nt_want" \
+       "$(sed -n '/NeutrinoWebview.externalAllowed = function/,/^    };$/p' "$T/$nt_which.cmd" |
+          grep -c "return $nt_want;" || true)" "1"
+done
+
+# Nothing reads a tier at run time, because there is nothing to read.
+for nt_gone in "hasTier" "has_tier" "//#" '"tiers"'; do
+    eq "no artifact carries [$nt_gone]" \
+       "$(cat "$T"/release.cmd "$T"/testing.cmd "$T"/offline.cmd "$T"/tight.cmd |
+          grep -cF -- "$nt_gone" || true)" "0"
+done
 
 # =====================================================================
 # The config the app declares
@@ -749,13 +698,12 @@ EOF
 report "section: config"
 echo "=== a config the launcher could not use is refused ==="
 T="$(tree config)"
-BASE_TIERS="$(default_of tiers)"
 
 # Written as one string so a case is one line and reads as the file it stands
 # for. `|` separates the six values in the order they appear in config.json.
 mkconf() {
-    printf '{\n    "tiers": "%s",\n    "title": "%s",\n    "width": %s,\n' "$1" "$2" "$3"
-    printf '    "height": %s,\n    "background": "%s",\n    "decorations": "%s"\n}\n' "$4" "$5" "$6"
+    printf '{\n    "title": "%s",\n    "width": %s,\n' "$1" "$2"
+    printf '    "height": %s,\n    "background": "%s",\n    "decorations": "%s"\n}\n' "$3" "$4" "$5"
 }
 accepts() {
     nt_name="$1"; shift
@@ -787,10 +735,9 @@ refuses() {
 
 # The control first: the ordinary case has to build, or every refusal below is
 # also what a checker that refuses everything reports.
-accepts "an ordinary config" "default" "Sample" 1024 768 "#12141a" "auto"
-accepts "a config naming every tier" "default,tight,offline,testing" "S" 10 20 "auto" "none"
+accepts "an ordinary config" "Sample" 1024 768 "#12141a" "auto"
 for nt_bg in '#12141a' '#FFF' '#000000' '#AbCdEf' 'auto'; do
-    accepts "the background $nt_bg" "default" "S" 900 600 "$nt_bg" "auto"
+    accepts "the background $nt_bg" "S" 900 600 "$nt_bg" "auto"
 done
 
 # The background, which is the config value with a shape. `system`, `theme` and
@@ -801,7 +748,7 @@ done
 # exists to close reached by a different route and with nothing said.
 for nt_bg in 'white' 'rgb(1,2,3)' '#12' '#1234' '#12345' '#1234567' '12141a' '#12141g' \
              'system' 'theme' 'none' 'Auto' 'AUTO' ''; do
-    refuses "the background [${nt_bg:-empty}]" "default" "S" 900 600 "$nt_bg" "auto"
+    refuses "the background [${nt_bg:-empty}]" "S" 900 600 "$nt_bg" "auto"
 done
 
 # The frame, which is the value whose wrong answers are all words. Every lane
@@ -812,11 +759,11 @@ done
 # `frameless`, `chromeless` and `borderless` are what somebody reaches for who
 # is thinking of another launcher.
 for nt_dec in auto none; do
-    accepts "the decorations $nt_dec" "default" "S" 900 600 "auto" "$nt_dec"
+    accepts "the decorations $nt_dec" "S" 900 600 "auto" "$nt_dec"
 done
 for nt_dec in 'false' 'off' 'no' '0' 'true' 'on' 'yes' '1' \
               'frameless' 'chromeless' 'borderless' 'None' 'NONE' 'system' ''; do
-    refuses "the decorations [${nt_dec:-empty}]" "default" "S" 900 600 "auto" "$nt_dec"
+    refuses "the decorations [${nt_dec:-empty}]" "S" 900 600 "auto" "$nt_dec"
 done
 
 # The size. Zero is the one that matters: a window sized zero is a launch that
@@ -824,19 +771,24 @@ done
 # message parser already holds resize to.
 for nt_size in "0 600" "900 0" "-1 600" "9.5 600" "tall 600" '"900" 600'; do
     set -- $nt_size
-    refuses "the size [$1 x $2]" "default" "S" "$1" "$2" "auto" "auto"
+    refuses "the size [$1 x $2]" "S" "$1" "$2" "auto" "auto"
 done
-accepts "a one-pixel window" "default" "S" 1 1 "auto" "auto"
+accepts "a one-pixel window" "S" 1 1 "auto" "auto"
 
-# The tier list. `default` is not optional and it is not added: build.sh used to
-# put it in front of whatever it was handed, which meant the list in the
-# artifact was not the list anyone wrote. A file that declares the confinement
-# declares all of it.
-refuses "a tier list without default" "tight" "S" 900 600 "auto" "auto"
-refuses "an unknown tier" "default,paranoid" "S" 900 600 "auto" "auto"
-refuses "a tier named twice" "default,tight,tight" "S" 900 600 "auto" "auto"
-refuses "an empty tier list" "" "S" 900 600 "auto" "auto"
-refuses "an empty title" "default" "" 900 600 "auto" "auto"
+# A tier is not a config key any more, so a config naming one is a config with
+# an unknown key in it -- which is the case above, and this is the line that
+# says the two readings agree.
+badconf "a config still naming a tier list" <<'EOF'
+{
+    "tiers": "default",
+    "title": "S",
+    "width": 900,
+    "height": 600,
+    "background": "auto",
+    "decorations": "auto"
+}
+EOF
+refuses "an empty title" "" 900 600 "auto" "auto"
 
 # The shapes that are not a flat object of the six keys. There is no merge in
 # the assembler -- an overlay replaces config.json whole -- so a file naming
@@ -850,13 +802,11 @@ badconf() {
 }
 badconf "a config missing a key" <<'EOF'
 {
-    "tiers": "default",
     "title": "S"
 }
 EOF
 badconf "a config naming an unknown key" <<'EOF'
 {
-    "tiers": "default",
     "title": "S",
     "width": 900,
     "height": 600,
@@ -867,7 +817,6 @@ badconf "a config naming an unknown key" <<'EOF'
 EOF
 badconf "a config naming a key twice" <<'EOF'
 {
-    "tiers": "default",
     "title": "S",
     "title": "T",
     "width": 900,
@@ -881,7 +830,6 @@ badconf "a config that is not an object" <<'EOF'
 EOF
 badconf "a config with something after the close" <<'EOF'
 {
-    "tiers": "default",
     "title": "S",
     "width": 900,
     "height": 600,
@@ -900,10 +848,10 @@ EOF
 # missing } after property list`. Nothing writes the punctuation now -- the file
 # is copied in whole -- and this is the line that says the copy is a literal.
 nt_d="$(confdir good)"
-mkconf "default,tight" "A Title" 10 20 "#010203" "none" > "$nt_d/config.json"
+mkconf "A Title" 10 20 "#010203" "none" > "$nt_d/config.json"
 bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/good.cmd" >/dev/null 2>&1
 eq "a full config builds" "$?" "0"
-for nt_pair in "tiers:default,tight" "title:A Title" "width:10" "height:20" \
+for nt_pair in "title:A Title" "width:10" "height:20" \
                "background:#010203" "decorations:none"; do
     eq "the ${nt_pair%%:*} reaches the artifact" \
        "$(conf "$T/good.cmd" "${nt_pair%%:*}")" "${nt_pair#*:}"
@@ -923,7 +871,6 @@ fi
 nt_d="$(confdir quoted)"
 cat > "$nt_d/config.json" <<'EOF'
 {
-    "tiers": "default",
     "title": "He said \"hello\" \\ goodbye",
     "width": 900,
     "height": 600,
@@ -958,10 +905,10 @@ shellrefuses() {
     bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/refuse.log" 2>&1
     if [ "$?" = "0" ]; then
         fail "$nt_name was accepted"
-    elif ! grep -q 'the early shell contains' "$WORK/refuse.log"; then
+    elif ! grep -qE 'the early shell contains|content policies, wanted' "$WORK/refuse.log"; then
         fail "$nt_name was refused without saying why"
     else
-        pass "$nt_name is refused ($(sed -n 's/.*contains `\([^`]*\)`.*/\1/p' "$WORK/refuse.log" | head -1))"
+        pass "$nt_name is refused ($(sed -n -e 's/.*contains `\([^`]*\)`.*/\1/p' -e 's/.*carries \([0-9]* content policies\).*/\1/p' "$WORK/refuse.log" | head -1))"
     fi
     eq "and no artifact is left behind ($nt_name)" "$(size "$T/out.cmd")" "missing"
 }
@@ -1003,31 +950,24 @@ eq "and the policy the offline tier swaps is there exactly once" \
    "$(DOCREGION "$T/ok.cmd" | grep -c 'Content-Security-Policy' | head -1)" "1"
 
 # =====================================================================
-# What the artifact reads back at launch
+# The shell region of a built artifact runs
 # =====================================================================
-# The launcher itself, not an expression lifted out of it -- and neither launch
-# below is allowed to reach an engine.
+# This used to assert that an artifact whose tier stamp could not be read
+# refused to launch. There is no stamp: a tier is a set of parts, so there is
+# nothing at run time to read and nothing to fail to read.
 #
-# The first draft ran the artifact as it is and bounded it with a sleep-and-kill
-# beside a `wait`. That is what took the Windows lane from twelve minutes to
-# fifty and then lost the runner: the lane published nothing at all, so which
-# step blocked is not even readable after the fact. Two rules out of it. A suite
-# may not start a program whose exit it does not control, and a step that runs
-# one needs the `timeout-minutes` every other step in that lane already had.
-#
-# So the engine search is substituted out of both artifacts, one line, the way
-# navrefuse.sh substitutes the line it is measuring. What is left runs the tier
-# read and then stops with a marker, which is a *stronger* control than the old
-# one: `rc=3` says execution reached the search, and not merely that the refusal
-# did not print.
+# What is worth keeping is the only place in this suite that executes a built
+# artifact at all. The engine search is substituted out first -- neither launch
+# here is allowed to reach an engine. The first draft ran the artifact as it is
+# and bounded it with a sleep-and-kill beside a `wait`; that is what took the
+# Windows lane from twelve minutes to fifty and then lost the runner, and the
+# rule out of it is that a suite may not start a program whose exit it does not
+# control.
 report "launch section: substituting the engine search"
-echo "=== an artifact whose tier list cannot be read does not launch at default ==="
+echo "=== the shell region runs as far as the engine search ==="
 T="$(tree runtime)"
-nt_d="$(confdir runtime)"
-mkconf "default,tight,offline" "S" 900 600 "auto" "auto" > "$nt_d/config.json"
-bash "$T/neutrino/assemble.sh" --overlay "$nt_d" --overlay "$APP_TIERS" "$T/out.cmd" >/dev/null 2>&1
-eq "the tier list the shell would read is the config's" \
-   "$(conf "$T/out.cmd" tiers)" "default,tight,offline"
+bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/out.cmd" >/dev/null 2>&1
+eq "the artifact builds" "$?" "0"
 
 # The anchor is the reserved-status assignment rather than a `command -v` line,
 # because there is no longer one line that names the engine. The search is a
@@ -1037,46 +977,24 @@ eq "the tier list the shell would read is the config's" \
 # engine". Inserting the halt above it still stops before anything is launched.
 SEARCH='nt_ex_noengine=69'
 HITS="$(grep -cF "$SEARCH" "$T/out.cmd" | head -1)"
-# Two, and not one: config.json is included into the shell region as a here
-# document and into the JavaScript region as the config object. Asserted rather
-# than tolerated, because one copy would mean an include stopped resolving and
-# a third would mean something is writing the file that should not be.
-STAMP_LINE='    "tiers": "default,tight,offline",'
-STAMP_HITS="$(grep -cF "$STAMP_LINE" "$T/out.cmd" | head -1)"
-if [ "${HITS:-0}" != "1" ] || [ "${STAMP_HITS:-0}" != "2" ]; then
-    fail "the launcher was rewritten and this suite was not: engine search x${HITS:-0}, tier list x${STAMP_HITS:-0}, wanted 1 and 2"
+if [ "${HITS:-0}" != "1" ]; then
+    fail "the launcher was rewritten and this suite was not: engine search x${HITS:-0}, wanted 1"
 else
-    # Stops where the engine would have been chosen. Both artifacts get it, so
-    # the only difference between the two readings is the stamp.
-    halt() {
-        awk -v find="$SEARCH" '
-            !done && index($0, find) {
-                print "echo \"assemble: reached the engine search\" >&2; exit 3"
-                done = 1
-            }
-            { print }
-        ' "$1" > "$2"
-    }
-    halt "$T/out.cmd" "$T/intact.cmd"
-    # Both copies, because the shell reads its own and the assertion below is
-    # about the shell. A file with one of the two mangled is a file nothing in
-    # this tree can produce.
-    sed 's/^    "tiers": "default,tight,offline",$/    "tiers" : "unreadable",/' \
-        "$T/intact.cmd" > "$T/mangled.cmd"
+    awk -v find="$SEARCH" '
+        !done && index($0, find) {
+            print "echo \"assemble: reached the engine search\" >&2; exit 3"
+            done = 1
+        }
+        { print }
+    ' "$T/out.cmd" > "$T/halted.cmd"
 
-    bash "$T/mangled.cmd" > "$WORK/mangled.log" 2>&1
-    eq "an unreadable tier list refuses to launch" "$?" "1"
-    eq "and says so" "$(grep -c 'no readable tier list' "$WORK/mangled.log" | head -1)" "1"
-    eq "and it stopped before the engine search" \
-       "$(grep -c 'reached the engine search' "$WORK/mangled.log" | head -1)" "0"
-
-    # The control. Same artifact, stamp intact: it must get past the read and
-    # all the way to where an engine would be chosen. Without it, "the refusal
-    # did not print" is also what a launcher that never started reports.
-    bash "$T/intact.cmd" > "$WORK/intact.log" 2>&1
-    eq "a readable tier list runs on to the engine search" "$?" "3"
-    eq "and never took the refusal branch" \
-       "$(grep -c 'no readable tier list' "$WORK/intact.log" | head -1)" "0"
+    # rc=3 says execution reached the search, which is a stronger reading than
+    # "nothing printed an error": it says every line of the shell region above
+    # it ran, on this platform, in the artifact as assembled.
+    bash "$T/halted.cmd" > "$WORK/halted.log" 2>&1
+    eq "it runs to the engine search" "$?" "3"
+    eq "and said nothing on the way" \
+       "$(grep -vc 'reached the engine search' "$WORK/halted.log" || true)" "0"
 fi
 
 # =====================================================================
@@ -1095,21 +1013,29 @@ else
     printf 'document.title = "example";\n' > "$WORK/plainapp.js"
     bash "$MK" "$WORK/plainapp.js" "$WORK/mk-default.cmd" > "$WORK/mk.log" 2>&1
     eq "a build with no flags succeeds" "$?" "0"
-    for nt_key in tiers title width height background decorations; do
+    for nt_key in title width height background decorations; do
         eq "and $nt_key is the tree's default" \
            "$(conf "$WORK/mk-default.cmd" "$nt_key")" "$(default_of "$nt_key")"
     done
     eq "and the app is in it" \
        "$(grep -c 'document.title = "example";' "$WORK/mk-default.cmd" | head -1)" "1"
 
-    # --tier is sugar and adds `default`, the way build.sh's flag did. The
-    # assembler itself refuses a list that leaves it out rather than adding it.
+    # --tier names overlays under neutrino/tier and nothing else. Asserted on
+    # what the artifact carries, because that is now the whole of what a tier
+    # is -- there is no stamp to read back.
     bash "$MK" --tier=testing "$WORK/plainapp.js" "$WORK/mk-tier.cmd" >/dev/null 2>&1
-    eq "--tier=testing means testing as well as default" \
-       "$(conf "$WORK/mk-tier.cmd" tiers)" "default,testing"
+    eq "--tier=testing puts the scaffolding in" \
+       "$([ "$(grep -cF 'neutrino-title.txt' "$WORK/mk-tier.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
+    eq "and a build without it has none" \
+       "$(grep -cF 'neutrino-title.txt' "$WORK/mk-default.cmd" || true)" "0"
     bash "$MK" --tier=testing,offline "$WORK/plainapp.js" "$WORK/mk-two.cmd" >/dev/null 2>&1
-    eq "and two of them compose" \
-       "$(conf "$WORK/mk-two.cmd" tiers)" "default,testing,offline"
+    eq "two of them compose (testing)" \
+       "$([ "$(grep -cF 'neutrino-title.txt' "$WORK/mk-two.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
+    eq "two of them compose (offline)" \
+       "$([ "$(grep -cF 'default-src' "$WORK/mk-two.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
+    rm -f "$WORK/mk-bogus.cmd"
+    bash "$MK" --tier=paranoid "$WORK/plainapp.js" "$WORK/mk-bogus.cmd" >/dev/null 2>&1
+    eq "and a tier with no overlay is refused" "$?" "1"
 
     bash "$MK" --title "My App" --size 1024x768 --background '#12141a' --decorations=none \
         "$WORK/plainapp.js" "$WORK/mk-full.cmd" >/dev/null 2>&1

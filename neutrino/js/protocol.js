@@ -67,14 +67,14 @@
      * end-of-the-line checks, which exist because that is where a string
      * becomes ShellExecute, NSWorkspace or the desktop's URI handler.
      *
-     * The cost is real and is the tier's whole point: an offline app cannot
-     * open a link in the user's browser. An app that wants to do that wants
-     * the default tier.
+     * The cost is real and is the overlay's whole point: an offline app cannot
+     * open a link in the user's browser. An app that wants to do that wants a
+     * build without it.
      */
     NeutrinoWebview.mayOpenExternal = function (value) {
         if (!this.isExternalUrl(value)) {
             return false;
         }
-        return !this.hasTier("offline");
+        return this.externalAllowed();
     };
 

@@ -1,4 +1,4 @@
-@@include sh/tiers.sh
+@@include sh/script-path.sh
 @@include sh/loaders.sh
 @@include sh/qt.sh
 @@include sh/webkit.sh

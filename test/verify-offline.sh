@@ -400,9 +400,9 @@ run_phase offline "$OFFLINE_APP"
 
 # ------------------------------------------------------------------ the reading
 
-# applyContentPolicy is a literal string replace with no failure path, so the
-# document is asked which policy it ended up carrying rather than the build
-# being trusted to have applied one.
+# The offline policy is a part the overlay includes rather than a document
+# rewritten at launch, so the document is asked which policy it ended up
+# carrying rather than the build being trusted to have applied one.
 pol_of() { echo "$1" | sed -n 's/.* pol=\([A-Z]*\).*/\1/p'; }
 say "policy carried: default=$(pol_of "${READY_default:-}") offline=$(pol_of "${READY_offline:-}")"
 

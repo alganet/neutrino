@@ -85,12 +85,10 @@
          * so anything able to set it chooses which code this process loads.
          * netinstall's environment allowlist keeps the whole NEUTRINO_
          * prefix, so it arrives intact even there. A release build does not
-         * read it; the tests that need to point at a prepared package build
-         * with the testing tier.
+         * read it and does not carry the read: the tests that need to point at
+         * a prepared package build with the testing overlay.
          */
-        var envLibDir = this.hasTier("testing")
-            ? SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_WEBVIEW2_LIB_DIR")
-            : null;
+        var envLibDir = this.webview2LibDir(SystemRef);
         if (this.hasWebView2Assemblies(SystemRef, envLibDir)) {
             return envLibDir;
         }

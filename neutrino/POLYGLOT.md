@@ -171,7 +171,8 @@ also where the page script stops.
 | `html/document.html` | HTML | the doctype, the head, the content policy, and the two includes the early shell arrives through |
 | `style.css` | CSS | the early shell's stylesheet; an app lays its own over it |
 | `body.html` | HTML | the early shell's markup; likewise |
-| `config.json` | JSON | the window and the tier list, laid into `js/config.js` verbatim |
+| `config.json` | JSON | the window, laid into `js/config.js` verbatim |
+| `html/policy.html` | HTML | the document's content policy; the offline overlay replaces it |
 | `app.js` | JavaScript | the body of `runWeb`, which is where an app's code goes |
 | `js/config.js` | JavaScript | declares `NeutrinoWebview`, and includes `config.json` as its config object |
 | `js/*.js` | JavaScript | one group of members per file, assigned onto the object; the order is in `js/parts.list` |
@@ -214,6 +215,20 @@ ahead of this one, more than one may be given, and the last named wins; this
 directory is always last. Any part is overridable and not only the four an app
 usually writes — an overlay carrying `js/policy.js` replaces the launcher's,
 because whoever writes the overlay is whoever ships the artifact.
+
+That is also what a tier is. `tier/testing`, `tier/offline` and `tier/tight`
+each replace the few parts their tier varies. There used to be a tier list
+stamped into the config object, a `sed` that read it back at every launch, and
+nine runtime conditionals that consulted it; all of it is gone, and the thing it
+was trying to guarantee is now structural. A release build cannot be talked into
+the testing scaffolding because the scaffolding is not in it.
+
+The parts that exist to be replaced are worth naming, because each is a file
+whose whole content is one `return`: `js/trace.js`, `js/windows-trace.js`,
+`js/windows-libdir.js`, `js/windows-scriptpath.js`, `js/macos-status.js`,
+`js/external-allow.js`, `sh/qt-sandbox.sh`, `sh/macos-confine.sh` and
+`html/policy.html`. A variation point is a file here, and that is the whole
+mechanism.
 
 The expansion and all five strip rules are one recursive `awk` function, and
 that is a platform fact rather than a preference. A shell function per language

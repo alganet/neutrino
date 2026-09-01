@@ -148,13 +148,7 @@ QMLEOF
         return 1
     fi
 
-    # Chromium's own sandbox is the only thing standing between hostile page
-    # content and this machine, so a release build has no way to turn it off.
-    # CI needs it off because its containers cannot create user namespaces, and
-    # CI builds with --tier=testing to say so out loud.
-    if has_tier testing && [ "$neutrino_qt_disable_sandbox" = "1" ]; then
-        QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS} --no-sandbox"
-    fi
+@@include sh/qt-sandbox.sh
 
     QML_XHR_ALLOW_FILE_READ=1 \
     QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" \

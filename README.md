@@ -98,14 +98,13 @@ Three more parts, beside `app.js` in the same directory:
 ```
 myapp/
   app.js         your code, the body of runWeb()
-  config.json    the window, and the tier list
+  config.json    the window
   style.css      the early shell's stylesheet
   body.html      the early shell's markup
 ```
 
 ```json
 {
-    "tiers": "default",
     "title": "My App",
     "width": 1024,
     "height": 768,
@@ -125,8 +124,33 @@ which is why the window's title, size, background and frame live here and not in
 your markup.
 
 Leave a part out and you get the launcher's. Write `config.json` and you write
-all six keys — there is no merge, and a file that named only a title would take
+all five keys — there is no merge, and a file that named only a title would take
 the rest from nowhere.
+
+### Tiers
+
+A tier is an overlay, not a flag. `neutrino/tier/testing`, `neutrino/tier/offline`
+and `neutrino/tier/tight` each replace the few parts that tier varies, and you
+stack them like any other:
+
+```bash
+./neutrino/assemble.sh --overlay neutrino/tier/offline --overlay myapp myapp.cmd
+```
+
+There is no tier stamp in an artifact and nothing at run time reads one. A
+release build does not carry the testing scaffolding behind a check — it does
+not carry it. Measured on the launcher's own build: no trace file, no
+`NEUTRINO_WEBVIEW2_LIB_DIR`, no `NEUTRINO_SCRIPT_PATH` override, no status file,
+no `--no-sandbox`, and no `sandbox-exec` unless you asked for `tight`.
+
+| Overlay | What it puts in |
+|---|---|
+| `testing` | the trace channel, the macOS status file, the two Windows environment overrides, and Qt's `--no-sandbox` |
+| `offline` | a denying content policy in the document, and an `externalAllowed` that says no |
+| `tight` | the macOS seatbelt profile and the `sandbox-exec` launch |
+
+`offline` is a *document-level* tier and composes with netinstall's
+process-level `-DNEUTRINO_CONFINE_OFFLINE`.
 
 Without this, an app draws itself from script, and every launch shows the
 launcher's own document first — the shape that made the sample app blink.
@@ -342,7 +366,7 @@ click: a script synthesising one gets nothing, because
 The return value is `null` for anything sent outward. Nothing here is a window
 in your page's process, and three of the four engines already answer `null`.
 
-An offline build (`"tiers": "default,offline"`) refuses all of it, because a url handed to
+An offline build (`--overlay neutrino/tier/offline`) refuses all of it, because a url handed to
 the desktop's browser is the page reaching the network in another program.
 
 **There is no bespoke spelling for any of this.** `document.title`,
