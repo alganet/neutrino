@@ -2504,11 +2504,12 @@ jobs:
               "SystemUsesLightTheme=$(if ($null -eq $sys) {'<absent:light>'} else {$sys}) " +
               "SystemColors.Control=$($ctl.R),$($ctl.G),$($ctl.B)"
           }
-          function Run-Half($tag) {
+          function Run-Half($tag, $shot) {
             Add-Type -AssemblyName System.Drawing
             Read-Knob $tag | Tee-Object -FilePath "$HOME\flip-knobs.log" -Append | Write-Host
             .\test\neutrinostdtheme.cmd
-            & .\test\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE *>&1 |
+            & .\test\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE `
+              -ShotName "theme-$shot" *>&1 |
               Tee-Object -FilePath "$HOME\flip-$tag.log" | Out-Null
             Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |
               Stop-Process -Force -ErrorAction SilentlyContinue
@@ -2520,9 +2521,9 @@ jobs:
             }
           }
           Set-AppsTheme 1
-          Run-Half a
+          Run-Half a light
           Set-AppsTheme 0
-          Run-Half b
+          Run-Half b dark
           Set-AppsTheme 1
           exit 0
       - if: always()

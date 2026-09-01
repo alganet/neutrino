@@ -115,7 +115,11 @@ export GTK_THEME="$THEME_NAME"
 bash "$ART" > "$LOGDIR/themescheme-app.log" 2>&1 &
 APP=$!
 VERIFY=0
-bash "$ROOT/test/verify-std.sh" theme "$SHOTS" > "$VERIFY_LOG" 2>&1 || VERIFY=$?
+# Named for the desktop it built, not for the probe it ran. This launch used to
+# overwrite the plain theme step's picture with one taken under a theme that
+# exists only inside this file, and nothing in the artifact said so.
+NT_SHOT_NAME="theme-misnamed-dark" \
+    bash "$ROOT/test/verify-std.sh" theme "$SHOTS" > "$VERIFY_LOG" 2>&1 || VERIFY=$?
 pkill -P "$APP" 2>/dev/null || true
 kill "$APP" 2>/dev/null || true
 

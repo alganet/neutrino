@@ -36,6 +36,22 @@ set -uo pipefail
 
 PROBE="${1:-geom}"
 SHOT_DIR="${2:-$HOME/screenshots}"
+# What the picture is called, which is not what the probe is called.
+#
+# This wrote `std-$PROBE.png` for as long as one probe meant one launch. It has
+# not meant that for three rounds: decoflip.sh launches the geometry probe
+# decorated and then chromeless, themeflip.sh launches the theme probe on a
+# light desktop and then a dark one, and themescheme.sh launches it a third time
+# under a theme built to make the media query lie. Every one of those went to
+# the same filename, so the suite took four pictures of the frame question and
+# shipped the last, and five of the theme question and shipped the last -- and
+# the last is the one no reader would guess. No artifact this repository has
+# ever published contained a decorated window.
+#
+# The harness that knows which half it is running names the file; a lone launch
+# keeps the old name, because that is the one the sheet and the eye already
+# know.
+SHOT_NAME="${NT_SHOT_NAME:-std-$PROBE}"
 # Round zero. An instrument added in a hurry is code, and it gets run before it
 # is pushed -- a one-line annotate call with an unterminated quote once cost a
 # whole round. With a record captured from a previous run (or written by hand)
@@ -951,12 +967,40 @@ case "$PROBE" in
     *)     fail "no analysis for probe '$PROBE'" ;;
 esac
 
+# Who else is on screen, named, immediately before the shutter.
+#
+# The picture is `import -window root`, so it is a photograph of the desktop and
+# not of the app. Two lanes' geometry shots in the last green run carry a window
+# titled `EARLY at=held tx=console ready=complete DONE` -- left behind by a step
+# that ran six steps earlier and was reaped with `pkill -f`, which returns
+# before the window goes -- stacked over a netinstall dialog left by the step
+# after that, with the probe's own window somewhere underneath. Nothing in the
+# artifact said so, and a reader would have taken the top window for the subject.
+#
+# This does not clean up: a verifier that kills windows it did not start is a
+# verifier that can destroy the evidence of the leak. It names them, so the
+# round that does the cleaning knows what it is cleaning.
+if [ "$PLATFORM" = x11 ]; then
+    ONSCREEN=""
+    for w in $(x11_toplevels); do
+        ONSCREEN="$ONSCREEN[$(xdotool getwindowname "$((w))" 2>/dev/null)] "
+    done
+    # Plain echo and not note(): `report:` is what annotate.sh packs into
+    # annotations, GitHub keeps fifty of those per job, and this lane already
+    # loses its last step's to that cap. A diagnostic may not spend the budget
+    # the results are competing for.
+    echo "  onscreen at capture: ${ONSCREEN:-<none>}"
+    case "$ONSCREEN" in
+        *"]"*"]"*) echo "  onscreen: more than one window is in this shot" ;;
+    esac
+fi
+
 # After the loop, never inside it. The full record goes to the log and the
 # artifact; only the digest above carries the report: prefix annotate.sh reads.
 if [ "$PLATFORM" = x11 ]; then
-    import -window root "$SHOT_DIR/std-$PROBE.png" 2>/dev/null || true
+    import -window root "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
 else
-    screencapture -x "$SHOT_DIR/std-$PROBE.png" 2>/dev/null || true
+    screencapture -x "$SHOT_DIR/$SHOT_NAME.png" 2>/dev/null || true
 fi
 echo "--- recorded transitions (ms / title / inner / pos / outer / tick / raw) ---"
 cat "$REC"

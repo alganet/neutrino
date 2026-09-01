@@ -135,8 +135,11 @@ wait_gone() {
     return 1
 }
 
+# The third argument is what the picture is called. `flip-b` is not a thing a
+# reader can check; `theme-dark` is. Both halves wrote one filename until this
+# round, so the light half has never appeared in an artifact.
 run_half() {
-    local state="$1" tag="$2" pid rc=0
+    local state="$1" tag="$2" shot="$3" pid rc=0
     knob_clear
     knob_set "$state"
     note "knob $tag requested='$state' readback=[$(knob_read)]"
@@ -145,7 +148,8 @@ run_half() {
     [ "$MODE" = macos ] && rm -f "$STATUS"
     bash "$ART" > "$LOGDIR/flip-$tag-app.log" 2>&1 &
     pid=$!
-    bash "$ROOT/test/verify-std.sh" theme "$SHOTS" > "$LOGDIR/flip-$tag.log" 2>&1 || rc=$?
+    NT_SHOT_NAME="theme-$shot" \
+        bash "$ROOT/test/verify-std.sh" theme "$SHOTS" > "$LOGDIR/flip-$tag.log" 2>&1 || rc=$?
     pkill -P "$pid" 2>/dev/null || true
     kill "$pid" 2>/dev/null || true
     note "half $tag state='$state' verifier=$rc"
@@ -162,7 +166,7 @@ if prefix_up; then
     exit 1
 fi
 
-run_half "$STATE_A" a
+run_half "$STATE_A" a light
 
 # The precondition, not a courtesy sleep. Both halves answer to the same
 # prefix, so starting the second while the first is still on screen produces a
@@ -174,7 +178,7 @@ if ! wait_gone; then
 fi
 note "the first half's window is gone; the second may start"
 
-run_half "$STATE_B" b
+run_half "$STATE_B" b dark
 knob_clear
 
 bash "$ROOT/test/themediff.sh" "$LOGDIR/flip-a.log" "$LOGDIR/flip-b.log"

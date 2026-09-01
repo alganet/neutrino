@@ -77,7 +77,11 @@ function Wait-Gone($name) {
 # not capture, so `if (-not (Run-Half ...))` would be testing an array rather
 # than a boolean -- hence a script-scoped flag, and a call that is a statement
 # rather than a condition.
-function Run-Half($app, $tag) {
+# $shot is what the picture is called. It is passed rather than derived from the
+# tag because `deco-b` says nothing to a reader looking at a sheet, and because
+# both halves wrote one filename until this round -- so the decorated window,
+# which is the control this whole differential rests on, was never shipped.
+function Run-Half($app, $tag, $shot) {
     $artifact = Join-Path $root "test\$app.cmd"
     if (-not (Test-Path $artifact)) {
         Write-Host "FAIL: no artifact at '$artifact'; the $tag half cannot run"
@@ -94,7 +98,7 @@ function Run-Half($app, $tag) {
         -RedirectStandardError  (Join-Path $logdir "deco-$tag-app.err") `
         -NoNewWindow | Out-Null
     & (Join-Path $root "test\verify-std.ps1") -Probe geom -AppName $app `
-        -ScreenshotDir $ScreenshotDir *>&1 |
+        -ScreenshotDir $ScreenshotDir -ShotName "frame-$shot" *>&1 |
         Tee-Object -FilePath (Join-Path $logdir "deco-$tag.log") | Out-Null
     $rc = $LASTEXITCODE
     if ($null -eq $rc) { $rc = 0 }
@@ -116,7 +120,7 @@ foreach ($n in @($Decorated, $Chromeless)) {
 # Decorated first, because it is the control: a chromeless extent of zero means
 # nothing without a non-zero one beside it, and a half that wedges having run
 # first would publish the reading and never the thing that makes it evidence.
-Run-Half $Decorated "a"
+Run-Half $Decorated "a" "decorated"
 if ($halfBroken) { Write-Host "report: totals decoflip failures=1"; exit 1 }
 
 if (-not (Wait-Gone $Decorated)) {
@@ -126,7 +130,7 @@ if (-not (Wait-Gone $Decorated)) {
 }
 Note "the decorated half's window is gone; the chromeless half may start"
 
-Run-Half $Chromeless "b"
+Run-Half $Chromeless "b" "chromeless"
 if ($halfBroken) { Write-Host "report: totals decoflip failures=1"; exit 1 }
 
 & bash (Join-Path $root "test/decodiff.sh") `

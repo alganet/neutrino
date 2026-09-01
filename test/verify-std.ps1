@@ -27,7 +27,13 @@ param(
     # engine, so the assertions below get run before they are pushed.
     [string]$Replay = "",
     # Where the launcher compiles and unpacks. Only read when a wait gives up.
-    [string]$AppDir = ""
+    [string]$AppDir = "",
+    # What the picture is called, which is not what the probe is called. The
+    # shell half carries the whole account of why in its own header; the short
+    # version is that decoflip and the theme flip each launch this probe twice
+    # and both launches wrote one filename, so the pair was never shipped. A
+    # lone launch keeps the name the eye already knows.
+    [string]$ShotName = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -580,7 +586,7 @@ switch ($Probe) {
 }
 
 # After the loop, never inside it.
-if (-not $Replay) { Take-Screenshot "std-$Probe" }
+if (-not $Replay) { Take-Screenshot $(if ($ShotName) { $ShotName } else { "std-$Probe" }) }
 Write-Host "--- recorded transitions (ms / title / inner / pos / outer / tick) ---"
 foreach ($r in $rec.Rows) {
     Write-Host "$($r.At)`t$($r.Title)`t$($r.Inner)`t$($r.Pos)`t$($r.Outer)`t$($r.Tick)"
