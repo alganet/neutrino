@@ -1904,17 +1904,39 @@ jobs:
       # not, so anything that fails to exit here stops the whole run rather
       # than the step. The app not exiting is exactly what a missing close
       # handler produced.
-      - timeout-minutes: 20
+      # Named, because a step with no `name` is titled after its first line and
+      # this one's first line is now a comment: GitHub would report a timeout
+      # here as `The action 'Run # `-Launch`, and no launcher line above it.'
+      # has timed out`. The step used to be titled by the launcher it ran, and
+      # it no longer runs one.
+      - name: core launch
+        timeout-minutes: 20
         shell: pwsh
         run: |
-          .\test\neutrinotest.cmd
+          # `-Launch`, and no launcher line above it. This step used to run the
+          # batch and then start the verifier, which put the app's eleven-second
+          # head start in a race against the verifier's cold start -- two
+          # assembly loads and an `Add-Type` that shells out to the C# compiler.
+          # Measured on two runs of one commit, from the compiler's last warning
+          # to `=== Waiting for window ===`: 4.1s on one runner, 15.4s on
+          # another forty minutes later. The slow one found the app at STEP1 and
+          # failed it for a step it had performed correctly with nobody
+          # watching. The head start has already been raised three times to pay
+          # for this; the verifier launches the app itself now, so the expensive
+          # part happens before there is anything to miss.
+          #
+          # The `launch under load` step below is the same order by accident --
+          # its app spends two minutes reaching a window, so the verifier is
+          # always ready first, which is why that step passed on the very runner
+          # where this one went red.
+          #
           # Wrapped, because a verifier that leaves by exception takes the log
           # assembly below with it -- which is how three red runs published two
           # section headers and nothing else. The verifier no longer throws on a
           # timeout; this is here for the ones nobody has thought of.
           $testExit = 0
           try {
-              & .\test\verify-windows.ps1 *>&1 | Tee-Object -FilePath "$HOME\windows-verify.log"
+              & .\test\verify-windows.ps1 -Launch *>&1 | Tee-Object -FilePath "$HOME\windows-verify.log"
               $testExit = $LASTEXITCODE
           } catch {
               "FAIL: verify-windows.ps1 ended by exception: $($_.Exception.Message)" |
