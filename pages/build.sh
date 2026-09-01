@@ -14,7 +14,53 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
+
+# One optional argument, the directory to write the site into, and the checking
+# below is not ceremony: the next thing this script does is `rm -rf` it.
+#
+# There are two programs called build.sh in this repository and they take
+# different things. The one above assembles an app -- `build.sh <app.js>
+# <output.cmd>` -- and this one assembles the site. From inside pages/,
+# `./build.sh demo.js demo.cmd` is this program with `demo.js` as its output
+# directory, and it removed pages/demo.js and left an empty directory in its
+# place. Measured, twice, by somebody reading the other one's usage line.
+#
+# So a second argument is refused rather than ignored, and it says which program
+# the caller probably meant.
+nt_usage() {
+    echo "Usage: $0 [<output-directory>]" >&2
+    echo "       writes the published site; the default is $ROOT/_site" >&2
+    echo "       to build an app instead, that is $ROOT/build.sh <app.js> <out.cmd>" >&2
+}
+
+if [ $# -gt 1 ]; then
+    echo "error: this takes at most one argument, the output directory" >&2
+    echo "       '$2' looks like an app build; that is a different program" >&2
+    nt_usage
+    exit 1
+fi
+
 OUT="${1:-$ROOT/_site}"
+
+# And the directory itself has to be one this script may destroy. A path that
+# does not exist yet, an empty one, or one carrying the marker file a previous
+# run of this script left in it -- anything else is somebody's data and the
+# `rm -rf` below does not get to find that out afterwards.
+#
+# `.nojekyll` is the marker because this script already writes it on every run
+# and nothing else in the tree has one.
+if [ -e "$OUT" ] && [ ! -d "$OUT" ]; then
+    echo "error: $OUT is not a directory" >&2
+    echo "       this writes a site into a directory and would remove that file" >&2
+    nt_usage
+    exit 1
+fi
+if [ -d "$OUT" ] && [ ! -f "$OUT/.nojekyll" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
+    echo "error: $OUT is not empty and was not written by this script" >&2
+    echo "       it would be removed whole; name an empty directory or a previous site" >&2
+    nt_usage
+    exit 1
+fi
 
 # Where this is published, and the two facts the shape encodes. Change these
 # together with the repository or the Pages settings, never separately.

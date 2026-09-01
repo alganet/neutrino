@@ -158,6 +158,15 @@ if [ -e "$OUTPUT" ] && [ "$OUTPUT" -ef "$APP_JS" ]; then
     exit 1
 fi
 
+# A directory is not an output either, and it used to be accepted. `mv -f "$TMP"
+# "$OUTPUT"` moves a file *into* a directory of that name, so the artifact came
+# out as `<dir>/<name>.tmp.<pid>` -- not at the path that was asked for, under a
+# name that reads as leftover rubbish, from a build that exited 0. Measured.
+if [ -d "$OUTPUT" ]; then
+    echo "Error: $OUTPUT is a directory; the output is the artifact's own path" >&2
+    exit 1
+fi
+
 # Resolved rather than compared as text, for the reason `-ef` is used above: a
 # relative path, a symlinked checkout and `neutrino/../neutrino` are all the
 # same directory and only one of them looks like it.
