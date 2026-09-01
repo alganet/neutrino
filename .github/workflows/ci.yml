@@ -63,7 +63,7 @@ jobs:
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
       - run: bash test/nobrowser.sh
-      - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
+      - run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
       # The engine walk, asserted with stub interpreters: no display, no
       # toolkit, and it is the only place the meaning of an exit status is
@@ -108,8 +108,8 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
-          bash build.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          bash test/mkapp.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
           TEST_EXIT=0
           bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
           cat ~/loaders.log
@@ -135,7 +135,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
+          bash test/mkapp.sh test/neutrinoattack.js test/neutrinoattack.cmd
           bash test/neutrinoattack.cmd > ~/attack.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
@@ -161,7 +161,7 @@ jobs:
           # This does not return until it is serving, so the app below cannot
           # navigate into a port nothing has bound yet.
           PAGES_PID="$(bash test/serve-target.sh ~/pages.log)"
-          bash build.sh test/neutrinoearly.js test/neutrinoearly.cmd
+          bash test/mkapp.sh test/neutrinoearly.js test/neutrinoearly.cmd
           bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
@@ -179,7 +179,7 @@ jobs:
           export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
           bash netinstall/test/run.sh
       # The offline tier, which nothing in this repository has ever built.
-      # `build.sh --tier=offline` says it denies the page network access, and
+      # An offline build says it denies the page network access, and
       # the whole mechanism is one meta tag applyContentPolicy swaps into the
       # extracted document. Its only assertion is parse.sh comparing two
       # strings; no engine has ever loaded a document carrying it. This step is
@@ -202,8 +202,8 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
-          bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
+          bash test/mkapp.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
           TEST_EXIT=0
           bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
             > ~/offline.log 2>&1 || TEST_EXIT=$?
@@ -245,8 +245,8 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
-          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/mkapp.sh --tier=testing --decorations=none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
           bash test/parse.sh test/neutrinostdgeom-none.cmd
           TEST_EXIT=0
@@ -263,7 +263,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
           bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
           APP_PID=$!
@@ -295,7 +295,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
           bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
           APP_PID=$!
@@ -311,7 +311,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
           bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
           APP_PID=$!
@@ -346,7 +346,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           TEST_EXIT=0
           bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themescheme.log 2>&1 || TEST_EXIT=$?
@@ -379,7 +379,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
           TEST_EXIT=0
           bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots \
@@ -477,7 +477,7 @@ jobs:
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
       - run: bash test/nobrowser.sh
-      - run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
+      - run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
       # The walk itself: no display, no toolkit, stub engines. It asserts what a
       # status means, which is the contract the fallthrough rests on.
@@ -493,8 +493,8 @@ jobs:
           export GDK_BACKEND=x11
           Xvfb :99 -screen 0 1024x768x24 &
           sleep 3
-          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
-          bash build.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          bash test/mkapp.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
           TEST_EXIT=0
           bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
           cat ~/loaders.log
@@ -555,8 +555,8 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
-          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/mkapp.sh --tier=testing --decorations=none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
           bash test/parse.sh test/neutrinostdgeom-none.cmd
           TEST_EXIT=0
@@ -573,7 +573,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
           bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
           APP_PID=$!
@@ -605,7 +605,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
           bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
           APP_PID=$!
@@ -621,7 +621,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
           bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
           APP_PID=$!
@@ -656,7 +656,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           TEST_EXIT=0
           bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themescheme.log 2>&1 || TEST_EXIT=$?
@@ -689,7 +689,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
           TEST_EXIT=0
           bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots \
@@ -749,7 +749,7 @@ jobs:
       - if: always()
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - if: always()
-        run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
+        run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
       - if: always()
         run: bash test/parse.sh test/neutrinotest.cmd
       - if: always()
@@ -766,8 +766,8 @@ jobs:
           export GDK_BACKEND=x11
           Xvfb :99 -screen 0 1024x768x24 &
           sleep 3
-          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
-          bash build.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          bash test/mkapp.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
           TEST_EXIT=0
           bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
           cat ~/loaders.log
@@ -825,8 +825,8 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
-          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/mkapp.sh --tier=testing --decorations=none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
           bash test/parse.sh test/neutrinostdgeom-none.cmd
           TEST_EXIT=0
@@ -843,7 +843,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
           bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
           APP_PID=$!
@@ -875,7 +875,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
           bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
           APP_PID=$!
@@ -891,7 +891,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
           bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
           APP_PID=$!
@@ -926,7 +926,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           TEST_EXIT=0
           bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots \
             > ~/themescheme.log 2>&1 || TEST_EXIT=$?
@@ -959,7 +959,7 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
           TEST_EXIT=0
           bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots \
@@ -1022,7 +1022,7 @@ jobs:
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
       - run: bash test/nobrowser.sh
-      - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
+      - run: bash test/mkapp.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
       # The engine walk, asserted with stub interpreters: no display, no
       # toolkit, and it is the only place the meaning of an exit status is
@@ -1073,7 +1073,7 @@ jobs:
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoappdir.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinoloaders.js test/neutrinoappdir.cmd
           TEST_EXIT=0
           bash test/appdir.sh test/neutrinoappdir.cmd > ~/appdir.log 2>&1 || TEST_EXIT=$?
           cat ~/appdir.log
@@ -1097,8 +1097,8 @@ jobs:
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
-          bash build.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          bash test/mkapp.sh test/neutrinoloaders.js test/neutrinoloaders-default.cmd
           TEST_EXIT=0
           bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
           cat ~/loaders.log
@@ -1134,7 +1134,7 @@ jobs:
           export LIBGL_ALWAYS_SOFTWARE=1
           export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
-          bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
+          bash test/mkapp.sh test/neutrinoattack.js test/neutrinoattack.cmd
           bash test/neutrinoattack.cmd > ~/attack.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-attack.sh > ~/attack-verify.log 2>&1 || TEST_EXIT=$?
@@ -1164,7 +1164,7 @@ jobs:
           # This does not return until it is serving, so the app below cannot
           # navigate into a port nothing has bound yet.
           PAGES_PID="$(bash test/serve-target.sh ~/pages.log)"
-          bash build.sh test/neutrinoearly.js test/neutrinoearly.cmd
+          bash test/mkapp.sh test/neutrinoearly.js test/neutrinoearly.cmd
           bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
           TEST_EXIT=0
           bash test/verify-early.sh > ~/early-verify.log 2>&1 || TEST_EXIT=$?
@@ -1188,7 +1188,7 @@ jobs:
           export NEUTRINO_SCREENSHOTS="$HOME/netinstall-screenshots"
           dbus-run-session -- bash netinstall/test/run.sh
       # The offline tier, which nothing in this repository has ever built.
-      # `build.sh --tier=offline` says it denies the page network access, and
+      # An offline build says it denies the page network access, and
       # the whole mechanism is one meta tag applyContentPolicy swaps into the
       # extracted document. Its only assertion is parse.sh comparing two
       # strings; no engine has ever loaded a document carrying it. This step is
@@ -1215,8 +1215,8 @@ jobs:
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
-          bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
+          bash test/mkapp.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
           TEST_EXIT=0
           bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
             > ~/offline.log 2>&1 || TEST_EXIT=$?
@@ -1262,8 +1262,8 @@ jobs:
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
-          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/mkapp.sh --tier=testing --decorations=none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
           bash test/parse.sh test/neutrinostdgeom-none.cmd
           TEST_EXIT=0
@@ -1284,7 +1284,7 @@ jobs:
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
           bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
           APP_PID=$!
@@ -1320,7 +1320,7 @@ jobs:
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
           bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
           APP_PID=$!
@@ -1340,7 +1340,7 @@ jobs:
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
           bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
           APP_PID=$!
@@ -1381,7 +1381,7 @@ jobs:
           export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
           mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
           TEST_EXIT=0
           bash test/themeflip.sh qt test/neutrinostdtheme.cmd ~/screenshots \
@@ -1557,7 +1557,7 @@ jobs:
       # lane beside it: a tag is a name its owner can move.
       # PR 11 put the __OpenBSD__ half of netinstall/sandbox_bsd.c under a lane
       # and found four of its rules wrong. The other half -- FreeBSD, NetBSD --
-      # has still never been compiled by anything in this repository: build.sh
+      # has still never been compiled by anything in this repository: netinstall/build.sh
       # cross-compiles six targets and none of them is a BSD, and the lane
       # above compiles the branch this one does not. Meanwhile the suites grew
       # FreeBSD|NetBSD arms written from the OpenBSD reading -- phases.sh wants
@@ -1829,7 +1829,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - shell: bash
-        run: bash build.sh test/neutrinotest.js test/neutrinotest.cmd
+        run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
       - shell: bash
         run: bash test/parse.sh test/neutrinotest.cmd
       # The assembler, and the stamp it says it applied. Pure shell, no display
@@ -1881,7 +1881,7 @@ jobs:
       # is the state each of those suites was measured in when it had a runner
       # to itself and appcache to warm it.
       - shell: bash
-        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinowarm.cmd
+        run: bash test/mkapp.sh --tier=testing test/neutrinoloaders.js test/neutrinowarm.cmd
       - name: warm the WebView2 runtime
         timeout-minutes: 5
         shell: pwsh
@@ -1968,7 +1968,7 @@ jobs:
       # here it wrote it once and trusted a stamp beside it afterwards.
       - if: always()
         shell: bash
-        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinocache.cmd
+        run: bash test/mkapp.sh --tier=testing test/neutrinoloaders.js test/neutrinocache.cmd
       - if: always()
         timeout-minutes: 15
         shell: pwsh
@@ -1986,8 +1986,8 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash build.sh test/neutrinoloaders.js test/neutrinostandalone.cmd
-          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinostandalone-testing.cmd
+          bash test/mkapp.sh test/neutrinoloaders.js test/neutrinostandalone.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinoloaders.js test/neutrinostandalone-testing.cmd
       - if: always()
         timeout-minutes: 15
         shell: pwsh
@@ -2003,7 +2003,7 @@ jobs:
       # `if: always()` so it is measured whether or not appcache was.
       - if: always()
         shell: bash
-        run: bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinorace.cmd
+        run: bash test/mkapp.sh --tier=testing test/neutrinoloaders.js test/neutrinorace.cmd
       # The gap between the compile and the START, asserted shut. The batch
       # region MOVEs the freshly compiled exe onto a predictable name in the app
       # folder, writes a manifest, and only then STARTs it -- and appcache.ps1
@@ -2036,7 +2036,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash build.sh test/neutrinotest.js test/neutrinoerr.cmd
+          bash test/mkapp.sh test/neutrinotest.js test/neutrinoerr.cmd
           sed -i 's/\(webView2PinnedVersion[ :=]*\)"[^"]*"/\1"0.0.0-neutrino-does-not-exist"/' test/neutrinoerr.cmd
           grep -q 'webView2PinnedVersion[ :=]*"0.0.0-neutrino-does-not-exist"' test/neutrinoerr.cmd
       - if: always()
@@ -2109,8 +2109,8 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash build.sh --tier=testing test/neutrinotest.js test/neutrinoload1.cmd
-          bash build.sh --tier=testing test/neutrinotest.js test/neutrinoload2.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinotest.js test/neutrinoload1.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinotest.js test/neutrinoload2.cmd
       - name: launch under load
         if: always()
         timeout-minutes: 15
@@ -2232,7 +2232,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - shell: bash
-        run: bash build.sh test/neutrinoattack.js test/neutrinoattack.cmd
+        run: bash test/mkapp.sh test/neutrinoattack.js test/neutrinoattack.cmd
       - timeout-minutes: 15
         shell: pwsh
         run: |
@@ -2266,7 +2266,7 @@ jobs:
       # the four-job split was bought for, kept without the four jobs.
       - if: always()
         shell: bash
-        run: bash build.sh --tier=offline test/neutrinonav.js test/neutrinonav.cmd
+        run: bash test/mkapp.sh --tier=offline test/neutrinonav.js test/neutrinonav.cmd
       - if: always()
         timeout-minutes: 12
         shell: pwsh
@@ -2281,7 +2281,7 @@ jobs:
         shell: bash
         run: cat ~/navlogs/nav.log
       # The offline tier, which nothing in this repository has ever built.
-      # `build.sh --tier=offline` says it denies the page network access, and
+      # An offline build says it denies the page network access, and
       # the whole mechanism is one meta tag applyContentPolicy swaps into the
       # extracted document. Its only assertion is parse.sh comparing two
       # strings; no engine has ever loaded a document carrying it. This step is
@@ -2303,8 +2303,8 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
-          bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
+          bash test/mkapp.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
       - if: always()
         timeout-minutes: 15
         shell: pwsh
@@ -2337,7 +2337,7 @@ jobs:
       # both sat in one long lane.
       - if: always()
         shell: bash
-        run: bash build.sh --tier=testing test/neutrinodoc.js test/neutrinodoc.cmd
+        run: bash test/mkapp.sh --tier=testing test/neutrinodoc.js test/neutrinodoc.cmd
       - if: always()
         timeout-minutes: 20
         shell: pwsh
@@ -2384,11 +2384,11 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
-          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
+          bash test/mkapp.sh --tier=testing --decorations=none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom-none.cmd
-          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
       # Both halves and the differential, in place of the single launch this
       # step used to make -- the decorated half is that launch, it runs first
@@ -2447,9 +2447,9 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
       - if: always()
         timeout-minutes: 12
@@ -2497,7 +2497,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
       - if: always()
         timeout-minutes: 16
@@ -2613,7 +2613,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - run: bash build.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
+      - run: bash test/mkapp.sh --tier=testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
@@ -2697,7 +2697,7 @@ jobs:
       # survive the profile, and the profile has to refuse something -- because
       # either half alone passes for the wrong reason.
       - run: |
-          bash build.sh --tier=testing,tight test/neutrinotest.js test/neutrinotight.cmd
+          bash test/mkapp.sh --tier=testing,tight test/neutrinotest.js test/neutrinotight.cmd
           # This lane reported to its job log and called nothing that carried
           # the result out, so a red tight tier said FAILURES=0 is false and
           # nothing finer -- the gap PR 7 and PR 8 both parked here. The third
@@ -2721,14 +2721,14 @@ jobs:
       - if: always()
         timeout-minutes: 12
         run: |
-          bash build.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinoloaders.js test/neutrinoloaders.cmd
           TEST_EXIT=0
           bash test/loaders.sh test/neutrinoloaders.cmd > ~/loaders.log 2>&1 || TEST_EXIT=$?
           cat ~/loaders.log
           exit $TEST_EXIT
       - if: always()
         run: |
-          bash build.sh --tier=testing test/neutrinoattack.js test/neutrinoattack.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinoattack.js test/neutrinoattack.cmd
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/neutrinoattack.cmd > ~/neutrino-attack.log 2>&1 &
           TEST_EXIT=0
@@ -2751,7 +2751,7 @@ jobs:
           # This does not return until it is serving, so the app below cannot
           # navigate into a port nothing has bound yet.
           PAGES_PID="$(bash test/serve-target.sh ~/pages.log)"
-          bash build.sh --tier=testing test/neutrinoearly.js test/neutrinoearly.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinoearly.js test/neutrinoearly.cmd
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/neutrinoearly.cmd > ~/early.log 2>&1 &
           TEST_EXIT=0
@@ -2780,13 +2780,13 @@ jobs:
       - if: always()
         timeout-minutes: 12
         run: |
-          bash build.sh --tier=testing test/neutrinoearly.js test/neutrinonavrefuse.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinoearly.js test/neutrinonavrefuse.cmd
           TEST_EXIT=0
           bash test/navrefuse.sh test/neutrinonavrefuse.cmd > ~/navrefuse.log 2>&1 || TEST_EXIT=$?
           cat ~/navrefuse.log
           exit $TEST_EXIT
       # The offline tier, which nothing in this repository has ever built.
-      # `build.sh --tier=offline` says it denies the page network access, and
+      # An offline build says it denies the page network access, and
       # the whole mechanism is one meta tag applyContentPolicy swaps into the
       # extracted document. Its only assertion is parse.sh comparing two
       # strings; no engine has ever loaded a document carrying it. This step is
@@ -2807,8 +2807,8 @@ jobs:
       - if: always()
         timeout-minutes: 12
         run: |
-          bash build.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
-          bash build.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
+          bash test/mkapp.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
           TEST_EXIT=0
           bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
             > ~/offline.log 2>&1 || TEST_EXIT=$?
@@ -2848,8 +2848,8 @@ jobs:
         timeout-minutes: 14
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
-          bash build.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
-          bash build.sh --tier=testing --decorations none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/mkapp.sh --tier=testing --decorations=none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
           bash test/parse.sh test/neutrinostdgeom.cmd
           bash test/parse.sh test/neutrinostdgeom-none.cmd
           TEST_EXIT=0
@@ -2864,7 +2864,7 @@ jobs:
         timeout-minutes: 8
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
-          bash build.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
           bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
           APP_PID=$!
@@ -2894,7 +2894,7 @@ jobs:
         timeout-minutes: 10
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
-          bash build.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
           bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
           APP_PID=$!
@@ -2908,7 +2908,7 @@ jobs:
         timeout-minutes: 8
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
           bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
           APP_PID=$!
@@ -2943,7 +2943,7 @@ jobs:
         timeout-minutes: 14
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
-          bash build.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/mkapp.sh --tier=testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
           TEST_EXIT=0
           bash test/themeflip.sh macos test/neutrinostdtheme.cmd ~/screenshots \

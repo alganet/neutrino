@@ -2,14 +2,16 @@
  * SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
  * SPDX-License-Identifier: ISC
  *
- * The sample app's early shell. build.sh folds this to one line and splices it
- * into the document, so it is in the first paint -- there is no frame in which
- * the window is up and this has not been applied.
+ * The sample app's early shell. assemble.sh includes this into the document,
+ * so it is in the first paint -- there is no frame in which the window is up
+ * and this has not been applied.
  *
- * Written across as many lines as it wants to be. What it may not carry is a
- * star followed by a slash that survives comment removal -- that pair ends the
- * block comment the whole shell region of the polyglot lives inside, and
- * build.sh refuses it rather than escaping it.
+ * Written across as many lines as it wants to be, this comment included: the
+ * document is a region of the artifact rather than a single line, and nothing
+ * here is folded. What the artifact does not carry is any of these comments.
+ * assemble.sh removes a stylesheet's comments wherever they sit and whether or
+ * not --comments was asked for, because the pair that closes one also closes
+ * the block comment the whole shell region of the polyglot lives inside.
  */
 html, body { margin: 0 }
 

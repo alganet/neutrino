@@ -8,7 +8,15 @@ SPDX-License-Identifier: ISC
 `skeleton.cmd` is the whole of neutrino that is more than one language at once.
 Everything else in this directory is ordinary source in exactly one language,
 pulled in by an `@@include <path>` line, and `assemble.sh` puts the two together
-into the template `build.sh` splices an app into.
+into an app.
+
+There used to be a second program. `assemble.sh` built a template and `build.sh`
+spliced an app into it with four text replacements — the app into a slot, the
+tier list into a stamp, five config keys into an object, and a rebuilt document
+line. Each of those was a pattern with no failure path of its own, so each
+needed a read-back to say whether it had landed. There is one directive now and
+no substitutions: an app is a directory laid over this one with `--overlay`, and
+the things `build.sh` used to splice are parts it carries.
 
 That split is the reason this directory exists. A comment can be removed by a
 program that knows which language it is reading; in a single file that is five
@@ -104,8 +112,14 @@ is still inside the block comment from line 1.
 The first `<!doctype html>` in the file, and it has to stay the first one: the
 launcher cuts the document from the doctype to the `<script` tag after it, and
 the page script from that same tag. `test/parse.sh` refuses a source where
-anything above line 11 so much as mentions a doctype, and `build.sh` refuses a
-`--style` or `--body` carrying one.
+anything above the doctype so much as mentions a doctype, and `assemble.sh`
+refuses a `style.css` or a `body.html` carrying one.
+
+It used to have to be one physical line, because the style and the body were
+folded and spliced into it. They are `@@include`d parts now, so the document is
+a region: the doctype opens it, `style.css` and `body.html` arrive whole, and
+`</style></head><body>` sits between them. An app's stylesheet can be a
+stylesheet.
 
 ### Line 12 — `<script type=text/javascript>//*/`
 
@@ -154,8 +168,12 @@ also where the page script stops.
 | `qml/window.qml` | QML | the Qt window, inside an unquoted here-document — so `$qml_url` is the shell's and **no backticks** may appear |
 | `py/shim.py` | Python | the PyGObject lane, inside a quoted here-document |
 | `jsc/sink.jsc` | JScript.NET | the WebMessageReceived delegate, which cannot be written in the shared JavaScript |
-| `html/document.html` | HTML | the document line `build.sh` splices `--style` and `--body` into |
-| `js/config.js` | JavaScript | declares `NeutrinoWebview`; the only part that is an object literal, and it holds the two things `build.sh` stamps and nothing else |
+| `html/document.html` | HTML | the doctype, the head, the content policy, and the two includes the early shell arrives through |
+| `style.css` | CSS | the early shell's stylesheet; an app lays its own over it |
+| `body.html` | HTML | the early shell's markup; likewise |
+| `config.json` | JSON | the window and the tier list, laid into `js/config.js` verbatim |
+| `app.js` | JavaScript | the body of `runWeb`, which is where an app's code goes |
+| `js/config.js` | JavaScript | declares `NeutrinoWebview`, and includes `config.json` as its config object |
 | `js/*.js` | JavaScript | one group of members per file, assigned onto the object; the order is in `js/parts.list` |
 | `js/launch.js` | JavaScript | `NeutrinoWebview.run();`, and it goes last |
 
@@ -171,12 +189,15 @@ they are called as `this.parseColor(...)` from each other, and the order is free
 except that `js/config.js` declares the object first and `js/launch.js` starts
 it last.
 
-Two things in here are not whole documents, and they are named rather than
-hidden. `html/document.html` is one line and cannot be: its closing tags are the
-skeleton's last line, which is also the here-document terminator. And the two
-include lists are `.list` files rather than `.js` and `.sh` ones, because a list
-of `@@include` lines is a manifest and not a program -- giving it a language's
-extension would make it the only lying file in the tree.
+Some things in here are not whole documents, and they are named rather than
+hidden. `html/document.html` opens tags the skeleton's last line closes, which
+is also the here-document terminator. `app.js` is the body of a function rather
+than a program. `js/config.js` and `js/run.js` carry an `@@include` and are
+therefore templates rather than JavaScript — `test/assemble.sh` works out which
+parts those are by looking for the directive rather than by keeping a list. And
+the two include lists are `.list` files rather than `.js` and `.sh` ones,
+because a list of `@@include` lines is a manifest and not a program — giving it
+a language's extension would make it the only lying file in the tree.
 
 ## Includes
 
@@ -188,7 +209,13 @@ conditional form, so a part reads exactly as it will ship.
 Includes nest. `skeleton.cmd` includes `sh/parts.list`, which includes `sh/qt.sh`,
 which includes `qml/window.qml` in the middle of a here-document.
 
-The expansion and all four strip rules are one recursive `awk` function, and
+Includes resolve against a search path. `--overlay <dir>` puts a directory
+ahead of this one, more than one may be given, and the last named wins; this
+directory is always last. Any part is overridable and not only the four an app
+usually writes — an overlay carrying `js/policy.js` replaces the launcher's,
+because whoever writes the overlay is whoever ships the artifact.
+
+The expansion and all five strip rules are one recursive `awk` function, and
 that is a platform fact rather than a preference. A shell function per language
 and a `while read` loop per part is forty processes for one template; on Windows
 process creation is the cost of everything, and forty became sixteen thousand
@@ -213,16 +240,24 @@ wrote:
 - **Whole lines only.** A comment sharing a line with code stays. What that
   costs is a few hundred bytes; what it buys is that this program never has to
   decide whether a `//` inside a string is a comment.
-- **`//#` is structure, not prose.** `build.sh` splices between those markers
-  and the shell region reads its tier stamp from between two of them. A strip
-  that took them would produce a file that assembles, runs, and refuses to
-  launch.
+- **There is no `//#` any more.** Four of them used to name regions a second
+  program spliced between, and one outlived the splice for a while: the shell
+  had to search the built file for the tier list and be told where to stop.
+  `sh/tiers.sh` includes `config.json` as a here document now, so it has the
+  value instead of looking for it, and the artifact carries no marker of any
+  kind. A rule about what the strip must not remove is one less thing to be
+  right about.
 - **An SPDX tag is not prose.** A build step that removes a licence notice from
   somebody else's source is not a size optimisation. A comment line carrying one
   is kept, and a block comment carrying one is kept whole — the lines of a block
   cannot stand on their own, so the choice is the whole block or none of it. An
   author who wants the notice and not the essay writes the notice as two line
-  comments above the block, which is what `pages/demo.js` does.
+  comments above the block, which is what `pages/demo/app.js` does.
+- **A stylesheet is the exception, both ways.** CSS comments come off wherever
+  they sit on the line rather than at the left margin only, and they come off
+  under `--comments` as well — including an SPDX one. `*/` closes the block
+  comment the whole shell and document region lives inside, and a stylesheet is
+  the one place an author writes that pair without thinking about it.
 - **Multi-line strings are stepped over.** A JavaScript template literal and a
   Python triple-quoted string both span lines, and a line inside one that
   happens to begin with `//` or `#` is content. Parity is tracked on the lines
@@ -230,8 +265,8 @@ wrote:
   wraps mid-backtick often enough that counting those would put half the parts
   into the literal state and strip nothing.
 
-`build.sh` runs the app it is handed through the same strip, so an artifact
-carries no more prose than the launcher does.
+An app's `app.js` is a part like any other, so it goes through the same strip
+and an artifact carries no more prose than the launcher does.
 
 The assembly comes out with unix line endings whatever the checkout had. Git for
 Windows checks this tree out with CRLF, and the programs that read a part here
@@ -247,30 +282,32 @@ about to ship: `bash -n` on the shell, `node --check` on the JavaScript,
 here rather than an engine that opens no window three suites later. QML and
 JScript.NET have no checker to run; they are covered by the lanes.
 
-Running `./assemble.sh` takes those checks. `build.sh` does not: the answer is a
-property of this directory and not of the app being spliced into it, so it is
-the same answer for every build from one tree, and `test/assemble.sh` takes it
-once. Fifty builds out of one tree used to mean fifty `node` startups, which was
-a step that timed out at five minutes on the Windows runner with nothing else
-wrong in the job.
+`./assemble.sh --check` runs them and writes nothing, and every build runs them
+unless it passes `--no-verify`. They reach into the overlays, so an app whose
+JavaScript does not parse is refused here rather than by an engine that opens no
+window. `test/mkapp.sh` passes `--no-verify` anyway: fifty builds out of one tree
+means fifty `node` startups, which was a step that timed out at five minutes on
+the Windows runner with nothing else wrong in the job, and the artifacts that
+matter go through `test/parse.sh`, which reads the built file.
 
 ## Working on it
 
 ```sh
-# the template as it ships
-./assemble.sh > /tmp/template.cmd
+# the launcher on its own, with its own greeting in it
+./assemble.sh /tmp/plain.cmd
 
-# the same template with every comment still in it
-./assemble.sh --comments > /tmp/readable.cmd
+# an app, built from a directory laid over this one
+./assemble.sh --overlay ../myapp /tmp/myapp.cmd
 
-# an app built either way
-../build.sh myapp.js myapp.cmd
-../build.sh --comments myapp.js myapp.cmd
+# either of those with every comment still in it
+./assemble.sh --comments --overlay ../myapp /tmp/readable.cmd
+
+# the region checks on their own, writing nothing
+./assemble.sh --check
 ```
 
 `--comments` is what to reach for when a lane is failing and the artifact has to
-be read. It is also how the split was checked when it landed: assembled with
-comments, the parts reproduce the `webview.cmd` they came out of byte for byte.
+be read.
 
 Adding a part is a file plus a line in the include list beside it. Moving code
 between parts changes nothing about the artifact, which is what

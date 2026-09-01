@@ -2,52 +2,29 @@
 # SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
 # SPDX-License-Identifier: ISC
 #
-# assemble.sh - the assembler's inputs, and the stamp it says it applied.
+# assemble.sh - the assembler's inputs, and the artifact it says it built.
 #
-# build.sh is the program every other suite's artifact comes out of, and it
-# carries the one check in this tree whose job is to say that a build did not
-# quietly produce a weaker file than the one that was asked for. That check
-# used to read the *first* line in the output shaped like the stamp, and the
-# app spliced into the output is arbitrary JavaScript that may carry one. So
-# the check could be answered by the thing it was checking, and three openings
-# went through it:
+# neutrino/assemble.sh is the program every other suite's artifact comes out of.
+# It used to be half of a pair: it put a template together and build.sh spliced
+# an app into it with four text replacements. Each of those was a sed or awk
+# pattern with no failure path of its own, so each needed a read-back to say
+# whether it had applied, and most of this file was those read-backs and the
+# `oldbuild.sh` before-state they were measured against.
 #
-#   the output as the template   `> "$OUTPUT"` is set up before the pipeline
-#                                reads the template, so naming the template as
-#                                the output truncated it, spliced nothing, and
-#                                exited 0 with the app's own line standing in
-#                                for the stamp. With an app carrying no such
-#                                line it exited 1 and deleted the template.
-#                                The template is assembled into a temporary now
-#                                and that exact name cannot be given any more,
-#                                so what stands in its place is the source tree
-#                                it is assembled from -- the same opening in a
-#                                worse shape, since a build that truncates
-#                                neutrino/js/message.js leaves nothing to
-#                                reassemble from at all.
-#   the output as the app        the redirection belongs to the `sed` on the
-#                                right of the pipeline and the `cat` on the left
-#                                runs beside it, so the assembler read back what
-#                                it had already written.
-#   the app's own source         the substitution had no range, so it rewrote
-#                                every line in the stream shaped like the stamp.
+# All of that is gone, and it is gone by construction rather than by being
+# fixed. There is one directive, `@@include`, and an include cannot half-apply:
+# a part that is not there is a refusal before a byte is written, and a part
+# that is there arrives whole. The hazards that needed proving -- an app's own
+# `tiers:` line answering the check that was checking it, a substitution with no
+# range rewriting the app's source, a stamp that silently did not land -- are
+# not hazards this program has, because it performs no substitution.
 #
-# And the artifact's own shell region read the stamp the same way, with an empty
-# read falling back to "default" -- the weakest tier this file has.
+# What is left to assert is what an assembler can still get wrong: which file
+# wins when two roots carry the same part, what the strip takes off, where the
+# artifact may be written, and whether a config the launcher could not use is
+# refused before it ships rather than after.
 #
-# The before-state is an artifact here and not a sentence. `oldbuild.sh` below
-# is the assembler as it shipped through PR 23, and every defect above is
-# asserted to reproduce against it in the same run that asserts the fix closes
-# it. "It would have failed before" is a claim until something runs it, and this
-# runs it on every push. The day a platform makes the old spelling behave
-# differently, this goes red and says which half moved.
-#
-# Two controls, because a refusal that builds nothing is not a pass. `plain`
-# says the shipped assembler works on this platform at all, and `old-plain` says
-# the before-state assembler does too -- without the second, a before-state that
-# simply failed to run would report every defect as reproduced.
-#
-# No display, no engine, about a second. Usage: assemble.sh
+# No display, no engine, a few seconds. Usage: assemble.sh
 
 set -uo pipefail
 
@@ -69,160 +46,186 @@ report "platform=$(uname -s) bash=${BASH_VERSION:-none}"
 # =====================================================================
 # The fixtures
 # =====================================================================
-# An app carrying a `tiers:` line is not a contrived one -- it is any app with a
-# config object that happens to use the name. It is the fixture for most of what
-# follows because it is what made the openings above silent. No app in this
-# repository carries one today, which is a reason to close this cheaply and not
-# a reason to leave it open.
-cat > "$WORK/app-tiers.js" <<'EOF'
+# A fresh copy of the tree per case, because some of these destroy the source
+# they are handed. assemble.sh takes neutrino/ from beside itself, which is what
+# makes "the output is inside the source" expressible at all.
+tree() {
+    rm -rf "$WORK/$1"
+    mkdir -p "$WORK/$1"
+    cp -R "$ROOT/neutrino" "$WORK/$1/"
+    echo "$WORK/$1"
+}
+
+# An overlay holding one app.js, read from stdin, which is what most of these
+# want. An app is a directory now and this is the shortest way to write one.
+appdir() {
+    nt_d="$WORK/ov-$1"
+    rm -rf "$nt_d"
+    mkdir -p "$nt_d"
+    cat > "$nt_d/app.js"
+    printf '%s\n' "$nt_d"
+}
+
+# An empty overlay for a config case to write into. Unlike appdir this reads
+# nothing: its callers write config.json themselves, some from a here document
+# and some from mkconf below, and a `cat` in here would swallow whichever of the
+# two the caller was not using -- which is a suite that hangs waiting on a
+# terminal rather than one that fails.
+confdir() {
+    nt_d="$WORK/cf-$1"
+    rm -rf "$nt_d"
+    mkdir -p "$nt_d"
+    printf '%s\n' "$nt_d"
+}
+
+# The defaults, as the tree carries them, so nothing below writes a second copy
+# of a value that lives in a file.
+# A config value out of a built artifact, bounded by the two lines the launcher
+# itself writes around the include: `        config:` opens it and the JSON's own
+# `}` at column zero closes it. That used to be a pair of `//#` markers, and it
+# is real code now for the same reason nothing else is a marker any more.
+conf() {
+    sed -n '/^        config:$/,/^}$/p' "$1" |
+        sed -n -e "s/^ *\"$2\": \"\(.*\)\",\{0,1\}\$/\1/p" \
+               -e "s/^ *\"$2\": \([^\",]*\),\{0,1\}\$/\1/p" | head -1
+}
+default_of() {
+    sed -n -e "s/^ *\"$1\": \"\(.*\)\",\{0,1\}\$/\1/p" \
+           -e "s/^ *\"$1\": \([^\",]*\),\{0,1\}\$/\1/p" \
+        "$ROOT/neutrino/config.json" | head -1
+}
+
+APP_PLAIN="$(appdir plain <<'EOF'
+document.title = "example";
+EOF
+)"
+
+# An app carrying a `tiers:` line. It used to be the fixture most of this file
+# was built on: the substitutions had no range, so a line of the app's own
+# source shaped like the stamp was rewritten by the build and read back by the
+# check that was meant to catch it. Nothing substitutes now, and this is here to
+# say that -- an app may write whatever it likes and the assembler does not edit
+# the app.
+APP_TIERS="$(appdir tiers <<'EOF'
 var myConfig = {
     tiers: "offline,tight",
     name: "example"
 };
 document.title = myConfig.name;
 EOF
-cat > "$WORK/app-plain.js" <<'EOF'
-document.title = "example";
-EOF
-APP_TIERS_BYTES="$(size "$WORK/app-tiers.js")"
-
-# A fresh copy of the tree per case, because half of these destroy the source
-# they are handed. build.sh takes neutrino/ from beside itself, which is what
-# makes "the output is the source" expressible at all.
-#
-# `webview.cmd` in the copy is not a file this repository has any more. It is
-# the launcher as assemble.sh puts it together with its comments left in, and it
-# is here for two readers: the frozen before-state assembler below, which knows
-# no other way to find a template, and the assertions that ask what value an
-# unflagged build inherits. Comments left in on purpose -- the before-state's
-# output is compared byte for byte against `build.sh --comments`, and the two
-# have to be reading the same bytes for that comparison to mean the splice
-# rather than the strip.
-tree() {
-    rm -rf "$WORK/$1"
-    mkdir -p "$WORK/$1"
-    cp "$ROOT/build.sh" "$WORK/$1/"
-    cp -R "$ROOT/neutrino" "$WORK/$1/"
-    bash "$WORK/$1/neutrino/assemble.sh" --comments > "$WORK/$1/webview.cmd"
-    cp "$WORK/oldbuild.sh" "$WORK/$1/" 2>/dev/null
-    echo "$WORK/$1"
-}
-
-# =====================================================================
-# The before-state, as an artifact
-# =====================================================================
-# Verbatim as it shipped through PR 23. It is frozen on purpose: it is not a
-# copy of a live program that could drift, it is the state the assertions below
-# are measured against.
-cat > "$WORK/oldbuild.sh" <<'OLDEOF'
-#!/bin/bash
-set -euo pipefail
-TIER="default"
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --tier=*) TIER="${1#--tier=}"; shift ;;
-        --tier)   TIER="${2:-}"; shift 2 ;;
-        --)       shift; break ;;
-        -*)       echo "Error: unknown option $1" >&2; exit 1 ;;
-        *)        break ;;
-    esac
-done
-if [ $# -lt 2 ]; then
-    echo "Usage: $0 [--tier=<list>] <app.js> <output.cmd>" >&2
-    exit 1
-fi
-APP_JS="$1"
-OUTPUT="$2"
-TEMPLATE="$(cd "$(dirname "$0")" && pwd)/webview.cmd"
-if [ ! -f "$APP_JS" ]; then
-    echo "Error: $APP_JS not found" >&2
-    exit 1
-fi
-if [ ! -f "$TEMPLATE" ]; then
-    echo "Error: $TEMPLATE not found" >&2
-    exit 1
-fi
-case ",$TIER," in *,default,*) ;; *) TIER="default,$TIER" ;; esac
-TIER="${TIER%,}"
-for t in $(echo "$TIER" | tr ',' ' '); do
-    case "$t" in
-        default|tight|offline|testing) ;;
-        *) echo "Error: unknown tier '$t' (want: default, tight, offline, testing)" >&2; exit 1 ;;
-    esac
-done
-{
-    sed -n '1,/\/\/#RUNWEB_START/p' "$TEMPLATE"
-    cat "$APP_JS"
-    sed -n '/\/\/#RUNWEB_END/,$p' "$TEMPLATE"
-} | sed "s|^\( *\)tiers: \"[a-z,]*\",|\1tiers: \"$TIER\",|" > "$OUTPUT"
-STAMPED="$(sed -n 's/^ *tiers: "\([a-z,]*\)",.*$/\1/p' "$OUTPUT" | head -1)"
-if [ "$STAMPED" != "$TIER" ]; then
-    echo "Error: tier stamp did not apply (wanted '$TIER', found '${STAMPED:-nothing}')" >&2
-    rm -f "$OUTPUT"
-    exit 1
-fi
-OLDEOF
-chmod +x "$WORK/oldbuild.sh"
-
-TPL_BYTES="$(size "$(tree tplsize)/webview.cmd")"
+)"
 
 # =====================================================================
 # The controls
 # =====================================================================
+# A refusal that builds nothing is not a pass. Everything below that asserts
+# something is refused is worth reading only if this says the assembler works
+# on this platform at all.
 report "section: controls"
-echo "=== both assemblers build, on this platform ==="
+echo "=== the assembler builds, with and without an overlay ==="
 T="$(tree plain)"
-bash "$T/build.sh" --tier=tight "$WORK/app-plain.js" "$T/new.cmd" > "$WORK/plain.log" 2>&1
-eq "the shipped assembler builds" "$?" "0"
-eq "and stamps what it was asked for" \
-   "$(sed -n '/\/\/#TIER_START/,/\/\/#TIER_END/s/^ *tiers: "\([a-z,]*\)",.*$/\1/p' "$T/new.cmd" | head -1)" \
-   "default,tight"
-bash "$T/oldbuild.sh" --tier=tight "$WORK/app-plain.js" "$T/old.cmd" > "$WORK/oldplain.log" 2>&1
-eq "the before-state assembler builds too" "$?" "0"
+bash "$T/neutrino/assemble.sh" "$T/bare.cmd" > "$WORK/plain.log" 2>&1
+eq "a build with no overlay succeeds" "$?" "0"
+eq "and carries the tree's default tier" "$(conf "$T/bare.cmd" tiers)" "$(default_of tiers)"
 
-# What ships may not change, and the strip is the one change it is allowed to
-# be. Every app CI builds, from both assemblers, byte for byte -- with the
-# comments left in on both sides, because that is the comparison that is about
-# the splice. A repair that fixes this check by changing the artifact is a
-# different PR, and this is the line that would say so.
-report "section: byte-identity"
-echo "=== the artifacts CI builds are unchanged, comments and all ==="
-for spec in "default:neutrinotest" "testing:neutrinoloaders" "tight,offline:neutrinooffline" "testing:neutrinoearly"; do
-    tier="${spec%%:*}"; app="$ROOT/test/${spec#*:}.js"
-    if [ ! -f "$app" ]; then
-        fail "$(basename "$app") is not in this tree; the comparison below measured nothing"
-        continue
-    fi
-    T="$(tree ident)"
-    bash "$T/oldbuild.sh" --tier="$tier" "$app" "$T/old.cmd" > /dev/null 2>&1
-    bash "$T/build.sh" --comments --tier="$tier" "$app" "$T/new.cmd" > /dev/null 2>&1
-    # Compared with the returns taken off both sides. What is asserted is the
-    # splice, and a line ending is not the splice: the frozen assembler leaves
-    # whatever the checkout gave it and the shipped one normalises on purpose
-    # (see the carriage-return note in neutrino/assemble.sh), so on a CRLF
-    # checkout the two differ
-    # by one byte per line and by nothing else. Stripping here says that, rather
-    # than letting the comparison mean two things at once.
-    tr -d '\r' < "$T/old.cmd" > "$T/old.lf"
-    tr -d '\r' < "$T/new.cmd" > "$T/new.lf"
-    if cmp -s "$T/old.lf" "$T/new.lf"; then
-        pass "$(basename "$app" .js) at --tier=$tier is byte-identical"
-    else
-        fail "$(basename "$app" .js) at --tier=$tier changed ($(size "$T/old.cmd") -> $(size "$T/new.cmd"))"
-    fi
-done
+bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/app.cmd" > "$WORK/app.log" 2>&1
+eq "a build with an app overlay succeeds" "$?" "0"
+eq "and the app is in it" "$(grep -c 'document.title = "example";' "$T/app.cmd" | head -1)" "1"
+eq "and the app is inside the runWeb slot" \
+   "$(sed -n '/^    NeutrinoWebview.runWeb = function () {$/,/^    };$/p' "$T/app.cmd" |
+      grep -c 'document.title = "example";' | head -1)" "1"
 
-# And what the strip takes off is prose and nothing else. The stripped artifact
-# is asserted against the commented one it was built beside: smaller, carrying
-# no line that is only a comment, and every line that is not a comment still
-# there in the same order. The last of those is the one that matters -- a strip
-# that dropped a line of code would still be smaller and still carry no
-# comments.
+# The app is a part like any other, so the assembler has no business editing it.
+# This is the hazard the old suite was mostly about, asserted the other way
+# round: not "the substitution had a range" but "there is no substitution".
+bash "$T/neutrino/assemble.sh" --overlay "$APP_TIERS" "$T/tiers.cmd" >/dev/null 2>&1
+eq "an app carrying a tiers: line builds" "$?" "0"
+eq "and its line is untouched" \
+   "$(sed -n '/^    NeutrinoWebview.runWeb = function () {$/,/^    };$/s/^ *tiers: "\(.*\)",$/\1/p' "$T/tiers.cmd" | head -1)" \
+   "offline,tight"
+eq "and the artifact's own stamp is the tree's" \
+   "$(conf "$T/tiers.cmd" tiers)" "$(default_of tiers)"
+
+# =====================================================================
+# Which root a part comes from
+# =====================================================================
+# The whole of what an overlay is. `--overlay` names a directory that is
+# searched before this one, more than one may be given, and the last named wins
+# -- so a caller can stack a general overlay under a specific one and change a
+# single part without copying the rest.
+report "section: overlays"
+echo "=== the last overlay named is the first root searched ==="
+T="$(tree overlay)"
+OV_A="$WORK/ov-a"; OV_B="$WORK/ov-b"
+rm -rf "$OV_A" "$OV_B"; mkdir -p "$OV_A" "$OV_B"
+printf 'document.title = "from A";\n' > "$OV_A/app.js"
+printf 'i-am-from-a{color:red}\n'     > "$OV_A/style.css"
+printf 'document.title = "from B";\n' > "$OV_B/app.js"
+
+bash "$T/neutrino/assemble.sh" --overlay "$OV_A" --overlay "$OV_B" "$T/ab.cmd" >/dev/null 2>&1
+eq "the later overlay's part wins" "$(grep -c 'from B' "$T/ab.cmd" | head -1)" "1"
+eq "and the earlier one's is not in the file" "$(grep -c 'from A' "$T/ab.cmd" | head -1)" "0"
+eq "while a part only the earlier one has still arrives" \
+   "$(grep -c 'i-am-from-a' "$T/ab.cmd" | head -1)" "1"
+# Without this, "the later one wins" is also what a program that ignores the
+# earlier overlay entirely would report.
+bash "$T/neutrino/assemble.sh" --overlay "$OV_B" --overlay "$OV_A" "$T/ba.cmd" >/dev/null 2>&1
+eq "and the order is the argument order, not the alphabet" \
+   "$(grep -c 'from A' "$T/ba.cmd" | head -1)" "1"
+
+# neutrino/ is last, so a part no overlay carries is the launcher's.
+eq "a part no overlay carries comes from the tree" \
+   "$(grep -c 'Welcome to neutrino' "$T/ab.cmd" | head -1)" "1"
+
+# Any part, and not only the four an app usually writes. An overlay carrying a
+# launcher module replaces the launcher's, because the author of the overlay is
+# the person shipping the artifact.
+rm -rf "$WORK/ov-deep"; mkdir -p "$WORK/ov-deep/js"
+printf 'NeutrinoWebview.somethingOfMyOwn = function () { return 42; };\n' \
+    > "$WORK/ov-deep/js/note.js"
+bash "$T/neutrino/assemble.sh" --overlay "$WORK/ov-deep" "$T/deep.cmd" >/dev/null 2>&1
+eq "an overlay may replace a part inside a subdirectory" \
+   "$(grep -c 'somethingOfMyOwn' "$T/deep.cmd" | head -1)" "1"
+
+# A part named by an include and carried by nobody is a refusal before a byte is
+# written, because the expansion runs inside a pipeline and an exit taken in
+# there is an exit taken in a subshell -- the assembly would carry on with a
+# hole in it and come out looking assembled.
+T2="$(tree overlay-missing)"
+printf '@@include js/nothing-here.js\n' >> "$T2/neutrino/js/parts.list"
+rm -f "$T2/out.cmd"
+bash "$T2/neutrino/assemble.sh" "$T2/out.cmd" > "$WORK/missing.log" 2>&1
+eq "a part nothing carries is refused" "$?" "1"
+eq "and says which one" "$(grep -c 'no such part' "$WORK/missing.log" | head -1)" "1"
+eq "and no artifact is left behind" "$(size "$T2/out.cmd")" "missing"
+
+# The control for that refusal: the same include, satisfied by an overlay.
+rm -rf "$WORK/ov-fills"; mkdir -p "$WORK/ov-fills/js"
+printf 'NeutrinoWebview.filled = 1;\n' > "$WORK/ov-fills/js/nothing-here.js"
+bash "$T2/neutrino/assemble.sh" --overlay "$WORK/ov-fills" "$T2/filled.cmd" >/dev/null 2>&1
+eq "and an overlay that carries it builds" "$?" "0"
+
+# An include may not climb out of the roots it is resolved against.
+T3="$(tree overlay-escape)"
+printf '@@include ../../../etc/passwd\n' >> "$T3/neutrino/js/parts.list"
+bash "$T3/neutrino/assemble.sh" "$T3/out.cmd" > "$WORK/escape.log" 2>&1
+eq "an include that leaves the tree is refused" "$?" "1"
+eq "and says so" "$(grep -c 'leaves the source tree' "$WORK/escape.log" | head -1)" "1"
+
+# =====================================================================
+# The strip
+# =====================================================================
+# What the strip takes off is prose and nothing else. The stripped artifact is
+# asserted against the commented one it was built beside: smaller, carrying no
+# line that is only a comment, and every line that is not a comment still there
+# in the same order. The last of those is the one that matters -- a strip that
+# dropped a line of code would still be smaller and still carry no comments.
 report "section: strip"
 echo "=== the strip removes comments and nothing else ==="
 T="$(tree strip)"
-bash "$T/build.sh" --comments --tier=testing "$ROOT/test/neutrinotest.js" "$T/full.cmd" >/dev/null 2>&1
-bash "$T/build.sh"            --tier=testing "$ROOT/test/neutrinotest.js" "$T/thin.cmd" >/dev/null 2>&1
+APP_TEST="$(appdir suite < "$ROOT/test/neutrinotest.js")"
+bash "$T/neutrino/assemble.sh" --comments --overlay "$APP_TEST" "$T/full.cmd" >/dev/null 2>&1
+bash "$T/neutrino/assemble.sh"             --overlay "$APP_TEST" "$T/thin.cmd" >/dev/null 2>&1
 FULL="$(size "$T/full.cmd")"; THIN="$(size "$T/thin.cmd")"
 report "full=$FULL thin=$THIN"
 eq "the stripped artifact is smaller" \
@@ -264,13 +267,14 @@ eq "every line the stripped artifact carries is a line of the commented one" \
 # And the notice survives. Built from an app that carries one of its own, so
 # this measures the app's header and not the skeleton's, which is never
 # stripped and would pass this on its own.
-cat > "$WORK/app-spdx.js" <<'EOF'
+APP_SPDX="$(appdir spdx <<'EOF'
 // SPDX-FileCopyrightText: 2026 Somebody Else <nobody@example.invalid>
 // SPDX-License-Identifier: MIT
 // An ordinary comment, which is prose and goes.
 document.title = "x";
 EOF
-bash "$T/build.sh" "$WORK/app-spdx.js" "$T/spdx.cmd" >/dev/null 2>&1
+)"
+bash "$T/neutrino/assemble.sh" --overlay "$APP_SPDX" "$T/spdx.cmd" >/dev/null 2>&1
 eq "the app's licence notice survives the strip" \
    "$(grep -c 'SPDX-License-Identifier: MIT' "$T/spdx.cmd" | head -1)" "1"
 eq "and its copyright line does too" \
@@ -278,19 +282,69 @@ eq "and its copyright line does too" \
 eq "while the comment beside them does not" \
    "$(grep -c 'An ordinary comment' "$T/spdx.cmd" | head -1)" "0"
 
+# CSS is the one language whose comments come off whatever was asked for, and
+# it is not tidiness: `*/` closes the block comment the whole shell and document
+# region lives inside, and a stylesheet is where an author writes that pair
+# without thinking about it. A licence header in a stylesheet is a comment and
+# goes with the rest, which is why there is no SPDX exception here.
+report "section: css"
+echo "=== a stylesheet's comments never reach the artifact ==="
+T="$(tree css)"
+OV_CSS="$WORK/ov-css"
+rm -rf "$OV_CSS"; mkdir -p "$OV_CSS"
+cat > "$OV_CSS/style.css" <<'EOF'
+/* SPDX-License-Identifier: MIT */
+/* a normal comment */
+q{color:green}
+r{color:blue} /* trailing, and on a line with a rule */
+s{color:pink}
+/* one that
+   runs across
+   three lines */
+t{color:grey}
+EOF
+for nt_mode in "" "--comments"; do
+    rm -f "$T/css.cmd"
+    if [ -n "$nt_mode" ]; then
+        bash "$T/neutrino/assemble.sh" "$nt_mode" --overlay "$OV_CSS" "$T/css.cmd" >/dev/null 2>&1
+    else
+        bash "$T/neutrino/assemble.sh" --overlay "$OV_CSS" "$T/css.cmd" >/dev/null 2>&1
+    fi
+    nt_label="${nt_mode:---stripped}"
+    eq "a stylesheet with comments builds ($nt_label)" "$?" "0"
+    eq "no comment survives ($nt_label)" \
+       "$(grep -c 'a normal comment\|runs across\|trailing, and on a line' "$T/css.cmd" | head -1)" "0"
+    eq "not even the licence header ($nt_label)" \
+       "$(grep -c 'SPDX-License-Identifier: MIT' "$T/css.cmd" | head -1)" "0"
+    for nt_rule in 'q{color:green}' 'r{color:blue}' 's{color:pink}' 't{color:grey}'; do
+        eq "the rule $nt_rule survives ($nt_label)" \
+           "$(grep -cF "$nt_rule" "$T/css.cmd" | head -1)" "1"
+    done
+done
+
+# A stylesheet is written across as many lines as it wants to be. The document
+# used to be one physical line -- the style and the body were folded into it --
+# and an app's CSS arrived as one long run with its structure gone.
+eq "and the stylesheet keeps its own lines" \
+   "$(sed -n '/^<!doctype html><html>/,/^<script type=text\/javascript>/p' "$T/css.cmd" |
+      grep -c '^[qrst]{color:' | head -1)" "4"
+
 # =====================================================================
 # The parts, each read by its own language
 # =====================================================================
 # The split is only worth its shape if a part is a thing an editor, a linter or
 # a checker can open. It was not, to begin with: the JavaScript went in as runs
 # of `key: value,` entries cut out of the middle of one object literal, and
-# every one of the twenty-five files was a syntax error on its own. They are
-# `NeutrinoWebview.parseColor = ...` assignments now, and this is the line that
-# says so on every push rather than the day somebody notices.
+# every one of the files was a syntax error on its own.
 #
-# Two files are not documents and are not checked here: html/document.html,
-# whose closing tags are the skeleton's last line, and the `.list` manifests,
-# which claim no language. neutrino/assemble.sh checks the assembled regions,
+# What is not checked here is anything that is not a document in its own right:
+# html/document.html, whose closing tags are the skeleton's last line, the
+# `.list` manifests, which claim no language, app.js, which is the body of a
+# function rather than a program, and any part carrying an `@@include` -- a
+# directive is not JavaScript and a file with one in it is a template. That last
+# exclusion is derived rather than listed, so a part that grows an include stops
+# being checked here without anybody editing this file, and a part that loses
+# one starts being checked again. assemble.sh checks the assembled regions,
 # which is a different thing -- a tree of fragments assembles into something
 # that parses perfectly well.
 report "section: parts"
@@ -311,6 +365,16 @@ else
     # middle of an object literal, which is what every one of these files used
     # to be. If it is not reported as broken then neither is anything else.
     printf 'foo: function () {\n    return 1;\n},\n' > "$T/fragment.js"
+    NT_DOCS=""
+    NT_TEMPLATES=""
+    for nt_part in "$T"/neutrino/js/*.js; do
+        if grep -q '^@@include ' "$nt_part"; then
+            NT_TEMPLATES="$NT_TEMPLATES $(basename "$nt_part")"
+        else
+            NT_DOCS="$NT_DOCS $nt_part"
+        fi
+    done
+    report "js parts carrying an include:${NT_TEMPLATES:- none}"
     if command -v node >/dev/null 2>&1; then
         NT_BAD="$(node -e '
             var fs = require("fs"), vm = require("vm"), path = require("path");
@@ -320,7 +384,7 @@ else
                 catch (e) { bad.push(path.basename(f)); }
             });
             process.stdout.write(bad.join(" "));
-        ' "$T"/neutrino/js/*.js "$T/fragment.js")"
+        ' $NT_DOCS "$T/fragment.js")"
         eq "the only js/ file that does not parse is the fragment control" \
            "${NT_BAD:-none}" "fragment.js"
     else
@@ -346,28 +410,27 @@ else
     # parse can still assemble into a region that does not, because the strip is
     # what runs in between.
     #
-    # This is the only place they run. build.sh passes --no-verify, because the
-    # answer is a property of neutrino/ and not of the app -- fifty builds out
-    # of one tree used to mean fifty node startups, and on the Windows runner
-    # that was a step that timed out at five minutes with nothing else wrong.
-    bash "$T/neutrino/assemble.sh" > "$T/verified.cmd" 2> "$WORK/verify.log"
+    # `--check` runs them and writes nothing. It reads the overlays too, so an
+    # app whose JavaScript does not parse is refused here -- which is a change:
+    # build.sh could not check an app it had not spliced yet. test/mkapp.sh
+    # still passes --no-verify, because fifty builds out of one tree used to
+    # mean fifty node startups and on the Windows runner that was a step that
+    # timed out at five minutes with nothing else wrong.
+    bash "$T/neutrino/assemble.sh" --check 2> "$WORK/verify.log"
     eq "the assembler's own region checks pass" "$?" "0"
     if [ -s "$WORK/verify.log" ]; then
         report "verify said: $(sed -n '1p' "$WORK/verify.log")"
     fi
+
     # The two lines an object lift anchors on. There are two lifts -- one in
     # test/parse.sh and one in test/verify-windows.ps1 -- and the second is
     # PowerShell, so it only runs on the platform where a mistake is most
-    # expensive to find. It anchored on the first `    };` and kept doing so
-    # when the object stopped being one literal: the range that used to be the
-    # whole launcher became the thirteen lines of the stamped literal, the
-    # member list it wanted was not in there, and what said so was a Windows
-    # runner an hour later.
+    # expensive to find.
     #
-    # Asserted on a built artifact rather than on the template, because the app
-    # is spliced inside the range both lifts take and an app carrying either
-    # line moves where they end.
-    bash "$T/build.sh" "$WORK/app-plain.js" "$T/anchors.cmd" >/dev/null 2>&1
+    # Asserted on a built artifact rather than on a bare tree, because the app
+    # sits inside the range both lifts take and an app carrying either line
+    # moves where they end.
+    bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/anchors.cmd" >/dev/null 2>&1
     eq "the artifact opens the object on exactly one line" \
        "$(grep -c '^    var NeutrinoWebview = {$' "$T/anchors.cmd" | head -1)" "1"
     eq "and starts it on exactly one line" \
@@ -377,8 +440,19 @@ else
     # file it breaks is the one that is never stripped and never parsed.
     T2="$(tree parts-broken)"
     printf 'NeutrinoWebview.nope = function () {\n' >> "$T2/neutrino/js/launch.js"
-    bash "$T2/neutrino/assemble.sh" > /dev/null 2>&1
+    bash "$T2/neutrino/assemble.sh" --check > /dev/null 2>&1
     eq "and a region that does not parse is refused" \
+       "$([ "$?" = "0" ] && echo accepted || echo refused)" "refused"
+
+    # The same check, reaching into an overlay. An app is part of the assembly
+    # now and this is the line that says the check knows it.
+    APP_BROKEN="$(appdir broken <<'EOF'
+document.title = "x"
+function unclosed() {
+EOF
+)"
+    bash "$T/neutrino/assemble.sh" --check --overlay "$APP_BROKEN" > /dev/null 2>&1
+    eq "and so is an app whose javascript does not parse" \
        "$([ "$?" = "0" ] && echo accepted || echo refused)" "refused"
 fi
 
@@ -392,12 +466,12 @@ fi
 # and both of them keep a return.
 #
 # What that cost, measured on the runner: an include line spelled
-# `cmd/launcher.cmd` with a return on the end matched no extension in nt_read,
-# the whole batch region went out through the fallback `cat`, and every build
+# `cmd/launcher.cmd` with a return on the end matched no extension in the
+# reader, the whole batch region went out through the fallback, and every build
 # step on the Windows lane was red behind
 # `cat: .../launcher.cmd$'\r': No such file or directory`. Behind that, the
-# parts that are never stripped -- the skeleton and the document line -- would
-# have kept their returns in a file where everything else had lost them, and
+# parts that are never stripped -- the skeleton and the document -- would have
+# kept their returns in a file where everything else had lost them, and
 # test/parse.sh reads the here-document delimiter off the seam line with a `$`
 # anchor.
 #
@@ -421,7 +495,7 @@ if [ "$EOL_CRS" != "$EOL_LINES" ]; then
     # return has measured nothing here, which is not the same as a defect.
     report "this sed does not write CRLF: the line-ending assertions were not run"
 else
-    bash "$T/build.sh" --tier=tight "$WORK/app-plain.js" "$T/eol.cmd" > "$WORK/eol.log" 2>&1
+    bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/eol.cmd" > "$WORK/eol.log" 2>&1
     EOL_RC=$?
     eq "a CRLF checkout builds" "$EOL_RC" "0"
     if [ "$EOL_RC" != "0" ]; then
@@ -432,7 +506,7 @@ else
         eq "and the artifact it produces has no returns in it" \
            "$(tr -dc "$NT_CRCH" < "$T/eol.cmd" | wc -c | tr -d ' ')" "0"
         T2="$(tree eol-unix)"
-        bash "$T2/build.sh" --tier=tight "$WORK/app-plain.js" "$T2/eol.cmd" > /dev/null 2>&1
+        bash "$T2/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T2/eol.cmd" > /dev/null 2>&1
         if cmp -s "$T/eol.cmd" "$T2/eol.cmd"; then
             pass "and it is byte for byte the artifact the unix checkout builds"
         else
@@ -442,260 +516,491 @@ else
 fi
 
 # =====================================================================
-# The output named as the source
+# Where the artifact may be written
 # =====================================================================
-# The before-state is still measured against a template that is a file, because
-# that is what it was: `oldbuild.sh` reads `webview.cmd` from beside itself and
-# nothing else. What the after-state is asked is the same question in the shape
-# it can be asked today -- the source the template is assembled from is a
-# directory, and naming anything inside it as the output is the opening the
-# monolith had, with no earlier artifact to compare against afterwards.
-report "section: output-as-template"
-echo "=== the output may not be the template ==="
-T="$(tree oldclobber)"
-bash "$T/oldbuild.sh" --tier=tight "$WORK/app-tiers.js" "$T/webview.cmd" > "$WORK/oc.log" 2>&1
-OC_RC=$?
-OC_TPL="$(size "$T/webview.cmd")"
-report "before: rc=$OC_RC template=$OC_TPL/$TPL_BYTES"
-eq "before, it destroyed the template" "$([ "$OC_TPL" = "$TPL_BYTES" ] && echo intact || echo destroyed)" "destroyed"
-eq "before, it said nothing about it" "$OC_RC" "0"
-
-# The same opening with an app carrying no stamp line: the before-state exits 1
-# here, and then removes the template it has already truncated. Both destroy it;
-# this is the half that at least says so, and it is still a destroyed template.
-T="$(tree oldclobber2)"
-bash "$T/oldbuild.sh" --tier=tight "$WORK/app-plain.js" "$T/webview.cmd" > /dev/null 2>&1
-eq "before, an app with no stamp line lost the template as well" "$(size "$T/webview.cmd")" "missing"
-
-echo "=== the output may not be anywhere in the source tree ==="
+# Every one of these was a build that destroyed one of its own inputs and said
+# nothing, or said the wrong thing. They are kept as assertions because the
+# shapes are still expressible: the roots are directories of files and the
+# output is a path somebody types beside them.
+report "section: output"
+echo "=== the output may not be inside anything this build reads ==="
+T="$(tree output)"
 # Three names, because the refusal is about the directory and not about a file:
-# a part that exists, a part that does not, and the include list itself. Each
-# one would be truncated before it was read.
-for nt_out in "neutrino/js/message.js" "neutrino/js/nothing-here.js" "neutrino/skeleton.cmd"; do
-    T="$(tree newclobber)"
-    NT_WAS="$(size "$T/$nt_out")"
-    bash "$T/build.sh" --tier=tight "$WORK/app-tiers.js" "$T/$nt_out" > "$WORK/nc.log" 2>&1
-    eq "an output at $nt_out is refused" "$([ "$?" -eq 0 ] && echo built || echo refused)" "refused"
-    eq "and $nt_out is untouched" "$(size "$T/$nt_out")" "$NT_WAS"
-    eq "and it says the tree is the problem" \
-       "$(grep -c 'the output is inside' "$WORK/nc.log" | head -1)" "1"
+# the part that used to be the template, a part that never was, and a name in
+# there that does not exist yet.
+for nt_out in neutrino/skeleton.cmd neutrino/js/message.js neutrino/anything.cmd; do
+    rm -f "$WORK/marker"
+    cp "$T/$nt_out" "$WORK/marker" 2>/dev/null
+    bash "$T/neutrino/assemble.sh" "$T/$nt_out" > "$WORK/out.log" 2>&1
+    eq "the output $nt_out is refused" "$?" "1"
+    eq "and says why" "$(grep -c 'that tree is what this build reads' "$WORK/out.log" | head -1)" "1"
+    if [ -f "$WORK/marker" ]; then
+        cmp -s "$WORK/marker" "$T/$nt_out" && pass "and $nt_out is untouched" \
+            || fail "$nt_out was modified by a build that refused"
+    fi
 done
-
-# The control. The refusal is the source tree's and not every path with the word
-# in it, or "refused" above is also what a build.sh that refuses everything
-# reports.
-T="$(tree newclobber-ok)"
+# The control. The refusal is about the roots and not about every path with the
+# word neutrino in it, or "refused" above is also what an assembler that refuses
+# everything reports.
 mkdir -p "$T/neutrino-apps"
-bash "$T/build.sh" --tier=tight "$WORK/app-tiers.js" "$T/neutrino-apps/out.cmd" > /dev/null 2>&1
-eq "an output beside the tree still builds" "$?" "0"
+bash "$T/neutrino/assemble.sh" "$T/neutrino-apps/out.cmd" > /dev/null 2>&1
+eq "a directory merely named like the source is not refused" "$?" "0"
 
-# =====================================================================
-# The output named as a directory
-# =====================================================================
-# `mv -f "$TMP" "$OUTPUT"` moves a file into a directory of that name, so an
-# output that already existed as one came out as `<dir>/<name>.tmp.<pid>`: not
-# at the path that was asked for, under a name that reads as leftover rubbish,
-# from a build that exited 0.
-report "section: output-as-directory"
-echo "=== a directory is not an artifact path ==="
-T="$(tree dirout)"
+# An app is a root too, so its own parts are unnameable as an output. This is
+# the shape that used to be spelled "the output is one of the inputs", and it
+# used to cost the app: the redirection belonged to the sed on the right of the
+# pipeline and the cat on the left ran beside it, so the assembler read back
+# what it had already written and a 116-byte app came out 213225 bytes.
+cp "$APP_PLAIN/app.js" "$WORK/app-before.js"
+bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$APP_PLAIN/app.js" > "$WORK/selfout.log" 2>&1
+eq "an overlay's own part is refused as the output" "$?" "1"
+cmp -s "$WORK/app-before.js" "$APP_PLAIN/app.js" && pass "and the app is untouched" \
+    || fail "the app was destroyed by a build that refused"
+
+# A directory is not an output either, and it used to be accepted: `mv -f` moves
+# a file *into* a directory of that name, so the artifact came out as
+# `<dir>/<name>.tmp.<pid>` -- not at the path that was asked for, under a name
+# that reads as leftover rubbish, from a build that exited 0.
 mkdir -p "$T/adir"
-bash "$T/build.sh" "$WORK/app-plain.js" "$T/adir" > "$WORK/dirout.log" 2>&1
-eq "an output that is a directory is refused" "$([ "$?" -eq 0 ] && echo built || echo refused)" "refused"
+bash "$T/neutrino/assemble.sh" "$T/adir" > "$WORK/dirout.log" 2>&1
+eq "a directory named as the output is refused" "$?" "1"
+eq "and says which it wanted" \
+   "$(grep -c "the output is the artifact's own path" "$WORK/dirout.log" | head -1)" "1"
 eq "and nothing was written into it" "$(ls -A "$T/adir" | wc -l | tr -d ' ')" "0"
-eq "and it says what an output is" \
-   "$(grep -c 'is a directory' "$WORK/dirout.log" | head -1)" "1"
+
+# And nothing this program writes outlives a failure. build.sh wrote three
+# temporaries beside the output and cleared its trap after the `mv`, which left
+# two of them there under names nobody would think to delete -- 153 KB and the
+# app's own source, published to the website by pages/build.sh, which copies
+# whatever is in its output directory.
+rm -rf "$T/clean"; mkdir -p "$T/clean"
+bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/clean/out.cmd" >/dev/null 2>&1
+eq "a build that succeeds leaves one file behind" \
+   "$(ls -A "$T/clean" | wc -l | tr -d ' ')" "1"
 
 # =====================================================================
 # The other build.sh, and the source file it removed
 # =====================================================================
-# There are two programs called build.sh here and they take different things.
-# The one under test assembles an app -- `build.sh <app.js> <output.cmd>`. The
-# one in pages/ assembles the published site and takes at most one argument, the
-# directory to write it into, which it removes before it writes anything.
+# There used to be two programs called build.sh here and they took different
+# things: one assembled an app, the other assembles the site. From inside
+# pages/, `./build.sh demo.js demo.cmd` was the site builder with `demo.js` as
+# its output directory, and it removed pages/demo.js and left an empty directory
+# in its place. Measured, twice, by somebody reading the other one's usage line.
 #
-# So from inside pages/, `./build.sh demo.js demo.cmd` is the site builder with
-# `demo.js` as its output directory: it removed pages/demo.js and left an empty
-# directory where the sample app used to be, then failed on the app it could no
-# longer read. Measured twice, by somebody reading the other program's usage
-# line -- which is the shape of mistake a usage line cannot fix on its own,
-# because both programs answer to `./build.sh`.
-#
-# Asserted here rather than in a suite of its own because it is the same hazard
-# the three sections above cover: an output path that is somebody's source.
+# The name collision is gone -- an app is assembled by neutrino/assemble.sh --
+# but the shape of the mistake is not, because pages/build.sh still starts by
+# removing the directory it is handed.
 report "section: pages"
-echo "=== the site builder does not remove what it was not given ==="
+echo "=== the site builder refuses anything it was not meant to remove ==="
 PAGES="$ROOT/pages/build.sh"
 if [ ! -f "$PAGES" ]; then
     fail "no pages/build.sh in this tree; nothing below is a reading"
 else
-    T="$(tree pages)"
-    mkdir -p "$T/site" "$T/notasite"
-    printf 'var app = 1;\n' > "$T/notasite/demo.js"
-    printf 'x\n' > "$T/afile"
-    # Measured rather than written down: what is asserted is that the bytes did
-    # not move, and a length in the assertion is a second thing to keep right.
-    PAGES_SRC="$(size "$T/notasite/demo.js")"
-    PAGES_FILE="$(size "$T/afile")"
-
-    pages_refuses() {
-        nt_what="$1"; shift
-        bash "$PAGES" "$@" > "$WORK/pages.log" 2>&1
-        if [ "$?" = "0" ]; then
-            fail "$nt_what was accepted"
-        elif ! grep -q '^error:' "$WORK/pages.log"; then
-            fail "$nt_what was refused without saying why"
-        else
-            pass "$nt_what is refused ($(sed -n '1s/^error: //p' "$WORK/pages.log"))"
-        fi
-    }
-
-    pages_refuses "the app build's two arguments" "$T/site" "out.cmd"
-    pages_refuses "an output that is a file"      "$T/afile"
-    pages_refuses "a directory holding source"    "$T/notasite"
-
-    eq "and the source it would have removed is still there" \
-       "$(size "$T/notasite/demo.js")" "$PAGES_SRC"
-    eq "and the file it would have removed is still there" \
-       "$(size "$T/afile")" "$PAGES_FILE"
-
-    # The control: an empty directory is a legitimate output and has to get past
-    # the guard. It cannot be run to completion on every lane -- the published
-    # binaries need zig -- so what is asserted is that the refusal above is
-    # about the path and not about every path.
-    bash "$PAGES" "$T/site" > "$WORK/pagesok.log" 2>&1
-    eq "an empty directory is not refused by the guard" \
-       "$(grep -c '^error: .*directory' "$WORK/pagesok.log" | head -1)" "0"
+    rm -rf "$WORK/pagesdir"; mkdir -p "$WORK/pagesdir"
+    printf 'keep me\n' > "$WORK/pagesdir/notes.txt"
+    bash "$PAGES" "$WORK/pagesdir" > "$WORK/pages.log" 2>&1
+    eq "a directory it did not write is refused" "$?" "1"
+    eq "and the file in it survives" "$(size "$WORK/pagesdir/notes.txt")" "8"
+    printf 'an app\n' > "$WORK/anapp.js"
+    bash "$PAGES" "$WORK/anapp.js" "$WORK/out.cmd" > "$WORK/pages2.log" 2>&1
+    eq "an app build passed to it is refused" "$?" "1"
+    eq "and the app survives" "$(size "$WORK/anapp.js")" "7"
+    eq "and it says which program was meant" \
+       "$(grep -c 'that is a different program' "$WORK/pages2.log" | head -1)" "1"
 fi
 
 # =====================================================================
-# The output named as the app
+# The tier list, and how the shell comes to have it
 # =====================================================================
-report "section: output-as-app"
-echo "=== the output may not be the app ==="
-T="$(tree oldself)"
-cp "$WORK/app-tiers.js" "$T/a.js"
-# Bounded by the kernel and by a clock, and this is the one invocation in the
-# suite that needs both.
+# There used to be four `//#` sentinels in the artifact and a section here about
+# keeping them intact. They were splice targets: a second program stamped the
+# tier list into the JavaScript region, so the shell had to search the built
+# file for it and had to be told where to stop looking.
 #
-# The old assembler builds `{ sed template; cat "$APP_JS"; sed template; }` into
-# a pipeline whose last stage redirects over $OUTPUT -- and here $APP_JS and
-# $OUTPUT are the same file. So `cat` reads the bytes the final `sed` is still
-# writing, hands them back, and they are written again. Whether that ever
-# reaches EOF is a scheduling race between two processes and not a property of
-# any input, which is what the note about 213225 against 164073 was already
-# saying without naming the mechanism.
-#
-# The race was winnable while the template was small and stopped being winnable
-# when it grew: measured on this machine, 3713 lines of template terminated with
-# a 240 KB file and 4281 lines did not terminate at all, having written 2.1 GB in
-# twenty-five seconds and still going. That is the suite's own rule being broken
-# -- a program whose exit it does not control -- so the exit is controlled here
-# rather than hoped for. RLIMIT_FSIZE is the same instrument netinstall uses on
-# a downloader that cannot express a bound of its own.
-#
-# What is asserted does not change, because the runaway was never the finding.
-# The finding is that the old assembler destroyed the app it was handed and
-# said nothing, and both halves of that are true the instant the redirection
-# truncates -- long before the loop this now stops.
-#
-# The clock is optional and the file bound is not. `timeout` is coreutils, and
-# macOS ships neither it nor gtimeout -- there this read rc=127, the assembler
-# never ran at all, and the app was therefore still intact, so the before-state
-# asserted the exact opposite of the thing it exists to measure. RLIMIT_FSIZE
-# needs no such program and is the bound that actually stops this anyway, since
-# what runs away here is a file that grows without end.
-OS_LOG="$WORK/oldself.log"
-OS_CLOCK=""
-command -v timeout >/dev/null 2>&1 && OS_CLOCK="timeout 20"
-( ulimit -f 8192 2>/dev/null
-  exec $OS_CLOCK bash "$T/oldbuild.sh" --tier=tight "$T/a.js" "$T/a.js" ) \
-    > "$OS_LOG" 2>&1
-OS_RC=$?
-OS_SIZE="$(size "$T/a.js")"
-report "before: rc=$OS_RC app=$OS_SIZE was=$APP_TIERS_BYTES"
-# Asserted as "not the app any more" and never to a length: what the file holds
-# is however far the loop above got before it was stopped.
-eq "before, the app was overwritten" "$([ "$OS_SIZE" = "$APP_TIERS_BYTES" ] && echo intact || echo overwritten)" "overwritten"
-# Read off what it printed rather than off its status. The status is downstream
-# of the race -- 0 where cat won, a signal where the bound stopped it -- while
-# the refusal it never printed is the thing the after-state adds and is the
-# same reading on every lane.
-eq "before, it said nothing about it" "$(grep -c '^Error:' "$OS_LOG")" "0"
+# Nothing is stamped. sh/tiers.sh includes config.json as a here document of its
+# own, the way sh/qt.sh includes qml/window.qml, so the shell has the value
+# rather than going to look for it -- and the JavaScript region has the same
+# file, included by the same assembler in the same pass. What that removes is
+# not a check but the reason for one.
+report "section: tiers"
+echo "=== the shell and the javascript carry one file, included twice ==="
+T="$(tree tiers)"
+nt_d="$(confdir tiers)"
+cat > "$nt_d/config.json" <<'EOF'
+{
+    "tiers": "default,tight,offline",
+    "title": "S",
+    "width": 900,
+    "height": 600,
+    "background": "auto",
+    "decorations": "auto"
+}
+EOF
+bash "$T/neutrino/assemble.sh" --overlay "$nt_d" --overlay "$APP_TIERS" "$T/out.cmd" >/dev/null 2>&1
+eq "a build with a full tier list succeeds" "$?" "0"
 
-T="$(tree newself)"
-cp "$WORK/app-tiers.js" "$T/a.js"
-bash "$T/build.sh" --tier=tight "$T/a.js" "$T/a.js" > /dev/null 2>&1
-eq "after, it refuses" "$([ "$?" -eq 0 ] && echo built || echo refused)" "refused"
-eq "after, the app is untouched" "$(size "$T/a.js")" "$APP_TIERS_BYTES"
+eq "the artifact carries no // # markers at all" \
+   "$(grep -c '//#' "$T/out.cmd" || true)" "0"
+
+# The two copies, read the way each language reaches its own. The shell's is the
+# here document; the JavaScript's is the config object. They are one file, so
+# this is asserting the assembler put the same bytes in both places.
+nt_shellcopy() {
+    sed -n "/<<'NEUTRINO_CONFIG_JSON'/,/^NEUTRINO_CONFIG_JSON\$/p" "$1" |
+        sed -e '1d' -e '$d'
+}
+nt_jscopy() {
+    sed -n '/^        config:$/,/^}$/p' "$1" | sed -e '1d'
+}
+if [ -z "$(nt_shellcopy "$T/out.cmd")" ]; then
+    fail "no here document in the shell region; the two readings below measured nothing"
+else
+    if [ "$(nt_shellcopy "$T/out.cmd")" = "$(nt_jscopy "$T/out.cmd")" ]; then
+        pass "the shell's copy and the JavaScript's are the same bytes"
+    else
+        fail "the two copies of config.json differ"
+    fi
+fi
+
+# And the app cannot reach either of them. This is the defect the sentinels
+# existed for, asserted the other way round: the app carries a line shaped like
+# the stamp, and the shell never looks at a file the app is in.
+eq "the tier list the shell reads is the config's" \
+   "$(nt_shellcopy "$T/out.cmd" | sed -n 's/^ *"tiers": "\([a-z,]*\)".*$/\1/p' | head -1)" \
+   "default,tight,offline"
+
+# The shell's sed and the assembler's validator are two programs in two
+# languages reading one format, and the shape they accept has to be the same
+# shape. It was not: the validator trims a tab as readily as a space, the sed
+# was anchored `^ *`, and a config.json indented with tabs therefore validated,
+# assembled, and read as nothing -- which is `has_tier` answering false for
+# every tier a build had named. Asserted on both indents, and on the value
+# rather than on the exit status, because a build that refuses and a build that
+# reads an empty list both leave the tier unapplied.
+nt_tierof() {
+    nt_shellcopy "$1" | sed -n 's/^[[:space:]]*"tiers": "\([a-z,]*\)".*$/\1/p' | head -1
+}
+for nt_indent in spaces tabs; do
+    nt_d="$(confdir indent)"
+    if [ "$nt_indent" = tabs ]; then nt_pad="$(printf '\t')"; else nt_pad="    "; fi
+    {
+        printf '{\n'
+        printf '%s"tiers": "default,tight",\n' "$nt_pad"
+        printf '%s"title": "S",\n' "$nt_pad"
+        printf '%s"width": 900,\n' "$nt_pad"
+        printf '%s"height": 600,\n' "$nt_pad"
+        printf '%s"background": "auto",\n' "$nt_pad"
+        printf '%s"decorations": "auto"\n' "$nt_pad"
+        printf '}\n'
+    } > "$nt_d/config.json"
+    rm -f "$T/indent.cmd"
+    bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/indent.cmd" >/dev/null 2>&1
+    eq "a config indented with $nt_indent builds" "$?" "0"
+    eq "and the shell reads its tier list ($nt_indent)" \
+       "$(nt_tierof "$T/indent.cmd")" "default,tight"
+done
+
+# config.json is in the shell region now, which is inside the block comment the
+# whole file opens with and above the doctype the document is cut from. Two
+# sequences it therefore may not carry, and neither is escapable.
+badconf_shape() {
+    nt_name="$1"; nt_d="$(confdir shape)"
+    cat > "$nt_d/config.json"
+    rm -f "$T/shape.cmd"
+    bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/shape.cmd" > "$WORK/shape.log" 2>&1
+    if [ "$?" = "0" ]; then
+        fail "$nt_name was accepted"
+    else
+        pass "$nt_name is refused"
+    fi
+    eq "and no artifact is left behind ($nt_name)" "$(size "$T/shape.cmd")" "missing"
+}
+badconf_shape "a title closing the block comment" <<'EOF'
+{
+    "tiers": "default",
+    "title": "done */ here",
+    "width": 900,
+    "height": 600,
+    "background": "auto",
+    "decorations": "auto"
+}
+EOF
+badconf_shape "a title naming a doctype" <<'EOF'
+{
+    "tiers": "default",
+    "title": "about <!doctype html>",
+    "width": 900,
+    "height": 600,
+    "background": "auto",
+    "decorations": "auto"
+}
+EOF
 
 # =====================================================================
-# The app's own source
+# The config the app declares
 # =====================================================================
-report "section: app-source"
-echo "=== the assembler does not edit the app it is given ==="
-T="$(tree appstamp)"
-bash "$T/oldbuild.sh" --tier=tight "$WORK/app-tiers.js" "$T/old.cmd" > /dev/null 2>&1
-bash "$T/build.sh"    --tier=tight "$WORK/app-tiers.js" "$T/new.cmd" > /dev/null 2>&1
-eq "before, the app's line was rewritten" \
-   "$(grep -c '^    tiers: "offline,tight",$' "$T/old.cmd" | head -1)" "0"
-eq "after, the app's line is verbatim" \
-   "$(grep -c '^    tiers: "offline,tight",$' "$T/new.cmd" | head -1)" "1"
-eq "after, there is still exactly one stamp between the sentinels" \
-   "$(sed -n '/\/\/#TIER_START/,/\/\/#TIER_END/p' "$T/new.cmd" | grep -c '^ *tiers: "[a-z,]*",' | head -1)" "1"
-eq "and it is the tier that was asked for" \
-   "$(sed -n '/\/\/#TIER_START/,/\/\/#TIER_END/s/^ *tiers: "\([a-z,]*\)",.*$/\1/p' "$T/new.cmd" | head -1)" \
-   "default,tight"
-# The half the before-state could not tell apart: two stamp-shaped lines in one
-# artifact is now the normal case, and the check has to still be the stamp's.
-eq "the artifact has two stamp-shaped lines and that is fine" \
-   "$(grep -c '^ *tiers: "[a-z,]*",' "$T/new.cmd" | head -1)" "2"
-
-# =====================================================================
-# A template, or an app, that is not shaped like one
-# =====================================================================
-report "section: sentinels"
-echo "=== the sentinels are counted before anything is spliced ==="
-T="$(tree marker)"
-# A template missing a splice marker is not a build that fails: sed prints the
-# whole file when a range never matches, and what comes out is the app appended
-# past the end of the document.
+# Five window values and the tier list, laid in verbatim because JSON is a
+# JavaScript object literal. There is no serializer, so nothing here can write a
+# value differently from the way the author spelled it -- and nothing needs a
+# read-back to say it landed, which is what most of this file used to be.
 #
-# Taken out of the part that carries it rather than out of an assembled file,
-# because an assembled file is not what build.sh reads any more. This is also
-# the assertion that the count is run on the assembly and not on the parts: the
-# marker is one line of one file in a tree of thirty-eight.
-# Unanchored, because a CRLF checkout puts a return between the marker and the
-# end of the line and an anchored pattern then matches nothing -- which is a
-# suite that quietly measures a build with its marker still in it.
-sed 's|^\( *\)//#RUNWEB_START|\1// removed by assemble.sh|' "$T/neutrino/js/run.js" > "$T/broken.js"
-mv "$T/broken.js" "$T/neutrino/js/run.js"
-bash "$T/build.sh" --tier=tight "$WORK/app-plain.js" "$T/out.cmd" > "$WORK/marker.log" 2>&1
-eq "a template missing a marker is refused" "$([ "$?" -eq 0 ] && echo built || echo refused)" "refused"
-eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
+# What is left is refusing a shape the launcher could not use. Every one of
+# these produces a valid artifact that is quietly wrong if it is let through.
+report "section: config"
+echo "=== a config the launcher could not use is refused ==="
+T="$(tree config)"
+BASE_TIERS="$(default_of tiers)"
 
-T="$(tree appmarker)"
-printf 'document.title = "x";\n//#RUNWEB_END\n' > "$WORK/app-marker.js"
-bash "$T/build.sh" --tier=tight "$WORK/app-marker.js" "$T/out.cmd" > "$WORK/appmarker.log" 2>&1
-eq "an app carrying a marker line is refused" "$([ "$?" -eq 0 ] && echo built || echo refused)" "refused"
-eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
-eq "and no temporary of any of the three kinds is left behind either" \
-   "$(ls "$T" | grep -c '\.\(tmp\|tpl\|app\)\.' | head -1)" "0"
+# Written as one string so a case is one line and reads as the file it stands
+# for. `|` separates the six values in the order they appear in config.json.
+mkconf() {
+    printf '{\n    "tiers": "%s",\n    "title": "%s",\n    "width": %s,\n' "$1" "$2" "$3"
+    printf '    "height": %s,\n    "background": "%s",\n    "decorations": "%s"\n}\n' "$4" "$5" "$6"
+}
+accepts() {
+    nt_name="$1"; shift
+    nt_d="$(confdir case)"
+    mkconf "$@" > "$nt_d/config.json"
+    rm -f "$T/out.cmd"
+    bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/conf.log" 2>&1
+    if [ "$?" != "0" ]; then
+        fail "$nt_name was refused: $(sed -n '1p' "$WORK/conf.log")"
+    else
+        pass "$nt_name builds"
+    fi
+}
+refuses() {
+    nt_name="$1"; shift
+    nt_d="$(confdir case)"
+    mkconf "$@" > "$nt_d/config.json"
+    rm -f "$T/out.cmd"
+    bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/conf.log" 2>&1
+    if [ "$?" = "0" ]; then
+        fail "$nt_name was accepted"
+    elif ! grep -q 'config.json' "$WORK/conf.log"; then
+        fail "$nt_name was refused without naming the file"
+    else
+        pass "$nt_name is refused"
+    fi
+    eq "and no artifact is left behind ($nt_name)" "$(size "$T/out.cmd")" "missing"
+}
 
-# And the same on the way out of a build that worked, which is the half that was
-# missing and the half that cost something. build.sh writes three files beside
-# the artifact -- the assembled template, the stripped app, and the artifact
-# before it is moved into place -- and it used to disarm the trap after the
-# move, back when the move had already consumed the only one there was. So a
-# successful build left `out.cmd.tpl.NNNN` and `out.cmd.app.NNNN` next to
-# `out.cmd`: 153 KB and the app source, under names nobody would think to
-# delete. pages/build.sh publishes whatever is in its output directory, so both
-# of them went to the website.
-T="$(tree tmpclean)"
-bash "$T/build.sh" --tier=tight "$WORK/app-plain.js" "$T/out.cmd" > /dev/null 2>&1
-eq "a build that works leaves the artifact" "$([ -f "$T/out.cmd" ] && echo yes || echo no)" "yes"
-eq "and nothing beside it" \
-   "$(ls "$T" | grep -c '\.\(tmp\|tpl\|app\)\.' | head -1)" "0"
+# The control first: the ordinary case has to build, or every refusal below is
+# also what a checker that refuses everything reports.
+accepts "an ordinary config" "default" "Sample" 1024 768 "#12141a" "auto"
+accepts "a config naming every tier" "default,tight,offline,testing" "S" 10 20 "auto" "none"
+for nt_bg in '#12141a' '#FFF' '#000000' '#AbCdEf' 'auto'; do
+    accepts "the background $nt_bg" "default" "S" 900 600 "$nt_bg" "auto"
+done
+
+# The background, which is the config value with a shape. `system`, `theme` and
+# `none` are in here because they are what somebody reaches for when `auto` is
+# the word they half-remember, and a build that took one and painted white would
+# be the value failing silently: every lane declines to paint a colour it cannot
+# read, so the window comes up in the theme colour, which is the bug the value
+# exists to close reached by a different route and with nothing said.
+for nt_bg in 'white' 'rgb(1,2,3)' '#12' '#1234' '#12345' '#1234567' '12141a' '#12141g' \
+             'system' 'theme' 'none' 'Auto' 'AUTO' ''; do
+    refuses "the background [${nt_bg:-empty}]" "default" "S" 900 600 "$nt_bg" "auto"
+done
+
+# The frame, which is the value whose wrong answers are all words. Every lane
+# compares against `none` and keeps its frame for anything else, so a
+# misspelling is not a build that fails, it is a build that comes up with the
+# title bar the config asked to remove and says nothing at all. `false`, `off`,
+# `no` and `0` are what somebody reaches for who is thinking of a boolean;
+# `frameless`, `chromeless` and `borderless` are what somebody reaches for who
+# is thinking of another launcher.
+for nt_dec in auto none; do
+    accepts "the decorations $nt_dec" "default" "S" 900 600 "auto" "$nt_dec"
+done
+for nt_dec in 'false' 'off' 'no' '0' 'true' 'on' 'yes' '1' \
+              'frameless' 'chromeless' 'borderless' 'None' 'NONE' 'system' ''; do
+    refuses "the decorations [${nt_dec:-empty}]" "default" "S" 900 600 "auto" "$nt_dec"
+done
+
+# The size. Zero is the one that matters: a window sized zero is a launch that
+# comes up with nothing on screen and no error anywhere, and it is the floor the
+# message parser already holds resize to.
+for nt_size in "0 600" "900 0" "-1 600" "9.5 600" "tall 600" '"900" 600'; do
+    set -- $nt_size
+    refuses "the size [$1 x $2]" "default" "S" "$1" "$2" "auto" "auto"
+done
+accepts "a one-pixel window" "default" "S" 1 1 "auto" "auto"
+
+# The tier list. `default` is not optional and it is not added: build.sh used to
+# put it in front of whatever it was handed, which meant the list in the
+# artifact was not the list anyone wrote. A file that declares the confinement
+# declares all of it.
+refuses "a tier list without default" "tight" "S" 900 600 "auto" "auto"
+refuses "an unknown tier" "default,paranoid" "S" 900 600 "auto" "auto"
+refuses "a tier named twice" "default,tight,tight" "S" 900 600 "auto" "auto"
+refuses "an empty tier list" "" "S" 900 600 "auto" "auto"
+refuses "an empty title" "default" "" 900 600 "auto" "auto"
+
+# The shapes that are not a flat object of the six keys. There is no merge in
+# the assembler -- an overlay replaces config.json whole -- so a file naming
+# only a title would take the rest from nowhere.
+badconf() {
+    nt_name="$1"; nt_d="$(confdir case)"
+    cat > "$nt_d/config.json"
+    rm -f "$T/out.cmd"
+    bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/conf.log" 2>&1
+    if [ "$?" = "0" ]; then fail "$nt_name was accepted"; else pass "$nt_name is refused"; fi
+}
+badconf "a config missing a key" <<'EOF'
+{
+    "tiers": "default",
+    "title": "S"
+}
+EOF
+badconf "a config naming an unknown key" <<'EOF'
+{
+    "tiers": "default",
+    "title": "S",
+    "width": 900,
+    "height": 600,
+    "background": "auto",
+    "decorations": "auto",
+    "url": "https://example.invalid/"
+}
+EOF
+badconf "a config naming a key twice" <<'EOF'
+{
+    "tiers": "default",
+    "title": "S",
+    "title": "T",
+    "width": 900,
+    "height": 600,
+    "background": "auto",
+    "decorations": "auto"
+}
+EOF
+badconf "a config that is not an object" <<'EOF'
+"just a string"
+EOF
+badconf "a config with something after the close" <<'EOF'
+{
+    "tiers": "default",
+    "title": "S",
+    "width": 900,
+    "height": 600,
+    "background": "auto",
+    "decorations": "auto"
+}
+trailing
+EOF
+badconf "an empty config" <<'EOF'
+EOF
+
+# And the artifact a good config produces is JavaScript. The way this went wrong
+# before produced a file no engine could parse from an assembler that exited 0:
+# `height` was the last key when its rule was written, so the rule printed no
+# comma, and `background` arrived after it. Measured on cjs: `SyntaxError:
+# missing } after property list`. Nothing writes the punctuation now -- the file
+# is copied in whole -- and this is the line that says the copy is a literal.
+nt_d="$(confdir good)"
+mkconf "default,tight" "A Title" 10 20 "#010203" "none" > "$nt_d/config.json"
+bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/good.cmd" >/dev/null 2>&1
+eq "a full config builds" "$?" "0"
+for nt_pair in "tiers:default,tight" "title:A Title" "width:10" "height:20" \
+               "background:#010203" "decorations:none"; do
+    eq "the ${nt_pair%%:*} reaches the artifact" \
+       "$(conf "$T/good.cmd" "${nt_pair%%:*}")" "${nt_pair#*:}"
+done
+if command -v node >/dev/null 2>&1; then
+    cp "$T/good.cmd" "$T/good.js"
+    node --check "$T/good.js" >/dev/null 2>&1
+    eq "and the artifact still parses as JavaScript" "$?" "0"
+else
+    report "node absent: the config artifact was not parsed"
+fi
+
+# A title carrying a quote or a backslash was refused by build.sh, because it
+# was stamped into a JavaScript string literal as raw text. JSON escapes what a
+# JavaScript string escapes, so the author's own escaping is the answer and
+# there is nothing here to get wrong.
+nt_d="$(confdir quoted)"
+cat > "$nt_d/config.json" <<'EOF'
+{
+    "tiers": "default",
+    "title": "He said \"hello\" \\ goodbye",
+    "width": 900,
+    "height": 600,
+    "background": "auto",
+    "decorations": "auto"
+}
+EOF
+bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/quoted.cmd" >/dev/null 2>&1
+eq "a title carrying a quote and a backslash builds" "$?" "0"
+if command -v node >/dev/null 2>&1; then
+    cp "$T/quoted.cmd" "$T/quoted.js"
+    node --check "$T/quoted.js" >/dev/null 2>&1
+    eq "and the artifact still parses as JavaScript" "$?" "0"
+fi
+
+# =====================================================================
+# What the early shell may not carry
+# =====================================================================
+# Each of these produces a different broken artifact if it is let through. The
+# star-slash is the one that matters most: every engine but jsc reads the whole
+# shell region as one block comment, so a close in the document spills the shell
+# into four JavaScript parsers at once -- and the file still looks like a
+# neutrino app.
+report "section: early-shell-refusals"
+echo "=== the sequences that are this file's structure are refused ==="
+T="$(tree shell-refuse)"
+shellrefuses() {
+    nt_name="$1"; nt_part="$2"
+    nt_d="$WORK/sr"; rm -rf "$nt_d"; mkdir -p "$nt_d"
+    cat > "$nt_d/$nt_part"
+    rm -f "$T/out.cmd"
+    bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/refuse.log" 2>&1
+    if [ "$?" = "0" ]; then
+        fail "$nt_name was accepted"
+    elif ! grep -q 'the early shell contains' "$WORK/refuse.log"; then
+        fail "$nt_name was refused without saying why"
+    else
+        pass "$nt_name is refused ($(sed -n 's/.*contains `\([^`]*\)`.*/\1/p' "$WORK/refuse.log" | head -1))"
+    fi
+    eq "and no artifact is left behind ($nt_name)" "$(size "$T/out.cmd")" "missing"
+}
+# The pair has to survive comment removal to be a hazard, so it is written
+# inside a string rather than inside a comment -- a comment carrying it would be
+# taken off by the strip and prove nothing.
+shellrefuses "a style closing the block comment" style.css <<'EOF'
+p::after{content:"*/"}
+EOF
+shellrefuses "a body opening a script" body.html <<'EOF'
+<p>x</p><script>alert(1)</script>
+EOF
+shellrefuses "a body naming a second doctype" body.html <<'EOF'
+<p><!doctype html></p>
+EOF
+shellrefuses "a body carrying a second policy" body.html <<'EOF'
+<meta http-equiv="Content-Security-Policy" content="x">
+EOF
+
+# The control: an ordinary style and an ordinary body build, or the four above
+# are also what an assembler that refuses every overlay reports.
+nt_d="$WORK/sr-ok"; rm -rf "$nt_d"; mkdir -p "$nt_d"
+printf 'q{color:green}\n' > "$nt_d/style.css"
+printf '<p id=x>hi</p>\n' > "$nt_d/body.html"
+bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/ok.cmd" >/dev/null 2>&1
+eq "an ordinary early shell builds" "$?" "0"
+DOCREGION() {
+    sed -n '/^<!doctype html><html>/,/^<script type=text\/javascript>/p' "$1"
+}
+eq "and the style is the one that was given" \
+   "$(DOCREGION "$T/ok.cmd" | grep -c 'q{color:green}' | head -1)" "1"
+eq "and the body is the one that was given" \
+   "$(DOCREGION "$T/ok.cmd" | grep -c '<p id=x>hi</p>' | head -1)" "1"
+# The content policy is the launcher's own, carried through rather than written
+# by the assembler, because the offline tier is one string replace against it. A
+# second spelling would be one that can drift, and the drift shows up as a build
+# that refuses at launch instead of at assembly.
+eq "and the policy the offline tier swaps is there exactly once" \
+   "$(DOCREGION "$T/ok.cmd" | grep -c 'Content-Security-Policy' | head -1)" "1"
 
 # =====================================================================
 # What the artifact reads back at launch
@@ -716,12 +1021,13 @@ eq "and nothing beside it" \
 # one: `rc=3` says execution reached the search, and not merely that the refusal
 # did not print.
 report "launch section: substituting the engine search"
-echo "=== an artifact whose stamp cannot be read does not launch at default ==="
+echo "=== an artifact whose tier list cannot be read does not launch at default ==="
 T="$(tree runtime)"
-bash "$T/build.sh" --tier=tight,offline "$WORK/app-tiers.js" "$T/out.cmd" > /dev/null 2>&1
-eq "the stamp reads back between the sentinels" \
-   "$(sed -n '/\/\/#TIER_START/,/\/\/#TIER_END/s/^ *tiers: "\([a-z,]*\)",.*$/\1/p' "$T/out.cmd" | head -1)" \
-   "default,tight,offline"
+nt_d="$(confdir runtime)"
+mkconf "default,tight,offline" "S" 900 600 "auto" "auto" > "$nt_d/config.json"
+bash "$T/neutrino/assemble.sh" --overlay "$nt_d" --overlay "$APP_TIERS" "$T/out.cmd" >/dev/null 2>&1
+eq "the tier list the shell would read is the config's" \
+   "$(conf "$T/out.cmd" tiers)" "default,tight,offline"
 
 # The anchor is the reserved-status assignment rather than a `command -v` line,
 # because there is no longer one line that names the engine. The search is a
@@ -731,10 +1037,14 @@ eq "the stamp reads back between the sentinels" \
 # engine". Inserting the halt above it still stops before anything is launched.
 SEARCH='nt_ex_noengine=69'
 HITS="$(grep -cF "$SEARCH" "$T/out.cmd" | head -1)"
-STAMP_LINE='        tiers: "default,tight,offline",'
+# Two, and not one: config.json is included into the shell region as a here
+# document and into the JavaScript region as the config object. Asserted rather
+# than tolerated, because one copy would mean an include stopped resolving and
+# a third would mean something is writing the file that should not be.
+STAMP_LINE='    "tiers": "default,tight,offline",'
 STAMP_HITS="$(grep -cF "$STAMP_LINE" "$T/out.cmd" | head -1)"
-if [ "${HITS:-0}" != "1" ] || [ "${STAMP_HITS:-0}" != "1" ]; then
-    fail "the launcher was rewritten and this suite was not: engine search x${HITS:-0}, stamp x${STAMP_HITS:-0}, wanted 1 each"
+if [ "${HITS:-0}" != "1" ] || [ "${STAMP_HITS:-0}" != "2" ]; then
+    fail "the launcher was rewritten and this suite was not: engine search x${HITS:-0}, tier list x${STAMP_HITS:-0}, wanted 1 and 2"
 else
     # Stops where the engine would have been chosen. Both artifacts get it, so
     # the only difference between the two readings is the stamp.
@@ -748,11 +1058,15 @@ else
         ' "$1" > "$2"
     }
     halt "$T/out.cmd" "$T/intact.cmd"
-    sed 's/^        tiers: "default,tight,offline",$/        tiers : "unreadable",/' "$T/intact.cmd" > "$T/mangled.cmd"
+    # Both copies, because the shell reads its own and the assertion below is
+    # about the shell. A file with one of the two mangled is a file nothing in
+    # this tree can produce.
+    sed 's/^    "tiers": "default,tight,offline",$/    "tiers" : "unreadable",/' \
+        "$T/intact.cmd" > "$T/mangled.cmd"
 
     bash "$T/mangled.cmd" > "$WORK/mangled.log" 2>&1
-    eq "an unreadable stamp refuses to launch" "$?" "1"
-    eq "and says so" "$(grep -c 'no readable tier stamp' "$WORK/mangled.log" | head -1)" "1"
+    eq "an unreadable tier list refuses to launch" "$?" "1"
+    eq "and says so" "$(grep -c 'no readable tier list' "$WORK/mangled.log" | head -1)" "1"
     eq "and it stopped before the engine search" \
        "$(grep -c 'reached the engine search' "$WORK/mangled.log" | head -1)" "0"
 
@@ -760,263 +1074,74 @@ else
     # all the way to where an engine would be chosen. Without it, "the refusal
     # did not print" is also what a launcher that never started reports.
     bash "$T/intact.cmd" > "$WORK/intact.log" 2>&1
-    eq "a readable stamp runs on to the engine search" "$?" "3"
+    eq "a readable tier list runs on to the engine search" "$?" "3"
     eq "and never took the refusal branch" \
-       "$(grep -c 'no readable tier stamp' "$WORK/intact.log" | head -1)" "0"
+       "$(grep -c 'no readable tier list' "$WORK/intact.log" | head -1)" "0"
 fi
 
 # =====================================================================
-# The early shell
+# The sugar the suite builds its apps with
 # =====================================================================
-# Four values that reach the artifact by two different routes -- the style and
-# the body as markup on the document line, the title and the size as a stamp
-# between the config sentinels -- and every one of them is a text substitution
-# with no failure path of its own. A pattern that stops matching produces a file
-# that is valid, runs, and quietly carries the template's value instead of the
-# author's. That is the whole reason build.sh reads each one back, and this is
-# what says the read-back is not itself a no-op.
-report "section: early-shell"
-echo "=== the shell an app is built with is the shell it gets ==="
-T="$(tree shell)"
-printf 'a{color:red}\n' > "$T/s.css"
-printf '<p id=x>hi</p>\n' > "$T/b.html"
-bash "$T/build.sh" --title "Sample" --size 1024x768 \
-     --style "$T/s.css" --body "$T/b.html" \
-     "$WORK/app-plain.js" "$T/out.cmd" > "$WORK/shell.log" 2>&1
-eq "a build with a full shell succeeds" "$?" "0"
-
-docline() { grep -m1 '^<!doctype html><html>' "$1"; }
-# Normalised, and that is not tidiness. These assertions used to compare the
-# raw remainder of the line -- `"Sample",` quotes and comma included -- so
-# adding a key after `height` and moving its comma turned a passing assertion
-# into a failing one about punctuation, next to the real defect it was hiding.
-# What is being asserted is the value.
-conf() {
-    sed -n '/\/\/#CONFIG_START/,/\/\/#CONFIG_END/p' "$1" |
-        sed -n "s/^ *$2: \"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}\$/\1/p" | head -1
-}
-
-eq "the style is the one that was given" \
-   "$(docline "$T/out.cmd" | sed -n 's/.*<style>\(.*\)<\/style>.*/\1/p')" "a{color:red}"
-eq "the body is the one that was given" \
-   "$(docline "$T/out.cmd" | sed -n 's/.*<\/style><\/head><body>//p')" "<p id=x>hi</p>"
-eq "the title is stamped between the sentinels" "$(conf "$T/out.cmd" title)" "Sample"
-eq "the width is too" "$(conf "$T/out.cmd" width)" "1024"
-eq "and the height" "$(conf "$T/out.cmd" height)" "768"
-# The content policy is carried over from the template rather than written out
-# by the assembler, because the offline tier is one string replace against the
-# launcher's own copy of it. A second spelling here is one that can drift, and
-# the drift shows up as a build that refuses at launch instead of at assembly.
-eq "the policy the offline tier swaps survived the splice" \
-   "$(docline "$T/out.cmd" | grep -c 'Content-Security-Policy')" "1"
-eq "and the document line is still one line" \
-   "$(grep -c '^<!doctype html><html>' "$T/out.cmd")" "1"
-
-# The other half of the same rule, and the one a flag-by-flag assembler gets
-# wrong: a value nobody asked to change must come through untouched.
-T="$(tree shell-partial)"
-TPL_STYLE="$(docline "$T/webview.cmd" | sed -n 's/.*<style>\(.*\)<\/style>.*/\1/p')"
-TPL_BODY="$(docline "$T/webview.cmd" | sed -n 's/.*<\/style><\/head><body>//p')"
-printf 'b{color:blue}\n' > "$T/s.css"
-bash "$T/build.sh" --style "$T/s.css" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-eq "the flag that was given applies" \
-   "$(docline "$T/out.cmd" | sed -n 's/.*<style>\(.*\)<\/style>.*/\1/p')" "b{color:blue}"
-eq "and the body nobody named keeps the template's" \
-   "$(docline "$T/out.cmd" | sed -n 's/.*<\/style><\/head><body>//p')" "$TPL_BODY"
-eq "as does the title" "$(conf "$T/out.cmd" title)" "$(conf "$T/webview.cmd" title)"
-
-# =====================================================================
-# What the shell may not carry
-# =====================================================================
-# Each of these is refused rather than escaped, and each produces a different
-# broken artifact if it is not. The star-slash is the one that matters most:
-# every engine but jsc reads the whole shell region as one block comment, so a
-# close in the document line spills 1375 lines of shell into four JavaScript
-# parsers at once -- and the file still looks like a neutrino app.
-report "section: early-shell-refusals"
-echo "=== the sequences that are this file's structure are refused ==="
-T="$(tree shell-refuse)"
-refuses() {
-    nt_name="$1"; nt_flag="$2"; nt_file="$3"
-    rm -f "$T/out.cmd"
-    bash "$T/build.sh" "$nt_flag" "$nt_file" "$WORK/app-plain.js" "$T/out.cmd" \
-        > "$WORK/refuse.log" 2>&1
-    if [ "$?" = "0" ]; then
-        fail "$nt_name was accepted"
-    elif ! grep -q '^Error:' "$WORK/refuse.log"; then
-        fail "$nt_name was refused without saying why"
-    else
-        pass "$nt_name is refused ($(sed -n 's/^Error: [^,]*contains `\([^`]*\)`.*/\1/p' "$WORK/refuse.log" | head -1))"
-    fi
-    eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
-}
-printf 'p::after{content:"*/"}\n'                       > "$T/star.css"
-printf '<p>x</p><script>alert(1)</script>\n'            > "$T/script.html"
-printf '<p><!doctype html></p>\n'                       > "$T/doctype.html"
-printf '<meta http-equiv="Content-Security-Policy" content="x">\n' > "$T/policy.html"
-refuses "a style closing the block comment"  --style "$T/star.css"
-refuses "a body opening a script"            --body   "$T/script.html"
-refuses "a body naming a second doctype"     --body   "$T/doctype.html"
-refuses "a body carrying a second policy"    --body   "$T/policy.html"
-
-# A CSS comment is ordinary and is removed rather than refused -- an author has
-# no reason to expect this file's comment rules to reach into their stylesheet.
-# What is refused is what survives the removal.
-printf '/* a normal comment */\nq{color:green}\n' > "$T/ok.css"
-bash "$T/build.sh" --style "$T/ok.css" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-eq "a stylesheet with an ordinary comment builds" "$?" "0"
-eq "and the comment is gone from the document" \
-   "$(docline "$T/out.cmd" | grep -c 'a normal comment')" "0"
-eq "while the rule after it survived" \
-   "$(docline "$T/out.cmd" | grep -c 'q{color:green}')" "1"
-
-# The title is a JavaScript string in live code, not markup, so its rules are
-# the string's. Refused for the reason parseMessage drops a malformed record
-# rather than repairing it: a window title is not worth a second quoting scheme
-# that has to be right.
-for nt_bad in 'x"y' 'x\y' ''; do
-    rm -f "$T/out.cmd"
-    bash "$T/build.sh" --title "$nt_bad" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-    [ "$?" = "0" ] && fail "the title [$nt_bad] was accepted" \
-                   || pass "the title [${nt_bad:-empty}] is refused"
-done
-# The control: a title with neither is the ordinary case and has to build, or
-# the three refusals above are also what a flag nobody implemented reports.
-bash "$T/build.sh" --title "Ordinary Title" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-eq "an ordinary title builds" "$?" "0"
-eq "and reaches the config" "$(conf "$T/out.cmd" title)" "Ordinary Title"
-for nt_bad in 0x600 900 900xtall 900x0; do
-    rm -f "$T/out.cmd"
-    bash "$T/build.sh" --size "$nt_bad" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-    [ "$?" = "0" ] && fail "--size $nt_bad was accepted" \
-                   || pass "--size $nt_bad is refused"
-done
-
-# The background, which is the one config value with a shape. It is refused here
-# rather than at launch because every lane declines to paint a colour it cannot
-# read -- so an unreadable one comes up in the theme colour, which is precisely
-# the bug the value exists to close, reached by a different route and with
-# nothing said on the way.
-report "section: background"
-echo "=== the background is a colour or it is refused ==="
-T="$(tree background)"
-for nt_ok in '#12141a' '#FFF' '#000000' '#AbCdEf'; do
-    rm -f "$T/out.cmd"
-    bash "$T/build.sh" --background "$nt_ok" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-    eq "--background $nt_ok reaches the config" "$(conf "$T/out.cmd" background)" "$nt_ok"
-done
-# `system`, `theme` and `none` are in here because they are what somebody
-# reaches for when `auto` is the word they half-remember, and a build that took
-# one and painted white would be this flag failing silently all over again.
-for nt_bad in 'white' 'rgb(1,2,3)' '#12' '#1234' '#12345' '#1234567' '12141a' '#12141g' \
-              'system' 'theme' 'none' 'Auto' 'AUTO' ''; do
-    rm -f "$T/out.cmd"
-    bash "$T/build.sh" --background "$nt_bad" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-    [ "$?" = "0" ] && fail "--background [$nt_bad] was accepted" \
-                   || pass "--background [${nt_bad:-empty}] is refused"
-    eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
-done
-bash "$T/build.sh" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-eq "a build that names no background keeps the template's" \
-   "$(conf "$T/out.cmd" background)" "$(conf "$T/webview.cmd" background)"
-
-# And what the template's is, asserted here rather than inferred from the line
-# above -- which passes just as well when both sides are wrong together. `auto`
-# is what makes an unflagged build follow the desktop it is launched on, so a
-# template that quietly went back to carrying a colour would turn the whole
-# feature off and every assertion in this file would still pass.
-eq "and the template's is auto, so that build follows the desktop" \
-   "$(conf "$T/webview.cmd" background)" "auto"
-
-# `auto` is accepted from the flag as well as by omission, so a script can say
-# what it means instead of meaning it by silence. Refusing it would also be a
-# build.sh that cannot reproduce its own default.
-rm -f "$T/out.cmd"
-bash "$T/build.sh" --background auto "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-eq "--background auto reaches the config" "$(conf "$T/out.cmd" background)" "auto"
-
-# The punctuation, asserted directly, because the way it went wrong produced a
-# file no engine could parse from an assembler that exited 0. `height` was the
-# last key when its rule was written, so the rule printed no comma; `background`
-# arrived after it and the object lost the separator between them. Measured on
-# cjs: `SyntaxError: missing } after property list`.
-bash "$T/build.sh" --title A --size 10x20 --background '#010203' \
-     "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-if command -v node >/dev/null 2>&1; then
-    cp "$T/out.cmd" "$T/out.js"
-    node --check "$T/out.js" >/dev/null 2>&1
-    eq "a fully stamped config still parses as JavaScript" "$?" "0"
+# test/mkapp.sh writes the overlay a one-file app would otherwise be a directory
+# for, and it is what every other suite in this tree calls. Its defaults come
+# out of neutrino/config.json rather than being written in it, so the two cannot
+# drift; this is the line that says the reading works at all.
+report "section: mkapp"
+echo "=== the test helper writes the overlay it says it does ==="
+MK="$ROOT/test/mkapp.sh"
+if [ ! -f "$MK" ]; then
+    fail "no test/mkapp.sh in this tree; every other suite builds with it"
 else
-    report "node absent: the stamped config was not parsed"
+    printf 'document.title = "example";\n' > "$WORK/plainapp.js"
+    bash "$MK" "$WORK/plainapp.js" "$WORK/mk-default.cmd" > "$WORK/mk.log" 2>&1
+    eq "a build with no flags succeeds" "$?" "0"
+    for nt_key in tiers title width height background decorations; do
+        eq "and $nt_key is the tree's default" \
+           "$(conf "$WORK/mk-default.cmd" "$nt_key")" "$(default_of "$nt_key")"
+    done
+    eq "and the app is in it" \
+       "$(grep -c 'document.title = "example";' "$WORK/mk-default.cmd" | head -1)" "1"
+
+    # --tier is sugar and adds `default`, the way build.sh's flag did. The
+    # assembler itself refuses a list that leaves it out rather than adding it.
+    bash "$MK" --tier=testing "$WORK/plainapp.js" "$WORK/mk-tier.cmd" >/dev/null 2>&1
+    eq "--tier=testing means testing as well as default" \
+       "$(conf "$WORK/mk-tier.cmd" tiers)" "default,testing"
+    bash "$MK" --tier=testing,offline "$WORK/plainapp.js" "$WORK/mk-two.cmd" >/dev/null 2>&1
+    eq "and two of them compose" \
+       "$(conf "$WORK/mk-two.cmd" tiers)" "default,testing,offline"
+
+    bash "$MK" --title "My App" --size 1024x768 --background '#12141a' --decorations=none \
+        "$WORK/plainapp.js" "$WORK/mk-full.cmd" >/dev/null 2>&1
+    eq "a full set of flags builds" "$?" "0"
+    for nt_pair in "title:My App" "width:1024" "height:768" \
+                   "background:#12141a" "decorations:none"; do
+        eq "and the ${nt_pair%%:*} reaches the artifact" \
+           "$(conf "$WORK/mk-full.cmd" "${nt_pair%%:*}")" "${nt_pair#*:}"
+    done
+
+    # A bad value goes to the assembler and is refused there, so the helper has
+    # no second copy of the rules to keep right.
+    rm -f "$WORK/mk-bad.cmd"
+    bash "$MK" --background 'chartreuse' "$WORK/plainapp.js" "$WORK/mk-bad.cmd" >/dev/null 2>&1
+    eq "a bad value is refused" "$?" "1"
+    eq "and no artifact is left behind" "$(size "$WORK/mk-bad.cmd")" "missing"
+
+    # And an overlay passed through it still applies, which is how a case builds
+    # one app against two different early shells.
+    nt_d="$WORK/mk-ov"; rm -rf "$nt_d"; mkdir -p "$nt_d"
+    printf 'passed-through{color:red}\n' > "$nt_d/style.css"
+    bash "$MK" --overlay "$nt_d" "$WORK/plainapp.js" "$WORK/mk-ov.cmd" >/dev/null 2>&1
+    eq "an overlay passed through the helper applies" \
+       "$(grep -c 'passed-through' "$WORK/mk-ov.cmd" | head -1)" "1"
+    eq "and the app it wrote still wins" \
+       "$(grep -c 'document.title = "example";' "$WORK/mk-ov.cmd" | head -1)" "1"
 fi
 
-# The frame, which is the second config value with a shape and the first whose
-# wrong answers are all words. It is refused here rather than passed through
-# because every lane compares against `none` and keeps its frame for anything
-# else -- so a misspelling is not a build that fails, it is a build that comes
-# up with the title bar the flag asked to remove and says nothing at all.
-report "section: decorations"
-echo "=== the decorations are one of two words or they are refused ==="
-T="$(tree decorations)"
-for nt_ok in auto none; do
-    rm -f "$T/out.cmd"
-    bash "$T/build.sh" --decorations "$nt_ok" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-    eq "--decorations $nt_ok reaches the config" "$(conf "$T/out.cmd" decorations)" "$nt_ok"
-done
-# `false`, `off`, `no` and `0` are what somebody reaches for who is thinking of
-# a boolean; `frameless`, `chromeless` and `borderless` are what somebody
-# reaches for who is thinking of another launcher; `None` and `NONE` are the
-# case the background's `Auto` already stands for on the other flag.
-for nt_bad in 'false' 'off' 'no' '0' 'true' 'on' 'yes' '1' \
-              'frameless' 'chromeless' 'borderless' 'None' 'NONE' 'system' ''; do
-    rm -f "$T/out.cmd"
-    bash "$T/build.sh" --decorations "$nt_bad" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-    [ "$?" = "0" ] && fail "--decorations [$nt_bad] was accepted" \
-                   || pass "--decorations [${nt_bad:-empty}] is refused"
-    eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
-done
-bash "$T/build.sh" "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-eq "a build that names no decorations keeps the template's" \
-   "$(conf "$T/out.cmd" decorations)" "$(conf "$T/webview.cmd" decorations)"
-
-# And what the template's is, asserted directly for the reason the background's
-# is: a template that quietly shipped `none` would open every unflagged build
-# without a title bar, and the line above would pass just as well.
-eq "and the template's is auto, so an unflagged build keeps its frame" \
-   "$(conf "$T/webview.cmd" decorations)" "auto"
-
-# The punctuation again, with the key that arrives after `background` -- which
-# is the position `background` itself was in when the comma bug was written, and
-# the position this key inherits. The assertion is here rather than folded into
-# the background's because what it guards is the *last* key in the object, and
-# that is now this one.
-bash "$T/build.sh" --title A --size 10x20 --background '#010203' --decorations none \
-     "$WORK/app-plain.js" "$T/out.cmd" >/dev/null 2>&1
-if command -v node >/dev/null 2>&1; then
-    cp "$T/out.cmd" "$T/out.js"
-    node --check "$T/out.js" >/dev/null 2>&1
-    eq "a config stamped in every key still parses as JavaScript" "$?" "0"
-else
-    report "node absent: the fully stamped config was not parsed"
+echo
+if [ "$FAILURES" = "0" ]; then
+    echo "assembler assertions passed"
+    exit 0
 fi
-
-# The read-back, asserted the way every other check in this file is: against a
-# template it cannot apply to. A document line with no style to replace used to
-# be nothing at all -- awk matched, printed a composed line, and the build went
-# on -- so this is the case that says the read-back is doing work.
-T="$(tree shell-readback)"
-sed 's|^\(<!doctype html><html>\).*$|\1<head></head>|' "$T/neutrino/html/document.html" > "$T/w.tmp"
-mv "$T/w.tmp" "$T/neutrino/html/document.html"
-bash "$T/build.sh" --title "Sample" "$WORK/app-plain.js" "$T/out.cmd" > "$WORK/rb.log" 2>&1
-eq "a template whose document line cannot be taken apart is refused" "$?" "1"
-eq "and it says which shape it wanted" \
-   "$(grep -c 'no document line this can take apart' "$WORK/rb.log" | head -1)" "1"
-eq "and no artifact is left behind" "$(size "$T/out.cmd")" "missing"
-
-echo ""
-if [ "$FAILURES" -gt 0 ]; then
-    echo "=== Results: $FAILURES failure(s) ==="
-    exit 1
-fi
-echo "=== Results: assembler assertions passed ==="
-exit 0
+echo "$FAILURES assertion(s) failed"
+exit 1

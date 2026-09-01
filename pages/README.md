@@ -56,9 +56,14 @@ follows the link. CI re-checks the published names against the published file an
 script agreeing with itself is not two files agreeing, and it checks that every row in the list
 is a file that actually shipped.
 
-## demo.js
+## demo/
 
-ES5 only — the same source runs under JScript.NET, gjs, QtWebEngine and WKWebView. One
+The sample app is an overlay laid over `neutrino/` — `app.js`, `config.json`,
+`style.css` and `body.html` — and `pages/build.sh` hands the directory to
+`neutrino/assemble.sh`. There are no build flags here: everything the app
+declares lives in the app's own directory.
+
+`app.js` is ES5 only — the same source runs under JScript.NET, gjs, QtWebEngine and WKWebView. One
 constraint worth knowing: no top-level closing brace may be indented four spaces, because
 [`test/parse.sh`](../test/parse.sh) lifts the `NeutrinoWebview` object out of a built `.cmd`
 with a `sed` range ending at `/^    };$/`, and an app carrying that line truncates it.

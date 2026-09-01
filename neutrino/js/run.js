@@ -33,12 +33,7 @@
     };
 
     NeutrinoWebview.runWeb = function () {
-        //#RUNWEB_START
-        // No app is spliced in here yet, and this template's own greeting
-        // is markup on the document line rather than something written
-        // from script -- which is the whole of what the early shell is
-        // for. Unbuilt, this file paints its greeting and does nothing.
-        //#RUNWEB_END
+@@include app.js
     };
 
     /*

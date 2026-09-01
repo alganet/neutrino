@@ -7,8 +7,8 @@
  * screenshot cannot fake.
  *
  * Almost none of it is here any more. The window, its style and its markup are
- * the early shell -- demo.css and demo.html, spliced into the document by
- * build.sh -- so they are in the first paint and this script never draws
+ * the early shell -- style.css and body.html, included into the document by
+ * assemble.sh -- so they are in the first paint and this script never draws
  * anything. What is left is the two facts no build can know: which engine
  * answered, and which transport it is speaking over.
  *
@@ -68,8 +68,8 @@ function start() {
  * happened before the wait was armed.
  *
  * The markup is a second guarantee and a different one, and it still holds:
- * demo.html and demo.css are spliced into the document by build.sh and this
- * script sits after them, so the shell is parsed by the time the line below
+ * body.html and style.css are included into the document by assemble.sh and
+ * this script sits after them, so the shell is parsed by the time the line below
  * runs. It is also why `document.readyState` can read `loading` at this point
  * on WebView2 -- the parser has not reached the end of the document, which says
  * nothing about the elements already above this script.

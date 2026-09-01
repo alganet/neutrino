@@ -1,28 +1,34 @@
     var NeutrinoWebview = {
-        // The tier list is stamped here by build.sh and read back out of this
-        // file by the shell section, so all three languages in this polyglot
-        // see one value and there is nothing in the environment that can be set
-        // to talk any of them out of it. A release build has no way to be
-        // talked into "testing".
-        //#TIER_START
-        tiers: "default",
-        //#TIER_END
-
         /*
+         * The app's own config.json, laid in verbatim.
+         *
+         * JSON is a JavaScript object literal, so there is no serializer here
+         * and nothing that could write a value differently from the way the
+         * author spelled it -- what the artifact carries here are the bytes of
+         * the file. assemble.sh reads it too, but only to refuse a shape the
+         * launcher could not use; what it never does is rewrite it.
+         *
          * What the native window needs before there is a document to read it
          * from, and nothing else. createWindow runs on every lane before
-         * loadHTML, so these three cannot come from the markup the way the
-         * style and the body now do -- there is no document yet when they are
-         * asked for.
+         * loadHTML, so these cannot come from the markup the way the style and
+         * the body do -- there is no document yet when they are asked for.
+         *
+         * `tiers` is the exception that proves the rule: it is not read by
+         * createWindow but by the shell region, which includes this same file
+         * as a here document of its own. Two languages, one file, included
+         * twice by one assembler -- so they cannot be built disagreeing, and
+         * neither of them consults the environment. It lives here because an
+         * app declares its own confinement, and the file that declares it is
+         * the file that ships.
          *
          * `url` used to sit here and had not been read by anything since the
          * launcher stopped navigating to a remote page. It is gone rather than
          * kept, because a config entry nothing consumes reads as a feature.
          *
-         * `background` is the fourth for the same reason the other three are
-         * here: it is wanted before there is a document. Two surfaces are up
-         * ahead of the first paint -- the native window, and the view inside it
-         * -- and neither of them can be reached from a stylesheet. Measured on
+         * `background` is here for the same reason `title`, `width` and
+         * `height` are: it is wanted before there is a document. Two surfaces
+         * are up ahead of the first paint -- the native window, and the view
+         * inside it -- and neither can be reached from a stylesheet. Measured on
          * WebKitGTK with the load held back: the window is the theme's bare
          * background, #F6F5F4 under Adwaita, and the view adds about two frames
          * of its own on top. Both of them are white on a default desktop, and
@@ -38,10 +44,10 @@
          * assembly because it is not a property of the app: it is a property of
          * the desktop the app is launched on, and resolveBackground reads it
          * there, from the palette readTheme took off the running toolkit. An
-         * author who wants one fixed colour on every machine says so with
-         * --background and gets exactly that, on every machine, forever.
+         * author who wants one fixed colour on every machine names it in
+         * config.json and gets exactly that, on every machine, forever.
          *
-         * `decorations` is the fifth, and it is here because a frame is chosen
+         * `decorations` is here because a frame is chosen
          * when a window is constructed rather than adjusted afterwards: a style
          * mask, a GtkWindow construct property, a QML `flags` value and a
          * FormBorderStyle are each read once, at the call createWindow makes.
@@ -54,22 +60,17 @@
          * offered here, and the launcher adds no verb for it. `auto` is the
          * frame the desktop would have given the window anyway.
          *
-         * Stamped by build.sh between the sentinels, the way the tier list is,
-         * and for the same reason: one value, read by five lanes, with nothing
-         * in the environment able to talk any of them out of it.
+         * An overlay replaces this file whole rather than a key at a time, so
+         * an app that names a title names its size and its tiers as well. That
+         * is the cost of having no merge in here, and it buys the thing above:
+         * what the artifact carries is a file somebody wrote, not a file two
+         * programs agreed on.
          */
-        //#CONFIG_START
-        config: {
-            title: "neutrino",
-            width: 900,
-            height: 600,
-            background: "auto",
-            decorations: "auto"
-        }
-        //#CONFIG_END
+        config:
+@@include config.json
     };
 
     NeutrinoWebview.hasTier = function (name) {
-        return ("," + String(this.tiers || "default") + ",").indexOf("," + name + ",") >= 0;
+        return ("," + String(this.config.tiers) + ",").indexOf("," + name + ",") >= 0;
     };
 
