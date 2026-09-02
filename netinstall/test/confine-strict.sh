@@ -97,64 +97,76 @@ fi
 
 # The open question this suite exists to answer: the tier has to keep a real
 # webview alive, or it is not worth having.
+#
+# "Alive" is the whole of it, and nt_app_probe in lib.sh is what asks. This
+# section used to run test/verify-linux.sh and its two siblings, which assert
+# neutrino's six-state window contract -- a question this lane's own launch
+# steps have already answered, minutes earlier, outside any sandbox.
 echo "=== Can a real webview still start under it? ==="
-bash "$ROOT/test/mkapp.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
-GSPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
+bash "$ROOT/test/mkapp.sh" --tier=testing "$NT_TESTDIR/alive.js" "$SERVE/alive.cmd"
+GSPEC="alive-example-com-1$(nt_pin "$SERVE/alive.cmd")"
 GAPP="$(nt_as "$BIN" "$GSPEC" "$WORK/bin")"
-GAPPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$GSPEC")/neutrinotest"
-RC=0
+GAPPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$GSPEC")/alive"
+STATE=""
 
 if [ "$NT_WINDOWS" = "1" ]; then
     "$GAPP" > "$WORK/app.log" 2>&1 &
     GPID=$!
     for _ in $(seq 1 120); do
-        [ -f "$GAPPDIR/neutrinotest.exe" ] && break
+        [ -f "$GAPPDIR/alive.exe" ] && break
         sleep 1
     done
-    if [ -f "$GAPPDIR/neutrinotest.exe" ]; then
+    if [ -f "$GAPPDIR/alive.exe" ]; then
         echo "  PASS: jsc.exe still compiles at low integrity"
     else
         nt_fail "jsc.exe did not compile at low integrity"
         FAILURES=$((FAILURES + 1))
     fi
-    nt_timeout 240 pwsh -NoProfile -ExecutionPolicy Bypass \
-        -File "$(cygpath -w "$ROOT/test/verify-windows.ps1")" \
-        -ScreenshotDir "$(cygpath -w "$WORK/shots")"
-    RC=$?
+    STATE="$(nt_app_probe 120)"
     nt_kill_tree $GPID
 elif [ "$(uname -s)" = "Darwin" ]; then
+    nt_app_gone
     "$GAPP" > "$WORK/app.log" 2>&1 &
     GPID=$!
-    APP_PID=$GPID nt_timeout 240 bash "$ROOT/test/verify-macos.sh" "$WORK/shots"
-    RC=$?
+    STATE="$(nt_app_probe 180)"
     nt_kill_tree $GPID
 elif [ -n "${DISPLAY:-}" ] && nt_linux_runtime; then
+    nt_app_gone
     "$GAPP" > "$WORK/app.log" 2>&1 &
     GPID=$!
-    nt_timeout 240 bash "$ROOT/test/verify-linux.sh" "$WORK/shots"
-    RC=$?
+    STATE="$(nt_app_probe 120)"
     nt_kill_tree $GPID
 else
     nt_note "SKIP: no webview runtime here; viability untested"
-    RC=-1
 fi
 
-if [ "$RC" -eq 0 ]; then
-    nt_note "webview started under tight confinement"
-    echo "  PASS: webview works under the tight tier"
-elif [ "$RC" -eq -1 ]; then
-    :
-elif [ "$NT_WINDOWS" = "1" ]; then
-    # Measured, not assumed: WebView2 does not render in a low integrity host,
-    # which is what Microsoft documents. Recorded rather than failed, so the
-    # suite still reports it if that ever changes.
-    nt_note "known limitation: WebView2 does not render at low integrity (rc=$RC)"
-    echo "  NOTE: webview does not start under the tight tier on windows"
-else
-    nt_fail "webview failed under tight confinement (rc=$RC); this tier is not viable as written"
-    nt_note "app log: $(tr '\n' ' ' < "$WORK/app.log" 2>/dev/null | tail -c 400)"
-    FAILURES=$((FAILURES + 1))
-fi
+case "$STATE" in
+    "") ;;
+    CONTENT_OK)
+        nt_note "webview started under tight confinement"
+        echo "  PASS: webview works under the tight tier" ;;
+    NO_WINDOW|WINDOW_NO_CONTENT)
+        if [ "$NT_WINDOWS" = "1" ]; then
+            # Measured, not assumed: WebView2 does not render in a low integrity
+            # host, which is what Microsoft documents. Recorded rather than
+            # failed, so the suite still reports it if that ever changes -- and
+            # the probe now names which half went, which the verifier's failure
+            # count could not: WINDOW_NO_CONTENT is the renderer, NO_WINDOW is
+            # a process that never got that far.
+            nt_note "known limitation: WebView2 does not render at low integrity ($STATE)"
+            echo "  NOTE: webview does not start under the tight tier on windows"
+        else
+            nt_fail "webview failed under tight confinement ($STATE); this tier is not viable as written"
+            nt_note "app log: $(tr '\n' ' ' < "$WORK/app.log" 2>/dev/null | tail -c 400)"
+            FAILURES=$((FAILURES + 1))
+        fi ;;
+    *)
+        # Not a reading about the tier at all. Kept apart from the two states
+        # above so that a probe which could not run is never filed as the
+        # Windows limitation it happens to resemble.
+        nt_fail "the webview probe did not report a state ($STATE)"
+        FAILURES=$((FAILURES + 1)) ;;
+esac
 
 echo "=== Results: $FAILURES failure(s) ==="
 exit $FAILURES

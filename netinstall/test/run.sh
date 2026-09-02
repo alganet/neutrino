@@ -182,7 +182,6 @@ for t in $SUITES; do
         # payload.
         confine-tight) nt_timeout 600 bash "$HERE/$t.sh" \
             "$HERE/../dist/netinstall-strict$NT_EXE" ;;
-        e2e)   nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-testing$NT_EXE" "${NEUTRINO_SCREENSHOTS:-}" ;;
         # Up to four real webview launches -- two with a loader knob pointed at
         # a module, two with the candidate deny set taken away -- and each one
         # is bounded by a wait it is allowed to lose. Same leash as job-ui for

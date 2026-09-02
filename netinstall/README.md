@@ -875,7 +875,10 @@ integrity, which would otherwise break `jsc.exe`.
 
 It is off by default because the benefit was not proven when it was written. `test/confine-strict.sh`
 is what settles it: it asserts the tier actually holds, then launches a real webview under it and
-fails if it cannot start.
+fails if it cannot start. "Cannot start" has three readings and the suite prints which one — no
+window at all, a window whose page never ran, or a page that ran — because a sandbox that lets the
+process live and kills its renderer is the interesting failure, and on Windows it is the measured
+one.
 
 ### The offline tier (experimental)
 
@@ -1144,6 +1147,25 @@ nothing does, and that a session tier which fails a step mid-way is refused by a
 survived by a normal one, and never left able to fork exactly once), `strict.sh` (that
 `-DNEUTRINO_STRICT_SANDBOX` really refuses to run unconfined), and `e2e.sh` (a real neutrino
 polyglot fetched, verified and launched).
+
+**What a launch is asked here, and what it is not.** Three of those suites start a real webview —
+`e2e.sh`, `confine-strict.sh`, `confine-session.sh` — and each of them wants one thing from it: that
+the confinement just applied still lets a webview come up and run the page's script. That is
+`nt_app_probe` in `test/lib.sh`, and its answer is one of `NO_WINDOW`, `WINDOW_NO_CONTENT` or
+`CONTENT_OK`.
+
+They used to answer it by running `test/verify-linux.sh` and its macOS and Windows siblings —
+neutrino's own verifiers, which assert the window title at each of six states, the size to the pixel,
+the frame's corner and the desktop's palette, and keep a screenshot of every one. Every lane that
+runs this suite already runs that verifier against a standalone launch in a step of its own, minutes
+earlier, so the second run measured nothing the first had not. It cost about twenty-four seconds per
+launch, ten launches across the matrix, and worse than the time: a regression in neutrino's geometry
+or palette turned three sandbox suites red on four lanes, each reporting a webview defect under a
+sandbox's name.
+
+The app is `test/alive.js`, which this suite owns. It sets one title and holds the window, so there
+is no eleven-second head start to wait out and no step list to fall out of step with. The suites
+here take no screenshots at all now.
 
 `session.sh` is a ninth that does not run by default. It is a probe rather than a gate: it applies
 each candidate mechanism on its own — covering the buses, sealing the runtime dir, hiding the
