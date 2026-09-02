@@ -51,6 +51,7 @@
                 // inside an emitted call with nothing to say.
                 static var selfType : Type = null;
                 static var rectType : Type = null;
+                static var colourType : Type = null;
                 static var entryType : Type = null;
 
                 // Emitted callback objects, kept because nothing else refers to
@@ -116,6 +117,9 @@
                     if (code == "r") {
                         return NeutrinoEvergreen.rectType;
                     }
+                    if (code == "c") {
+                        return NeutrinoEvergreen.colourType;
+                    }
                     return Type.GetType("System.IntPtr");
                 }
 
@@ -157,6 +161,21 @@
                         rect.DefineField("right", intType, FieldAttributes.Public);
                         rect.DefineField("bottom", intType, FieldAttributes.Public);
                         NeutrinoEvergreen.rectType = rect.CreateType();
+
+                        // COREWEBVIEW2_COLOR, and the second thing here that is
+                        // not pointer-shaped. Four bytes by value, in the field
+                        // order the pinned header gives -- read rather than
+                        // remembered, because a struct laid out wrong is not a
+                        // wrong colour, it is a crash.
+                        var byteType : Type = Type.GetType("System.Byte");
+                        var colour : TypeBuilder = NeutrinoEvergreen.module.DefineType("COLOR",
+                            TypeAttributes.Public | TypeAttributes.SequentialLayout | TypeAttributes.Sealed,
+                            Type.GetType("System.ValueType"));
+                        colour.DefineField("A", byteType, FieldAttributes.Public);
+                        colour.DefineField("R", byteType, FieldAttributes.Public);
+                        colour.DefineField("G", byteType, FieldAttributes.Public);
+                        colour.DefineField("B", byteType, FieldAttributes.Public);
+                        NeutrinoEvergreen.colourType = colour.CreateType();
                         return true;
                     } catch (e) {
                         NeutrinoEvergreen.faults.Add("could not start the emitter: " + e);
@@ -388,6 +407,18 @@
                         return null;
                     }
                     return Marshal.GetTypedObjectForIUnknown(p, itf);
+                }
+
+                // Through Convert rather than from a number: a JScript.NET
+                // literal boxes as Double and the reflection binder will not
+                // narrow one to a Byte.
+                static function MakeColour(r : int, g : int, b : int) : Object {
+                    var made : Object = Activator.CreateInstance(NeutrinoEvergreen.colourType);
+                    NeutrinoEvergreen.colourType.GetField("A").SetValue(made, Convert.ToByte(255));
+                    NeutrinoEvergreen.colourType.GetField("R").SetValue(made, Convert.ToByte(r));
+                    NeutrinoEvergreen.colourType.GetField("G").SetValue(made, Convert.ToByte(g));
+                    NeutrinoEvergreen.colourType.GetField("B").SetValue(made, Convert.ToByte(b));
+                    return made;
                 }
 
                 static function MakeRect(w : int, h : int) : Object {

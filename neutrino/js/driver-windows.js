@@ -141,7 +141,14 @@
                 } catch (e) {
                     self.note("could not repaint the window: " + e);
                 }
-                if (wv) {
+                // Through the view, because what a view paints is the one
+                // thing the two engines do differently: a control has a
+                // property and a controller has a second interface. Before
+                // there is a view -- boot repaints once on the way up -- the
+                // package path's control is all there is to paint.
+                if (view) {
+                    view.paint(color);
+                } else if (wv) {
                     self.paintWindowsView(wv, color);
                 }
             },
@@ -218,6 +225,12 @@
                         throw new Error("neutrino: the installed WebView2 runtime " +
                             "started but would not give this window a view");
                     }
+                    // Painted before it is sized and long before it is
+                    // navigated to. There is exactly one chance to get this
+                    // right: a view repainted after it is on screen is the
+                    // flash, in a different colour.
+                    view.paint(self.makeWindowsColor(SystemRef,
+                        self.resolveBackground(self.theme)));
                     view.syncBounds();
                     return;
                 }
