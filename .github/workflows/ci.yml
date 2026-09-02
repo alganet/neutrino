@@ -76,9 +76,12 @@ jobs:
           exit $TEST_EXIT
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
-      # assembles anything -- and it has to run on all of them, because the
-      # spelling of what it asserts is sed's and the three seds here are not the
-      # same program. Every defect is measured against `oldbuild.sh`, the
+      # assembles anything -- once per sed, because the spelling of what it
+      # asserts is sed's and the three seds here are not the same program. gjs
+      # is the GNU one, windows-launch is MSYS, macos is BSD. kde is
+      # ubuntu-latest as well and used to run it a fourth time against the very
+      # same GNU sed, which is the rule being read as "every lane" rather than
+      # as what it says. Every defect is measured against `oldbuild.sh`, the
       # assembler as it shipped through PR 23, carried inside the suite.
       #
       # Bounded, because the first version of it was not: it launched the
@@ -1031,25 +1034,16 @@ jobs:
           bash test/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
           cat ~/lanes.log
           exit $TEST_EXIT
-      # The assembler, and the stamp it says it applied. Pure shell, no display
-      # and about a second, so it runs beside parse.sh on every lane that
-      # assembles anything -- and it has to run on all of them, because the
-      # spelling of what it asserts is sed's and the three seds here are not the
-      # same program. Every defect is measured against `oldbuild.sh`, the
-      # assembler as it shipped through PR 23, carried inside the suite.
+      # No assemble.sh on this lane, and that follows from its own rule rather
+      # than against it. It runs wherever the assembler is assembled because
+      # "the spelling of what it asserts is sed's and the three seds here are
+      # not the same program" -- three: GNU, BSD and MSYS. This lane and gjs are
+      # both ubuntu-latest and share the one GNU sed, so the second run asks the
+      # same program the same question. It is 9 s, which is the smallest thing
+      # in this branch and the easiest to put back; what it buys is that the
+      # rule now means what it says.
       #
-      # Bounded, because the first version of it was not: it launched the
-      # artifact and waited on it, the Windows lane went from twelve minutes to
-      # fifty and lost its runner, and a lane that dies publishes nothing -- so
-      # which step blocked was not readable afterwards. The suite no longer
-      # starts anything whose exit it does not control, and this is the second
-      # half of that.
-      - timeout-minutes: 5
-        run: |
-          TEST_EXIT=0
-          bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
-          cat ~/assemble.log
-          exit $TEST_EXIT
+      # gjs, windows-launch and macos still run it, which is one lane per sed.
       # The Qt launch path's document, which no longer has a name. Every check
       # is one that fails against the commit before it, and the payloads it
       # plants are proven live against qml itself first. It runs first in this
@@ -1859,9 +1853,12 @@ jobs:
           exit $LASTEXITCODE
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
-      # assembles anything -- and it has to run on all of them, because the
-      # spelling of what it asserts is sed's and the three seds here are not the
-      # same program. Every defect is measured against `oldbuild.sh`, the
+      # assembles anything -- once per sed, because the spelling of what it
+      # asserts is sed's and the three seds here are not the same program. gjs
+      # is the GNU one, windows-launch is MSYS, macos is BSD. kde is
+      # ubuntu-latest as well and used to run it a fourth time against the very
+      # same GNU sed, which is the rule being read as "every lane" rather than
+      # as what it says. Every defect is measured against `oldbuild.sh`, the
       # assembler as it shipped through PR 23, carried inside the suite.
       #
       # Bounded, because the first version of it was not: it launched the
@@ -2689,9 +2686,12 @@ jobs:
       - run: bash test/parse.sh test/neutrinotest.cmd
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
-      # assembles anything -- and it has to run on all of them, because the
-      # spelling of what it asserts is sed's and the three seds here are not the
-      # same program. Every defect is measured against `oldbuild.sh`, the
+      # assembles anything -- once per sed, because the spelling of what it
+      # asserts is sed's and the three seds here are not the same program. gjs
+      # is the GNU one, windows-launch is MSYS, macos is BSD. kde is
+      # ubuntu-latest as well and used to run it a fourth time against the very
+      # same GNU sed, which is the rule being read as "every lane" rather than
+      # as what it says. Every defect is measured against `oldbuild.sh`, the
       # assembler as it shipped through PR 23, carried inside the suite.
       #
       # Bounded, because the first version of it was not: it launched the
