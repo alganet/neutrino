@@ -10,6 +10,13 @@
         // before the view, so this is set by the time createWebView
         // connects anything to it.
         var windowRef = null;
+        // Declared here and assigned in createWebView, because the message
+        // handler below closes over it and is registered before that runs.
+        // `var` hoists, so this was never a reference error and the handler
+        // cannot fire before the view exists -- but the declaration sitting
+        // under its own use is what jsc reports as "might not be initialized",
+        // and the ordering is worth stating rather than leaving to hoisting.
+        var wv = null;
 
         return {
             webMessageTransport: "window.webkit.messageHandlers.neutrino.postMessage",
@@ -273,7 +280,7 @@
                 inject(pendingPreload, WebKit2.UserScriptInjectionTime.START);
                 inject(pendingPageScript, WebKit2.UserScriptInjectionTime.END);
 
-                var wv = new WebKit2.WebView({ user_content_manager: ucm });
+                wv = new WebKit2.WebView({ user_content_manager: ucm });
                 self.paintWebKitView(Gdk, wv, self.resolveBackground(self.theme));
                 /*
                  * COMMITTED, not FINISHED, and the difference is a hole.

@@ -13,7 +13,7 @@ exit $?;:<<'//</script></body></html>' #-->
 
     /*@cc_on
         @if (@_jscript_version >= 7)
-@@include jsc/sink.jsc
+@@include jsc/parts.list
         @end
     @*/
 

@@ -1,15 +1,3 @@
-            import System;
-            import System.IO;
-            import System.Collections;
-            import System.Drawing;
-            import System.Windows.Forms;
-            import System.Reflection;
-
-            // Line comments only in here. This whole block is itself a block
-            // comment to every engine but jsc, and JavaScript has no nested
-            // block comments -- an inner close would end the outer one and
-            // spill JScript.NET syntax into three engines that cannot read it.
-            //
             // The only reason this class exists is that CoreWebView2's
             // WebMessageReceived wants a delegate, and the delegate's type
             // comes from an assembly loaded at run time, so it cannot be named

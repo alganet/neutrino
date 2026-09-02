@@ -42,8 +42,13 @@
     NeutrinoWebview.systemColorNames = "ButtonFace,ButtonText,Canvas,CanvasText," +
         "Highlight,HighlightText,ButtonBorder";
 
-    NeutrinoWebview.inSet = function (set, name) {
-        return ("," + set + ",").indexOf("," + String(name) + ",") >= 0;
+    // `names` and not `set`. jsc.exe warns that `set` is a reserved word, and
+    // this file is compiled by it on every Windows launch -- the same warning
+    // one rung down from the one that stopped an artifact compiling entirely.
+    // test/compile.ps1 prints what the compiler said, so this was visible the
+    // first time that step ran.
+    NeutrinoWebview.inSet = function (names, name) {
+        return ("," + names + ",").indexOf("," + String(name) + ",") >= 0;
     };
 
     NeutrinoWebview.themeKeyList = function () {

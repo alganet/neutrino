@@ -105,9 +105,21 @@ $scriptAnchor = 'var BUILD = "X";'
 # The condition and the string handed to NavigateToString both went back to the
 # file; putting them back is what makes "it would have failed before" a thing
 # that runs on every push instead of a claim.
-$navGuardNew = 'if (navMethod && pendingDocument) {'
-$navGuardOld = 'if (navMethod && SystemRef.IO.File.Exists(String(SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH") || ""))) {'
-$navCallNew = 'navMethod.Invoke(coreWv2, [pendingDocument]);'
+# The current spelling, which is what the reconstruction substitutes *out*. It
+# moved when the driver stopped reaching for CoreWebView2 by reflection and
+# started asking a view: there is no navMethod to test any more, and the call is
+# view.navigateToString. What is being reproduced is unchanged -- the old driver
+# went back to the file for the document it was about to render instead of using
+# the one boot had already prepared -- and this is the second time these anchors
+# have had to follow the driver, which is what a frozen spelling costs.
+$navGuardNew = 'if (pendingDocument) {'
+# Without the `navMethod &&` it used to carry, because there is no navMethod in
+# this driver any more and a reconstruction that names one does not compile --
+# which is a before-state that fails for the wrong reason and reports it as the
+# right one. What the guard is about is the second read, and that is the half
+# that stays.
+$navGuardOld = 'if (SystemRef.IO.File.Exists(String(SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH") || ""))) {'
+$navCallNew = 'view.navigateToString(pendingDocument);'
 # The reconstruction lost its applyContentPolicy call, and that is a repair
 # rather than a change of subject. The offline tier used to swap the document's
 # content policy at run time, and the old spelling applied it here because here
@@ -120,7 +132,7 @@ $navCallNew = 'navMethod.Invoke(coreWv2, [pendingDocument]);'
 # the *file* for the document it was about to render, instead of using the one
 # already prepared; `extractHtmlDocument(ReadAllText(...))` is that, and the
 # policy call was never part of it.
-$navCallOld = 'navMethod.Invoke(coreWv2, [self.extractHtmlDocument(SystemRef.IO.File.ReadAllText(SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH")))]);'
+$navCallOld = 'view.navigateToString(self.extractHtmlDocument(SystemRef.IO.File.ReadAllText(SystemRef.Environment.GetEnvironmentVariable("NEUTRINO_SCRIPT_PATH"))));'
 
 $appA = Join-Path $work "a.cmd"
 $appB = Join-Path $work "b.cmd"

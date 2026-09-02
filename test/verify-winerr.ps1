@@ -20,6 +20,18 @@
 # package URL 404s and the download throws the way a digest mismatch would.
 # Nothing about the driver is modified: this is the real path into handleError.
 #
+# It takes two substitutions to get there now, and the second is worth as much
+# as the first. The driver renders through the WebView2 runtime the machine
+# already has and only fetches the package when it cannot, so a build carrying
+# nothing but a bad pin never reaches the pin -- it comes up, and this suite
+# passes while measuring nothing. Naming an entry point that does not exist is
+# what puts the download back in front of it.
+#
+# Which makes this the one suite that measures the fallback. An Evergreen path
+# that fails has to arrive on the package path, and the proof of it is a build
+# that gets all the way to the 404 this file is waiting for. See ci.yml, where
+# both substitutions are made and checked.
+#
 # Usage: verify-winerr.ps1 <app.cmd>
 
 $ErrorActionPreference = "Stop"
