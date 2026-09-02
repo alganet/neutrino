@@ -71,11 +71,21 @@ APP="demo"
 SHAPE=3          # 3 = one directory, and the file is named
 PINLEN=32        # the parser's floor, and what every example in the docs uses
 
-# What a Windows machine fetches on top of the app the first time it runs one:
-# the WebView2 package, which neutrino downloads into the app directory. Linux
-# and macOS render on a runtime the system already has and fetch nothing.
-# 8.8 MiB, as measured and recorded in netinstall/README.md.
-WEBVIEW2_BYTES=$((8 * 1048576 + 819200))
+# Nothing here about WebView2 any more, and that is the change rather than an
+# omission. Windows used to fetch an 8.8 MiB SDK package the first time an app
+# ran, so a size column that stopped at the file was off by a factor of fifty
+# and the row carried "+8.8 MB only on Windows first run" to say so.
+#
+# The driver renders through the WebView2 runtime the machine already has now --
+# which ships with Windows 11 and reached Windows 10 through Windows Update, so
+# on very nearly every machine the answer is the file and nothing else. Windows
+# fetches what Linux and macOS have always fetched, which is nothing.
+#
+# It is not never. A machine without that runtime -- Server, LTSC, a stripped
+# image -- still falls back to the package, and that first run still costs 8.8
+# MiB. What changed is that it stopped being the common case, and a size column
+# is a poor place to explain a rare one: the README says when it still happens,
+# where there is room to say why.
 
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -184,11 +194,9 @@ done
 # BINARIES is multi-line, so it goes in through r rather than s.
 printf '%s' "$BINARIES" > "$OUT/.binaries.html"
 
-# The launcher's row carries what running it costs, which is not the same as
-# what downloading it costs: on Windows the app fetches the WebView2 package on
-# top of itself. A size column that stopped at the file would be off by a factor
-# of fifty there. The figure is the addition, not the total -- "+" says so.
-DEMOSIZE="$(human "$APPBYTES") (+$(human "$WEBVIEW2_BYTES") only on Windows first run)"
+# The file, on every platform. See the note by APPBYTES for what used to be
+# added here on Windows and why it no longer is.
+DEMOSIZE="$(human "$APPBYTES")"
 
 echo "Rendering index.html"
 sed -e "s|@DEMOSIZE@|$DEMOSIZE|g" \
