@@ -244,6 +244,40 @@ nt_kill_tree() {
 NT_ALIVE_TITLE="NETINSTALL-ALIVE"
 export NT_ALIVE_TITLE
 
+# The title the probe matched, written to a file rather than to a variable.
+#
+# Every caller spells this `STATE="$(nt_app_probe ...)"`, which is a subshell,
+# so an assignment inside it is gone before the caller reads it --
+# verify-linux.sh carries the same file for the same reason and got there by
+# reporting `wid_src=?` on every lane for a round.
+#
+# What it is for: alive.js announces its viewport size from a frame callback, so
+# the title arrives as `NETINSTALL-ALIVE 900x600` once the view has laid the
+# document out and scheduled a frame, and as a bare `NETINSTALL-ALIVE` before
+# that. Those two are different readings -- a view that ran a script and a view
+# that got a surface -- and on Windows the difference is the whole question,
+# because low integrity is documented to leave WebView2 with a window and no
+# rendering.
+NT_APP_TITLE_FILE="${TMPDIR:-/tmp}/nt-app-title-$$"
+
+# How long a bare NETINSTALL-ALIVE is given to grow a size before the probe
+# settles for it. A frame callback runs in about sixteen milliseconds and this
+# loop polls once a second, so in practice the first poll already sees the size;
+# this is the bound on the case where no frame ever comes, and it has to be
+# short because that case is a reading and not a hang.
+NT_FRAME_GRACE=5
+
+nt_app_title() {
+    cat "$NT_APP_TITLE_FILE" 2>/dev/null
+}
+
+# The viewport alive.js reported, as WxH, or empty if no frame was announced.
+# Never the string "0x0" quietly: a zero viewport is a real reading and the
+# caller is the one that decides what it means.
+nt_app_frame() {
+    nt_app_title | sed -n "s/.*$NT_ALIVE_TITLE \([0-9][0-9]*x[0-9][0-9]*\).*/\1/p" | head -1
+}
+
 # The window manager's own list of managed top-levels, which is what
 # verify-linux.sh reaches for first and for the reason it gives at length:
 # `xdotool search` matches any window carrying the name, and GTK gives that
@@ -269,17 +303,18 @@ nt_x11_titles() {
 # quietly fall through. A probe that could not run is a failure of the suite and
 # has to read as one.
 nt_app_probe() {
-    local secs="${1:-60}" i titles title saw=0 ps out
+    local secs="${1:-60}" i titles title saw=0 ps out raw grace=""
     if [ "${NT_WINDOWS:-0}" = "1" ]; then
         ps=powershell
         command -v pwsh >/dev/null 2>&1 && ps=pwsh
         # The whole wait happens inside the script, which is the only side that
         # can skip the console hosts: the launcher runs cmd.exe, whose window
         # carries the script path in its title and a real MainWindowHandle.
-        out="$("$ps" -NoProfile -ExecutionPolicy Bypass \
+        raw="$("$ps" -NoProfile -ExecutionPolicy Bypass \
             -File "$(cygpath -w "$NT_TESTDIR/probe-window.ps1")" \
-            -TimeoutSeconds "$secs" 2>/dev/null | tr -d '\r' |
-            grep -E '^(NO_WINDOW|WINDOW_NO_CONTENT|CONTENT_OK)$' | tail -1)"
+            -TimeoutSeconds "$secs" 2>/dev/null | tr -d '\r')"
+        out="$(printf '%s\n' "$raw" | grep -E '^(NO_WINDOW|WINDOW_NO_CONTENT|CONTENT_OK)$' | tail -1)"
+        printf '%s\n' "$raw" | sed -n 's/^TITLE //p' | tail -1 > "$NT_APP_TITLE_FILE"
         case "$out" in
             NO_WINDOW|WINDOW_NO_CONTENT|CONTENT_OK) echo "$out" ;;
             *) echo PROBE_FAILED ;;
@@ -303,12 +338,28 @@ nt_app_probe() {
         # ever used to explain a failure.
         while IFS= read -r title; do
             case "$title" in
-                *"$NT_ALIVE_TITLE"*) echo CONTENT_OK; return 0 ;;
-                neutrino)            saw=1 ;;
+                *"$NT_ALIVE_TITLE "[0-9]*x[0-9]*)
+                    # A title carrying a size: the view got a surface. Nothing
+                    # further is worth waiting for.
+                    printf '%s\n' "$title" > "$NT_APP_TITLE_FILE"
+                    echo CONTENT_OK
+                    return 0 ;;
+                *"$NT_ALIVE_TITLE"*)
+                    # The bare one. The script ran, and whether a frame follows
+                    # is the reading this waits a moment for -- see
+                    # NT_FRAME_GRACE. Recorded now so that if none comes, the
+                    # caller still has the title that did.
+                    printf '%s\n' "$title" > "$NT_APP_TITLE_FILE"
+                    [ -n "$grace" ] || grace=$((SECONDS + NT_FRAME_GRACE)) ;;
+                neutrino) saw=1 ;;
             esac
         done <<TITLES
 $titles
 TITLES
+        if [ -n "$grace" ] && [ $SECONDS -ge $grace ]; then
+            echo CONTENT_OK
+            return 0
+        fi
         sleep 1
     done
     [ "$saw" = "1" ] && { echo WINDOW_NO_CONTENT; return 0; }
@@ -322,6 +373,7 @@ TITLES
 # if it never went.
 nt_app_gone() {
     local i
+    : > "$NT_APP_TITLE_FILE"
     if [ "$(uname -s)" = "Darwin" ]; then
         rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
         return 0

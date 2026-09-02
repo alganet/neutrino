@@ -860,11 +860,30 @@ still read `~/.ssh` and browser cookie stores. Only an AppContainer would close 
 documented to break WebView2. The suite asserts this limitation explicitly rather than letting
 the tier look stronger than it is.
 
-**The Windows tier does not work for GUI apps.** Measured in CI, not assumed: `jsc.exe` does still
-compile at low integrity once `%TEMP%` is redirected, but WebView2 never renders a window, which
-is what Microsoft documents for low-IL hosts. So on Windows this tier is only useful for payloads
-that do not open a webview — which netinstall does run, since it is a general script runner. The
-suite records the outcome rather than failing on it, so it will tell you if that ever changes.
+**The Windows tier does work for GUI apps, and this paragraph used to say the opposite.** It said
+WebView2 never renders a window at low integrity, which is what Microsoft documents for low-IL
+hosts, and it promised the suite would tell you if that ever changed. It did change, the suite did
+say so, and nobody read it. On run 33674586566 the tight tier's own webview section recorded a
+window 23 ms after launch and then the app's whole sequence through it — `neutrino` at 106 ms,
+`STEP0` at 10459, a resize to 500x400 at 16474, a move to 0,0 at 20490, `THEMEOK` at 22506 and
+`TESTS DONE` at 24538 — which is a view that came up, ran its page, took window calls from it and
+read the desktop palette, all at low integrity. The suite has printed `PASS: webview works under
+the tight tier` for as long as anyone has looked.
+
+`jsc.exe` still compiles at low integrity once `%TEMP%` is redirected, and that part was always
+right.
+
+**What is asserted, and what is not.** The claim above is worth exactly what measures it, so
+`confine-strict.sh` now measures the frame rather than the script. `test/alive.js` announces its
+viewport from a `requestAnimationFrame` callback — which runs after layout and immediately before
+the engine would paint — so the title arrives as `NETINSTALL-ALIVE 900x600` from a view that got a
+surface and laid the document out on it, and as a bare `NETINSTALL-ALIVE` from one that ran a
+script and never got that far. On Windows a missing or zero viewport is now a failure with the old
+paragraph's own sentence attached to it; elsewhere it is recorded as unmeasured.
+
+That is a frame scheduled, not pixels confirmed on a screen. Only a photograph is the second thing,
+and these suites stopped taking them — [what a launch is asked here](#testing) says why. If the
+tier ever needs that stronger claim, it is a screenshot in one suite and not a redesign.
 
 Two consequences of the layout are worth knowing if you change it. The script sits one level
 above the writable directory so an app cannot rewrite its own launcher — and once reads are
@@ -1038,8 +1057,9 @@ one, not that any particular call is at fault. The likely reason is the document
 WebView2 builds lowbox tokens for its own renderers and AppContainers do not nest.
 
 So reads stay unconfined on Windows. Every unprivileged mechanism the platform offers has now been
-tried against a real webview: job object limits and privilege stripping work and are shipped, job UI
-restrictions break it, low integrity breaks it, and AppContainer breaks it.
+tried against a real webview: job object limits, privilege stripping and low integrity all work and
+are shipped; job UI restrictions break it, and AppContainer breaks it. Low integrity was in the
+second list until the tight tier's own suite was read — see above.
 
 **Token privileges are stripped.** Every privilege but `SeChangeNotifyPrivilege`, which path
 traversal needs, is *removed* rather than merely disabled, so nothing downstream can turn it back
@@ -1137,7 +1157,7 @@ offline cache, tampered cache), `confine.sh`
 (a hostile script that tries to escape — the filesystem, the environment, an inherited descriptor,
 an abstract socket, another process's memory, and on macOS a bundle it wrote handed to
 LaunchServices two different ways), `confine-strict.sh` (the tight tier, and whether a
-webview still starts under it), `confine-session.sh` (the session tier: both buses closed against a
+webview still starts and gets as far as a frame under it), `confine-session.sh` (the session tier: both buses closed against a
 control that reaches them, the runtime dir sealed, no outside process visible, the screen
 unphotographable from inside, and a real webview under all of it), `offline.sh` (that the offline
 tier really refuses outbound TCP and, where it took a network namespace, UDP too, while the fetch
@@ -1153,6 +1173,11 @@ polyglot fetched, verified and launched).
 the confinement just applied still lets a webview come up and run the page's script. That is
 `nt_app_probe` in `test/lib.sh`, and its answer is one of `NO_WINDOW`, `WINDOW_NO_CONTENT` or
 `CONTENT_OK`.
+
+`confine-strict.sh` asks for one thing more, because the tight tier is the one whose viability was
+in doubt: the viewport `test/alive.js` announces from a frame callback, which separates a view that
+got a surface from one that only ran a script. See [the Windows tier](#the-tight-tier-experimental)
+for why that distinction had to become an assertion.
 
 They used to answer it by running `test/verify-linux.sh` and its macOS and Windows siblings —
 neutrino's own verifiers, which assert the window title at each of six states, the size to the pixel,
