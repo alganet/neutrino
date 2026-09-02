@@ -221,21 +221,26 @@ case "$CONFINE" in
         fi ;;
 esac
 
+# Alive, and nothing further -- the same question confine-strict.sh asks of the
+# tight tier, asked the same way. See nt_app_probe in lib.sh: this used to run
+# test/verify-linux.sh, whose six states are neutrino's contract and are
+# asserted by this lane's own launch step, outside any sandbox, minutes before
+# the netinstall suite starts.
 echo "=== Can a real webview still start under it? ==="
 if [ -n "${DISPLAY:-}" ] && nt_linux_runtime; then
-    bash "$ROOT/test/mkapp.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
-    GSPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
+    bash "$ROOT/test/mkapp.sh" --tier=testing "$NT_TESTDIR/alive.js" "$SERVE/alive.cmd"
+    GSPEC="alive-example-com-1$(nt_pin "$SERVE/alive.cmd")"
     GAPP="$(nt_as "$BIN" "$GSPEC" "$WORK/bin")"
+    nt_app_gone
     "$GAPP" > "$WORK/app.log" 2>&1 &
     GPID=$!
-    nt_timeout 240 bash "$ROOT/test/verify-linux.sh" "${NEUTRINO_SCREENSHOTS:-$WORK/shots}/session"
-    RC=$?
+    STATE="$(nt_app_probe 120)"
     nt_kill_tree $GPID
-    if [ "$RC" -eq 0 ]; then
+    if [ "$STATE" = "CONTENT_OK" ]; then
         nt_note "webview started with the session closed"
         echo "  PASS: webview works under the session tier"
     else
-        nt_fail "webview failed under the session tier (rc=$RC); the tier is not viable as written"
+        nt_fail "webview failed under the session tier ($STATE); the tier is not viable as written"
         nt_note "app log: $(tr '\n' ' ' < "$WORK/app.log" 2>/dev/null | tail -c 400)"
         FAILURES=$((FAILURES + 1))
     fi

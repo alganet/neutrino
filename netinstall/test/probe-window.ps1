@@ -9,10 +9,15 @@
 #   CONTENT_OK        the page ran and drove the title
 #
 # Console hosts are skipped, and that is not a detail. The launcher runs
-# "cmd.exe /c ...\neutrinotest.cmd", whose console window carries the script
-# path in its title and a real MainWindowHandle -- so without this, a launch
-# where the app never started at all scores WINDOW_NO_CONTENT off the console
-# alone, and reads as a webview whose renderer died.
+# "cmd.exe /c ...\alive.cmd", whose console window carries the script path in
+# its title and a real MainWindowHandle -- so without this, a launch where the
+# app never started at all scores WINDOW_NO_CONTENT off the console alone, and
+# reads as a webview whose renderer died.
+#
+# Two vocabularies of content title, because two callers ask this. job-ui.sh
+# launches test/neutrinotest.js and watches for its steps; nt_app_probe in
+# lib.sh launches netinstall/test/alive.js, which says one thing and holds it.
+# Either one is a page that ran.
 
 param([int]$TimeoutSeconds = 30)
 
@@ -28,7 +33,8 @@ do {
             $t = $p.MainWindowTitle
         } catch { continue }
         if (-not $t) { continue }
-        if ($t -like "*STEP*" -or $t -like "*TESTS DONE*") {
+        if ($t -like "*STEP*" -or $t -like "*TESTS DONE*" -or
+            $t -like "*NETINSTALL-ALIVE*") {
             Write-Output "CONTENT_OK"
             exit 0
         }

@@ -441,50 +441,24 @@ fi
 NT_TOOLKIT="not measured"
 NT_TOOLKIT_CTL="not measured"
 
+# Up, and nothing more than up. nt_app_probe in lib.sh is the one instrument
+# the suite asks this of -- this file used to carry a second copy of it, asking
+# xdotool where lib.sh asks the window manager, which is two answers to one
+# question and the shorter road to them disagreeing.
 nt_app_up() {
-    local secs="$1" i
-    for i in $(seq 1 "$secs"); do
-        if [ "$UNAME" = "Darwin" ]; then
-            [ -f "${TMPDIR:-/tmp}/neutrino-title.txt" ] && return 0
-        elif command -v xdotool >/dev/null 2>&1; then
-            xdotool search --name 'STEP' >/dev/null 2>&1 && return 0
-        fi
-        sleep 1
-    done
-    return 1
-}
-
-nt_app_reset() {
-    [ "$UNAME" = "Darwin" ] && rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
-    return 0
-}
-
-# A window from the previous launch still on the display is indistinguishable
-# from this launch's, and would read as UP before anything had started. So each
-# launch waits for the last one to be gone before it begins, and says so if it
-# never went.
-nt_app_down() {
-    local i
-    [ "$UNAME" = "Darwin" ] && return 0
-    command -v xdotool >/dev/null 2>&1 || return 0
-    for i in $(seq 1 20); do
-        xdotool search --name 'STEP' >/dev/null 2>&1 || return 0
-        sleep 1
-    done
-    nt_note "a STEP window outlived its launch; the next reading may be the old one"
-    return 1
+    [ "$(nt_app_probe "${1:-45}")" = "CONTENT_OK" ]
 }
 
 NT_HAVE_APP=0
-if [ "$UNAME" = "Darwin" ] || { [ -n "${DISPLAY:-}" ] && nt_linux_runtime && command -v xdotool >/dev/null 2>&1; }; then
+if [ "$UNAME" = "Darwin" ] || { [ -n "${DISPLAY:-}" ] && nt_linux_runtime && command -v xprop >/dev/null 2>&1; }; then
     NT_HAVE_APP=1
 fi
 
 if [ "$NT_HAVE_APP" = "1" ]; then
     echo "=== Build the app under test ==="
-    if bash "$ROOT/test/mkapp.sh" --tier=testing "$ROOT/test/neutrinotest.js" \
-            "$SERVE/neutrinotest.cmd" >/dev/null 2>&1 &&
-       [ -s "$SERVE/neutrinotest.cmd" ]; then
+    if bash "$ROOT/test/mkapp.sh" --tier=testing "$NT_TESTDIR/alive.js" \
+            "$SERVE/alive.cmd" >/dev/null 2>&1 &&
+       [ -s "$SERVE/alive.cmd" ]; then
         # With the launcher's own loader scrub cut out of it, and both launches
         # get the same file so the pair still differ by netinstall alone.
         #
@@ -496,15 +470,15 @@ if [ "$NT_HAVE_APP" = "1" ]; then
         # under test here is env.c's allowlist. The launcher's rule is asserted
         # by test/loaders.sh, against a control patched exactly this way.
         awk '/^nt_scrub_loaders$/ { next } { print }' \
-            "$SERVE/neutrinotest.cmd" > "$SERVE/neutrinotest.patched" &&
-            mv "$SERVE/neutrinotest.patched" "$SERVE/neutrinotest.cmd"
-        if grep -q '^nt_scrub_loaders$' "$SERVE/neutrinotest.cmd"; then
+            "$SERVE/alive.cmd" > "$SERVE/alive.patched" &&
+            mv "$SERVE/alive.patched" "$SERVE/alive.cmd"
+        if grep -q '^nt_scrub_loaders$' "$SERVE/alive.cmd"; then
             nt_fail "the polyglot's loader scrub is still in the file under test; the toolkit half measures two rules"
             FAILURES=$((FAILURES + 1))
         fi
-        ASPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
+        ASPEC="alive-example-com-1$(nt_pin "$SERVE/alive.cmd")"
         AAPP="$(nt_as "$BIN" "$ASPEC" "$WORK/bin")"
-        AAPPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$ASPEC")/neutrinotest"
+        AAPPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$ASPEC")/alive"
         echo "  built and pinned as $ASPEC"
     else
         # Not a failure of this suite: the polyglot build is e2e.sh's gate, and
@@ -554,11 +528,10 @@ if [ -n "$NT_KNOB_TAGS" ]; then
 
     # Control first: no netinstall, so the only question is whether the toolkit
     # honours the knob at all. A confined silence means nothing without it.
-    nt_app_down
-    nt_app_reset
+    nt_app_gone
     rm -f "$WORK/marks"/*
     ( export NEUTRINO_TEST_MODULE_MARKDIR="$WORK/marks"
-      env "${NT_KNOBS[@]}" bash "$SERVE/neutrinotest.cmd" >"$WORK/ctl-app.log" 2>&1 ) &
+      env "${NT_KNOBS[@]}" bash "$SERVE/alive.cmd" >"$WORK/ctl-app.log" 2>&1 ) &
     CTL_PID=$!
     nt_app_up 45
     NT_TOOLKIT_CTL=""
@@ -570,8 +543,7 @@ if [ -n "$NT_KNOB_TAGS" ]; then
     sleep 2
 
     # And the same knobs through netinstall, which is where the allowlist is.
-    nt_app_down
-    nt_app_reset
+    nt_app_gone
     ( export NEUTRINO_TEST_MODULE_MARKDIR="$AAPPDIR"
       env "${NT_KNOBS[@]}" "$AAPP" >"$WORK/app.log" 2>&1 ) &
     APP_PID=$!
@@ -676,8 +648,7 @@ if [ "$NT_HAVE_APP" = "1" ]; then
     NT_UNSET=()
     for n in $NT_STRIP; do NT_UNSET+=(-u "$n"); done
 
-    nt_app_down
-    nt_app_reset
+    nt_app_gone
     ( env "${NT_UNSET[@]}" "$AAPP" >"$WORK/strip.log" 2>&1 ) &
     STRIP_PID=$!
     STRIPPED=DOWN
@@ -687,8 +658,7 @@ if [ "$NT_HAVE_APP" = "1" ]; then
 
     # The control: the same launch with the lane's environment untouched. If
     # this one is DOWN too then the strip is not what the reading is about.
-    nt_app_down
-    nt_app_reset
+    nt_app_gone
     ( "$AAPP" >"$WORK/keep.log" 2>&1 ) &
     KEEP_PID=$!
     KEPT=DOWN

@@ -8,7 +8,7 @@ set -uo pipefail
 
 BIN="${1:-}"
 if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
-    echo "usage: e2e.sh <netinstall binary built with -DNEUTRINO_TESTING> [screenshot dir]" >&2
+    echo "usage: e2e.sh <netinstall binary built with -DNEUTRINO_TESTING>" >&2
     exit 2
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
@@ -17,9 +17,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 WORK="$(mktemp -d)"
 SERVE="$WORK/serve"
-SHOTS="${2:-}"
-[ -n "$SHOTS" ] || SHOTS="$WORK/screenshots"
-mkdir -p "$SERVE" "$WORK/bin" "$SHOTS"
+mkdir -p "$SERVE" "$WORK/bin"
 export NEUTRINO_HOME="$WORK/home"
 
 nt_serve "$SERVE" || exit 2
@@ -28,8 +26,13 @@ trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK"' EXIT
 FAILURES=0
 
 echo "=== Build the app under test ==="
-bash "$ROOT/test/mkapp.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
-SPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
+# netinstall's own app and not test/neutrinotest.js. What this suite asserts
+# about the launch is that a fetched, verified and pinned polyglot runs; the
+# six-state window contract belongs to neutrino's verifiers, which every lane
+# that runs this suite has already run against a standalone launch of its own.
+# See nt_app_probe in lib.sh for the whole of that argument.
+bash "$ROOT/test/mkapp.sh" --tier=testing "$NT_TESTDIR/alive.js" "$SERVE/alive.cmd"
+SPEC="alive-example-com-1$(nt_pin "$SERVE/alive.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 echo "  built and pinned as $SPEC"
 
@@ -37,8 +40,8 @@ echo "=== Resolve ==="
 "$APP" --info
 nt_note "confine: $("$APP" --info 2>/dev/null | awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')"
 
-SCRIPT="$NEUTRINO_HOME/apps/$(nt_appkey "$SPEC")/neutrinotest.cmd"
-APPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$SPEC")/neutrinotest"
+SCRIPT="$NEUTRINO_HOME/apps/$(nt_appkey "$SPEC")/alive.cmd"
+APPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$SPEC")/alive"
 
 echo "=== Fetch and verify ==="
 if "$APP" --fetch >/dev/null 2>&1; then
@@ -48,7 +51,7 @@ else
     FAILURES=$((FAILURES + 1))
 fi
 
-if cmp -s "$SERVE/neutrinotest.cmd" "$SCRIPT"; then
+if cmp -s "$SERVE/alive.cmd" "$SCRIPT"; then
     echo "  PASS: cached bytes are identical to what was served"
 else
     nt_fail "cached bytes expected=identical actual=differ"
@@ -62,7 +65,7 @@ else
     FAILURES=$((FAILURES + 1))
 fi
 
-FULL="$(nt_sha256 "$SERVE/neutrinotest.cmd")"
+FULL="$(nt_sha256 "$SERVE/alive.cmd")"
 if [ -f "$NEUTRINO_HOME/blobs/$FULL" ]; then
     echo "  PASS: blob is content-addressed as blobs/$FULL"
 else
@@ -70,6 +73,12 @@ else
     FAILURES=$((FAILURES + 1))
 fi
 
+# What a launch has to answer here, and the three answers it can give, are in
+# nt_app_probe's header in lib.sh. In one line: this suite asks whether the app
+# it installed opens a webview and runs its script, and neutrino's own verifiers
+# -- which every lane running this suite has already run against a standalone
+# launch a few minutes earlier -- answer a different and much longer question.
+STATE=""
 if [ "$NT_WINDOWS" = "1" ]; then
     echo "=== Launch through cmd.exe ==="
     "$APP" > "$WORK/app.log" 2>&1 &
@@ -82,12 +91,10 @@ if [ "$NT_WINDOWS" = "1" ]; then
     # both are waited for and the reading says which arrived.
     #
     # This loop used to name the app dir alone. When the exe moved it spun its
-    # whole 120 seconds and then failed, and the cost was not the failure: the
-    # app runs a sixteen-second sequence and exits, so by the time
-    # verify-windows started there was no process left and it spent its own 240
-    # against one that had already finished.
+    # whole 120 seconds and then failed, and by the time the window was looked
+    # for there was nothing left to look at.
     KEPT="${SCRIPT%.cmd}.exe"
-    FALLBACK="$APPDIR/neutrinotest.exe"
+    FALLBACK="$APPDIR/alive.exe"
     for _ in $(seq 1 120); do
         if [ -f "$KEPT" ] || [ -f "$FALLBACK" ]; then break; fi
         sleep 1
@@ -106,84 +113,27 @@ if [ "$NT_WINDOWS" = "1" ]; then
         nt_fail "compiled exe expected=$KEPT or $FALLBACK actual=missing"
         FAILURES=$((FAILURES + 1))
     fi
-    # PowerShell cannot read an MSYS path, so hand it a native one.
-    PS1="$(cygpath -w "$ROOT/test/verify-windows.ps1")"
-    SHOTS_WIN="$(cygpath -w "$SHOTS")"
-    # verify-windows defaults its app dir to its own test/ tree, where the
-    # standalone lane runs neutrinotest.cmd. Here the app is installed and run
-    # from the netinstall HOME, so the WebView2 package sits beside *that* exe
-    # -- point the verifier at it, or it checks an empty repo path and fails
-    # "no package directory". The single windows lane masked this: its earlier
-    # standalone neutrinotest step had populated test/neutrinotest first.
-    APPDIR_WIN="$(cygpath -w "$APPDIR")"
-    SCRIPT_WIN="$(cygpath -w "$SCRIPT")"
-    PSEXE=powershell
-    command -v pwsh >/dev/null 2>&1 && PSEXE=pwsh
-    # `-Command ... *>&1`, not `-File`: verify-windows.ps1 speaks in Write-Host,
-    # which is the information stream, and a plain `> log 2>&1` catches stdout
-    # and stderr and not that -- so the log would be empty of every PASS and
-    # FAIL. The webview lanes merge with `*>&1` for the same reason; this is the
-    # same merge, one level out, so the exit code still carries the count.
-    "$PSEXE" -NoProfile -ExecutionPolicy Bypass \
-        -Command "& '$PS1' -ScreenshotDir '$SHOTS_WIN' -AppDir '$APPDIR_WIN' -Artifact '$SCRIPT_WIN' *>&1" \
-        > "$WORK/verify-windows.log" 2>&1
-    RC=$?
-    cat "$WORK/verify-windows.log"
-    if [ "$RC" -ne 0 ]; then
-        # The verifier's own account, not just its count. e2e used to surface
-        # only the number, so a red here named nothing and the detail -- which
-        # half stalled, the WebView2 package or the window -- was left behind.
-        # Emitted as errors, not notices:
-        # the whole netinstall suite shares one step, its ten-notice bucket is
-        # full of findings long before e2e runs, and these lines were dropped.
-        # The error bucket is near empty -- only actual failures reach it.
-        #
-        # The failures first, and that is the repair. This was one grep for
-        # `FAIL:|report:` with `head -8` on the end, and verify-windows.ps1
-        # prints a `report:` line per recorded state before it asserts anything
-        # -- so eight lines of a run that reported seven states was seven states
-        # and a watch line, and the sentence naming what failed was the ninth.
-        # A red round surfaced a complete, correct sequence and no reason,
-        # which is worse than surfacing nothing: it reads like the app was fine.
-        #
-        # The per-state `seq` lines go, because a failing assertion prints its
-        # own detail and the full log is in the artifact. What is kept beside
-        # the failures is the apparatus: the sampler's turn count and its widest
-        # gap, which is the reading half of these controls fire on.
-        while IFS= read -r line; do
-            echo "  verify-windows: $line"
-            [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=netinstall::e2e verify-windows: $line"
-        done < <({ grep -aE '^[[:space:]]*FAIL:' "$WORK/verify-windows.log"
-                   grep -aE '^[[:space:]]*report: (sampler|watch)' "$WORK/verify-windows.log"
-                 } | tr -d '\r' | sed 's/^[[:space:]]*//' | head -10)
-        nt_fail "verify-windows.ps1 reported $RC failure(s)"
-    fi
-    FAILURES=$((FAILURES + RC))
+    STATE="$(nt_app_probe 120)"
     nt_kill_tree $APP_PID
 elif command -v osascript >/dev/null 2>&1 && [ "$(uname -s)" = "Darwin" ]; then
     echo "=== Launch through osascript ==="
+    # TMPDIR is deliberately not redirected on macOS, so the launcher and the
+    # probe agree on where the status file lives. nt_app_gone clears it, so a
+    # title left by something earlier cannot be read as this launch's.
+    nt_app_gone
     "$APP" > "$WORK/app.log" 2>&1 &
     APP_PID=$!
-    # TMPDIR is deliberately not redirected on macOS, so the driver and the
-    # verifier agree on where the status file lives.
-    APP_PID=$APP_PID nt_timeout 240 bash "$ROOT/test/verify-macos.sh" "$SHOTS"
-    RC=$?
-    [ "$RC" -eq 124 ] && nt_fail "verify-macos.sh timed out"
-    if [ "$RC" -ne 0 ]; then
-        nt_note "status file search: $(find "$APPDIR" "${TMPDIR:-/tmp}" -name 'neutrino-title*' 2>/dev/null | tr '\n' ' ')"
-    fi
-    [ "$RC" -eq 0 ] || nt_fail "verify-macos.sh reported $RC failure(s)"
-    FAILURES=$((FAILURES + RC))
+    # The longest budget of the three, and it is the one verify-macos.sh already
+    # needed for a first window: osascript starting, the bridge coming up, and
+    # WKWebView creating its content process all happen before any title.
+    STATE="$(nt_app_probe 180)"
     nt_kill_tree $APP_PID
 elif [ -n "${DISPLAY:-}" ] && nt_linux_runtime; then
     echo "=== Launch through the linux runtime ==="
+    nt_app_gone
     "$APP" > "$WORK/app.log" 2>&1 &
     APP_PID=$!
-    nt_timeout 240 bash "$ROOT/test/verify-linux.sh" "$SHOTS"
-    RC=$?
-    [ "$RC" -eq 124 ] && nt_fail "verify-linux.sh timed out"
-    [ "$RC" -eq 0 ] || nt_fail "verify-linux.sh reported $RC failure(s)"
-    FAILURES=$((FAILURES + RC))
+    STATE="$(nt_app_probe 120)"
     nt_kill_tree $APP_PID
 else
     echo "=== No webview runtime here; assert the polyglot's shell path ran ==="
@@ -200,12 +150,33 @@ else
     fi
 fi
 
+case "$STATE" in
+    # Empty is the no-runtime branch above, which asserted its own thing and
+    # left nothing for this to judge. Every other silence is named.
+    "") ;;
+    CONTENT_OK)
+        echo "  PASS: the installed app opened a webview and its script ran" ;;
+    WINDOW_NO_CONTENT)
+        # The distinction this probe exists for: the process started and got a
+        # window, and the page inside it never ran. A launcher that cannot find
+        # its runtime fails differently, and so does a sandbox that kills the
+        # renderer -- naming which one is the finding.
+        nt_fail "the installed app got a window but its script never ran"
+        FAILURES=$((FAILURES + 1)) ;;
+    NO_WINDOW)
+        nt_fail "the installed app never got a window"
+        FAILURES=$((FAILURES + 1)) ;;
+    *)
+        nt_fail "the webview probe did not report a state ($STATE)"
+        FAILURES=$((FAILURES + 1)) ;;
+esac
+
 echo "=== A new pin reuses the app dir and replaces the launcher ==="
-cp "$SERVE/neutrinotest.cmd" "$WORK/v1.cmd"
+cp "$SERVE/alive.cmd" "$WORK/v1.cmd"
 mkdir -p "$APPDIR"
 echo keep > "$APPDIR/carried-over"
-printf 'echo v2\n' > "$SERVE/neutrinotest.cmd"
-SPEC2="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
+printf 'echo v2\n' > "$SERVE/alive.cmd"
+SPEC2="alive-example-com-1$(nt_pin "$SERVE/alive.cmd")"
 APP2="$(nt_as "$BIN" "$SPEC2" "$WORK/bin")"
 if [ "$SPEC" = "$SPEC2" ]; then
     nt_fail "second pin expected=different actual=same"
@@ -217,7 +188,7 @@ elif "$APP2" --fetch >/dev/null 2>&1; then
         nt_fail "app dir state expected=preserved actual=lost"
         FAILURES=$((FAILURES + 1))
     fi
-    if cmp -s "$SERVE/neutrinotest.cmd" "$SCRIPT"; then
+    if cmp -s "$SERVE/alive.cmd" "$SCRIPT"; then
         echo "  PASS: launcher replaced by the new pin"
     else
         nt_fail "launcher expected=new-version actual=stale"
@@ -233,7 +204,7 @@ else
     nt_fail "second pin expected=fetched actual=failed"
     FAILURES=$((FAILURES + 1))
 fi
-cp "$WORK/v1.cmd" "$SERVE/neutrinotest.cmd"
+cp "$WORK/v1.cmd" "$SERVE/alive.cmd"
 
 echo "=== A shape with a directory fetches from the subdirectory ==="
 # The shapes are the only thing that knows a subdirectory exists, and a parser
@@ -242,7 +213,7 @@ echo "=== A shape with a directory fetches from the subdirectory ==="
 # It is an even shape, so nothing in the name says netinstall.cmd and that is
 # still the file the server has to be asked for.
 mkdir -p "$SERVE/demo"
-cp "$SERVE/neutrinotest.cmd" "$SERVE/demo/netinstall.cmd"
+cp "$SERVE/alive.cmd" "$SERVE/demo/netinstall.cmd"
 DSPEC="demo-127_0_0_1-2$(nt_pin "$SERVE/demo/netinstall.cmd")"
 DAPP="$(nt_as "$BIN" "$DSPEC" "$WORK/bin")"
 DURL="$("$DAPP" --info 2>/dev/null | awk '$1 == "url" { print $2 }')"
@@ -261,7 +232,7 @@ else
 fi
 echo "=== A shape that names both file and directory ==="
 mkdir -p "$SERVE/toy"
-cp "$SERVE/neutrinotest.cmd" "$SERVE/toy/calc.cmd"
+cp "$SERVE/alive.cmd" "$SERVE/toy/calc.cmd"
 TSPEC="calc-toy-127_0_0_1-3$(nt_pin "$SERVE/toy/calc.cmd")"
 TAPP="$(nt_as "$BIN" "$TSPEC" "$WORK/bin")"
 TSCRIPT="$NEUTRINO_HOME/apps/$(nt_appkey "$TSPEC")/calc.cmd"

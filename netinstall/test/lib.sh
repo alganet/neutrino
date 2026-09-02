@@ -15,6 +15,11 @@ export NT_WINDOWS NT_EXE
 NT_HTTPSERVE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)/test/httpserve.py"
 export NT_HTTPSERVE
 
+# This directory, resolved the same way and for the same reason: the liveness
+# probe below reaches for probe-window.ps1, which lives beside this file.
+NT_TESTDIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+export NT_TESTDIR
+
 nt_python() {
     if command -v python3 >/dev/null 2>&1; then
         echo python3
@@ -184,6 +189,7 @@ nt_timeout() {
 nt_kill_app() {
     [ "${NT_WINDOWS:-0}" = "1" ] || return 0
     taskkill //F //T //IM neutrinotest.exe >/dev/null 2>&1
+    taskkill //F //T //IM alive.exe >/dev/null 2>&1
     taskkill //F //T //IM msedgewebview2.exe >/dev/null 2>&1
     return 0
 }
@@ -198,6 +204,138 @@ nt_kill_tree() {
     done
     kill "$pid" 2>/dev/null
     return 0
+}
+
+# ---------------------------------------------------------------------------
+# Did a webview come up, and did its content run?
+# ---------------------------------------------------------------------------
+#
+# Three suites here launch a real webview and none of them is asking about
+# neutrino's window: `e2e.sh` wants to know that a fetched and verified app
+# runs, `confine-strict.sh` and `confine-session.sh` that a tier is worth
+# having. Each of them used to answer that by running `test/verify-linux.sh`
+# and its two siblings -- neutrino's own verifiers, which assert the title at
+# each of six states, the size to the pixel, the frame's corner and the
+# desktop's palette, and keep a screenshot of every one.
+#
+# Every lane that runs this suite already runs that verifier directly against a
+# standalone launch, in a step of its own, a few minutes earlier: `gjs` and
+# `kde` do, `windows-launch` does in `core launch`, and `macos` does beside
+# `macos-netinstall`. So the second run measured nothing the first had not, and
+# it cost more than the time: a regression in neutrino's geometry or palette
+# turned three netinstall suites red on four lanes, each of them reporting a
+# webview defect under a sandbox's name.
+#
+# What is left when that is taken out is one question with three answers, and
+# they are the ones probe-window.ps1 was already written to give:
+#
+#   NO_WINDOW          nothing ever showed a window
+#   WINDOW_NO_CONTENT  a window appeared but the page never set its title
+#   CONTENT_OK         the page ran and drove the title
+#
+# The middle one is why this is a probe and not a boolean. A sandbox that lets
+# the process start and kills its renderer is the interesting failure -- it is
+# what Windows low integrity does to WebView2 -- and "the verifier reported 4
+# failures" could not say it.
+#
+# The app is netinstall/test/alive.js, which this suite owns: it sets the title
+# once and holds the window. Nothing here waits out neutrino's eleven-second
+# head start any more, and nothing here breaks when its step list changes.
+NT_ALIVE_TITLE="NETINSTALL-ALIVE"
+export NT_ALIVE_TITLE
+
+# The window manager's own list of managed top-levels, which is what
+# verify-linux.sh reaches for first and for the reason it gives at length:
+# `xdotool search` matches any window carrying the name, and GTK gives that
+# name to more than the toplevel. Asked through xprop, so this needs x11-utils
+# and not xdotool -- both lanes install both, and xprop is the one that is also
+# on a developer's machine.
+nt_x11_titles() {
+    local wid
+    for wid in $(xprop -root _NET_CLIENT_LIST 2>/dev/null |
+                 sed -n 's/.*# *//p' | tr ',' '\n' | tr -d ' ' | grep '^0x'); do
+        xprop -id "$wid" _NET_WM_NAME WM_NAME 2>/dev/null |
+            sed -n 's/.*= *"\(.*\)"/\1/p'
+    done
+}
+
+# Prints one of the three outcomes above. $1 is the budget in seconds; it
+# returns as soon as the answer is CONTENT_OK, and spends the whole budget only
+# when it is about to report one of the other two.
+# A fourth word, and it is not one of the outcomes: the probe itself did not
+# report. Only the Windows path can produce it -- powershell missing, the script
+# unreadable, an exception before the first Write-Output -- and it exists so
+# that case cannot arrive as the empty string, which every caller's `case` would
+# quietly fall through. A probe that could not run is a failure of the suite and
+# has to read as one.
+nt_app_probe() {
+    local secs="${1:-60}" i titles title saw=0 ps out
+    if [ "${NT_WINDOWS:-0}" = "1" ]; then
+        ps=powershell
+        command -v pwsh >/dev/null 2>&1 && ps=pwsh
+        # The whole wait happens inside the script, which is the only side that
+        # can skip the console hosts: the launcher runs cmd.exe, whose window
+        # carries the script path in its title and a real MainWindowHandle.
+        out="$("$ps" -NoProfile -ExecutionPolicy Bypass \
+            -File "$(cygpath -w "$NT_TESTDIR/probe-window.ps1")" \
+            -TimeoutSeconds "$secs" 2>/dev/null | tr -d '\r' |
+            grep -E '^(NO_WINDOW|WINDOW_NO_CONTENT|CONTENT_OK)$' | tail -1)"
+        case "$out" in
+            NO_WINDOW|WINDOW_NO_CONTENT|CONTENT_OK) echo "$out" ;;
+            *) echo PROBE_FAILED ;;
+        esac
+        return 0
+    fi
+    for i in $(seq 1 "$secs"); do
+        if [ "$(uname -s)" = "Darwin" ]; then
+            # The macOS driver writes the title it set to this file, and only
+            # in the testing tier. Line 1 is the title; the launcher writes the
+            # window's own name there from its clock tick, before any script
+            # has run, which is exactly the WINDOW_NO_CONTENT state.
+            titles="$(sed -n '1p' "${TMPDIR:-/tmp}/neutrino-title.txt" 2>/dev/null)"
+        else
+            titles="$(nt_x11_titles)"
+        fi
+        # Line by line, and the bare title matched exactly. A substring match
+        # for `neutrino` over the whole display finds a terminal sitting in
+        # this checkout, and would turn NO_WINDOW into WINDOW_NO_CONTENT on a
+        # developer's machine -- which is the one reading here that is only
+        # ever used to explain a failure.
+        while IFS= read -r title; do
+            case "$title" in
+                *"$NT_ALIVE_TITLE"*) echo CONTENT_OK; return 0 ;;
+                neutrino)            saw=1 ;;
+            esac
+        done <<TITLES
+$titles
+TITLES
+        sleep 1
+    done
+    [ "$saw" = "1" ] && { echo WINDOW_NO_CONTENT; return 0; }
+    echo NO_WINDOW
+    return 0
+}
+
+# A window from the previous launch still on the display is indistinguishable
+# from this launch's, and would read as CONTENT_OK before anything had started.
+# So a suite that launches twice waits for the last one to be gone, and says so
+# if it never went.
+nt_app_gone() {
+    local i
+    if [ "$(uname -s)" = "Darwin" ]; then
+        rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+        return 0
+    fi
+    [ "${NT_WINDOWS:-0}" = "1" ] && return 0
+    command -v xprop >/dev/null 2>&1 || return 0
+    for i in $(seq 1 20); do
+        case "$(nt_x11_titles)" in
+            *"$NT_ALIVE_TITLE"*) sleep 1 ;;
+            *) return 0 ;;
+        esac
+    done
+    nt_note "an app window outlived its launch; the next reading may be the old one"
+    return 1
 }
 
 # Which GI-capable JavaScript interpreter the launcher would pick, in its
