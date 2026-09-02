@@ -1832,6 +1832,21 @@ jobs:
         run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
       - shell: bash
         run: bash test/parse.sh test/neutrinotest.cmd
+      # Before anything is launched, because an artifact that does not compile
+      # is an app that never appears -- and every suite that waits for a window
+      # then waits out its own timeout before saying so. Measured: three suites
+      # spent fifty minutes between them against a forty-minute job, the run was
+      # killed in the middle of the fourth, and GitHub keeps no logs for a job
+      # killed like that. The compiler had said exactly what was wrong, once, on
+      # the first launch of the first suite.
+      #
+      # A second or so, and it compiles the artifact the way the launcher does
+      # -- with the reference list read out of the artifact's own jsc line.
+      - timeout-minutes: 5
+        shell: pwsh
+        run: |
+          & .\test\compile.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
+          exit $LASTEXITCODE
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
       # assembles anything -- and it has to run on all of them, because the
@@ -1869,6 +1884,22 @@ jobs:
         shell: pwsh
         run: |
           & .\test\winexec.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\winexec.log"
+          exit $LASTEXITCODE
+      # Whether the 20 MB the Windows lane downloads on first run has to be
+      # downloaded at all. What renders is the Evergreen Runtime, which is
+      # already on this runner and on most machines; the package is the SDK
+      # wrapper around it, and the only part of it the runtime does not carry.
+      #
+      # Beside winexec.ps1 because it is the same kind of step: it reads the
+      # built artifact, compiles small programs with the same jsc.exe, starts no
+      # window, and nothing it starts outlives the step. It fetches the pinned
+      # package once, to read the IIDs out of its header rather than to load
+      # anything from it -- so a run of this proves nothing about the network
+      # the shipped app would need, which is the point.
+      - timeout-minutes: 15
+        shell: pwsh
+        run: |
+          & .\test\evergreen.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\evergreen.log"
           exit $LASTEXITCODE
       # The monolith launched a webview (appcache) before the neutrinotest
       # verify, so the WebView2 runtime's one-time cold init was already done.
@@ -2233,6 +2264,21 @@ jobs:
       - uses: actions/checkout@v7
       - shell: bash
         run: bash test/mkapp.sh test/neutrinoattack.js test/neutrinoattack.cmd
+      # Before anything is launched, because an artifact that does not compile
+      # is an app that never appears -- and every suite that waits for a window
+      # then waits out its own timeout before saying so. Measured: three suites
+      # spent fifty minutes between them against a forty-minute job, the run was
+      # killed in the middle of the fourth, and GitHub keeps no logs for a job
+      # killed like that. The compiler had said exactly what was wrong, once, on
+      # the first launch of the first suite.
+      #
+      # A second or so, and it compiles the artifact the way the launcher does
+      # -- with the reference list read out of the artifact's own jsc line.
+      - timeout-minutes: 5
+        shell: pwsh
+        run: |
+          & .\test\compile.ps1 test\neutrinoattack.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
+          exit $LASTEXITCODE
       - timeout-minutes: 15
         shell: pwsh
         run: |
