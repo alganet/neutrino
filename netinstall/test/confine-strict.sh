@@ -140,26 +140,49 @@ else
     nt_note "SKIP: no webview runtime here; viability untested"
 fi
 
+# The viewport alive.js announced from a frame callback, or empty if no frame
+# ever came. Printed on every platform because it is a reading, and asserted on
+# Windows because there it is the question. Microsoft documents low integrity as
+# leaving WebView2 with a window and no rendering, and this repository believed
+# that in prose for a long time -- while its own CI recorded the opposite on
+# every run, because nothing here asserted the difference and "a script ran"
+# cannot see it. It is asserted now, in the direction the measurement points:
+# green means a frame with a size on it, and a return to what the vendor
+# documents goes red rather than quietly back into a comment.
+FRAME="$(nt_app_frame)"
+
 case "$STATE" in
     "") ;;
     CONTENT_OK)
-        nt_note "webview started under tight confinement"
-        echo "  PASS: webview works under the tight tier" ;;
+        nt_note "webview started under tight confinement, viewport ${FRAME:-<no frame announced>}"
+        case "$FRAME" in
+            ""|0x*|*x0)
+                if [ "$NT_WINDOWS" = "1" ]; then
+                    # This is the shape the README's long-standing claim
+                    # predicts, and until now nothing here could see it: the
+                    # process lives, the page runs, and the view never gets as
+                    # far as a frame with a size on it.
+                    nt_fail "the webview ran but scheduled no frame with a size (viewport ${FRAME:-none}); the tight tier is not viable for GUI apps on windows"
+                    FAILURES=$((FAILURES + 1))
+                else
+                    nt_note "no viewport was announced (${FRAME:-none}); the frame half is unmeasured on this lane"
+                fi ;;
+            *)
+                echo "  PASS: webview works under the tight tier, laid out at $FRAME" ;;
+        esac ;;
     NO_WINDOW|WINDOW_NO_CONTENT)
-        if [ "$NT_WINDOWS" = "1" ]; then
-            # Measured, not assumed: WebView2 does not render in a low integrity
-            # host, which is what Microsoft documents. Recorded rather than
-            # failed, so the suite still reports it if that ever changes -- and
-            # the probe now names which half went, which the verifier's failure
-            # count could not: WINDOW_NO_CONTENT is the renderer, NO_WINDOW is
-            # a process that never got that far.
-            nt_note "known limitation: WebView2 does not render at low integrity ($STATE)"
-            echo "  NOTE: webview does not start under the tight tier on windows"
-        else
-            nt_fail "webview failed under tight confinement ($STATE); this tier is not viable as written"
-            nt_note "app log: $(tr '\n' ' ' < "$WORK/app.log" 2>/dev/null | tail -c 400)"
-            FAILURES=$((FAILURES + 1))
-        fi ;;
+        # Windows used to be excused here, on the strength of a documented
+        # limitation this lane has never actually reproduced. That excuse was
+        # load-bearing in the wrong direction: it meant the one platform whose
+        # tier was most suspect was also the only one where a webview failing to
+        # come up produced a green tick and a note. Every platform fails now.
+        # If low integrity does start behaving as Microsoft documents, the way
+        # to find out is a red lane, and the state says which half went --
+        # WINDOW_NO_CONTENT is the renderer, NO_WINDOW is a process that never
+        # got that far.
+        nt_fail "webview failed under tight confinement ($STATE); this tier is not viable as written"
+        nt_note "app log: $(tr '\n' ' ' < "$WORK/app.log" 2>/dev/null | tail -c 400)"
+        FAILURES=$((FAILURES + 1)) ;;
     *)
         # Not a reading about the tier at all. Kept apart from the two states
         # above so that a probe which could not run is never filed as the

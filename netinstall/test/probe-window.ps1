@@ -35,7 +35,17 @@ do {
         if (-not $t) { continue }
         if ($t -like "*STEP*" -or $t -like "*TESTS DONE*" -or
             $t -like "*NETINSTALL-ALIVE*") {
+            # The title as well as the verdict, on a line of its own. alive.js
+            # puts its viewport size in there once a frame callback has run, and
+            # that reading is the only thing here that can tell a view which got
+            # a surface from one which merely ran a script -- which is the
+            # question the Windows tight tier turns on.
+            #
+            # A bare NETINSTALL-ALIVE is not waited out here: the caller owns
+            # that grace, because it owns the budget. This returns the first
+            # matching title it sees and says which one it was.
             Write-Output "CONTENT_OK"
+            Write-Output "TITLE $t"
             exit 0
         }
         if ($t -like "*neutrino*") { $sawWindow = $true }
