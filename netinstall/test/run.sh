@@ -108,6 +108,33 @@ esac
 [ "${NEUTRINO_LOWFETCH_PROBE:-}" = "1" ] && SUITES="$SUITES lowfetch"
 [ "${NEUTRINO_JOB_UI_BISECT:-}" = "1" ] && SUITES="$SUITES job-ui"
 
+# A caller may name the list outright, and there is one reason to.
+#
+# Almost everything above is a question about a kernel: what Landlock refuses,
+# what seccomp refuses, what bounds curl is given, what the environment
+# allowlist drops. None of it knows what a webview is. `gjs` and `kde` are both
+# ubuntu-latest -- same kernel, both reporting landlock abi 7 -- so running the
+# whole list on both is the same measurement taken twice on the same machine.
+# Measured on run 33674586566, that is about 170 s a push: fetchbound at 130,
+# fetchconf at 34, and a dozen suites at a second or two each.
+#
+# What genuinely differs between those two lanes is the toolkit, so that is what
+# the second one is asked for: `env` (the loader knobs are GTK's on one and Qt's
+# on the other), `e2e`, `confine-strict` and `confine-session` -- the three that
+# put a real webview under a tier. confine-session earns its place there twice
+# over: kde runs the suite under dbus-run-session and lets nt_userns lift
+# AppArmor itself, where gjs has it lifted by a job step, so the tier is
+# measured against a session that was really there and through a code path the
+# other lane never takes.
+#
+# Last, and after the opt-in probes, so an explicit list wins over everything
+# above it. That is the point of naming one.
+#
+# It does not shorten the build block: every binary is still built, because the
+# builds are seconds on a machine with a compiler and a suite list that quietly
+# changed what was compiled would be a worse thing to own than the seconds.
+[ -n "${NEUTRINO_SUITES:-}" ] && SUITES="$NEUTRINO_SUITES"
+
 # Where the wall clock went, per suite, in the order they ran.
 #
 # The whole suite costs 5 minutes on ubuntu and 14.5 on macos, and until this

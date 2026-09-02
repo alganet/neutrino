@@ -1183,6 +1183,19 @@ jobs:
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          # The toolkit-facing four, and not the whole list. This lane and gjs
+          # are both ubuntu-latest -- one kernel, one Landlock ABI -- so every
+          # suite above that asks what the kernel refuses was being asked twice
+          # on the same machine, about 170 s a push. See run.sh, where the
+          # variable is read and the argument is written out in full.
+          #
+          # These four are the ones where the two lanes differ: env carries Qt's
+          # loader knobs here and GTK's there, and the other three put a real
+          # webview under a tier -- which is the whole reason a second Linux lane
+          # exists. confine-session doubly so: dbus-run-session below means the
+          # session it closes was really there, and nt_userns lifts AppArmor
+          # from inside the suite here where gjs has a job step do it.
+          export NEUTRINO_SUITES="env e2e confine-strict confine-session"
           dbus-run-session -- bash netinstall/test/run.sh
       # The offline tier, which nothing in this repository has ever built.
       # An offline build says it denies the page network access, and
