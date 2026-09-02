@@ -1,0 +1,25 @@
+            // The jsc region's imports, and the region's only shared statement.
+            //
+            // They are a part of their own because everything under here is one
+            // compilation unit -- the whole polyglot is a single file handed to
+            // jsc.exe -- so an import written in any one part is an import for
+            // all of them. Keeping them beside sink.jsc's classes made the two
+            // things look related, and made a part that needs a namespace have
+            // to reach into a part that does not use it.
+            //
+            // Line comments only in here, and in every part below. This block
+            // is a block comment to every engine but jsc, and JavaScript has no
+            // nested block comments -- an inner close would end the outer one
+            // and spill JScript.NET syntax into three engines that cannot read
+            // it. That is the rule the whole region lives under.
+            import System;
+            import System.IO;
+            import System.Collections;
+            import System.Drawing;
+            import System.Windows.Forms;
+            import System.Reflection;
+            // For the Evergreen path, which builds the types it needs rather
+            // than declaring them: jsc.exe accepts neither a P/Invoke nor a
+            // ComImport interface in source. See jsc/interop.jsc.
+            import System.Reflection.Emit;
+            import System.Runtime.InteropServices;

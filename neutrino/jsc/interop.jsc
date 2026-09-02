@@ -1,0 +1,543 @@
+            // The Evergreen path's half of the Windows driver, and the reason
+            // it is in here rather than beside the rest of it: everything below
+            // is either a .NET type this file has to declare, or a decision a
+            // COM callback takes while the engine is waiting for it. Neither
+            // can be written in the JavaScript four other engines also read.
+            //
+            // Line comments only, for the reason sink.jsc gives above: this
+            // whole block is a block comment to everything but jsc, and an
+            // inner close would end the outer one.
+            //
+            // What this is for. The Windows driver loads two managed
+            // assemblies out of a NuGet package it downloads on first run. That
+            // package is the SDK; what renders is the Evergreen Runtime, which
+            // is already on the machine. Skipping the download means not using
+            // the managed wrapper, and the runtime offers COM and nothing else.
+            //
+            // jsc.exe cannot declare either construct that would need. A
+            // P/Invoke has to be a function with no body, a body-less function
+            // has to be abstract, a static function cannot be abstract -- and
+            // the attribute that would carry the declaration is read as an
+            // array literal, so `[GuidAttribute("...")]` is a cast of a String
+            // to GuidAttribute and refused as one. Both facts were measured on
+            // a runner by test/evergreen.ps1, which carries them as the reason
+            // this file is shaped the way it is.
+            //
+            // So the types are emitted rather than declared. Reflection.Emit
+            // takes the same descriptions as arguments, and arguments are
+            // something this compiler has no opinion about. An interface has no
+            // method bodies, so emitting one costs only its attributes;
+            // TypeAttributes.Import is the flag ComImportAttribute would have
+            // set. The classes that implement the callbacks are the one place
+            // IL is written, and each is four instructions -- push both
+            // arguments, call a static below, return. Nothing in an emitted
+            // method decides anything.
+            //
+            // The table of IIDs and slot numbers is not here. It is data, it is
+            // derived from the pinned package's own header, and it belongs
+            // where the rest of the driver can read it -- see
+            // js/webview2-interfaces.js. A JScript.NET class cannot read a
+            // JScript global, which is the same wall sink.jsc runs into, so
+            // everything below takes primitives and hands back objects, and the
+            // JavaScript side does the walking.
+            class NeutrinoEvergreen {
+                // The dynamic module every emitted type goes into. One per
+                // process: there is nothing to gain from more and a second one
+                // would be a second place for a name to collide.
+                static var module : ModuleBuilder = null;
+                // This class's own Type. Asked of an instance rather than
+                // looked up by name: what jsc calls a class in metadata is its
+                // business, and a name that resolves to null here would fail
+                // inside an emitted call with nothing to say.
+                static var selfType : Type = null;
+                static var rectType : Type = null;
+                static var entryType : Type = null;
+
+                // Emitted callback objects, kept because nothing else refers to
+                // them. GetComInterfaceForObject hands out a pointer and the
+                // caller keeps only that; the managed object behind it has to
+                // stay reachable for as long as the runtime may call it, and
+                // this list is what makes that true.
+                static var sinks : ArrayList = new ArrayList();
+
+                // The argument interfaces the handlers below have to call back
+                // into. Set by the JavaScript side once the interfaces are
+                // built, because that side is the one holding the table.
+                static var messageArgsType : Type = null;
+                static var navigationArgsType : Type = null;
+                static var newWindowArgsType : Type = null;
+
+                // What the callbacks leave behind. The two completion handlers
+                // fire once each and the loop waits on them.
+                static var environmentPtr : IntPtr = IntPtr.Zero;
+                static var environmentHr : int = 0;
+                static var environmentDone : boolean = false;
+                static var controllerPtr : IntPtr = IntPtr.Zero;
+                static var controllerHr : int = 0;
+                static var controllerDone : boolean = false;
+
+                // Messages arrive as strings and not as argument objects, which
+                // is the one place this path cannot mirror the managed one. An
+                // event argument is alive for the duration of the call and no
+                // longer, so the string is taken inside the handler; the
+                // managed path can queue the object itself because the
+                // marshaller holds a reference to it.
+                static var messages : ArrayList = new ArrayList();
+                static var messageSources : ArrayList = new ArrayList();
+
+                // Anything a handler could not do, said out loud by the loop
+                // rather than swallowed. A callback that throws returns a
+                // failure HRESULT to the engine, and an engine told a handler
+                // failed does not always say so.
+                static var faults : ArrayList = new ArrayList();
+
+                // Under construction by DefineInterface/DefineSlot/EndInterface.
+                static var building : TypeBuilder = null;
+                static var slotNames : ArrayList = new ArrayList();
+                static var slotReturns : ArrayList = new ArrayList();
+                static var slotArgs : ArrayList = new ArrayList();
+
+                static function Self() : Type {
+                    if (NeutrinoEvergreen.selfType == null) {
+                        NeutrinoEvergreen.selfType = (new NeutrinoEvergreen()).GetType();
+                    }
+                    return NeutrinoEvergreen.selfType;
+                }
+
+                // One code to one type. See js/webview2-interfaces.js for what
+                // each means and why an interface pointer is spelled `p`.
+                static function TypeFor(code : String) : Type {
+                    if (code == "i") {
+                        return Type.GetType("System.Int32");
+                    }
+                    if (code == "l") {
+                        return Type.GetType("System.Int64");
+                    }
+                    if (code == "r") {
+                        return NeutrinoEvergreen.rectType;
+                    }
+                    return Type.GetType("System.IntPtr");
+                }
+
+                static function TypesFor(codes : String) : Type[] {
+                    var types : Type[] = new Type[codes.Length];
+                    for (var i : int = 0; i < codes.Length; i++) {
+                        types[i] = NeutrinoEvergreen.TypeFor(codes.Substring(i, 1));
+                    }
+                    return types;
+                }
+
+                static function ReturnFor(code : String) : Type {
+                    if (code == "v") {
+                        return null;
+                    }
+                    return NeutrinoEvergreen.TypeFor(code);
+                }
+
+                // The dynamic module, and RECT, which is the only shape in this
+                // driver that is not pointer-sized. A 16-byte struct is not
+                // passed the way a pointer is, so it has to be a real type with
+                // a real layout; everything else is an IntPtr and needs none.
+                static function Begin() : boolean {
+                    if (NeutrinoEvergreen.module != null) {
+                        return true;
+                    }
+                    try {
+                        var name : AssemblyName = new AssemblyName("NeutrinoEvergreen");
+                        var built : AssemblyBuilder = AppDomain.CurrentDomain.DefineDynamicAssembly(
+                            name, AssemblyBuilderAccess.Run);
+                        NeutrinoEvergreen.module = built.DefineDynamicModule("m");
+
+                        var rect : TypeBuilder = NeutrinoEvergreen.module.DefineType("RECT",
+                            TypeAttributes.Public | TypeAttributes.SequentialLayout | TypeAttributes.Sealed,
+                            Type.GetType("System.ValueType"));
+                        var intType : Type = Type.GetType("System.Int32");
+                        rect.DefineField("left", intType, FieldAttributes.Public);
+                        rect.DefineField("top", intType, FieldAttributes.Public);
+                        rect.DefineField("right", intType, FieldAttributes.Public);
+                        rect.DefineField("bottom", intType, FieldAttributes.Public);
+                        NeutrinoEvergreen.rectType = rect.CreateType();
+                        return true;
+                    } catch (e) {
+                        NeutrinoEvergreen.faults.Add("could not start the emitter: " + e);
+                        return false;
+                    }
+                }
+
+                // An interface, with the two attributes that make the CLR treat
+                // it as one it did not author. Applied through
+                // CustomAttributeBuilder because that is the only way in when
+                // the source cannot carry an attribute at all.
+                static function NewInterface(name : String, iid : String) : TypeBuilder {
+                    var tb : TypeBuilder = NeutrinoEvergreen.module.DefineType(name,
+                        TypeAttributes.Public | TypeAttributes.Interface |
+                        TypeAttributes.Abstract | TypeAttributes.Import);
+
+                    var guidType : Type = Type.GetType("System.Runtime.InteropServices.GuidAttribute");
+                    var guidArgs : Type[] = [Type.GetType("System.String")];
+                    var guidValue : Object[] = [iid];
+                    tb.SetCustomAttribute(new CustomAttributeBuilder(
+                        guidType.GetConstructor(guidArgs), guidValue));
+
+                    var itfType : Type = Type.GetType("System.Runtime.InteropServices.InterfaceTypeAttribute");
+                    var itfArgs : Type[] = [Type.GetType("System.Runtime.InteropServices.ComInterfaceType")];
+                    var itfValue : Object[] = [ComInterfaceType.InterfaceIsIUnknown];
+                    tb.SetCustomAttribute(new CustomAttributeBuilder(
+                        itfType.GetConstructor(itfArgs), itfValue));
+
+                    return tb;
+                }
+
+                static function AbstractAttributes() : MethodAttributes {
+                    return MethodAttributes.Public | MethodAttributes.Virtual |
+                        MethodAttributes.Abstract | MethodAttributes.HideBySig |
+                        MethodAttributes.NewSlot;
+                }
+
+                // Three calls make one interface: start it, name the slots that
+                // are actually called, finish it. The slots in between are
+                // filled with placeholders, because a vtable is positions and a
+                // position nothing calls only has to be occupied.
+                static function DefineInterface(name : String, iid : String) : void {
+                    NeutrinoEvergreen.building = NeutrinoEvergreen.NewInterface(name, iid);
+                    NeutrinoEvergreen.slotNames.Clear();
+                    NeutrinoEvergreen.slotReturns.Clear();
+                    NeutrinoEvergreen.slotArgs.Clear();
+                }
+
+                static function DefineSlot(index : int, name : String, ret : String, args : String) : void {
+                    while (NeutrinoEvergreen.slotNames.Count <= index) {
+                        NeutrinoEvergreen.slotNames.Add(null);
+                        NeutrinoEvergreen.slotReturns.Add(null);
+                        NeutrinoEvergreen.slotArgs.Add(null);
+                    }
+                    NeutrinoEvergreen.slotNames[index] = name;
+                    NeutrinoEvergreen.slotReturns[index] = ret;
+                    NeutrinoEvergreen.slotArgs[index] = args;
+                }
+
+                static function EndInterface() : Type {
+                    var placeholder : Type[] = [
+                        Type.GetType("System.IntPtr"), Type.GetType("System.IntPtr"),
+                        Type.GetType("System.IntPtr"), Type.GetType("System.IntPtr")
+                    ];
+                    for (var i : int = 0; i < NeutrinoEvergreen.slotNames.Count; i++) {
+                        if (NeutrinoEvergreen.slotNames[i] == null) {
+                            NeutrinoEvergreen.building.DefineMethod("slot" + i,
+                                NeutrinoEvergreen.AbstractAttributes(), null, placeholder);
+                        } else {
+                            NeutrinoEvergreen.building.DefineMethod(
+                                String(NeutrinoEvergreen.slotNames[i]),
+                                NeutrinoEvergreen.AbstractAttributes(),
+                                NeutrinoEvergreen.ReturnFor(String(NeutrinoEvergreen.slotReturns[i])),
+                                NeutrinoEvergreen.TypesFor(String(NeutrinoEvergreen.slotArgs[i])));
+                        }
+                    }
+                    var made : Type = NeutrinoEvergreen.building.CreateType();
+                    NeutrinoEvergreen.building = null;
+                    return made;
+                }
+
+                // A callback the runtime can call: an interface with one method,
+                // and a class implementing it whose body is push, push, call,
+                // return. `target` names a static on this class, so the only
+                // code that runs inside a COM callback is code written here.
+                //
+                // Answers the COM pointer, because that is all a caller ever
+                // wants and it keeps the object itself out of reach of anything
+                // that might drop it.
+                static function MakeSink(name : String, iid : String, args : String,
+                                         target : String) : IntPtr {
+                    var argTypes : Type[] = NeutrinoEvergreen.TypesFor(args);
+
+                    var itb : TypeBuilder = NeutrinoEvergreen.NewInterface(name, iid);
+                    itb.DefineMethod("Invoke", NeutrinoEvergreen.AbstractAttributes(), null, argTypes);
+                    var itype : Type = itb.CreateType();
+
+                    var ctb : TypeBuilder = NeutrinoEvergreen.module.DefineType(name + "Impl",
+                        TypeAttributes.Public);
+                    ctb.AddInterfaceImplementation(itype);
+                    var impl : MethodBuilder = ctb.DefineMethod("Invoke",
+                        MethodAttributes.Public | MethodAttributes.Virtual |
+                        MethodAttributes.HideBySig | MethodAttributes.NewSlot |
+                        MethodAttributes.Final,
+                        null, argTypes);
+
+                    var il : ILGenerator = impl.GetILGenerator();
+                    il.Emit(OpCodes.Ldarg_1);
+                    il.Emit(OpCodes.Ldarg_2);
+                    il.Emit(OpCodes.Call, NeutrinoEvergreen.Self().GetMethod(target));
+                    il.Emit(OpCodes.Ret);
+                    ctb.DefineMethodOverride(impl, itype.GetMethod("Invoke"));
+
+                    var instance : Object = Activator.CreateInstance(ctb.CreateType());
+                    NeutrinoEvergreen.sinks.Add(instance);
+                    return Marshal.GetComInterfaceForObject(instance, itype);
+                }
+
+                // The entry point. Two stubs: one to put the runtime's own DLL
+                // in this process by a path decided at run time, and one to call
+                // into it -- a P/Invoke cannot name a path, so the module is
+                // already loaded by the time the second stub resolves its name.
+                //
+                // The leading boolean is not in the documented signature and is
+                // not a guess: called without it the same export answers
+                // E_NOINTERFACE, which is the arguments arriving one place to
+                // the left. Measured on a runner, both shapes.
+                //
+                // `entry` and not `export`, which is a reserved word in this
+                // compiler and a perfectly ordinary noun everywhere else. It
+                // cost a whole Windows lane: the region is compiled on every
+                // launch, so a name jsc will not accept is not a broken feature,
+                // it is an app that does not start.
+                static function DefineEntry(dll : String, entry : String) : boolean {
+                    try {
+                        var tb : TypeBuilder = NeutrinoEvergreen.module.DefineType("NeutrinoNative",
+                            TypeAttributes.Public);
+                        var pinvoke : MethodAttributes = MethodAttributes.Public |
+                            MethodAttributes.Static | MethodAttributes.PinvokeImpl;
+                        var ptr : Type = Type.GetType("System.IntPtr");
+
+                        var loadArgs : Type[] = [ptr];
+                        var load : MethodBuilder = tb.DefinePInvokeMethod("LoadLibraryW",
+                            "kernel32.dll", "LoadLibraryW", pinvoke, CallingConventions.Standard,
+                            ptr, loadArgs, CallingConvention.Winapi, CharSet.Auto);
+                        load.SetImplementationFlags(
+                            load.GetMethodImplementationFlags() | MethodImplAttributes.PreserveSig);
+
+                        var createArgs : Type[] = [
+                            Type.GetType("System.Boolean"), ptr, ptr, ptr, ptr
+                        ];
+                        var create : MethodBuilder = tb.DefinePInvokeMethod("CreateEnvironment",
+                            dll, entry, pinvoke, CallingConventions.Standard,
+                            Type.GetType("System.Int32"), createArgs,
+                            CallingConvention.Winapi, CharSet.Auto);
+                        create.SetImplementationFlags(
+                            create.GetMethodImplementationFlags() | MethodImplAttributes.PreserveSig);
+
+                        NeutrinoEvergreen.entryType = tb.CreateType();
+                        return true;
+                    } catch (e) {
+                        NeutrinoEvergreen.faults.Add("could not build the entry point: " + e);
+                        return false;
+                    }
+                }
+
+                static function LoadModule(path : String) : boolean {
+                    var held : IntPtr = Marshal.StringToCoTaskMemUni(path);
+                    try {
+                        var args : Object[] = [held];
+                        var got : Object = NeutrinoEvergreen.entryType.GetMethod("LoadLibraryW")
+                            .Invoke(null, args);
+                        return String(got) != "0";
+                    } catch (e) {
+                        NeutrinoEvergreen.faults.Add("could not load " + path + ": " + e);
+                        return false;
+                    } finally {
+                        Marshal.FreeCoTaskMem(held);
+                    }
+                }
+
+                static function CreateEnvironment(userDataFolder : String, handler : IntPtr) : int {
+                    var folder : IntPtr = Marshal.StringToCoTaskMemUni(userDataFolder);
+                    try {
+                        var args : Object[] = [true, IntPtr.Zero, folder, IntPtr.Zero, handler];
+                        var hr : int = NeutrinoEvergreen.entryType.GetMethod("CreateEnvironment")
+                            .Invoke(null, args);
+                        return hr;
+                    } catch (e) {
+                        NeutrinoEvergreen.faults.Add("the entry point would not be called: " + e);
+                        return -1;
+                    } finally {
+                        Marshal.FreeCoTaskMem(folder);
+                    }
+                }
+
+                // A string that came back as a CoTaskMem LPWSTR, which is what
+                // every `p` return in the table is. Freed here because the
+                // caller allocated nothing and would have nothing to free.
+                static function TakeString(p : IntPtr) : String {
+                    if (p == IntPtr.Zero) {
+                        return "";
+                    }
+                    var s : String = Marshal.PtrToStringUni(p);
+                    Marshal.FreeCoTaskMem(p);
+                    return s;
+                }
+
+                // The other direction, and its counterpart. Every string in the
+                // table is an IntPtr, so a string going out has to be
+                // unmanaged memory the caller owns and frees -- which is one
+                // line each and no marshalling question at all, rather than a
+                // MarshalAs this compiler could not carry anyway.
+                static function GiveString(s : String) : IntPtr {
+                    return Marshal.StringToCoTaskMemUni(s);
+                }
+
+                static function DropString(p : IntPtr) : void {
+                    if (p != IntPtr.Zero) {
+                        Marshal.FreeCoTaskMem(p);
+                    }
+                }
+
+                // Wraps a raw interface pointer so that calls on it go through
+                // the emitted interface rather than through whatever the CLR
+                // would guess.
+                static function Wrap(p : IntPtr, itf : Type) : Object {
+                    if (p == IntPtr.Zero || itf == null) {
+                        return null;
+                    }
+                    return Marshal.GetTypedObjectForIUnknown(p, itf);
+                }
+
+                static function MakeRect(w : int, h : int) : Object {
+                    var rect : Object = Activator.CreateInstance(NeutrinoEvergreen.rectType);
+                    var zero : int = 0;
+                    NeutrinoEvergreen.rectType.GetField("left").SetValue(rect, zero);
+                    NeutrinoEvergreen.rectType.GetField("top").SetValue(rect, zero);
+                    NeutrinoEvergreen.rectType.GetField("right").SetValue(rect, w);
+                    NeutrinoEvergreen.rectType.GetField("bottom").SetValue(rect, h);
+                    return rect;
+                }
+
+                // ---- the callbacks ------------------------------------------
+                //
+                // Everything below runs inside a COM call with the engine
+                // waiting on it. Each one is reached from four instructions of
+                // emitted IL and nothing else calls it.
+
+                // An IntPtr parameter is one the marshaller did not count, so a
+                // pointer that has to outlive the call has to be counted here.
+                static function OnEnvironment(hr : int, env : IntPtr) : void {
+                    NeutrinoEvergreen.environmentHr = hr;
+                    if (env != IntPtr.Zero) {
+                        Marshal.AddRef(env);
+                    }
+                    NeutrinoEvergreen.environmentPtr = env;
+                    NeutrinoEvergreen.environmentDone = true;
+                }
+
+                static function OnController(hr : int, controller : IntPtr) : void {
+                    NeutrinoEvergreen.controllerHr = hr;
+                    if (controller != IntPtr.Zero) {
+                        Marshal.AddRef(controller);
+                    }
+                    NeutrinoEvergreen.controllerPtr = controller;
+                    NeutrinoEvergreen.controllerDone = true;
+                }
+
+                // Both strings are taken here and neither is judged here.
+                //
+                // Taken, because the argument object is alive for this call and
+                // no longer -- the managed path can queue the object itself
+                // because the marshaller holds a reference to it, and this one
+                // cannot. Not judged, because the rule is isOwnDocument and
+                // that is a JScript global, which a class in here cannot reach.
+                // Queueing the sender alongside the message is what lets the
+                // loop apply the same rule to both paths instead of this file
+                // growing a second one that has to agree with it.
+                static function OnWebMessage(sender : IntPtr, args : IntPtr) : void {
+                    try {
+                        var o : Object = NeutrinoEvergreen.Wrap(args, NeutrinoEvergreen.messageArgsType);
+                        if (o == null) {
+                            return;
+                        }
+                        var from : String = NeutrinoEvergreen.TakeString(
+                            NeutrinoEvergreen.messageArgsType.GetMethod("get_Source").Invoke(o, null));
+                        var text : String = NeutrinoEvergreen.TakeString(
+                            NeutrinoEvergreen.messageArgsType
+                                .GetMethod("TryGetWebMessageAsString").Invoke(o, null));
+                        NeutrinoEvergreen.messageSources.Add(from);
+                        NeutrinoEvergreen.messages.Add(text);
+                    } catch (e) {
+                        NeutrinoEvergreen.faults.Add("a page message could not be read: " + e);
+                    }
+                }
+
+                // Two completion handlers with nothing to complete. Neither
+                // call can be made without one -- measured: the runtime takes a
+                // handler this process supplies and answers 0 through it -- and
+                // neither result is anything the driver acts on, so the error
+                // code is kept for a trace and nothing else.
+                static var scriptAddedHr : int = 0;
+                static function OnScriptAdded(hr : int, id : IntPtr) : void {
+                    NeutrinoEvergreen.scriptAddedHr = hr;
+                }
+
+                static var scriptRanHr : int = 0;
+                static function OnScriptRan(hr : int, result : IntPtr) : void {
+                    NeutrinoEvergreen.scriptRanHr = hr;
+                }
+
+                // The navigation policy, and it is NeutrinoNavSink's, reached
+                // rather than repeated: identity, isOwn and the two queues are
+                // statics on that class and a JScript.NET class may call
+                // another's. What differs is only how the url is got and how
+                // the refusal is written -- a property through an emitted
+                // interface here, a reflected managed property there -- so the
+                // rule itself has one home and both drivers refuse the same
+                // things for the same reasons.
+                static function OnNavigationStarting(sender : IntPtr, args : IntPtr) : void {
+                    try {
+                        var o : Object = NeutrinoEvergreen.Wrap(args, NeutrinoEvergreen.navigationArgsType);
+                        if (o == null) {
+                            return;
+                        }
+                        var going : String = NeutrinoEvergreen.TakeString(
+                            NeutrinoEvergreen.navigationArgsType.GetMethod("get_Uri").Invoke(o, null));
+
+                        if (!NeutrinoNavSink.armed) {
+                            if (NeutrinoNavSink.navIssued && NeutrinoNavSink.ownDocument == "") {
+                                NeutrinoNavSink.ownDocument = NeutrinoNavSink.identity(going);
+                            }
+                            return;
+                        }
+                        if (NeutrinoNavSink.isOwn(going)) {
+                            return;
+                        }
+                        var one : int = 1;
+                        var yes : Object[] = [one];
+                        NeutrinoEvergreen.navigationArgsType.GetMethod("put_Cancel").Invoke(o, yes);
+                        NeutrinoNavSink.refusals.Add("refused navigation to " +
+                            NeutrinoNavSink.shorten(going));
+                    } catch (e) {
+                        NeutrinoEvergreen.faults.Add("a navigation could not be judged: " + e);
+                    }
+                }
+
+                // Armed on the commit of the document this driver loaded, and
+                // keyed on ownDocument rather than on navIssued for the reason
+                // sink.jsc writes down: the about:blank the view starts on
+                // commits too, and a gate armed by that one would refuse the
+                // app's own document.
+                static function OnContentLoading(sender : IntPtr, args : IntPtr) : void {
+                    if (NeutrinoNavSink.ownDocument != "") {
+                        NeutrinoNavSink.armed = true;
+                    }
+                }
+
+                // Every one of them, and the url forwarded to the machine's
+                // browser through the same queue the managed path uses -- so a
+                // link that works everywhere else is not silently dropped here.
+                static function OnNewWindowRequested(sender : IntPtr, args : IntPtr) : void {
+                    try {
+                        var o : Object = NeutrinoEvergreen.Wrap(args, NeutrinoEvergreen.newWindowArgsType);
+                        if (o == null) {
+                            return;
+                        }
+                        var going : String = NeutrinoEvergreen.TakeString(
+                            NeutrinoEvergreen.newWindowArgsType.GetMethod("get_Uri").Invoke(o, null));
+                        if (!NeutrinoNavSink.armed) {
+                            return;
+                        }
+                        var one : int = 1;
+                        var yes : Object[] = [one];
+                        NeutrinoEvergreen.newWindowArgsType.GetMethod("put_Handled").Invoke(o, yes);
+                        NeutrinoNavSink.refusals.Add("refused a new window for " +
+                            NeutrinoNavSink.shorten(going));
+                        NeutrinoNavSink.externals.Add(going);
+                    } catch (e) {
+                        NeutrinoEvergreen.faults.Add("a new window could not be refused: " + e);
+                    }
+                }
+            }

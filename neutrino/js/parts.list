@@ -25,5 +25,8 @@
 @@include js/winerror.js
 @@include js/webview2-fetch.js
 @@include js/webview2-wire.js
+@@include js/webview2-interfaces.js
+@@include js/webview2-evergreen.js
+@@include js/webview2-view.js
 @@include js/driver-windows.js
 @@include js/launch.js

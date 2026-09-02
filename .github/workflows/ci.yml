@@ -1834,8 +1834,9 @@ jobs:
         run: bash test/parse.sh test/neutrinotest.cmd
       # Before anything is launched, because an artifact that does not compile
       # is an app that never appears -- and every suite that waits for a window
-      # then waits out its own timeout before saying so. Measured: three suites
-      # spent fifty minutes between them against a forty-minute job, the run was
+      # then waits out its own timeout before saying so. One reserved word in
+      # the jsc region cost this lane its runner that way: three suites spent
+      # fifty minutes between them against a forty-minute job, the run was
       # killed in the middle of the fourth, and GitHub keeps no logs for a job
       # killed like that. The compiler had said exactly what was wrong, once, on
       # the first launch of the first suite.
@@ -1896,6 +1897,10 @@ jobs:
       # package once, to read the IIDs out of its header rather than to load
       # anything from it -- so a run of this proves nothing about the network
       # the shipped app would need, which is the point.
+      #
+      # It can fail the lane, and only on its last section: an environment that
+      # will not come up is the hypothesis being wrong, and that is the reading
+      # this branch exists to take. Everything above it is measurement.
       - timeout-minutes: 15
         shell: pwsh
         run: |
@@ -2064,12 +2069,25 @@ jobs:
       # the package URL 404s and the download throws the way a digest mismatch
       # would -- the real path into handleError, with nothing about the driver
       # modified for the test.
+      #
+      # Two substitutions now, because the download is no longer the first thing
+      # tried. The driver renders through the runtime the machine already has
+      # and only fetches the package when it cannot, so a build with nothing but
+      # a bad pin never reaches the pin at all -- it comes up perfectly well and
+      # this suite measures nothing. Naming an export that does not exist is
+      # what puts the download back in front of it.
+      #
+      # That makes this the suite that measures the fallback, which nothing else
+      # does: an Evergreen path that fails has to end up on the package path,
+      # and the only proof of it is a build that gets all the way to the 404.
       - if: always()
         shell: bash
         run: |
           bash test/mkapp.sh test/neutrinotest.js test/neutrinoerr.cmd
           sed -i 's/\(webView2PinnedVersion[ :=]*\)"[^"]*"/\1"0.0.0-neutrino-does-not-exist"/' test/neutrinoerr.cmd
           grep -q 'webView2PinnedVersion[ :=]*"0.0.0-neutrino-does-not-exist"' test/neutrinoerr.cmd
+          sed -i 's/\(evergreenEntryExport[ :=]*\)"[^"]*"/\1"NeutrinoNoSuchExport"/' test/neutrinoerr.cmd
+          grep -q 'evergreenEntryExport[ :=]*"NeutrinoNoSuchExport"' test/neutrinoerr.cmd
       - if: always()
         timeout-minutes: 10
         shell: pwsh
@@ -2266,8 +2284,9 @@ jobs:
         run: bash test/mkapp.sh test/neutrinoattack.js test/neutrinoattack.cmd
       # Before anything is launched, because an artifact that does not compile
       # is an app that never appears -- and every suite that waits for a window
-      # then waits out its own timeout before saying so. Measured: three suites
-      # spent fifty minutes between them against a forty-minute job, the run was
+      # then waits out its own timeout before saying so. One reserved word in
+      # the jsc region cost this lane its runner that way: three suites spent
+      # fifty minutes between them against a forty-minute job, the run was
       # killed in the middle of the fourth, and GitHub keeps no logs for a job
       # killed like that. The compiler had said exactly what was wrong, once, on
       # the first launch of the first suite.

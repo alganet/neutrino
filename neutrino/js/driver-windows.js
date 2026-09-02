@@ -10,10 +10,15 @@
         var pendingDocument = null;
         var settingsApplied = false;
         var webMessagesWired = false;
-        // Kept because evaluate needs it and the loop is the only place it
-        // can be got: CoreWebView2 does not exist until the runtime has
-        // finished starting, which is well after the window is on screen.
-        var coreWebView2 = null;
+        // What is actually rendering, behind the nine calls the loop makes of
+        // it. Two implementations -- see js/webview2-view.js -- and which one
+        // this is was decided in init by whether the machine already has a
+        // WebView2 runtime this build can reach.
+        var view = null;
+        // The Evergreen environment, when there is one. Null means the package
+        // path, which is what every launch did before this and what every
+        // launch still does when anything about the other one does not hold.
+        var evergreen = null;
 
         return {
             /*
@@ -49,6 +54,27 @@
                 // see js/windows-trace.js.
                 self.installWindowsTrace(SystemRef, appFolder);
                 self.trace("init: app folder " + appFolder);
+
+                /*
+                 * The runtime already on the machine, before anything is
+                 * fetched. It is there on almost every Windows install -- it
+                 * ships with 11 and reached 10 through Windows Update -- and
+                 * what the package adds on such a machine is a managed wrapper
+                 * around it and nothing else.
+                 *
+                 * Every failure inside startEvergreen answers null, and null
+                 * falls through to exactly the launch this driver has always
+                 * done. That is what makes the entry point it uses affordable:
+                 * a runtime that stops answering costs a first run its download
+                 * again, not an app that will not start. See
+                 * js/webview2-evergreen.js for what is being depended on.
+                 */
+                evergreen = self.startEvergreen(SystemRef, userDataDir);
+                if (evergreen) {
+                    self.trace("init: evergreen runtime " + evergreen.version +
+                        ", nothing to download");
+                    return;
+                }
 
                 var webView2LibDir = self.ensureWebView2Package(SystemRef, appFolder);
                 if (!webView2LibDir) {
@@ -123,14 +149,10 @@
                 // The gate every lane holds, spelled the way this one keeps
                 // it: `armed` is set from inside the engine at the commit of
                 // the document this file navigated to.
-                if (!coreWebView2 || !NeutrinoNavSink.armed) {
+                if (!view || !NeutrinoNavSink.armed) {
                     return;
                 }
-                var run = coreWebView2.GetType().GetMethod("ExecuteScriptAsync");
-                if (!run) {
-                    return;
-                }
-                run.Invoke(coreWebView2, [js]);
+                view.evaluate(js);
             },
             createWindow: function (config) {
                 var win = new SystemRef.Windows.Forms.Form();
@@ -155,6 +177,15 @@
                 return win;
             },
             createWebView: function () {
+                /*
+                 * On the Evergreen path there is no control to make. A
+                 * controller is created from the environment against the
+                 * window's own handle, and boot hands the window over one call
+                 * later -- so the placeholder is what travels between them.
+                 */
+                if (evergreen) {
+                    return { evergreen: true };
+                }
                 var wv = SystemRef.Activator.CreateInstance(webViewType);
                 self.paintWindowsView(wv,
                     self.makeWindowsColor(SystemRef, self.resolveBackground(self.theme)));
@@ -175,6 +206,22 @@
                 return wv;
             },
             attachWebView: function (win, wv) {
+                if (evergreen) {
+                    // The handle, which is the first moment there is one: a
+                    // Form makes it on demand and boot has not shown the window
+                    // yet. A controller that cannot be had here is not a
+                    // failure worth falling back from -- the environment
+                    // already came up, so the runtime is there and something
+                    // else is wrong -- but it is worth saying out loud.
+                    view = self.evergreenView(SystemRef, evergreen, win);
+                    if (!view) {
+                        throw new Error("neutrino: the installed WebView2 runtime " +
+                            "started but would not give this window a view");
+                    }
+                    view.syncBounds();
+                    return;
+                }
+                view = self.managedView(SystemRef, wv);
                 win.Controls.Add(wv);
             },
             loadHTML: function (wv, html) {
@@ -254,9 +301,7 @@
                 win.Show();
                 self.trace("loop: window shown");
                 var driver = this;
-                var coreWv2 = null;
-                var titleProp = null;
-                var sourceProp = null;
+                var coreReady = false;
                 var preloadInjected = false;
                 var trustedRemembered = false;
                 // Heartbeat and first-exception state. The loop body below
@@ -270,29 +315,30 @@
                     SystemRef.Windows.Forms.Application.DoEvents();
                     SystemRef.Threading.Thread.Sleep(16);
                     try {
-                        if (!coreWv2 && wv) {
-                            var coreWv2Prop = wv.GetType().GetProperty("CoreWebView2");
-                            if (coreWv2Prop) {
-                                coreWv2 = coreWv2Prop.GetValue(wv, null);
-                                // Kept where evaluate can reach it. This
-                                // is the only place it can be got.
-                                coreWebView2 = coreWv2;
-                            }
+                        // On the package path this is the control handing
+                        // over its CoreWebView2, which does not exist until the
+                        // runtime has finished starting -- well after the
+                        // window is on screen. On the Evergreen path it was
+                        // ready before the window was shown, and the answer is
+                        // true on the first turn.
+                        if (!coreReady) {
+                            coreReady = view.ready();
                         }
-                        if (coreWv2 && !settingsApplied) {
+                        if (coreReady && !settingsApplied) {
                             settingsApplied = true;
-                            self.trace("loop: CoreWebView2 available after " + spins + " turns");
-                            self.hardenWebView2(coreWv2);
+                            self.trace("loop: " + view.name + " view ready after " +
+                                spins + " turns");
+                            view.harden();
 
                             // Before the preload is built, because what the
                             // page is told to send on depends on whether
                             // this took.
-                            webMessagesWired = self.wireWebView2Messages(SystemRef, coreWv2);
+                            webMessagesWired = view.wireMessages();
                             // Before anything is injected and before the
                             // app's own document is navigated to, so the
                             // gate is armed by that navigation and not
                             // after it.
-                            self.wireWebView2Navigation(SystemRef, coreWv2);
+                            view.wireNavigation();
                             pendingPreload = self.buildPreloadScript(
                                 webMessagesWired
                                     ? "function(m){window.chrome.webview.postMessage(m);}"
@@ -308,28 +354,15 @@
                                 self.themeLiteral(self.theme)
                             );
                         }
-                        if (coreWv2 && pendingPreload && !preloadInjected) {
+                        if (coreReady && pendingPreload && !preloadInjected) {
                             preloadInjected = true;
-                            var addScript = coreWv2.GetType().GetMethod("AddScriptToExecuteOnDocumentCreatedAsync");
-                            if (addScript) {
-                                // The API first, then the page's own code,
-                                // both through the engine so the document
-                                // itself can forbid script.
-                                var sources = pendingPageScript
-                                    ? [pendingPreload, pendingPageScript]
-                                    : [pendingPreload];
-                                for (var si = 0; si < sources.length; si++) {
-                                    var task = addScript.Invoke(coreWv2, [sources[si]]);
-                                    if (task) {
-                                        while (!task.IsCompleted) {
-                                            SystemRef.Windows.Forms.Application.DoEvents();
-                                            SystemRef.Threading.Thread.Sleep(10);
-                                        }
-                                    }
-                                }
-                            }
-                            var navMethod = coreWv2.GetType().GetMethod("NavigateToString");
-                            if (navMethod && pendingDocument) {
+                            // The API first, then the page's own code, both
+                            // through the engine so the document itself can
+                            // forbid script.
+                            view.addScripts(pendingPageScript
+                                ? [pendingPreload, pendingPageScript]
+                                : [pendingPreload]);
+                            if (pendingDocument) {
                                 /*
                                  * Set before the call and not after it. The
                                  * navigation is queued here and its events
@@ -341,7 +374,7 @@
                                  */
                                 NeutrinoNavSink.navIssued = true;
                                 self.trace("loop: navigating to the app document");
-                                navMethod.Invoke(coreWv2, [pendingDocument]);
+                                view.navigateToString(pendingDocument);
                             } else {
                                 // The other half of the same finding, and
                                 // the quieter one. When the second read
@@ -357,8 +390,13 @@
                                 self.note("the view was given no document; the window will stay blank");
                             }
                         }
-                        if (coreWv2) {
+                        if (coreReady) {
                             self.drainNavRefusals(driver);
+                            // A controller is a rectangle somebody has to set,
+                            // and on this lane that somebody is this loop. The
+                            // package view is docked and answers this with
+                            // nothing.
+                            view.syncBounds();
                         }
                         /*
                          * The theme watcher, and on this lane it is a
@@ -383,19 +421,10 @@
                         if (spins % 60 === 0) {
                             self.applyTheme(driver, win, wv, driver.readTheme());
                         }
-                        if (coreWv2 && messageCallback && webMessagesWired) {
-                            // Drained here rather than handled in the event
-                            // itself: the queue is a .NET static, which no
-                            // document can reach, so nothing is lost by
-                            // reading it on the same clock as everything
-                            // else in this loop.
-                            while (NeutrinoWebMessageSink.queue.Count > 0) {
-                                var queued = NeutrinoWebMessageSink.queue[0];
-                                NeutrinoWebMessageSink.queue.RemoveAt(0);
-                                var text = self.readWebView2Message(queued);
-                                if (text !== null) {
-                                    messageCallback(text);
-                                }
+                        if (coreReady && messageCallback && webMessagesWired) {
+                            var arrived = view.takeMessages();
+                            for (var mi = 0; mi < arrived.length; mi++) {
+                                messageCallback(arrived[mi]);
                             }
                         }
                         /*
@@ -432,11 +461,7 @@
                          * refused rather than trusted, which is the rule
                          * isTrustedView already settled.
                          */
-                        if (coreWv2) {
-                            if (!titleProp) {
-                                titleProp = coreWv2.GetType().GetProperty("DocumentTitle");
-                                sourceProp = coreWv2.GetType().GetProperty("Source");
-                            }
+                        if (coreReady) {
                             /*
                              * The fifth lane arming the way the other four
                              * do, and remembering the reading it is going to
@@ -462,7 +487,7 @@
                              * unreachable from any document.
                              */
                             if (!trustedRemembered && NeutrinoNavSink.armed) {
-                                var committed = self.readWebView2Source(coreWv2, sourceProp);
+                                var committed = view.source();
                                 if (committed !== null && committed !== "") {
                                     trustedRemembered = true;
                                     self.rememberTrustedView(committed);
@@ -492,10 +517,10 @@
                             // the page's channel twice, which is worse than
                             // dropping it. Only the *name* branch waits for an
                             // acceptance before it latches.
-                            if (titleProp && trustedRemembered) {
-                                var docTitle = String(titleProp.GetValue(coreWv2, null) || "");
+                            if (trustedRemembered) {
+                                var docTitle = view.documentTitle();
                                 if (docTitle !== lastDocTitle) {
-                                    var showing = self.readWebView2Source(coreWv2, sourceProp);
+                                    var showing = view.source();
                                     if (docTitle.indexOf(self.recordPrefix) === 0) {
                                         lastDocTitle = docTitle;
                                         var mine = (showing !== null) && self.isOwnDocument(showing);
@@ -559,10 +584,10 @@
                      * write an unbounded file.
                      */
                     spins++;
-                    if (!coreWv2 && beats < 40 && spins % 300 === 0) {
+                    if (!coreReady && beats < 40 && spins % 300 === 0) {
                         beats++;
                         try {
-                            self.trace("loop: still no CoreWebView2 after " +
+                            self.trace("loop: still no view after " +
                                 spins + " turns");
                         } catch (_) {}
                     }

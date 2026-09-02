@@ -221,7 +221,12 @@
     NeutrinoWebview.sha256Hex = function (SystemRef, path) {
         var hasher = SystemRef.Security.Cryptography.SHA256.Create();
         var stream = SystemRef.IO.File.OpenRead(path);
-        var digest;
+        // Initialised, because the assignment below is inside a try and the
+        // path where ComputeHash throws leaves this reachable and unset. It
+        // rethrows there rather than returning, so nothing reads a null -- but
+        // "might not be initialized" is a true thing for a compiler to say
+        // about it, and a warning that is always there is one nobody reads.
+        var digest = null;
         try {
             digest = hasher.ComputeHash(stream);
         } finally {

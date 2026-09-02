@@ -414,9 +414,23 @@ function Wait-ForApp() {
 # here, for the same reason parse.sh lifts the splitter: a copy can go stale and
 # still pass.
 function Assert-WebView2Package($artifact, $packageRoot) {
+    # An absent package is the pass now, and on most machines it is the expected
+    # one. The driver renders through the WebView2 runtime the machine already
+    # has and only fetches the SDK when it cannot -- so "no package directory"
+    # means the download was not needed, which is the whole point of that path
+    # rather than a failure of it.
+    #
+    # What this function is for survives unchanged: a package that IS on disk is
+    # code the launcher loads with Assembly.LoadFrom, and it still has to match
+    # the pin member for member. The assertion was never "a download happened",
+    # it was "what got downloaded is what this build named" -- and that is the
+    # half that has to keep working on the machines that still take that path.
+    #
+    # This does not leave the Evergreen launch unmeasured. Every other assertion
+    # in this file is about a window that came up, a title that arrived and a
+    # message that was answered, and those ran against whichever engine rendered.
     if (-not (Test-Path -LiteralPath $packageRoot)) {
-        Write-Host "  FAIL: no package directory at $packageRoot"
-        $script:Failures++
+        Write-Host "  PASS: no package directory; the installed runtime was enough"
         return
     }
     # Canonicalise to the long-name form before any Substring math below. The

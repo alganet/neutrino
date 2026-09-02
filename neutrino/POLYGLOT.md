@@ -44,7 +44,7 @@ program.
 13
 14      /*@cc_on
 15          @if (@_jscript_version >= 7)
-16  @@include jsc/sink.jsc
+16  @@include jsc/parts.list
 17          @end
 18      @*/
 19
@@ -142,10 +142,16 @@ To gjs, QtWebEngine, JavaScriptCore and every browser this is a block comment.
 To `jsc.exe` it is conditional compilation, and the typed JScript.NET inside it
 is the only part of the file that compiles.
 
-JavaScript has no nested block comments, so nothing in `jsc/sink.jsc` may
-contain `*/` — a single one there ends the outer comment early and spills typed
+JavaScript has no nested block comments, so nothing under `jsc/` may contain
+`*/` — a single one there ends the outer comment early and spills typed
 JScript.NET into three engines at once. `test/parse.sh` checks for it, and
-`assemble.sh` strips only line comments in that file for the same reason.
+`assemble.sh` strips only line comments in those files for the same reason.
+
+The region is a `parts.list` like `sh/` and `js/` rather than one named file.
+It became one when the Evergreen path arrived and there were two kinds of thing
+that have to be typed .NET — a delegate the runtime hands a type for, and a set
+of types this file builds itself — and `import` is the region's, not any one
+part's, so the imports are a part of their own at the top.
 
 ### Line 21 — `//</script></body></html>`
 
@@ -167,7 +173,9 @@ also where the page script stops.
 | `sh/dispatch.sh` | POSIX shell | the engine search, and the refusal when there is none |
 | `qml/window.qml` | QML | the Qt window, inside an unquoted here-document — so `$qml_url` is the shell's and **no backticks** may appear |
 | `py/shim.py` | Python | the PyGObject lane, inside a quoted here-document |
-| `jsc/sink.jsc` | JScript.NET | the WebMessageReceived delegate, which cannot be written in the shared JavaScript |
+| `jsc/imports.jsc` | JScript.NET | the region's `import` lines; one compilation unit, so they are everyone's |
+| `jsc/sink.jsc` | JScript.NET | the WebMessageReceived delegate and the navigation policy, which cannot be written in the shared JavaScript |
+| `jsc/interop.jsc` | JScript.NET | the Evergreen path: COM interfaces and P/Invoke stubs built with `Reflection.Emit`, because `jsc.exe` will declare neither |
 | `html/document.html` | HTML | the doctype, the head, the content policy, and the two includes the early shell arrives through |
 | `style.css` | CSS | the early shell's stylesheet; an app lays its own over it |
 | `body.html` | HTML | the early shell's markup; likewise |
