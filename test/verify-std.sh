@@ -90,6 +90,42 @@ APP_JS="test/neutrinostd${PROBE}.js"
 DWELL="$(sed -n 's/^var DWELL = \([0-9]*\);.*/\1/p' "$APP_JS" 2>/dev/null | head -1)"
 [ -n "$DWELL" ] || DWELL=1500
 
+# When the record has stopped growing, the app is done -- and that has to be a
+# stop condition of its own, because for one probe the announced one cannot
+# arrive.
+#
+# The loop below ends on a `*-END` title. The win probe's last act is
+# `win.close()`, and neutrinostdwin.js says why in as many words: "it destroys
+# the window every reading above went out through". STD-WIN-END is therefore
+# written to a window that no longer exists and never reaches a title, so the
+# loop polled a dead window until RUN_TIMEOUT expired -- every run, on every
+# lane. Measured on run 33674586566: `turns=2468 transitions=13`, the last
+# transition at 19.8 s, the step at 151 s. Five invocations do that per push --
+# gjs, kde, linux-engines twice and macos -- which is about eleven minutes of
+# CI spent watching a window that is gone. The doc and theme probes reach their
+# own -END and finish in ten.
+#
+# Fifteen dwells of silence, which is deliberately far more than the app has
+# ever needed. The widest gap between two consecutive transitions on x11 is
+# 2375 ms, measured on the run above, so this is nine times the largest interval
+# anything here has actually taken.
+#
+# Nine and not three because of where the number cannot be checked: macOS has no
+# millisecond clock in this file -- every `ms` column in its record is 0, and the
+# note beside the sampler says so -- so the one platform whose runner is slowest
+# is also the one whose real gaps are unmeasured here. A bound that truncates a
+# record turns a passing lane red for a reason that is about this line, and that
+# is a worse failure than a slow lane. The floor is twenty seconds for the same
+# reason: a dwell small enough to make this tight is a finding about the app,
+# not a licence to stop watching sooner.
+#
+# RUN_TIMEOUT stays exactly as it was. It answers "has this stopped", which is
+# a different question from "has this finished", and a run that reaches it is
+# still the failure it always was -- the report line below says which of the
+# two ended the loop.
+IDLE_LIMIT=$(( DWELL * 15 / 1000 ))
+[ "$IDLE_LIMIT" -ge 20 ] || IDLE_LIMIT=20
+
 case "$(uname -s)" in
     Darwin) PLATFORM=macos ;;
     *)      PLATFORM=x11 ;;
@@ -387,6 +423,7 @@ macos_wait() {
 # after it, off the record.
 record() {
     local deadline=$((SECONDS + RUN_TIMEOUT))
+    local idle_deadline=$((SECONDS + IDLE_LIMIT))
     local turns=0 last="" t inner pos outer tick raw start ms prev gap
     local l1 l2 l3 l4 l5 l6 l7
     start="$(now_ms)"; prev="$start"; ms=0
@@ -447,8 +484,13 @@ record() {
         if [ "$t" != "$last" ]; then
             printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$ms" "$t" "$inner" "$pos" "$outer" "$tick" "$raw" >> "$REC"
             last="$t"
+            idle_deadline=$((SECONDS + IDLE_LIMIT))
         fi
-        case "$t" in *-END) break ;; esac
+        case "$t" in *-END) STOPPED_BY=end; break ;; esac
+        if [ $SECONDS -ge $idle_deadline ]; then
+            STOPPED_BY=idle
+            break
+        fi
         sleep "$POLL"
     done
     TURNS="$turns"
@@ -472,13 +514,19 @@ titles() { awk -F'\t' '{ print $2 }' "$REC" | awk '{ print $1 }' | tr '\n' ' '; 
 # nothing after the loop can reconstruct it.
 MAX_TURN_GAP=-1
 
+# Which of the three ways out of the record loop was taken: the app's own -END,
+# the record going quiet, or RUN_TIMEOUT. Only the last of those is a lane that
+# stopped rather than finished, and until this was printed the three were
+# indistinguishable from outside.
+STOPPED_BY=deadline
+
 # ------------------------------------------------------------------ assertions
 
 check_apparatus() {
     local rows gap
     rows="$(wc -l < "$REC" | tr -d ' ')"
     gap="$MAX_TURN_GAP"
-    note "sampler platform=$PLATFORM turns=${TURNS:-0} transitions=$rows dwell_ms=$DWELL max_turn_gap_ms=$gap"
+    note "sampler platform=$PLATFORM turns=${TURNS:-0} transitions=$rows dwell_ms=$DWELL max_turn_gap_ms=$gap stopped_by=$STOPPED_BY idle_limit_s=$IDLE_LIMIT"
     if [ "$PLATFORM" = x11 ]; then
         note "sampler frame_extents l=$FE_L r=$FE_R t=$FE_T b=$FE_B wid=$X11_WID via=$X11_SRC"
         # Two routes to the *client* corner, printed beside each other so the
@@ -1053,6 +1101,9 @@ if [ -n "$REPLAY" ]; then
     [ -f "$REPLAY" ] || { echo "FAIL: no record at '$REPLAY'"; exit 1; }
     cp "$REPLAY" "$REC"
     TURNS="$(wc -l < "$REC" | tr -d ' ')"
+    # Same reason as FE_SRC below: no loop ran here, so naming one of the three
+    # ways out of it would be this file reporting a measurement it never took.
+    STOPPED_BY="replay"
     echo "verify-std.sh: replaying $REPLAY -- apparatus checks are not a measurement here"
     # A fourth value, and it is not one of the three the reader can return: no
     # window was opened here, so the hint was neither read nor missing. Saying
