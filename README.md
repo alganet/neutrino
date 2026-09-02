@@ -519,7 +519,16 @@ detection would find the same answer.
   third of a second, rather than reusing what it finds there: the app folder is
   writable by everything running as you, so an executable sitting in it is not
   evidence of anything.
-- WebView2 runtime, downloaded automatically with progress bar on first run.
+- WebView2 runtime. Usually nothing to do: it ships with Windows 11 and reached
+  Windows 10 through Windows Update, and the launcher renders through the one
+  the machine already has. It reads the version out of EdgeUpdate, loads the
+  runtime's own library by path, and drives the COM surface behind it from the
+  same `jsc.exe` that compiles everything else — so on very nearly every machine
+  a first run downloads nothing at all.
+- WebView2 SDK package, on a machine that has no runtime — Server, LTSC, a
+  stripped image — where the above finds nothing to render through. Then it is
+  downloaded automatically with a progress bar on first run, 8.8 MiB, which is
+  what every Windows first run used to cost.
   The package is pinned to one version and one SHA-256, and every file taken out
   of it is pinned too; all of it is re-checked on every launch. If that fails,
   the reason goes on screen for twenty seconds and into `neutrino-error.log` in
