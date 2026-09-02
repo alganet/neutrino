@@ -29,7 +29,8 @@
      *   p   IntPtr, which is every interface pointer and every string here
      *   i   Int32, which is how BOOL arrives
      *   l   Int64, the EventRegistrationToken an add_ hands back
-     *   r   RECT, the one thing in this file that is not pointer-shaped
+     *   r   RECT, four ints by value
+     *   c   COREWEBVIEW2_COLOR, four bytes by value
      *
      * Interface pointers and strings are IntPtr on purpose and not as a
      * shortcut. Declared as an interface, a parameter makes the marshaller
@@ -39,9 +40,10 @@
      * that matters for a generated table -- no interface here refers to any
      * other, so they can be built in any order.
      *
-     * RECT is the exception because it has to be. A 16-byte struct is not
-     * passed the way a pointer is, and a struct passed as a pointer is not a
-     * wrong value, it is a crash.
+     * The two structs are the exception because they have to be. A struct is
+     * not passed the way a pointer is, whatever its size, and a struct passed
+     * as a pointer is not a wrong value -- it is a crash. Both layouts are read
+     * out of the pinned header by test/evergreen.ps1 rather than remembered.
      */
     NeutrinoWebview.webView2Interfaces = {
         environment: {
@@ -58,6 +60,28 @@
                 put_Bounds:        [3,  "v", "r"],
                 Close:             [21, "v", ""],
                 get_CoreWebView2:  [22, "p", ""]
+            }
+        },
+        /*
+         * The one derived interface here, and the reason the slot number looks
+         * large for an interface with two methods. COM single inheritance puts
+         * the base's vtable first, so ICoreWebView2Controller2's own methods
+         * start after ICoreWebView2Controller's twenty-three:
+         * put_DefaultBackgroundColor is its second, and so slot 24.
+         *
+         * This is what the package path gets from the WinForms control's
+         * DefaultBackgroundColor property. Without it the view paints its own
+         * default behind a window this launcher has already themed, which is
+         * the flash the whole theme lane exists to prevent.
+         *
+         * A runtime too old to offer it refuses the QueryInterface, and that is
+         * the entire failure -- the window is still painted, so what is lost is
+         * the gap before the document arrives and not the app.
+         */
+        controller2: {
+            iid: "c979903e-d4ca-4228-92eb-47ee3fa96eab",
+            calls: {
+                put_DefaultBackgroundColor: [24, "v", "c"]
             }
         },
         webview: {

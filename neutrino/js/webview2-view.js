@@ -124,6 +124,9 @@
                 run.Invoke(core, [js]);
                 return true;
             },
+            paint: function (color) {
+                return self.paintWindowsView(wv, color);
+            },
             // The control is docked and the form resizes it. Nothing to do.
             syncBounds: function () {},
             close: function () {}
@@ -169,6 +172,21 @@
         if (!core) {
             this.trace("evergreen: the controller has no webview");
             return null;
+        }
+
+        /*
+         * The background the view paints before it has a document, which is what
+         * the package path gets from the control's DefaultBackgroundColor. It is
+         * on a second interface with its own IID, so a runtime too old to offer
+         * it refuses this QueryInterface -- and that costs the gap before the
+         * first paint, not the app: the window underneath is already themed.
+         */
+        var controller2 = null;
+        try {
+            controller2 = NeutrinoEvergreen.Wrap(NeutrinoEvergreen.controllerPtr, types.controller2);
+        } catch (e) {
+            this.noteOnce("this WebView2 runtime cannot be told what to paint " +
+                "before the document arrives: " + e);
         }
 
         var scriptAddedSink = NeutrinoEvergreen.MakeSink("NeutrinoAddSink",
@@ -320,6 +338,25 @@
              * through a Resize handler, because a handler needs a delegate type
              * and this driver has no way to name one.
              */
+            /*
+             * Set before anything is navigated to, and again whenever the
+             * desktop palette moves -- the same two moments the package path
+             * paints its control at.
+             */
+            paint: function (color) {
+                if (!controller2 || !color) {
+                    return false;
+                }
+                try {
+                    types.controller2.GetMethod("put_DefaultBackgroundColor").Invoke(
+                        controller2,
+                        [NeutrinoEvergreen.MakeColour(color.R, color.G, color.B)]);
+                    return true;
+                } catch (e) {
+                    self.noteOnce("could not paint the view: " + e);
+                    return false;
+                }
+            },
             syncBounds: function () {
                 var width = SystemRef.Convert.ToInt32(win.ClientSize.Width);
                 var height = SystemRef.Convert.ToInt32(win.ClientSize.Height);
