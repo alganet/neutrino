@@ -494,6 +494,7 @@ if ($pinVersion) {
                 "ICoreWebView2Environment",
                 "ICoreWebView2CreateCoreWebView2ControllerCompletedHandler",
                 "ICoreWebView2Controller",
+                "ICoreWebView2Controller2",
                 "ICoreWebView2",
                 "ICoreWebView2Settings",
                 "ICoreWebView2WebMessageReceivedEventHandler",
@@ -544,6 +545,16 @@ if ($pinVersion) {
                 if ($name -eq "ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler") {
                     $handlerIid = $iid
                 }
+            }
+            $colour = [regex]::Match($header,
+                'typedef\s+struct\s+COREWEBVIEW2_COLOR\s*\{(.*?)\}\s*COREWEBVIEW2_COLOR',
+                [Text.RegularExpressions.RegexOptions]::Singleline)
+            if ($colour.Success) {
+                $fields = @([regex]::Matches($colour.Groups[1].Value, '(\w+)\s+(\w+)\s*;') |
+                    ForEach-Object { "$($_.Groups[1].Value) $($_.Groups[2].Value)" })
+                $lines += "COREWEBVIEW2_COLOR fields=$($fields -join ',')"
+            } else {
+                $lines += "COREWEBVIEW2_COLOR = NOT FOUND"
             }
             Set-Content -Path $idlFile -Value ($lines -join "`n") -Encoding UTF8
             foreach ($l in $lines) { Report "idl $l" }
@@ -1207,6 +1218,7 @@ $sigs = @{
     "ICoreWebView2Controller.put_IsVisible"                                = @{ ret = "null";     args = "oneInt" }
     "ICoreWebView2Controller.put_Bounds"                                   = @{ ret = "null";     args = "oneRect" }
     "ICoreWebView2Controller.get_CoreWebView2"                             = @{ ret = "ptrType";  args = "noArgs" }
+    "ICoreWebView2Controller2.put_DefaultBackgroundColor"                  = @{ ret = "v";        args = "oneColour" }
     "ICoreWebView2.NavigateToString"                                       = @{ ret = "null";     args = "onePtr" }
     "ICoreWebView2.add_WebMessageReceived"                                 = @{ ret = "longType"; args = "onePtr" }
     "ICoreWebView2.AddScriptToExecuteOnDocumentCreated"                    = @{ ret = "v";        args = "twoPtrs" }
@@ -1217,14 +1229,22 @@ $sigs = @{
 }
 
 # One emitted interface, from the header's own order.
-function New-InterfaceSource($varName, $jsName, $ifaceName) {
+function New-InterfaceSource($varName, $jsName, $ifaceName, $baseName) {
     $iid = $script:iidOf[$ifaceName]
-    $slots = @($script:slotsOf[$ifaceName])
-    $out = "// $ifaceName`n"
+    # COM single inheritance: a derived interface's vtable is the base's
+    # followed by its own, so the base's methods have to occupy their indices
+    # here or every slot after them is off by however many were left out.
+    $slots = @()
+    if ($baseName) { $slots += @($script:slotsOf[$baseName]) }
+    $slots += @($script:slotsOf[$ifaceName])
+    $out = "// $ifaceName$(if ($baseName) { " : $baseName" })`n"
     $out += "var $varName : TypeBuilder = defineInterface(mb, `"$jsName`", `"$iid`");`n"
     $i = 0
     foreach ($slot in $slots) {
         $key = "$ifaceName.$slot"
+        if (-not $script:sigs.ContainsKey($key) -and $baseName) {
+            $key = "$baseName.$slot"
+        }
         if ($script:sigs.ContainsKey($key)) {
             $sig = $script:sigs[$key]
             $ret = $sig.ret
@@ -1238,7 +1258,8 @@ function New-InterfaceSource($varName, $jsName, $ifaceName) {
     return $out
 }
 
-$driveNeeds = @("ICoreWebView2Environment", "ICoreWebView2Controller", "ICoreWebView2",
+$driveNeeds = @("ICoreWebView2Environment", "ICoreWebView2Controller",
+                "ICoreWebView2Controller2", "ICoreWebView2",
                 "ICoreWebView2WebMessageReceivedEventArgs",
                 "ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler",
                 "ICoreWebView2CreateCoreWebView2ControllerCompletedHandler",
@@ -1257,6 +1278,7 @@ if (-not $emittedOk) {
     $ifaceSrc += New-InterfaceSource "tbCtl" "ICtl" "ICoreWebView2Controller"
     $ifaceSrc += New-InterfaceSource "tbWeb" "IWeb" "ICoreWebView2"
     $ifaceSrc += New-InterfaceSource "tbArgs" "IMsgArgs" "ICoreWebView2WebMessageReceivedEventArgs"
+    $ifaceSrc += New-InterfaceSource "tbCtl2" "ICtl2" "ICoreWebView2Controller2" "ICoreWebView2Controller"
 
     $srcDrive = @'
 import System;
@@ -1375,11 +1397,27 @@ var rectType : Type = rtb.CreateType();
 var oneRect : Type[] = [rectType];
 print("rect=" + rectType.FullName + " size=" + Marshal.SizeOf(rectType));
 
+// COREWEBVIEW2_COLOR, the second thing here that is not pointer-shaped. Four
+// bytes by value: small enough that getting the layout wrong is not obviously
+// a crash and is still not a colour.
+var byteType : Type = Type.GetType("System.Byte");
+var ctb2 : TypeBuilder = mb.DefineType("COLOR",
+    TypeAttributes.Public | TypeAttributes.SequentialLayout | TypeAttributes.Sealed,
+    Type.GetType("System.ValueType"));
+ctb2.DefineField("A", byteType, FieldAttributes.Public);
+ctb2.DefineField("R", byteType, FieldAttributes.Public);
+ctb2.DefineField("G", byteType, FieldAttributes.Public);
+ctb2.DefineField("B", byteType, FieldAttributes.Public);
+var colourType : Type = ctb2.CreateType();
+var oneColour : Type[] = [colourType];
+print("colour=" + colourType.FullName + " size=" + Marshal.SizeOf(colourType));
+
 @IFACES@
 var envType : Type = tbEnv.CreateType();
 var ctlType : Type = tbCtl.CreateType();
 var webType : Type = tbWeb.CreateType();
 var argsType : Type = tbArgs.CreateType();
+var ctl2Type : Type = tbCtl2.CreateType();
 Bridge.argsType = argsType;
 print("interfaces=" + envType.IsImport + "," + ctlType.IsImport + "," + webType.IsImport + "," + argsType.IsImport);
 
@@ -1506,6 +1544,29 @@ if (Bridge.env == IntPtr.Zero) {
             print("visible=THREW " + ev);
         }
 
+        // The background the view paints before it has anything to paint, which
+        // is the flash this driver spends so much effort not having. It is on
+        // ICoreWebView2Controller2, a separate interface with its own IID, so a
+        // runtime too old to have it refuses the QueryInterface and that is the
+        // whole of the failure -- which is why this is tried and reported
+        // rather than assumed.
+        try {
+            var ctl2Obj : Object = Marshal.GetTypedObjectForIUnknown(Bridge.ctl, ctl2Type);
+            var colour : Object = Activator.CreateInstance(colourType);
+            // Through Convert rather than a typed local: a JScript.NET number
+            // literal boxes as Double, and Double to Byte is a narrowing the
+            // reflection binder will not do for you.
+            colourType.GetField("A").SetValue(colour, Convert.ToByte(255));
+            colourType.GetField("R").SetValue(colour, Convert.ToByte(32));
+            colourType.GetField("G").SetValue(colour, Convert.ToByte(32));
+            colourType.GetField("B").SetValue(colour, Convert.ToByte(32));
+            var colourArgs : Object[] = [colour];
+            ctl2Type.GetMethod("put_DefaultBackgroundColor").Invoke(ctl2Obj, colourArgs);
+            print("background=ok");
+        } catch (ec) {
+            print("background=THREW " + ec);
+        }
+
         var webPtr : IntPtr = ctlType.GetMethod("get_CoreWebView2").Invoke(ctlObj, null);
         print("webview=" + (webPtr != IntPtr.Zero));
         if (webPtr != IntPtr.Zero) {
@@ -1605,6 +1666,8 @@ Environment.Exit(0);
             Fail "drive put_Bounds did not take; a struct passed by value is the one signature here that cannot be an IntPtr"
         } elseif ($runOut -notmatch 'hello-from-page') {
             Fail "drive the page's message never arrived; the channel the whole API rides on is not open"
+        } elseif ($runOut -notmatch 'background=ok') {
+            Fail "drive put_DefaultBackgroundColor did not take; this lane paints white behind a dark app"
         } elseif ($runOut -notmatch 'from-preload') {
             Fail "drive the injected script never ran; the driver's API reaches the page this way and no other"
         } else {
