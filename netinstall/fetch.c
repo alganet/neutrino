@@ -331,9 +331,16 @@ static int nt_fetch_confine(const char *home, char *desc, size_t desclen)
 #ifdef NEUTRINO_TESTING
     const char *off = getenv("NEUTRINO_TEST_NO_CONFINE");
 
+    /*
+     * -2 rather than -1, and the callers below let it through. Refusing is the
+     * only behaviour now, so an unconfined run is a refusal -- which would take
+     * the suites' unconfined control with it, and that control is what says a
+     * refusal anywhere else was the confinement rather than the payload failing
+     * on its own. A release binary compiles none of this.
+     */
     if (off && *off == '1') {
         snprintf(desc, desclen, "none (disabled for testing)");
-        return -1;
+        return -2;
     }
 #endif
     return nt_confine(NT_PHASE_FETCH, home, NULL, 1, desc, desclen);
@@ -366,13 +373,17 @@ int nt_fetch(const char *url, const char *dest, const char *home,
     {
         char desc[256];
 
-        if (nt_fetch_confine(home, desc, sizeof(desc)) != 0) {
-#ifdef NEUTRINO_STRICT_SANDBOX
-            fprintf(stderr, "netinstall: refusing to fetch unconfined: %s\n", desc);
-            return -2;
-#else
-            fprintf(stderr, "netinstall: warning: fetching unconfined: %s\n", desc);
-#endif
+        {
+            int cf = nt_fetch_confine(home, desc, sizeof(desc));
+
+            if (cf == -2) {
+                fprintf(stderr, "netinstall: warning: fetching unconfined: %s\n",
+                        desc);
+            } else if (cf != 0) {
+                fprintf(stderr, "netinstall: refusing to fetch unconfined: %s\n",
+                        desc);
+                return -2;
+            }
         }
 #ifdef NEUTRINO_TESTING
         fprintf(stderr, "netinstall: fetch confine: %s\n", desc);
@@ -393,14 +404,9 @@ int nt_fetch(const char *url, const char *dest, const char *home,
         int rc;
 
         if (!nt_fetch_grant(dest)) {
-#ifdef NEUTRINO_STRICT_SANDBOX
             fprintf(stderr, "netinstall: refusing to fetch: the payload file "
                             "could not be made the downloader's only write\n");
             return -2;
-#else
-            fprintf(stderr, "netinstall: warning: the payload file could not be "
-                            "made the downloader's only write\n");
-#endif
         }
         rc = nt_win_spawn_as(bin, argv, nt_fetch_token());
         /*
@@ -493,15 +499,19 @@ int nt_fetch(const char *url, const char *dest, const char *home,
              * them -- a strict build that refuses to *run* unconfined and then
              * fetches unconfined is not strict, it is late.
              */
-            if (nt_fetch_confine(home, desc, sizeof(desc)) != 0) {
-#ifdef NEUTRINO_STRICT_SANDBOX
-                fprintf(stderr, "netinstall: refusing to fetch unconfined: %s\n",
-                        desc);
-                _exit(NT_FETCH_REFUSED);
-#else
-                fprintf(stderr, "netinstall: warning: fetching unconfined: %s\n",
-                        desc);
-#endif
+            {
+                int cf = nt_fetch_confine(home, desc, sizeof(desc));
+
+                if (cf == -2) {
+                    fprintf(stderr,
+                            "netinstall: warning: fetching unconfined: %s\n",
+                            desc);
+                } else if (cf != 0) {
+                    fprintf(stderr,
+                            "netinstall: refusing to fetch unconfined: %s\n",
+                            desc);
+                    _exit(NT_FETCH_REFUSED);
+                }
             }
 #ifdef NEUTRINO_TESTING
             fprintf(stderr, "netinstall: fetch confine: %s\n", desc);
