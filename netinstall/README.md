@@ -369,7 +369,7 @@ the command line alone is not the whole command. What a config can and cannot do
 |---|---|
 | raise `--max-filesize`, lower `--max-time` | **no** — curl parses the config *before* the command line, so a last-wins option is won by the argv. The two bounds below hold. |
 | redirect the download with `output` | **yes** — `-o` does not last-win, it pairs with URLs in order, so a config's `output` takes the URL and netinstall's `-o` is left holding nothing |
-| …and where those bytes land | wherever the fetch phase allows: refused outside `blobs` on Linux, macOS and OpenBSD in **both** tiers; on Windows refused outside the payload file itself in the tight tier, and unconfined in the default tier, whose `fetch` line says so |
+| …and where those bytes land | wherever the fetch phase allows: refused outside `blobs` on Linux, macOS and OpenBSD, and on Windows refused outside the payload file itself |
 | the same through `wget` | **no** — `output_document` loses to the argv's `-O`, and that branch's two bounds are held by the kernel, where no config reaches |
 
 A redirected download is a failed one: nothing arrives where netinstall told the downloader to put
@@ -428,39 +428,55 @@ polyglot. That is why the confinement below matters rather than being a nicety.
 
 ## Confinement
 
-Best-effort, and genuinely uneven. A webview needs the GPU, DBus, the compositor socket, fonts
-and the network, so "deny everything" is not on the table.
+**Every neutrino app runs confined, on every platform. There is nothing to turn on and nothing to
+choose.**
+
+- It cannot write to your files. It writes its own directory and the scratch and cache locations its
+  web engine needs, and nothing else.
+- It cannot gain privileges it was not started with.
+- It cannot load code through the environment.
+- The download that installed it could write nothing but the file it was downloading, and was
+  verified against its pin before anything ran it.
+- **Reads are not confined, on any platform.** An app can read what you can read.
+- If any of that cannot be applied, the app does not start.
+
+That is the whole of it. It is the same list on Linux, macOS, Windows and OpenBSD, and it is the
+same list in every build — there are no tiers, no flags and no combinations. Where a platform needs
+a different mechanism to keep one of those lines it uses one; where a platform could keep more than
+the list says, it does not, because a promise that is stronger on three platforms than on the fourth
+is not a promise, it is a support matrix.
+
+The rest of this section is how each platform keeps that list, and what was measured to decide it.
+A webview needs the GPU, DBus, the compositor socket, fonts and the network, so "deny everything"
+was never on the table.
 
 | Platform | What is applied |
 |---|---|
-| **Linux** | Landlock. Writes confined to the app dir, `/dev`, `/dev/shm` and `/proc`; reads unrestricted; binding a TCP port denied; signals scoped to the sandbox, and abstract unix sockets too where there is no X11 display. A seccomp filter on top. The session bus stays reachable unless the session tier is built in. The `/proc` write grant is every process's entry, not just the app's — see [what is still open](#what-is-still-open). |
+| **Linux** | Landlock. Writes confined to the app dir, `/dev`, `/dev/shm` and `/proc/self` — this process's own entry and no peer's. Reads unrestricted. A seccomp filter on top. The session bus stays reachable; see [what is still open](#what-is-still-open). |
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. Writes confined to the app dir and `/dev`, plus files that already exist under `/tmp`, and **write xor execute** on the app dir — the one directory the app can write to is one it cannot run anything from, at every tier. Reads are an allowlist too, because `unveil` is one. See the caveat below. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, the Darwin per-user temp directory, four `~/Library` subtrees and six `/dev` nodes — the carve-outs are what CFPreferences and WebKit need and are listed in [write xor execute on macOS](#write-xor-execute-on-macos). Read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
-| **Windows** | Job object — process limits only — plus every token privilege but `SeChangeNotify` removed. **No filesystem confinement** by default; see the tight tier. |
+| **Windows** | Low integrity: writes outside the app dir fail, except the two places the label leaves open by design, `AppData\LocalLow` and `HKCU\Software\AppDataLow`. Plus a job object and every token privilege but `SeChangeNotify` removed. Measured: `%USERPROFILE%`, the user temp directory, `C:\Windows\Temp` and `HKCU\Software` all refuse. |
 
 Each of those sets is what `--info`'s `confine` line names, in full. It named the app dir alone
 until it was measured: every platform grants writes somewhere else as well, deliberately and for
 a reason, and a sentence that describes one of five is the same defect as a sentence that
 describes none. The set was enumerated from inside the confinement on all six lanes —
 `netinstall/test/writable.sh` is that measurement, and it now asserts every letter of it.
-| **FreeBSD** | No confinement. `PROC_NO_NEW_PRIVS_CTL` only, which is a floor rather than a boundary — measured as a floor rather than assumed to be one: with it set, a setuid-root binary executed afterwards comes back unprivileged, and the same exec without it comes back root. |
-| **NetBSD** | No confinement, and no floor either — there is no `procctl` here. The `confine` line says so. |
 
-If nothing is available the binary **runs anyway and warns on stderr**, naming what was and
-wasn't applied; confinement here is defence in depth, not the trust anchor. Building with
-`-DNEUTRINO_STRICT_SANDBOX` produces a binary that refuses to run unconfined instead.
+If nothing is available the binary **refuses to run**, naming what could not be applied. There is no
+build that warns and continues; that used to be the default and `-DNEUTRINO_STRICT_SANDBOX` was the
+flag that changed it.
 
 ### The fetch is a phase of its own, and it is confined too
 
 The downloader is the one process here that reads bytes an attacker chose, off the network, before
 anything has verified them. It gets its own, narrower confinement — writes confined to
 `~/.cache/neutrino/blobs`, plus the handful of `/dev` nodes a downloader opens on macOS and in
-Linux's tight tier, and nothing else on Linux, macOS and OpenBSD. On Windows the default tier gets
-the job object and stripped token the run phase gets, which bounds processes rather than writes.
+and nothing else on Linux, macOS and OpenBSD.
 `--info` prints it on a `fetch` line next to the run phase's `confine` line, so a platform that
 applies nothing does not look like one that does.
 
-**Windows' tight tier confines it to a single file**, and it is the narrowest fetch grant here.
+**Windows confines it to a single file**, and it is the narrowest fetch grant here.
 Everywhere else the downloader may write a directory; here it may write the payload and nothing
 else — not even the rest of `blobs`. The mechanism is a low integrity token, and unlike every other
 confinement in this program it is applied to the *child*: integrity is a one-way trip, and the
@@ -479,9 +495,9 @@ unless it asked for it; a trivial child runs under one, but `curl` returns `STAT
 under the same token even with the window station and desktop granted that sid. Reads are not
 confined at either tier, for the same reason the run phase's are not.
 
-A strict build refuses to fetch when nothing applied, on the same terms it refuses to run: the
-answer used to be thrown away, so `-DNEUTRINO_STRICT_SANDBOX` downloaded the payload unconfined and
-refused afterwards — which is not strict, it is late. `phases.sh` asserts both halves on every
+The fetch refuses when nothing applied, on the same terms the run phase does. The answer used to be
+thrown away, so a strict build downloaded the payload unconfined and refused afterwards — which is
+not strict, it is late. `phases.sh` asserts both halves on every
 platform, including that a strict build still fetches and runs when both phases *are* confined.
 
 ### What was measured
@@ -545,7 +561,7 @@ What the probing did *not* find is much worth adding. That is the honest result:
   same code enters the namespace, writes the map and does the work — measured on
   Mint 22.3 with kernel 7.0, and in CI with the sysctl lifted for the length of
   the suite. That reopened the section below, and
-  [the session tier](#the-session-tier-experimental) is what came of it.
+  a session tier is what came of it, and it is gone with the other tiers.
 
   One trap worth leaving behind for whoever measures this next: **the same errno
   has a second cause, and that one is ours.** A probe that reads its own uid
@@ -563,9 +579,9 @@ while these stand:
   Connecting to a pathname unix socket is not mediated by any filesystem rule — measured on ABI 8,
   with a ruleset granting nothing but `/usr`, the session bus, the ssh-agent socket and
   `/tmp/.X11-unix/X0` all still connect. Landlock cannot express this and no amount of tightening it
-  will. [The session tier](#the-session-tier-experimental) closes both with namespaces and the X11
-  SECURITY extension, and it is off by default and unavailable outright on Ubuntu 24.04 and its
-  derivatives, so on a stock desktop this is still the ceiling.
+  will. A session tier once closed both with namespaces and the X11 SECURITY extension; it was
+  Linux-only and unavailable outright on Ubuntu 24.04 and its derivatives, so it could never be part
+  of a promise made everywhere. This is the ceiling.
 - **The default tier's `/proc` write grant reaches every same-uid process.** Landlock is granted
   `WRITE_FILE` on all of `/proc`, and that is not only the app's own entry. Measured: thirteen
   files under a peer's `/proc/<pid>` open for writing — `oom_score_adj`, `sched`, `clear_refs`,
@@ -577,18 +593,16 @@ while these stand:
   may not reach a task outside itself whatever the rights say — measured against an in-domain
   child, which does answer, under an identical rule.
 
-  [The tight tier](#the-tight-tier-experimental) narrows the grant to the app's own entry and
-  [the session tier](#the-session-tier-experimental) leaves no peer in `/proc` to write to at all.
-  The default tier keeps it, and this is why.
+  The grant is `/proc/self` now, on every build, and `confine.sh` asserts `PEEROOM_BLOCKED` where it
+  used to assert the escape.
 - **The default tier on macOS leaves the LaunchServices door open**, and it is an escape rather than
   a nuisance: an `.app` bundle written into the app dir and handed to LaunchServices is spawned
-  outside every profile in the stack. [The tight tier](#the-tight-tier-experimental) closes it; the
-  default tier does not, and `confine.sh` asserts that it does not, so the ceiling is on the record
-  in both directions. Even in the tight tier an **already-installed** app can still be launched —
+  outside every profile in the stack. It is closed on every build now, and `confine.sh` asserts the
+  refusal where it used to assert the escape. An **already-installed** app can still be launched —
   what is closed is launching a bundle the app itself wrote. See
   [the door that is not a file](#launchservices-and-the-door-that-is-not-a-file).
-- **Windows cannot confine reads.** AppContainer is the only mechanism that would, and low integrity
-  already stops WebView2 rendering, so there is no reason to expect AppContainer to fare better.
+- **No platform confines reads**, and windows is why. See
+  [why Windows gets less](#why-windows-gets-less-and-why-nobody-else-gets-more).
 - **OpenBSD leaves existing files under `/tmp` writable.** `/tmp` is unveiled `rw`, which is not
   `c`: the app cannot create a file there, and cannot write one through a shell redirection either
   — `>` is `O_CREAT`, which `unveil` refuses whether or not the file exists — but a deliberate
@@ -667,7 +681,7 @@ Denying `/usr/bin/open` would settle nothing. Anything that can reach AppKit cal
 it. **Both doors were measured open** under the shipped profile, so the service is the boundary and
 the binary is not.
 
-**The tight tier denies two names, and it has to be both:**
+**Two names are denied, and it has to be both:**
 
 ```
 (deny mach-lookup
@@ -737,8 +751,8 @@ Three details worth knowing if you edit the list:
   filesystem right, and on a kernel too old for Landlock, denying it here would newly break
   WebKitGTK's `bubblewrap` for nothing.
 - **It applies even when Landlock does not**, since it is worth having on an old kernel too. It is
-  still not filesystem confinement, so a `-DNEUTRINO_STRICT_SANDBOX` build refuses to run on
-  seccomp alone rather than settling for it.
+  still not filesystem confinement, so a kernel that offers seccomp and no Landlock is one the
+  binary refuses to run on rather than settling for half.
 
 ### Scoping, and where confinement is still theatre
 
@@ -776,354 +790,48 @@ succeed. So:
 - **X11** lets any client keylog and screenshot every other client, and on an X11 session the
   filesystem restriction is the only thing that holds.
 
-Both of those are what [the session tier](#the-session-tier-experimental) exists for. Two things it
-turned up are worth having here, next to the mechanism they are about:
+Both were what a session tier existed for, and it is gone: it was Linux-only and unavailable on
+Ubuntu 24.04 and its derivatives, so it could never be a line in a promise made everywhere. Two
+things it turned up are kept here, next to the mechanism they are about, because they are facts
+about X11 and namespaces rather than about a tier:
 
-- **A network namespace closes the abstract namespace on an X11 session, and scoping cannot.** The
-  two refusals are not the same refusal. Scoping answers `EPERM`, which libxcb does not retry, so
-  the client never tries the pathname socket and the display is gone. A network namespace answers
-  `ECONNREFUSED`, which libxcb *does* retry, so it falls back to `/tmp/.X11-unix/X0` and the window
-  comes up. Measured on both engines with a display set: the offline tier closes every abstract
-  socket and the webview lives.
+- **A network namespace closes the abstract namespace on an X11 session, and Landlock scoping
+  cannot.** The two refusals are not the same refusal. Scoping answers `EPERM`, which libxcb does
+  not retry, so the client never tries the pathname socket and the display is gone. A network
+  namespace answers `ECONNREFUSED`, which libxcb *does* retry, so it falls back to
+  `/tmp/.X11-unix/X0` and the window comes up.
 - **Hiding `/tmp/.X11-unix` does not remove the display.** The abstract name belongs to the network
   namespace, not the mount namespace, so a client covered out of the directory simply connects to
-  `@/tmp/.X11-unix/X0` instead. It takes both to leave an app with no display at all, which is now
-  the probe's must-die control.
+  `@/tmp/.X11-unix/X0` instead. It takes both to leave an app with no display at all.
 
-### What Landlock costs, in both tiers
+### Why Windows gets less, and why nobody else gets more
 
-This applies to the **default** tier as much as the tight one, and an earlier version of this file
-wrongly implied otherwise.
+Windows cannot confine a read. Low integrity is a no-write-up rule and leaves reads alone, and
+AppContainer -- the only mechanism that would close them -- does not work: launched inside a real
+one, with its capabilities granted and the app dir handed to its SID, no window appears at all.
+Every unprivileged mechanism the platform offers has now been tried against a real webview.
 
-Landlock unconditionally denies `mount`, `umount`, `pivot_root` and `move_mount` to any domain that
-handles even one filesystem right — by design, even inside a fresh namespace. `PR_SET_NO_NEW_PRIVS`,
-which Landlock requires, also neuters Chromium's SUID sandbox helper. So the moment netinstall
-confines anything on Linux, WebKitGTK's `bubblewrap` cannot initialise and Chromium's namespace
-sandbox may not either. Both tiers pay that; what the tight tier adds on top is only the read and
-execute allowlist.
+That is why no platform confines reads. macOS had a working `$HOME` denial and Linux had a working
+read allowlist, and both are gone, because a capability three platforms have and the fourth cannot
+is the shape that gets reported as a bug against the fourth. The promise is the intersection or it
+is a support matrix, and this file used to be one.
 
-That is a real trade, not a free one: **you may be giving up the renderer's own protection against
-hostile web content in exchange for protection against the app's author.** Which of those you care
-more about depends on what you are running. CI does not settle it either — the Qt lane sets
-`QTWEBENGINE_DISABLE_SANDBOX=1`, and WebKitGTK's sandbox is opt-in and never enabled by neutrino, so
-neither engine's sandbox was active there to be starved.
+What survives on macOS is not a read rule and is the reason this costs less than it looks: a
+keychain is not read by opening a file -- the request goes to securityd over Mach -- so denying the
+service was always the half that worked, and it is still denied, along with tccd, the task port,
+Apple Events and both LaunchServices names.
 
-If that trade is wrong for your case, run without netinstall: neutrino is a plain script and does
-not need it.
+What it costs on Linux is write-xor-execute. Landlock takes the union of every rule matching along
+a path, so execute has to be an allowlist, and the allowlist was the read one. `env.sh` asserts the
+consequence rather than leaving it to be discovered: a file in the app's own directory execs, and a
+library anywhere under `$HOME` maps and runs. That makes the environment deny list the only thing
+between a loader variable and code of the caller's choosing in the process that renders your page.
 
-The tight tier takes one more piece of that same mechanism, and this half **is** measured. Both
-`bubblewrap` and Chromium's `namespace_sandbox.cc` set a child's user namespace up the same way:
-fork, let the child `unshare(CLONE_NEWUSER)`, then have the **parent** write that child's
-`/proc/<pid>/setgroups` and `uid_map`. That is a descendant's entry, so the default tier's grant
-covers it and a rule pinned to `/proc/self` does not. `confine.sh` asserts it both ways —
-`USERNSMAP_OK` in the default tier, `USERNSMAP_BLOCKED` in the tight one — so if the engines ever
-do get their sandboxes started under netinstall, the suite says which tier took it away.
-
-Two things this does *not* cost, both measured rather than argued. A confined app can still read
-under its own `/proc` entry in the tight tier, because Landlock takes the union along a path and
-the read rule sits above the narrowed write rule — `PROCSELFREAD_OK`. And neither engine notices
-the narrowing today: `verify-linux.sh` renders identically under both grants on WebKitGTK and
-QtWebEngine, with identical `oom_score_adj` on every engine process. Chromium already logs
-`Failed to adjust OOM score of renderer` under the **default** grant, for a reason that is not
-ours — the kernel refuses to lower `oom_score_adj` without `CAP_SYS_RESOURCE`.
-
-### The tight tier (experimental)
-
-Building with `-DNEUTRINO_CONFINE_TIGHT` turns on a second, stronger tier. It means something
-different on each platform, because the mechanisms differ in what they can express:
-
-| Platform | What the tight tier adds |
-|---|---|
-| **Linux** | Landlock handles read rights too, so `$HOME` becomes deny-by-default, and execute becomes an allowlist that omits every writable directory. `~/.Xauthority` stays readable unless the session tier replaced the cookie with an untrusted one, in which case allowlisting it would hand back exactly what that took away. `$XDG_RUNTIME_DIR` becomes readable here and is writable in neither tier. The `/proc` write grant narrows from every process's entry to `/proc/self` — see [what Landlock costs](#what-landlock-costs-in-both-tiers) for what that buys and what it takes. |
-| **macOS** | Seatbelt denies reads of all of `$HOME` rather than a named list of secrets, and closes the LaunchServices escape — see [the door that is not a file](#launchservices-and-the-door-that-is-not-a-file). |
-| **Windows** | The process drops to low integrity, so writes outside the app dir fail — except the two places the label leaves open by design, `AppData\LocalLow` and `HKCU\Software\AppDataLow`. Measured: `%USERPROFILE%`, the user temp directory, `C:\Windows\Temp` and `HKCU\Software` all refuse. |
-| **OpenBSD** | Nothing — `unveil` is already an allowlist, so the default tier is the tight one. |
-
-On Linux and macOS the tier is also **write xor execute**: a directory an app can write to is one it
-cannot run anything from, so dropping a binary and executing it is not a path. macOS gets this in
-both tiers; Linux needs an execute allowlist to express it, so it arrives with the tight tier.
-
-Worth knowing before editing the ruleset: **Landlock takes the union of every rule matching along a
-path, not the closest one.** There is no way to grant a right broadly and subtract it for one
-directory — anything you want withheld somewhere has to be allowlisted everywhere else instead.
-
-On Linux and macOS the allowlist is the system tree plus the handful of `$HOME` subpaths a GTK,
-Qt or Cocoa app reads on the way up: fonts, icons, themes, and the toolkit's own settings.
-Everything else in `$HOME` is denied, which is what finally puts `~/.ssh`, `~/.gnupg`, `~/.aws`
-and browser profiles out of reach. `--info` says `reads allowlisted` on Linux and `reads denied
-under $HOME` on macOS, rather than the `reads and writes confined to <app dir>` it used to print:
-the read allowlist is the system tree, and a sentence claiming reads stop at the app dir was not
-true of either platform.
-
-**Windows confines writes, not reads.** Low integrity is a no-write-up rule; a low-IL process can
-still read `~/.ssh` and browser cookie stores. Only an AppContainer would close that, and it is
-documented to break WebView2. The suite asserts this limitation explicitly rather than letting
-the tier look stronger than it is.
-
-**The Windows tier does work for GUI apps, and this paragraph used to say the opposite.** It said
-WebView2 never renders a window at low integrity, which is what Microsoft documents for low-IL
-hosts, and it promised the suite would tell you if that ever changed. It did change, the suite did
-say so, and nobody read it. On run 33674586566 the tight tier's own webview section recorded a
-window 23 ms after launch and then the app's whole sequence through it — `neutrino` at 106 ms,
-`STEP0` at 10459, a resize to 500x400 at 16474, a move to 0,0 at 20490, `THEMEOK` at 22506 and
-`TESTS DONE` at 24538 — which is a view that came up, ran its page, took window calls from it and
-read the desktop palette, all at low integrity. The suite has printed `PASS: webview works under
-the tight tier` for as long as anyone has looked.
-
-`jsc.exe` still compiles at low integrity once `%TEMP%` is redirected, and that part was always
-right.
-
-**What is asserted, and what is not.** The claim above is worth exactly what measures it, so
-`confine-strict.sh` now measures the frame rather than the script. `test/alive.js` announces its
-viewport from a `requestAnimationFrame` callback — which runs after layout and immediately before
-the engine would paint — so the title arrives as `NETINSTALL-ALIVE 900x600` from a view that got a
-surface and laid the document out on it, and as a bare `NETINSTALL-ALIVE` from one that ran a
-script and never got that far. On Windows a missing or zero viewport is now a failure with the old
-paragraph's own sentence attached to it; elsewhere it is recorded as unmeasured.
-
-That is a frame scheduled, not pixels confirmed on a screen. Only a photograph is the second thing,
-and these suites stopped taking them — [what a launch is asked here](#testing) says why. If the
-tier ever needs that stronger claim, it is a screenshot in one suite and not a redesign.
-
-Two consequences of the layout are worth knowing if you change it. The script sits one level
-above the writable directory so an app cannot rewrite its own launcher — and once reads are
-confined, that same split hides the script from `sh`, so the parent is granted read and execute
-and nothing more. On Windows the app dir must carry a Low mandatory label or the app cannot write
-its own files, and `%TEMP%` has to be redirected because it does not relocate on its own at low
-integrity, which would otherwise break `jsc.exe`.
-
-It is off by default because the benefit was not proven when it was written. `test/confine-strict.sh`
-is what settles it: it asserts the tier actually holds, then launches a real webview under it and
-fails if it cannot start. "Cannot start" has three readings and the suite prints which one — no
-window at all, a window whose page never ran, or a page that ran — because a sandbox that lets the
-process live and kills its renderer is the interesting failure, and on Windows it is the measured
-one.
-
-### The offline tier (experimental)
-
-Building with `-DNEUTRINO_CONFINE_OFFLINE` denies the app outbound network access. It is a separate
-axis from the tight tier and the two compose. A lot of what people build with neutrino is a local
-UI over local data, and for those the network is pure attack surface — an app that can read your
-files and reach the internet is a very different proposition from one that can only do the first.
-
-| Platform | What it does |
-|---|---|
-| **Linux** | Landlock handles `CONNECT_TCP` and grants it to nothing (needs ABI 4), plus a network namespace where the distribution allows one. |
-| **macOS** | `(deny network-outbound (remote ip))` and the inbound equivalent. |
-| **OpenBSD** | The same `pledge` list without `inet` and `dns`. |
-| **Windows** | **Nothing.** WFP needs administrator and a job object cannot express it. |
-
-**The fetch is never offline** — the download is the one thing that has to reach the network, so the
-tier applies to the run phase only.
-
-Be precise about what "offline" means here, because it is narrower than the word suggests:
-
-- **Linux covers TCP with Landlock, and everything with a network namespace.** Landlock's network
-  rules are TCP-only, so on their own UDP — QUIC, DNS, anything else — is untouched, which is a real
-  hole and not a rounding error. Where an unprivileged user namespace can be had, the tier takes a
-  network namespace as well and there is no protocol left to leak through; `--info` says `offline`
-  when it got one and `offline (tcp only)` when it did not, and `test/offline.sh` asserts the UDP
-  half rather than assuming it. The namespace also brings loopback up, or local IPC would go down
-  with the internet, and closes the abstract socket namespace as a side effect — see above for why
-  that does not cost the display.
-- **macOS denies IP, not sockets.** Unix domain sockets and Mach stay open, deliberately:
-  WindowServer, the pasteboard and WebKit's helpers all talk over those, and denying them takes the
-  window down along with the network.
-- **Windows gets nothing at all**, and `--info` says so rather than letting the build look like it
-  did something.
-
-`test/offline.sh` points the app at the suite's own fixture server, which is definitely listening,
-so a refusal is the tier rather than a dead port — and the same binary fetched through that server
-moments earlier, which is the other half of what it asserts.
-
-### The session tier (experimental)
-
-Building with `-DNEUTRINO_CONFINE_NOSESSION` closes the two holes the section above calls out: the
-session bus and what X11 hands every client. It is a third axis, and it composes with the other two.
-
-| Platform | What it does |
-|----------|--------------|
-| **Linux** | A user, mount and pid namespace. A fresh tmpfs over the runtime directory keeping only the compositor and audio sockets; the system bus covered; the X11 directory hidden where there is no display to keep; an untrusted X cookie where there is. |
-| **everywhere else** | Nothing. `--info` says so. |
-
-**The runtime directory is sealed to an allowlist, not a list of sockets to cover.** A denylist here
-would have the same problem it has in the environment: it must enumerate every socket a desktop has
-ever put in `$XDG_RUNTIME_DIR` and silently passes the next one. So a tmpfs goes over the directory
-and only `wayland-*`, `pulse/native` and the pipewire sockets are bound back into it. The bus, the
-keyring, the portal, the document store and anything the next release adds are gone without being
-named. What is left is writable, so an app that wants a runtime file of its own gets one that leaves
-with it.
-
-The keepers are pinned by an `O_PATH` descriptor *before* the tmpfs goes on, because after it there
-is no path left to bind from — `/proc/self/fd/<n>` still resolves to the original, which is the
-whole
-trick. The system bus lives at `/run/dbus/system_bus_socket`, outside that directory, so it is
-covered by hand: `/dev/null` bind-mounted over a socket, which answers `ECONNREFUSED` rather than
-`EPERM`, because that is the errno a client already knows how to read as "nothing is listening
-there".
-
-**The pid namespace is not decoration.** A mount namespace on its own is not a boundary:
-`/proc/<pid>/root` of any process left outside it is a path straight back to every socket that was
-just covered, and `connect()` walks it like any other path. The only thing in front of that is
-Yama's `ptrace_scope`, which is `1` on Debian and Ubuntu and `0` on plenty of other distributions —
-a boundary that holds or does not depending on a sysctl is not one. With a pid namespace and its own
-`/proc` there is no outside process left to walk through. It costs the launcher its exit: the
-process that asks for a pid namespace does not enter it, so netinstall forks, becomes pid 1, and
-waits — reaping until the namespace is empty rather than exiting on the first child, or a polyglot
-that backgrounds its own runtime would take everything down with it.
-
-It also closes the `/proc` write grant that [is still open](#what-is-still-open) in the default
-tier, and closes it better than the tight tier's narrower rule does: there is no peer entry to
-write to rather than a rule refusing to write it, so nothing is given up on the way. The errno
-says which — `ENOENT` here, `EACCES` from a ruleset — and `confine.sh` records both. Where a usable
-user namespace can be had, this is the answer to that finding; the tight tier's rule is for the
-machines where one cannot.
-
-**What keeps the covers on** is Landlock, which denies `mount`, `umount`, `pivot_root` and
-`move_mount` to any domain that handles even one filesystem right, by design and even inside a fresh
-namespace. An app that nests another user namespace to get capabilities back still cannot unmount
-anything, and the mounts it inherits are locked to each other by the kernel anyway. The order
-matters: namespaces first, Landlock second, because Landlock would deny our own mounts otherwise.
-
-**The display cannot be hidden, so it is untrusted instead.** The X11 SECURITY extension splits
-clients in two, and an untrusted one is refused what makes X11 an escape. `xauth generate ...
-untrusted` produces a cookie in the app directory, `XAUTHORITY` points at it, and the app connects
-as a client the server itself distrusts. Measured on both engines, with controls: a screen capture
-of the root window is **refused** where a trusted client gets a PNG, and a client that grabs the
-keyboard and waits sees **none** of the injected keys that a trusted client in the same position
-sees. The cost is the extension list, which drops from twenty-three to two — no XTEST, no RECORD,
-and no XKB, MIT-SHM or GLX either. WebKitGTK and QtWebEngine both still came up.
-
-Be precise about what that is worth. **It is a boundary only while the trusted cookie is out of
-reach.** In the default tier reads are unconfined, so an app can read `~/.Xauthority` and connect
-trusted anyway; there it raises the bar and no more. With `-DNEUTRINO_CONFINE_TIGHT` the trusted
-cookie is not on the read allowlist — this tier is why that entry is now conditional — and the seal
-covers the runtime directory where a display manager keeps the other copy. And it only means
-anything on a server that requires authorisation at all: measured against an `Xvfb` started with
-`-auth`, a client holding no cookie is refused, which is the assumption the rest rests on.
-
-**Where it is unavailable it says so and runs anyway.** Ubuntu 24.04 and its derivatives give an
-unprofiled binary the namespace and then refuse the `uid_map` write, so `--info` reports `session
-open (uid map refused: Operation not permitted)` and Landlock, seccomp and the rest still apply.
-The tier asks in a throwaway child first and declines to start what it cannot finish, because a
-process that enters a user namespace and fails to map itself is left as the overflow uid — every
-file it owns unreadable, and a webview that cannot start. It is not made a fatal condition even in a
-strict build:
-that would make the tier unusable on the most common desktop base rather than making it stronger.
-`test/confine-session.sh` skips itself with a note on such a machine, and lifts the sysctl for the
-length of its own run on CI, which is one of them.
-
-**Where a step fails after the namespace was granted, it finishes the one that matters.** The tier
-is four steps and the first one changes the process, so "it did not work" has more than one shape.
-Measured rather than reasoned: `unshare(CLONE_NEWPID)` puts the caller's *children* in the new
-namespace without entering it, so an app launched from a half-built one forks exactly **once** —
-its first child becomes pid 1 of a namespace nobody is reaping, and when that child exits the
-namespace dies and every later fork gets `ENOMEM`. That is not a weaker sandbox someone might
-accept; it is a process that fails later, somewhere else, looking like a bug in the app.
-
-So the pid namespace gets entered even when an earlier step did not work, and what comes out is a
-real process in a weaker session, saying which step failed: `session partly closed (runtime seal
-failed)`. A strict build refuses it — `refusing to run half confined` — because less was applied
-than was promised, which is exactly what that flag is for. The one state that cannot be repaired is
-the pid namespace failing itself, and **no build launches into that**, strict or not:
-`refusing to run: ... session broken`. `phases.sh` forces each step in turn and asserts all three
-from both sides.
-
-What the tier does **not** close:
-
-- **Anything the app is meant to keep.** The compositor socket is the app's window and the audio
-  sockets are its sound; a hostile app can still talk to all three, and on an X11 session it can
-  still talk to the display as an untrusted client.
-- **The system bus on a machine that puts it elsewhere.** The cover names two paths.
-- **Anything at all on Ubuntu 24.04 and its derivatives**, until someone lifts the sysctl or gives
-  the binary a profile.
-
-### Why Windows gets so little
-
-Low integrity was the obvious next step and does not work: it blocks writes but not reads,
-`%TEMP%` does not redirect so `jsc.exe` fails, and WebView2 does not render in a low-IL host — the
-suite still launches one there every run and still reports a window that never draws.
-
-**AppContainer does not work either, and that is now measured rather than assumed.** It is the only
-mechanism that would confine *reads*, so it was worth being sure about. The app was launched inside
-a real AppContainer — profile created, the three capabilities WebView2 needs in a packaged app
-granted, and the directory holding the script handed to the container's SID with an inheritable ACE,
-since an AppContainer starts with access to almost nothing and would otherwise fail on the grant
-rather than on the mechanism. With an unrestricted control passing on the same clock before and
-after, the container produced no window at all.
-
-Where exactly it died was not isolated — the honest claim is that a webview does not come up inside
-one, not that any particular call is at fault. The likely reason is the documented one, that
-WebView2 builds lowbox tokens for its own renderers and AppContainers do not nest.
-
-So reads stay unconfined on Windows. Every unprivileged mechanism the platform offers has now been
-tried against a real webview: job object limits, privilege stripping and low integrity all work and
-are shipped; job UI restrictions break it, and AppContainer breaks it. Low integrity was in the
-second list until the tight tier's own suite was read — see above.
-
-**Token privileges are stripped.** Every privilege but `SeChangeNotifyPrivilege`, which path
-traversal needs, is *removed* rather than merely disabled, so nothing downstream can turn it back
-on, and the token is inherited by everything the launcher starts. A standard user token carries few
-privileges to begin with, so this is a small win — but it is free, it survives the hop to the real
-app that per-process mitigation policies do not, and it was probed on its own against a real
-webview before being shipped.
-
-The one that is kept is kept **enabled**, which is a distinction `AdjustTokenPrivileges` makes and
-the obvious spelling gets wrong: the attribute `0` reads as *disable*, not as *leave alone*. For a
-while this code passed `0` and shipped a token where `SeChangeNotifyPrivilege` was present and
-switched off. `privs.sh` asserts the difference where it is visible rather than where it is
-convenient — the payload reads a file underneath a directory the account is explicitly denied
-traverse on, which is exactly the check this privilege bypasses. With the privilege disabled that
-read is refused; with it enabled it succeeds. Both states have been measured on a `windows-latest`
-runner.
-
-`--info` reports the same phrase from the same code, with the adjustment skipped. It used to be a
-constant in the format string, so it promised a stripping regardless of what the token turned out
-to be.
-
-**Job UI restrictions do not work with WebView2 at all**, and that is measured rather than argued.
-`JOBOBJECT_BASIC_UI_RESTRICTIONS` is the obvious remaining lever, and the only mechanism here that
-survives the hop to the real app — the polyglot compiles itself and `START`s the result, so job
-membership is inherited where a per-process mitigation policy would land on `cmd.exe` and stop
-there. It was worth being sure about, so it was bisected instead of guessed at.
-
-`test/job-ui.sh` applies each of the eight flags on its own to a real webview, one launch each, with
-an unrestricted control run on the same clock before and after the table. Both controls passed. All
-eight flags failed:
-
-| flag | webview |
-|---|---|
-| `handles` | dead |
-| `readclipboard` | dead |
-| `writeclipboard` | dead |
-| `systemparameters` | dead |
-| `displaysettings` | dead |
-| `globalatoms` | dead |
-| `desktop` | dead |
-| `exitwindows` | dead |
-
-`exitwindows` only blocks `ExitWindowsEx` and `displaysettings` only blocks `ChangeDisplaySettings`,
-so neither can plausibly be responsible on its own. Eight identical results bracketed by two passing
-controls do not say "these eight flags are each fatal" — they say **any** non-empty UI restriction
-mask is, and there is therefore no subset worth shipping. Since every singleton mask is a minimal
-non-empty mask, that is as far as bisection can go; there is no smaller experiment left to run.
-
-What it does *not* establish is why. The probe reports `WINDOW_NO_CONTENT`, which sounds like a
-window whose renderer died — but the launcher's own `cmd.exe` console carries the script path in its
-title, so that outcome cannot be told apart from the app never starting. Only `CONTENT_OK` is
-unambiguous, because nothing but the app sets a `STEP` title. The mechanism is unexplained and the
-plausible story — that Chromium's nested sandbox needs USER and desktop objects belonging to
-processes outside our job — is a guess, written down as one.
-
-So `NT_JOB_UI_DEFAULT` is empty, `--info` says `job object` with nothing after it, and the suite is
-opt-in behind `NEUTRINO_JOB_UI_BISECT=1` rather than costing ten minutes of Windows CI on every push
-to re-answer a settled question. The machinery stays so a future WebView2 can be re-tested in one
-command instead of rebuilt from scratch.
-
-The job object also carries no `KILL_ON_JOB_CLOSE`. The windows polyglot compiles itself, `START`s
-the result and returns, so this launcher exits while the app is still starting; killing the job on
-close would take the app down with it.
-
+Two more capabilities are absent for a different reason: they were decided by the kernel version
+underneath rather than by this program. Landlock's scoping needs ABI 6, which is 6.12, and its
+TCP-bind rule needs ABI 4, which is 6.7 -- while Debian 12 ships 6.1 and Ubuntu 24.04 ships 6.8,
+both in support. An app that could bind a port on one supported machine and not another, with
+nothing in the artifact to say which, is the thing this document exists to stop having.
 ## Building
 
 ```bash
@@ -1131,15 +839,16 @@ close would take the app down with it.
 ./build.sh host     # just this machine, needs cc
 ```
 
-Four build-time flags change behaviour rather than platform: `-DNEUTRINO_STRICT_SANDBOX` refuses to
-run when no confinement is available instead of warning, `-DNEUTRINO_CONFINE_TIGHT` enables the
-experimental read-and-execute tier, `-DNEUTRINO_CONFINE_OFFLINE` denies the app the network, and
-`-DNEUTRINO_CONFINE_NOSESSION` closes the session bus and untrusts the display. The last three are
-separate axes and compose. Pass them through `NETINSTALL_CFLAGS`.
+**No build-time flags change the confinement.** There used to be four —
+`-DNEUTRINO_STRICT_SANDBOX`, `-DNEUTRINO_CONFINE_TIGHT`, `-DNEUTRINO_CONFINE_OFFLINE` and
+`-DNEUTRINO_CONFINE_NOSESSION`, sixteen combinations — and every one is gone. What they enabled is
+either always on or deleted; there is nothing to pass through `NETINSTALL_CFLAGS` and nothing to get
+wrong.
 
 Targets: `linux-{x86_64,aarch64}` (musl, static), `macos-{x86_64,arm64}`,
-`windows-{x86_64,aarch64}`. OpenBSD, FreeBSD and NetBSD build natively with `./build.sh host`, and
-all three run the suite in CI.
+`windows-{x86_64,aarch64}`. OpenBSD builds natively with `./build.sh host` and runs the suite in CI.
+FreeBSD and NetBSD used to as well; neither can be confined without root, so neither is a target any
+more — see [why Windows gets less](#why-windows-gets-less-and-why-nobody-else-gets-more).
 
 ## Testing
 
@@ -1147,73 +856,43 @@ all three run the suite in CI.
 test/run.sh
 ```
 
-Builds a release binary, a `-DNEUTRINO_TESTING` binary, one each for the tight, offline and session
-tiers, one with the session and tight tiers together, one with the session tier built fail-closed,
-and one that prefers the `wget` fallback — every machine that can be rented resolves `curl`, so that
-branch is otherwise never taken. Then it runs the suites: `names.sh` (the
-grammar, accepted and rejected), `fetchbound.sh` (what bounds a hostile response's size and
-duration, on both downloader branches), `verify.sh` (pin mismatch, non-text payloads, oversized responses,
-offline cache, tampered cache), `confine.sh`
-(a hostile script that tries to escape — the filesystem, the environment, an inherited descriptor,
-an abstract socket, another process's memory, and on macOS a bundle it wrote handed to
-LaunchServices two different ways), `confine-strict.sh` (the tight tier, and whether a
-webview still starts and gets as far as a frame under it), `confine-session.sh` (the session tier: both buses closed against a
-control that reaches them, the runtime dir sealed, no outside process visible, the screen
-unphotographable from inside, and a real webview under all of it), `offline.sh` (that the offline
-tier really refuses outbound TCP and, where it took a network namespace, UDP too, while the fetch
-still worked), `phases.sh` (what confines the downloader on each platform, measured through curl's
-own config file rather than asserted from the source, that a strict build refuses to fetch when
-nothing does, and that a session tier which fails a step mid-way is refused by a strict build,
-survived by a normal one, and never left able to fork exactly once), `strict.sh` (that
-`-DNEUTRINO_STRICT_SANDBOX` really refuses to run unconfined), and `e2e.sh` (a real neutrino
-polyglot fetched, verified and launched).
+Builds three binaries — a release one, a `-DNEUTRINO_TESTING` one, and one that prefers the `wget`
+fallback, because every machine that can be rented resolves `curl` so that branch is otherwise never
+taken. It used to build nine.
 
-**What a launch is asked here, and what it is not.** Three of those suites start a real webview —
-`e2e.sh`, `confine-strict.sh`, `confine-session.sh` — and each of them wants one thing from it: that
-the confinement just applied still lets a webview come up and run the page's script. That is
-`nt_app_probe` in `test/lib.sh`, and its answer is one of `NO_WINDOW`, `WINDOW_NO_CONTENT` or
-`CONTENT_OK`.
+Then it runs the suites: `names.sh` (the grammar, accepted and rejected), `fetchbound.sh` (what
+bounds a hostile response's size and duration, on both downloader branches), `verify.sh` (pin
+mismatch, non-text payloads, oversized responses, offline cache, tampered cache), `confine.sh` (a
+hostile script that tries to escape — the filesystem, the environment, an inherited descriptor, an
+abstract socket, another process's memory, and on macOS a bundle it wrote handed to LaunchServices
+two different ways), `phases.sh` (what confines the downloader on each platform, measured through
+curl's own config file rather than asserted from the source, and that a build refuses to fetch when
+nothing does), `writable.sh` (what a confined app can actually put bytes into, enumerated from
+inside the confinement), `env.sh` (the loader environment, and what the sandbox does *not* do about
+it), and `e2e.sh` (a real neutrino polyglot fetched, verified and launched).
 
-`confine-strict.sh` asks for one thing more, because the tight tier is the one whose viability was
-in doubt: the viewport `test/alive.js` announces from a frame callback, which separates a view that
-got a surface from one that only ran a script. See [the Windows tier](#the-tight-tier-experimental)
-for why that distinction had to become an assertion.
+**What a launch is asked here, and what it is not.** `e2e.sh` starts a real webview and wants one
+thing from it: that the confinement just applied still lets a webview come up and run the page's
+script. That is `nt_app_probe` in `test/lib.sh`, and its answer is one of `NO_WINDOW`,
+`WINDOW_NO_CONTENT` or `CONTENT_OK`.
 
-They used to answer it by running `test/verify-linux.sh` and its macOS and Windows siblings —
+It used to answer that by running `test/verify-linux.sh` and its macOS and Windows siblings —
 neutrino's own verifiers, which assert the window title at each of six states, the size to the pixel,
 the frame's corner and the desktop's palette, and keep a screenshot of every one. Every lane that
 runs this suite already runs that verifier against a standalone launch in a step of its own, minutes
 earlier, so the second run measured nothing the first had not. It cost about twenty-four seconds per
-launch, ten launches across the matrix, and worse than the time: a regression in neutrino's geometry
-or palette turned three sandbox suites red on four lanes, each reporting a webview defect under a
-sandbox's name.
+launch and, worse than the time, a regression in neutrino's geometry or palette turned three sandbox
+suites red on four lanes, each reporting a webview defect under a sandbox's name.
 
 The app is `test/alive.js`, which this suite owns. It sets one title and holds the window, so there
 is no eleven-second head start to wait out and no step list to fall out of step with. The suites
 here take no screenshots at all now.
 
-`session.sh` is a ninth that does not run by default. It is a probe rather than a gate: it applies
-each candidate mechanism on its own — covering the buses, sealing the runtime dir, hiding the
-display, a pid namespace, a network namespace, an untrusted cookie — to a real webview, with an
-unconfined control on the same clock either side and one lane that has to die. It answered, and
-[the session tier](#the-session-tier-experimental) is what came of it, so it now needs
-`NEUTRINO_SESSION_PROBE=1` and costs eight webview launches when you ask for it. The machinery stays
-so a future engine or kernel can be re-measured in one command. Both it and
-`confine-session.sh` lift `kernel.apparmor_restrict_unprivileged_userns` for the length of their own
-run when CI refuses the namespace, say so in their results, and put it back; nothing shipped does
-that.
-
-`job-ui.sh` is an eighth suite that does not run by default: it is the Windows job UI bisect
-described above, it needs `NEUTRINO_JOB_UI_BISECT=1`, and it takes about ten minutes because every
-flag costs a real webview launch.
-
-`lowfetch.sh` is a tenth, Windows only, behind `NEUTRINO_LOWFETCH_PROBE=1`. It is what priced the
-tight tier's fetch phase: it applies each candidate token to a child and puts a real `curl` behind
-it, across five grants, and asks at each step both what the child can write and what an *unrelated*
-low integrity process gained — which is the half a reading off the label cannot give you. It
-answered, and `phases.sh` gates the answer, so it is opt-in. The machinery stays because it is the
-only thing here that can tell a token that never reached `main` from one that refused a write, and
-that distinction is what ruled out the write-restricted route.
+Two probes do not run by default. `crashdump.sh` (Windows) measures where a crash puts bytes, and
+`landlockfloor.sh` (Linux, needs Docker) reads what kernel each supported distribution ships; both
+print `report:` lines and assert nothing. `job-ui.sh` is the Windows job UI bisect described above,
+behind `NEUTRINO_JOB_UI_BISECT=1`, and takes about ten minutes because every flag costs a real
+webview launch.
 
 The `NEUTRINO_TEST_ORIGIN` override the suite needs to serve fixtures from loopback is compiled
 in only under `-DNEUTRINO_TESTING`; release binaries ignore it entirely.

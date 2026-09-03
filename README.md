@@ -127,30 +127,37 @@ Leave a part out and you get the launcher's. Write `config.json` and you write
 all five keys — there is no merge, and a file that named only a title would take
 the rest from nowhere.
 
-### Tiers
+### What an app is allowed to do
 
-A tier is an overlay, not a flag. `neutrino/tier/testing`, `neutrino/tier/offline`
-and `neutrino/tier/tight` each replace the few parts that tier varies, and you
-stack them like any other:
+**Every neutrino app runs confined, on every platform. There is nothing to turn on and nothing to
+choose.**
+
+- It cannot write to your files. It writes its own directory and the scratch and cache locations its
+  web engine needs, and nothing else.
+- It cannot gain privileges it was not started with.
+- It cannot load code through the environment.
+- **Reads are not confined, on any platform.** An app can read what you can read.
+- If any of that cannot be applied, the app does not start.
+
+It is the same list on Linux, macOS, Windows and OpenBSD, and the same list in every build. Where a
+platform needs a different mechanism to keep one of those lines it uses one; where a platform could
+keep more than the list says, it does not — a promise that is stronger on three platforms than on
+the fourth is not a promise, it is a support matrix. [netinstall's README](netinstall/#confinement)
+has the mechanisms and the measurements.
+
+There used to be three overlays under `neutrino/tier/` — `tight`, `offline` and `testing` — and
+four build flags on netinstall's side. The first two are gone. `testing` remains and was never a
+security tier: it is the trace channel, the macOS status file, the two Windows environment
+overrides and Qt's `--no-sandbox`, none of which a release build carries.
+
+An overlay is still how you replace a part. An app that wants a denying content policy replaces
+`html/policy.html`; one that wants `window.open` to stop handing urls to the browser replaces
+`js/external-allow.js`. `test/nav-hermetic/` is a two-file example of the second.
 
 ```bash
-./neutrino/assemble.sh --overlay neutrino/tier/offline --overlay myapp myapp.cmd
+./neutrino/assemble.sh --overlay myapp myapp.cmd
 ```
 
-There is no tier stamp in an artifact and nothing at run time reads one. A
-release build does not carry the testing scaffolding behind a check — it does
-not carry it. Measured on the launcher's own build: no trace file, no
-`NEUTRINO_WEBVIEW2_LIB_DIR`, no `NEUTRINO_SCRIPT_PATH` override, no status file,
-no `--no-sandbox`, and no `sandbox-exec` unless you asked for `tight`.
-
-| Overlay | What it puts in |
-|---|---|
-| `testing` | the trace channel, the macOS status file, the two Windows environment overrides, and Qt's `--no-sandbox` |
-| `offline` | a denying content policy in the document, and an `externalAllowed` that says no |
-| `tight` | the macOS seatbelt profile and the `sandbox-exec` launch |
-
-`offline` is a *document-level* tier and composes with netinstall's
-process-level `-DNEUTRINO_CONFINE_OFFLINE`.
 
 Without this, an app draws itself from script, and every launch shows the
 launcher's own document first — the shape that made the sample app blink.
@@ -366,8 +373,8 @@ click: a script synthesising one gets nothing, because
 The return value is `null` for anything sent outward. Nothing here is a window
 in your page's process, and three of the four engines already answer `null`.
 
-An offline build (`--overlay neutrino/tier/offline`) refuses all of it, because a url handed to
-the desktop's browser is the page reaching the network in another program.
+An app that replaces `js/external-allow.js` refuses all of it, because a url handed to the desktop's
+browser is the page reaching the network in another program.
 
 **There is no bespoke spelling for any of this.** `document.title`,
 `resizeTo`, `resizeBy`, `moveTo`, `moveBy`, `close` and `open` are the whole of
