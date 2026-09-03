@@ -620,69 +620,67 @@ fi
 # flag to get wrong, nothing to read at launch, and nothing an artifact can be
 # talked into. These assertions are about presence and absence for that reason.
 report "section: tiers"
-echo "=== a release build does not carry what a tier build does ==="
+echo "=== a release build does not carry the testing scaffolding ==="
 T="$(tree tiers)"
 bash "$T/neutrino/assemble.sh" "$T/release.cmd" >/dev/null 2>&1
 eq "a release build assembles" "$?" "0"
-for nt_tier in testing offline tight; do
-    bash "$T/neutrino/assemble.sh" --overlay "$T/neutrino/tier/$nt_tier" "$T/$nt_tier.cmd" >/dev/null 2>&1
-    eq "the $nt_tier overlay assembles" "$?" "0"
-done
+bash "$T/neutrino/assemble.sh" --overlay "$T/neutrino/tier/testing" "$T/testing.cmd" >/dev/null 2>&1
+eq "the testing overlay assembles" "$?" "0"
 
-# One probe per tier, named for the thing that must not be in a shipped app: a
-# file it writes beside itself, an environment variable that redirects where it
-# loads native code from, and a flag that turns the renderer sandbox off.
-for nt_probe in "testing:neutrino-title.txt" "testing:neutrino-trace.log" \
-                "testing:NEUTRINO_WEBVIEW2_LIB_DIR\")" "testing:no-sandbox" \
-                "testing:QTWEBENGINE_DISABLE_SANDBOX" \
-                "tight:sandbox-exec" "offline:default-src"; do
-    nt_tier="${nt_probe%%:*}"; nt_text="${nt_probe#*:}"
-    eq "the $nt_tier build carries [$nt_text]" \
-       "$([ "$(grep -cF -- "$nt_text" "$T/$nt_tier.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
+# One overlay left, and the probes are the same shape they were: each names a
+# thing that must not be in a shipped app -- a file it writes beside itself, an
+# environment variable that redirects where it loads native code from, and the
+# flag that turns the renderer sandbox off.
+#
+# The offline and tight rows are gone with their overlays. `tight:sandbox-exec`
+# in particular asserted that a release build did NOT carry sandbox-exec, which
+# was true and was the defect: the seatbelt profile was the tight overlay's, so
+# a standalone app -- the one case where nothing else confines anything -- was
+# the case that got none. It is in every build now, and the assertion below is
+# the reverse of what this loop used to make.
+for nt_text in "neutrino-title.txt" "neutrino-trace.log" \
+               "NEUTRINO_WEBVIEW2_LIB_DIR\")" "no-sandbox" \
+               "QTWEBENGINE_DISABLE_SANDBOX"; do
+    eq "the testing build carries [$nt_text]" \
+       "$([ "$(grep -cF -- "$nt_text" "$T/testing.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
     eq "and the release build does not" \
        "$(grep -cF -- "$nt_text" "$T/release.cmd" || true)" "0"
 done
 
-# And the release build is smaller for it, which is the same fact said as a
-# number. Not asserted to a size -- what is asserted is the direction.
-for nt_tier in testing offline tight; do
-    eq "the release build is smaller than the $nt_tier one" \
-       "$([ "$(size "$T/release.cmd")" -lt "$(size "$T/$nt_tier.cmd")" ] && echo smaller || echo not-smaller)" \
-       "smaller"
-done
+# The seatbelt profile is not scaffolding and is asserted the other way: every
+# build carries it, release included.
+eq "the release build carries sandbox-exec" \
+   "$([ "$(grep -cF -- "sandbox-exec" "$T/release.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
 
-# The offline overlay is a different document, not a document rewritten at
-# launch. It used to be a string replace performed by every lane on every start,
-# with a failure path of its own: a document that did not carry the string being
-# replaced came back unchanged, shipping the permissive policy under a build
-# that said it denied the network.
+# And the release build is smaller for the scaffolding it does not carry, which
+# is the same fact said as a number. Not asserted to a size -- the direction is.
+eq "the release build is smaller than the testing one" \
+   "$([ "$(size "$T/release.cmd")" -lt "$(size "$T/testing.cmd")" ] && echo smaller || echo not-smaller)" \
+   "smaller"
+
+# One document, one policy, and nothing rewriting it at launch. The offline
+# overlay used to supply a second, denying one; assemble.sh still refuses an
+# artifact carrying two, which is what made that overlay legal and now makes an
+# app author's own policy legal in the same way.
 nt_policy() {
     sed -n '/^<!doctype html><html>/,/^<script type=text\/javascript>/p' "$1" |
         sed -n 's/.*content="\([^"]*\)".*/\1/p' | head -1
 }
 eq "the release document carries the permissive policy" \
    "$(nt_policy "$T/release.cmd" | grep -c "^script-src 'unsafe-eval'" || true)" "1"
-eq "the offline document carries the denying one" \
-   "$(nt_policy "$T/offline.cmd" | grep -c "^default-src 'none'" || true)" "1"
-eq "and neither carries a second policy" \
-   "$(grep -c 'Content-Security-Policy' "$T/offline.cmd" || true)" "1"
+eq "and carries exactly one" \
+   "$(grep -c 'Content-Security-Policy' "$T/release.cmd" || true)" "1"
 eq "and nothing rewrites the document at launch" \
-   "$(grep -c 'applyContentPolicy' "$T/offline.cmd" || true)" "0"
+   "$(grep -c 'applyContentPolicy' "$T/release.cmd" || true)" "0"
 
-# The other half of the offline overlay, which no content policy can express: a
-# url handed to the machine's browser is the page reaching the network in
-# another program.
-for nt_pair in "release:true" "offline:false"; do
-    nt_which="${nt_pair%%:*}"; nt_want="${nt_pair#*:}"
-    eq "the $nt_which build's externalAllowed answers $nt_want" \
-       "$(sed -n '/NeutrinoWebview.externalAllowed = function/,/^    };$/p' "$T/$nt_which.cmd" |
-          grep -c "return $nt_want;" || true)" "1"
-done
+eq "externalAllowed answers true" \
+   "$(sed -n '/NeutrinoWebview.externalAllowed = function/,/^    };$/p' "$T/release.cmd" |
+      grep -c "return true;" || true)" "1"
 
 # Nothing reads a tier at run time, because there is nothing to read.
 for nt_gone in "hasTier" "has_tier" "//#" '"tiers"'; do
     eq "no artifact carries [$nt_gone]" \
-       "$(cat "$T"/release.cmd "$T"/testing.cmd "$T"/offline.cmd "$T"/tight.cmd |
+       "$(cat "$T"/release.cmd "$T"/testing.cmd |
           grep -cF -- "$nt_gone" || true)" "0"
 done
 
@@ -1029,11 +1027,13 @@ else
        "$([ "$(grep -cF 'neutrino-title.txt' "$WORK/mk-tier.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
     eq "and a build without it has none" \
        "$(grep -cF 'neutrino-title.txt' "$WORK/mk-default.cmd" || true)" "0"
-    bash "$MK" --tier=testing,offline "$WORK/plainapp.js" "$WORK/mk-two.cmd" >/dev/null 2>&1
-    eq "two of them compose (testing)" \
-       "$([ "$(grep -cF 'neutrino-title.txt' "$WORK/mk-two.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
-    eq "two of them compose (offline)" \
-       "$([ "$(grep -cF 'default-src' "$WORK/mk-two.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
+    # A removed tier is refused by name rather than as an unknown one: roughly a
+    # hundred call sites spelled a tier, and a caller who still spells offline
+    # or tight should be told it was removed, not told it was a typo.
+    bash "$MK" --tier=testing,offline "$WORK/plainapp.js" "$WORK/mk-two.cmd" >"$WORK/mk-two.err" 2>&1
+    eq "a removed tier is refused" "$?" "1"
+    eq "and the refusal says it was removed" \
+       "$(grep -c 'was removed' "$WORK/mk-two.err" || true)" "1"
     rm -f "$WORK/mk-bogus.cmd"
     bash "$MK" --tier=paranoid "$WORK/plainapp.js" "$WORK/mk-bogus.cmd" >/dev/null 2>&1
     eq "and a tier with no overlay is refused" "$?" "1"

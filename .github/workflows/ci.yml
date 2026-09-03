@@ -180,37 +180,6 @@ jobs:
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash netinstall/test/run.sh
-      # The offline tier, which nothing in this repository has ever built.
-      # An offline build says it denies the page network access, and
-      # the whole mechanism is one meta tag the offline overlay includes into the
-      # extracted document. Its only assertion is parse.sh comparing two
-      # strings; no engine has ever loaded a document carrying it. This step is
-      # the measurement, and it asserts what three probing rounds read: nine
-      # ways of reaching the network, none of which arrive under the tier and
-      # all of which arrive under the one that permits them; and the route no
-      # content policy can see, which is a url handed to the machine's browser
-      # and which this PR closes.
-      #
-      # Two builds, one tier apart: the control carries `testing` and the app
-      # under test carries `testing,offline`, so the only thing that differs
-      # between the two readings is the policy in the document. The testing tier
-      # is on both because macOS has no window a shell can query and writes its
-      # title to a file only there.
-      #
-      # Last in the lane on purpose. A probing round is the round most likely to
-      # be red, and a red probe should cost its own reading and nothing else.
-      - timeout-minutes: 20
-        run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          bash test/mkapp.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
-          bash test/mkapp.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
-          TEST_EXIT=0
-          bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
-            > ~/offline.log 2>&1 || TEST_EXIT=$?
-          cat ~/offline.log
-          exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
       # Two questions were opened here. Whether an app can be written against
@@ -1189,43 +1158,8 @@ jobs:
           # exists. confine-session doubly so: dbus-run-session below means the
           # session it closes was really there, and nt_userns lifts AppArmor
           # from inside the suite here where gjs has a job step do it.
-          export NEUTRINO_SUITES="env e2e confine-strict confine-session"
+          export NEUTRINO_SUITES="env e2e"
           dbus-run-session -- bash netinstall/test/run.sh
-      # The offline tier, which nothing in this repository has ever built.
-      # An offline build says it denies the page network access, and
-      # the whole mechanism is one meta tag the offline overlay includes into the
-      # extracted document. Its only assertion is parse.sh comparing two
-      # strings; no engine has ever loaded a document carrying it. This step is
-      # the measurement, and it asserts what three probing rounds read: nine
-      # ways of reaching the network, none of which arrive under the tier and
-      # all of which arrive under the one that permits them; and the route no
-      # content policy can see, which is a url handed to the machine's browser
-      # and which this PR closes.
-      #
-      # Two builds, one tier apart: the control carries `testing` and the app
-      # under test carries `testing,offline`, so the only thing that differs
-      # between the two readings is the policy in the document. The testing tier
-      # is on both because macOS has no window a shell can query and writes its
-      # title to a file only there.
-      #
-      # Last in the lane on purpose. A probing round is the round most likely to
-      # be red, and a red probe should cost its own reading and nothing else.
-      - timeout-minutes: 20
-        run: |
-          export DISPLAY=:99
-          export QT_QPA_PLATFORM=xcb
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
-          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
-          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          bash test/mkapp.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
-          bash test/mkapp.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
-          TEST_EXIT=0
-          bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
-            > ~/offline.log 2>&1 || TEST_EXIT=$?
-          cat ~/offline.log
-          exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
       # Two questions were opened here. Whether an app can be written against
@@ -2349,61 +2283,6 @@ jobs:
       - if: always()
         shell: bash
         run: cat ~/navlogs/nav.log
-      # The offline tier, which nothing in this repository has ever built.
-      # An offline build says it denies the page network access, and
-      # the whole mechanism is one meta tag the offline overlay includes into the
-      # extracted document. Its only assertion is parse.sh comparing two
-      # strings; no engine has ever loaded a document carrying it. This step is
-      # the measurement, and it asserts what three probing rounds read: nine
-      # ways of reaching the network, none of which arrive under the tier and
-      # all of which arrive under the one that permits them; and the route no
-      # content policy can see, which is a url handed to the machine's browser
-      # and which this PR closes.
-      #
-      # Two builds, one tier apart: the control carries `testing` and the app
-      # under test carries `testing,offline`, so the only thing that differs
-      # between the two readings is the policy in the document. The testing tier
-      # is on both because macOS has no window a shell can query and writes its
-      # title to a file only there.
-      #
-      # In the windows-content lane behind the attack and navigation suites and
-      # in front of docswap, every group gated `if: always()`, so a red reading
-      # here costs its own reading and nothing else in the lane.
-      - if: always()
-        shell: bash
-        run: |
-          bash test/mkapp.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
-          bash test/mkapp.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
-      - if: always()
-        timeout-minutes: 15
-        shell: pwsh
-        run: |
-          & .\test\verify-offline.ps1 .\test\neutrinooffline-default.cmd .\test\neutrinooffline.cmd "$HOME\offlinelogs" *>&1 |
-            Tee-Object -FilePath "$HOME\offlinelogs-full.log"
-          $offExit = $LASTEXITCODE
-          Get-Process | Where-Object { $_.MainWindowTitle -like "OFFLINE-*" } |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $offExit
-      - if: always()
-        shell: bash
-        run: cat ~/offlinelogs/offline.log
-      # PR 26, and the only lane it applies to. `boot` extracts the document,
-      # applies the content policy and hands the result to `driver.loadHTML`;
-      # this driver used to drop that argument, navigate to about:blank, and
-      # read the file off NEUTRINO_SCRIPT_PATH a second time inside the event
-      # loop to make another one. Measured: the gap between the two reads is
-      # open from roughly half a second to under a second after the exe starts,
-      # a file replaced inside it was the one that rendered, and a file removed
-      # inside it left a window with no document and no account of why.
-      #
-      # The suite derives its own three builds from this one artifact -- two
-      # markers apart, and one carrying the spelling this PR replaced -- so
-      # "it would have failed before" runs on every push.
-      #
-      # `if: always()`: it shares the windows-content job with the offline
-      # suite ahead of it, and a red there should not skip this build and hide
-      # whether docswap passes -- the failure that once cost a whole round when
-      # both sat in one long lane.
       - if: always()
         shell: bash
         run: bash test/mkapp.sh --tier=testing test/neutrinodoc.js test/neutrinodoc.cmd
@@ -2651,7 +2530,6 @@ jobs:
             "The suites=$HOME/sheetsrc" \
             "docswap=$HOME/docswaplogs" \
             "nav=$HOME/navlogs" \
-            "offline=$HOME/offlinelogs"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -2660,15 +2538,11 @@ jobs:
 
   # Everything this platform has to say about a running app: the core launch
 
-  # and the tight tier, the loader environment, hostile content, a page that
-  # navigates before its own load finished, the navigation guard's account of
-  # itself, and the offline tier.
+  # the loader environment, hostile content, a page that navigates before its
+  # own load finished, and the navigation guard's account of itself.
   #
   # Four macOS jobs before this, and three of them came to five minutes
-  # between them.
-  # The offline tier comes over from the netinstall lane, which is where the
-  # Windows split already puts it -- it is a content policy, not an installer.
-  # Everything after the core launch is gated `if: always()`.
+  # between them. Everything after the core launch is gated `if: always()`.
   #
   # One upload at the end: all four jobs pointed at ~/screenshots, so the
   # separate artifacts were separate names over the same directory.
@@ -2764,22 +2638,6 @@ jobs:
             cat ~/neutrino-stdout.log 2>/dev/null || true
           } >> ~/macos-verify.log
           exit $TEST_EXIT
-      # The tight tier: webview.cmd confining its own process, whether or not
-      # netinstall launched it. Asserted from both sides -- the webview has to
-      # survive the profile, and the profile has to refuse something -- because
-      # either half alone passes for the wrong reason.
-      - run: |
-          bash test/mkapp.sh --tier=testing,tight test/neutrinotest.js test/neutrinotight.cmd
-          # This lane reported to its job log and called nothing that carried
-          # the result out, so a red tight tier said FAILURES=0 is false and
-          # nothing finer -- the gap PR 7 and PR 8 both parked here. The third
-          # verifier speaks in PASS/FAIL rather than in `report:` lines, which
-          # is worth knowing when reading its log beside the others.
-          TIGHT_EXIT=0
-          bash test/verify-macos-tight.sh test/neutrinotight.cmd ~/screenshots \
-            > ~/tight.log 2>&1 || TIGHT_EXIT=$?
-          cat ~/tight.log
-          exit $TIGHT_EXIT
       # The loader environment the standalone launch path hands its engine.
       # Every check here is against the same build with the fix cut out of it,
       # so "it would have failed before" is measured in this run rather than
@@ -2856,35 +2714,6 @@ jobs:
           TEST_EXIT=0
           bash test/navrefuse.sh test/neutrinonavrefuse.cmd > ~/navrefuse.log 2>&1 || TEST_EXIT=$?
           cat ~/navrefuse.log
-          exit $TEST_EXIT
-      # The offline tier, which nothing in this repository has ever built.
-      # An offline build says it denies the page network access, and
-      # the whole mechanism is one meta tag the offline overlay includes into the
-      # extracted document. Its only assertion is parse.sh comparing two
-      # strings; no engine has ever loaded a document carrying it. This step is
-      # the measurement, and it asserts what three probing rounds read: nine
-      # ways of reaching the network, none of which arrive under the tier and
-      # all of which arrive under the one that permits them; and the route no
-      # content policy can see, which is a url handed to the machine's browser
-      # and which this PR closes.
-      #
-      # Two builds, one tier apart: the control carries `testing` and the app
-      # under test carries `testing,offline`, so the only thing that differs
-      # between the two readings is the policy in the document. The testing tier
-      # is on both because macOS has no window a shell can query and writes its
-      # title to a file only there.
-      #
-      # Last in the lane on purpose. A probing round is the round most likely to
-      # be red, and a red probe should cost its own reading and nothing else.
-      - if: always()
-        timeout-minutes: 12
-        run: |
-          bash test/mkapp.sh --tier=testing test/neutrinooffline.js test/neutrinooffline-default.cmd
-          bash test/mkapp.sh --tier=testing,offline test/neutrinooffline.js test/neutrinooffline.cmd
-          TEST_EXIT=0
-          bash test/verify-offline.sh test/neutrinooffline-default.cmd test/neutrinooffline.cmd \
-            > ~/offline.log 2>&1 || TEST_EXIT=$?
-          cat ~/offline.log
           exit $TEST_EXIT
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
