@@ -130,7 +130,7 @@
             NeutrinoNavSink.refusals.RemoveAt(0);
             this.note(text);
         }
-        // The guard's other half, and the tier check is here rather than in
+        // The guard's other half, and the build check is here rather than in
         // the handler because this is the side of the file that can ask.
         // driver.openExternal asks again at the end of the line, which is
         // the same belt-and-braces every other lane has: one check where

@@ -71,7 +71,7 @@ nt_win_kill() {
 }
 
 echo "=== Build the app under test ==="
-bash "$ROOT/test/mkapp.sh" --tier=testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
+bash "$ROOT/test/mkapp.sh" --testing "$ROOT/test/neutrinotest.js" "$SERVE/neutrinotest.cmd"
 SPEC="neutrinotest-example-com-1$(nt_pin "$SERVE/neutrinotest.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 

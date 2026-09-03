@@ -5,7 +5,7 @@ nt_resolve() {
     ( cd "$1" 2>/dev/null && pwd -P ) || printf '%s\n' "$1"
 }
 
-# The tight tier, and the only platform in this file that has one. Linux gets
+# The seatbelt profile, and the only platform in this file that gets one. Linux gets
 # nothing here on purpose: the mechanism a script could reach is bubblewrap, and
 # this file just spent a great deal of effort turning WebKitGTK's *own*
 # bubblewrap on. Wrapping that in another user namespace is the nesting problem
@@ -38,8 +38,8 @@ nt_resolve() {
 # bundle launching, quarantine-resolver alone leaves it launching, the pair
 # shuts both doors. What stays open, also measured: an already-installed app
 # still launches and an http url still reaches the browser, so
-# shell.openExternal is unaffected. This is only in the tight tier because that
-# is the only tier this function is reached from.
+# shell.openExternal is unaffected. It is here because this is the only place
+# the profile is built.
 #
 # Every path below lands inside an s-expression string literal, and a directory
 # name may legally contain a `"`. Unescaped, one closes the string it is in and

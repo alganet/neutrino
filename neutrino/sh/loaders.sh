@@ -63,7 +63,7 @@ nt_scrub_loaders() {
     # down to the document below is one JavaScript block comment, so a star
     # followed by a slash anywhere in the shell region closes it early and the
     # rest of the file is parsed as code -- which is what a regex ending
-    # ".*" then "/" does. Anchoring with $ first is how the tier line above
+    # ".*" then "/" does. Anchoring with $ first is how the line above
     # already avoids it, and test/parse.sh asserts the region contains none.
     #
     # Two sequences, not one. The other is the document's doctype: it is where

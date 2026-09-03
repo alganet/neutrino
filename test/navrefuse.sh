@@ -44,7 +44,7 @@
 # not the previous commit, so the difference between the two readings is the
 # fix and nothing else.
 #
-# Usage: navrefuse.sh <early-app.cmd built at --tier=testing>
+# Usage: navrefuse.sh <early-app.cmd built at --testing>
 
 set -uo pipefail
 

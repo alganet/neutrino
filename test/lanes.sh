@@ -68,10 +68,15 @@ fi
 cp "$APP_IN" "$WORK/app.cmd"
 APP="$WORK/app.cmd"
 
-# The minimum a launch needs before it reaches the walk at all: the tier stamp
-# is read with sed and head, and the lanes below use dirname, basename, mkdir
-# and rm. Built by symlink rather than by copying a $PATH, because the whole
-# method here is controlling exactly which engines exist.
+# The minimum a launch needs before it reaches the walk at all: sed, because the
+# loader scrub reads the environment's names through it, and dirname, basename,
+# mkdir and rm for the lanes below. Built by symlink rather than by copying a
+# $PATH, because the whole method here is controlling exactly which engines
+# exist.
+#
+# This used to say sed and head were how the tier stamp was read. There is no
+# stamp -- that went before the tiers themselves did -- and head is kept only
+# because removing a tool from this list is a separate measurement.
 BIN="$WORK/bin"
 mkdir -p "$BIN"
 for tool in sh bash sed head env dirname basename mkdir rm cat awk; do

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: ISC
 #
 # mkapp.sh - build a test app out of one .js file.
-# Usage: mkapp.sh [--tier=<list>] [--title=<str>] [--size=<WxH>]
+# Usage: mkapp.sh [--testing] [--title=<str>] [--size=<WxH>]
 #                 [--background=<#rrggbb|auto>] [--decorations=<auto|none>]
 #                 [--comments] [--overlay <dir>]...
 #                 <app.js> <output.cmd>
@@ -14,10 +14,14 @@
 # ten directories with one file each to say so would be ten directories saying
 # nothing.
 #
-# --tier is overlay selection and nothing else now. There is no tier stamp in an
-# artifact and nothing at run time reads one: neutrino/tier/<name> replaces the
-# few parts that tier varies, so a testing build has the scaffolding in it and a
-# release build does not have it at all.
+# --testing lays neutrino/build/testing over the launcher. It is the only
+# overlay this helper knows by name, and it was never a security tier -- it is
+# the trace channel, the macOS status file, the two windows environment
+# overrides and Qt's --no-sandbox. A testing build has that scaffolding in it
+# and a release build does not have it at all.
+#
+# It was spelled --testing until the word went. There were two other
+# tiers; the confinement they varied is the same in every build now.
 #
 # So this builds the overlay instead. It writes app.js and config.json into a
 # temporary, and the flags above are the keys of config.json spelled as command
@@ -41,7 +45,7 @@ ROOT="$(cd "$HERE/.." && pwd)"
 SOURCE="$ROOT/neutrino"
 DEFAULTS="$SOURCE/config.json"
 
-NT_TIERS=""; NT_TITLE=""; NT_WIDTH=""; NT_HEIGHT=""; NT_BG=""; NT_DECOR=""
+NT_TESTING=0; NT_TITLE=""; NT_WIDTH=""; NT_HEIGHT=""; NT_BG=""; NT_DECOR=""
 NT_COMMENTS=""
 # Newline separated and not an array, for the reason assemble.sh spells out:
 # `set -u` with an empty array is an unbound variable on the bash macOS ships.
@@ -52,15 +56,20 @@ $1"; fi
 }
 
 nt_usage() {
-    echo "Usage: $0 [--tier=<list>] [--title=<str>] [--size=<WxH>]" >&2
+    echo "Usage: $0 [--testing] [--title=<str>] [--size=<WxH>]" >&2
     echo "          [--background=<#rrggbb|auto>] [--decorations=<auto|none>]" >&2
     echo "          [--comments] [--overlay <dir>]... <app.js> <output.cmd>" >&2
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --tier=*)  NT_TIERS="${1#--tier=}"; shift ;;
-        --tier)    NT_TIERS="${2:-}"; shift 2 ;;
+        --testing) NT_TESTING=1; shift ;;
+        # Named in the refusal rather than folded into "unknown option": every
+        # call site in the suite spelled this until the word went, and a caller
+        # who still spells it should be told what replaced it.
+        --tier|--tier=*)
+            echo "mkapp.sh: --tier is gone; the only overlay left is --testing" >&2
+            exit 1 ;;
         --title=*) NT_TITLE="${1#--title=}"; shift ;;
         --title)   NT_TITLE="${2:-}"; shift 2 ;;
         --size=*)  NT_SIZE="${1#--size=}"; shift ;;
@@ -116,31 +125,16 @@ nt_default() {
 [ -n "$NT_BG" ] || NT_BG="$(nt_default background)"
 [ -n "$NT_DECOR" ] || NT_DECOR="$(nt_default decorations)"
 
-# A tier is an overlay under neutrino/tier, so --tier=testing,offline is two
-# more directories in the search path and nothing else. `default` names no
-# overlay: it is what a build with none of them is, and it is accepted so that
-# the ninety call sites that spell it do not have to change.
-NT_TIER_OVERLAYS=""
-for nt_t in $(printf '%s' "$NT_TIERS" | tr ',' ' '); do
-    case "$nt_t" in
-        default) continue ;;
-        testing) ;;
-        # offline and tight were the other two and are gone. Named in the
-        # refusal rather than folded into "unknown", because roughly a hundred
-        # call sites spelled a tier and a caller who still spells one of these
-        # should be told it was removed, not told it was a typo.
-        offline|tight)
-            echo "mkapp.sh: the '$nt_t' tier was removed; there is one confinement now and every build has it" >&2
-            exit 1 ;;
-        *) echo "mkapp.sh: unknown tier '$nt_t' (want: default, testing)" >&2; exit 1 ;;
-    esac
-    if [ ! -d "$SOURCE/tier/$nt_t" ]; then
-        echo "mkapp.sh: no overlay at $SOURCE/tier/$nt_t" >&2
+# One overlay, one directory in the search path. This was a comma-separated list
+# resolved in a loop while there were three of them.
+NT_TESTING_OVERLAY=""
+if [ "$NT_TESTING" = "1" ]; then
+    if [ ! -d "$SOURCE/build/testing" ]; then
+        echo "mkapp.sh: no overlay at $SOURCE/build/testing" >&2
         exit 1
     fi
-    NT_TIER_OVERLAYS="$NT_TIER_OVERLAYS$SOURCE/tier/$nt_t
-"
-done
+    NT_TESTING_OVERLAY="$SOURCE/build/testing"
+fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -160,13 +154,13 @@ cp "$APP_JS" "$WORK/app.js"
 # The generated overlay goes last so it wins: a --overlay named on the command
 # line supplies parts this one does not write, and the app is this one's.
 set -- --no-verify
-# Tiers first, so a --overlay named on the command line can still replace a part
-# one of them supplies.
+# The testing overlay first, so a --overlay named on the command line can still
+# replace a part it supplies.
 while IFS= read -r nt_d; do
     [ -n "$nt_d" ] || continue
     set -- "$@" --overlay "$nt_d"
 done <<EOF
-$NT_TIER_OVERLAYS
+$NT_TESTING_OVERLAY
 EOF
 while IFS= read -r nt_d; do
     [ -n "$nt_d" ] || continue

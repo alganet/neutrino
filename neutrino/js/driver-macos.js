@@ -26,7 +26,7 @@
         var tickerRef = null;
         // The status file's line 7, and the whole of what separates "the
         // window has stopped changing" from "the thing writing this file
-        // has stopped". Both are testing-tier only.
+        // has stopped". Both are in testing builds only.
         var statusTicks = 0;
         // The last title this lane read off the view. The clock below is a
         // poll and this is what makes it an edge: without it every tick
@@ -147,10 +147,10 @@
                  * ObjC object with a selector, and NSTimer's block-taking
                  * spelling is one JXA cannot supply.
                  *
-                 * It used to be registered only under the testing tier,
+                 * It used to be registered only under a testing build,
                  * because writeStatus was all it did and writeStatus
                  * refuses to write in a release build. It now also carries
-                 * the title hook, which every build needs, so the tier gate
+                 * the title hook, which every build needs, so the gate
                  * moved down into writeStatus alone -- where it already
                  * was.
                  *
@@ -640,7 +640,7 @@
              * apart.
              *
              * The second is writeStatus, which is scaffolding and gates
-             * itself on the tier. The title goes first so that a tick which
+             * itself on whether this is a testing build. The title goes first so that a tick which
              * moves the window's name writes the file with the new name in
              * it rather than one tick behind -- setTitle writes it again on
              * the way past, and a second write of the same seven lines

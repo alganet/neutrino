@@ -67,7 +67,7 @@
 # run directly, and the hammer has to have made real attempts -- a round with
 # too few is a throttle regression and reported as one, not a silent green.
 #
-# Usage: exerace.ps1 <app.cmd built from test/neutrinoloaders.js --tier=testing>
+# Usage: exerace.ps1 <app.cmd built from test/neutrinoloaders.js --testing>
 
 $ErrorActionPreference = "Continue"
 

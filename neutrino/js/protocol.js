@@ -52,9 +52,10 @@
      *
      * isExternalUrl answers a question about the string. This answers one
      * about the build, and the two are separate on purpose: the allowlist
-     * above is about schemes and stays true whatever tier is stamped.
+     * above is about schemes and stays true in every build.
      *
-     * The offline tier says the page has no network. A url handed to the
+     * An app that answers `externalAllowed` false says the page has no way
+     * out of the process. A url handed to the
      * desktop's handler is the page reaching the network in another
      * program, and it was measured going out that way on all four engines,
      * by both routes -- `window.open`, which any page script may call, and
@@ -62,7 +63,7 @@
      * without the page having to ask twice. Neither is something a content
      * policy can see: CSP governs subresources, and this is not a load.
      *
-     * So the tier closes it, and every place that was asking isExternalUrl
+     * So `externalAllowed` gates it, and every place that was asking isExternalUrl
      * before opening asks this instead -- including the four drivers' own
      * end-of-the-line checks, which exist because that is where a string
      * becomes ShellExecute, NSWorkspace or the desktop's URI handler.

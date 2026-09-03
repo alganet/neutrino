@@ -33,11 +33,14 @@
 # those four: an overlay carrying `js/policy.js` replaces the launcher's. That
 # is the author's business, because the author is the one shipping the artifact.
 #
-# `tier/testing` is the only overlay left under this directory, and it was never
-# a security tier: it is the trace channel, the macOS status file, the two
-# windows environment overrides and Qt's --no-sandbox. A release build does not
-# carry that behind a flag -- it does not carry it. `tier/offline` and
-# `tier/tight` are gone; there is one confinement now and every build has it.
+# `build/testing` is the only overlay shipped under this directory, and it is
+# scaffolding rather than a security setting: the trace channel, the macOS status
+# file, the two windows environment overrides and Qt's --no-sandbox. A release
+# build does not carry that behind a flag -- it does not carry it.
+#
+# It lived at `tier/testing` beside `tier/offline` and `tier/tight`. Those two
+# are gone: there is one confinement now, every build has it, and nothing here
+# uses the word tier any more.
 #
 # The default output has no comments in it. That is the whole point of the
 # split: a comment can be removed by a program that knows which language it is

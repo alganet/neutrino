@@ -16,7 +16,7 @@
     /*
      * Set by a driver that has somewhere durable to write. Null everywhere
      * else, and null in every release build: the one installer is gated on
-     * the testing tier, which is stamped into the artifact by build.sh and
+     * a testing build, which is stamped into the artifact by build.sh and
      * cannot be reached from the environment.
      */
     NeutrinoWebview.noteSink = null;

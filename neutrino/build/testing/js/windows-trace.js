@@ -1,5 +1,5 @@
     /*
-     * The Windows driver's own account, on disk, under the testing tier.
+     * The Windows driver's own account, on disk, in a testing build.
      *
      * Everything this file has ever learned about the Windows first-window
      * stall was read from outside, because from inside the app said nothing

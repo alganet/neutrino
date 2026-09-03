@@ -60,9 +60,9 @@
      * with no `<head>` yet -- and a stylesheet in the markup has no such
      * moment. It is parsed with the document that carries it.
      *
-     * Permitted under both tiers, by the policy this file writes: the
-     * default tier restricts no styles at all, and the offline tier's
-     * carries `style-src 'unsafe-inline'`, which is what an inline
+     * Permitted by the policy this file writes, which restricts no styles
+     * at all. An app that replaces `html/policy.html` with a stricter one
+     * needs `style-src 'unsafe-inline'` in it, which is what an inline
      * `<style>` needs and what an external one is denied.
      *
      * Placed immediately before the document's own `<style>`, and both
