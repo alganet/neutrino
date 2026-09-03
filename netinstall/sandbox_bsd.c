@@ -18,22 +18,6 @@
 #include "sandbox.h"
 
 /* Never on the fetch: the download is the one thing that has to reach out. */
-#ifdef NEUTRINO_CONFINE_OFFLINE
-#define NT_OFFLINE_NOTE " (offline)"
-#else
-#define NT_OFFLINE_NOTE ""
-#endif
-
-/*
- * The session tier is namespaces and the X11 SECURITY extension, and there is
- * nothing here shaped like either. Saying so beats letting a
- * -DNEUTRINO_CONFINE_NOSESSION build look like it did something.
- */
-#ifdef NEUTRINO_CONFINE_NOSESSION
-#define NT_SESSION_NOTE " (session tier unavailable here)"
-#else
-#define NT_SESSION_NOTE ""
-#endif
 
 #ifdef __OpenBSD__
 
@@ -127,9 +111,9 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     }
 
     if (!enforce) {
-        snprintf(desc, desclen, "unveil + pledge%s" NT_SESSION_NOTE
+        snprintf(desc, desclen, "unveil + pledge%s"
                                 ", writes confined to %s" NT_ALSO_WRITABLE,
-                 NT_OFFLINE_NOTE, appdir);
+                , appdir);
         return 0;
     }
 
@@ -186,18 +170,15 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
      * had never started an app. Measured one promise at a time: this is the
      * only one missing -- id and unveil change nothing.
      */
-    if (pledge(NULL, "stdio rpath wpath cpath fattr flock getpw "
-#ifndef NEUTRINO_CONFINE_OFFLINE
-                     "inet dns "
-#endif
+    if (pledge(NULL, "stdio rpath wpath cpath fattr flock getpw inet dns "
                      "unix proc exec prot_exec drm recvfd sendfd tty "
                      "ps vminfo") != 0) {
         snprintf(desc, desclen, "none (pledge failed)");
         return -1;
     }
-    snprintf(desc, desclen, "unveil + pledge%s" NT_SESSION_NOTE
+    snprintf(desc, desclen, "unveil + pledge%s"
                             ", writes confined to %s" NT_ALSO_WRITABLE,
-             NT_OFFLINE_NOTE, appdir);
+            , appdir);
     return 0;
 }
 
@@ -235,14 +216,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 #endif
 
     snprintf(desc, desclen,
-             "none (no unprivileged confinement on this system%s)%s"
-             NT_SESSION_NOTE, floor,
-#ifdef NEUTRINO_CONFINE_OFFLINE
-             " (offline tier unavailable here)"
-#else
-             ""
-#endif
-             );
+             "none (no unprivileged confinement on this system%s)", floor);
     return -1;
 }
 

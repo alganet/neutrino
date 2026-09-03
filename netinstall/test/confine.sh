@@ -898,13 +898,22 @@ if [ "$(uname -s)" = "Darwin" ]; then
     esac
 fi
 
-NT_ABI="$(grep -o 'abi [0-9]*' <<<"$CONFINE" | awk '{print $2}')"
-if [ "$(uname -s)" = "Linux" ] && [ -n "$NT_ABI" ] && [ "$NT_ABI" -ge 4 ]; then
-    check "cannot bind a TCP port" BIND_BLOCKED
-elif [ "$(uname -s)" = "Linux" ]; then
-    nt_note "tcp bind mediation needs landlock abi 4; this kernel reports ${NT_ABI:-none}"
+# Asserted to BIND_OK, and asserted rather than dropped.
+#
+# This read BIND_BLOCKED on any kernel at landlock ABI 4 or above, and nothing
+# at all below it -- which is the reason the rule is gone. ABI 4 is 6.7, and
+# Debian 12 ships 6.1 while Ubuntu 24.04 ships 6.8, both in support: an app
+# could bind a port on one supported machine and not another, with nothing in
+# the artifact to say which. A capability that varies by kernel version is a
+# support matrix, and the promise does not have one.
+#
+# So the assertion is that it binds, on every platform, and a kernel or a
+# platform that starts refusing it should fail here and be read about rather
+# than quietly narrowing what the promise says.
+if [ "$(uname -s)" = "Linux" ]; then
+    check "binding a TCP port is not mediated" BIND_OK
 else
-    nt_note "tcp bind confinement is landlock-only; got $(grep -o 'BIND_[A-Z]*' <<<"$OUT")"
+    nt_note "tcp bind was landlock-only; got $(grep -o 'BIND_[A-Z]*' <<<"$OUT")"
 fi
 
 # The control for the /proc probes, through the same binary with confinement

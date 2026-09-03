@@ -15,15 +15,15 @@ typedef enum {
 
 /*
  * Applies the platform confinement for the phase and writes a human-readable
- * summary into desc. Returns 0 when everything asked for applied, -1 when
- * nothing was available, -2 when part of it did -- a different sentence and,
- * for a strict build, the same answer -- and -3 when part of it did and what is
- * left is a process nothing should be launched into. The caller decides whether
- * -1 and -2 are fatal. -3 is fatal in every build.
+ * summary into desc. Returns 0 when everything asked for applied and -1 when it
+ * did not. The caller decides whether -1 is fatal.
  *
- * Only the linux session tier can answer -2 or -3, and only for the run phase:
- * it is the one mechanism here built out of steps that can fail separately
- * after the first one has already changed the process.
+ * It used to return -2 and -3 as well, for a confinement that partly applied
+ * and for one that left a process nothing should be launched into. Both
+ * belonged to the linux session tier, which was the one mechanism here built
+ * out of steps that could fail separately after the first had already changed
+ * the process. Nothing left has that shape: every platform now applies its
+ * confinement in a call that either takes or does not.
  */
 /*
  * With enforce zero this only describes what would be applied, changing
@@ -34,17 +34,16 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
 
 #ifdef _WIN32
 /*
- * The windows tight tier's fetch phase, which is the one confinement here that
+ * The windows fetch phase, which is the one confinement here that
  * cannot be applied to the process asking for it. Everything else in this file
  * changes the caller; a low integrity token can only change a child, because
  * integrity is a one-way trip and the digest, the app directory and the hard
  * link all happen after the download returns.
  *
- * So the tier is spread over three calls that the fetch phase makes in order:
+ * So it is spread over three calls that the fetch phase makes in order:
  * nt_confine builds the token, nt_fetch_grant opens the one file the downloader
  * is allowed to write, and nt_fetch_revoke closes it again before anything
- * hashes it. Outside the tight tier all three are the honest no-ops that leave
- * the default tier exactly as it was.
+ * hashes it.
  *
  * Measured on windows-latest: a Low label on the payload file is the narrowest
  * grant a lowered child can download through, and the label has to come back
@@ -63,7 +62,7 @@ int nt_fetch_grant(const char *dest);
  * Takes it back. Must run before dest is hashed, not merely before it is used,
  * and answers rather than returning void: a payload that could not be taken
  * back from low integrity is a digest checked against content that can still
- * change, which is not a thing to continue past in any tier.
+ * change, which is not a thing to continue past.
  */
 int nt_fetch_revoke(const char *dest);
 #endif
