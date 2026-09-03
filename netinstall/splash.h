@@ -19,14 +19,40 @@
  * payload's title, size and colour live inside the payload, and this runs
  * before there is a payload to read them from. Anything more would be this
  * program inventing an appearance for an app it has not downloaded yet.
+ *
+ * Two numbers keep it from blinking. It is not raised until the download has
+ * been running NT_SPLASH_DELAY_MS -- a fetch that finishes inside that, which
+ * a small payload from a near host does, never gets a window at all. And once
+ * raised it stays up NT_SPLASH_HOLD_MS at the least, so a download that
+ * crossed the first line by a few milliseconds is not a window that appears
+ * and is gone before the eye has settled on it. Both are about the same thing
+ * from opposite sides: a window that is on screen for less time than it takes
+ * to read is not information, it is a flash.
+ *
+ * The lifecycle is three calls. nt_splash_arm says a download is starting and
+ * a window is wanted if it turns out to be worth one; nt_splash_up is what
+ * the fetch calls at NT_SPLASH_DELAY_MS if it is still waiting; and
+ * nt_splash_down takes the window away, sleeping out the rest of the hold
+ * first. The delay is the fetch's to measure because the wait is the fetch's
+ * own -- see fetch.h -- and the hold is this module's because it is the same
+ * on every platform and about nothing but the window.
  */
+#define NT_SPLASH_DELAY_MS 100L
+#define NT_SPLASH_HOLD_MS 400L
 
+void nt_splash_arm(void);
 void nt_splash_up(void);
 
 /*
  * Idempotent, and safe to call when nothing came up. It has to be: the paths
  * out of the fetch branch are many, main() registers this with atexit() to
  * cover them all at once, and the exec path calls it directly on top of that.
+ *
+ * Blocks for whatever is left of the hold when a window is up. A testing build
+ * reads NEUTRINO_SPLASH_HOLD_MS to lengthen that -- it is how the suite keeps
+ * the window still for a photograph, and how a person can look at the thing
+ * for longer than four hundred milliseconds -- and a release binary reads
+ * nothing.
  */
 void nt_splash_down(void);
 

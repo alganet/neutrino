@@ -134,6 +134,17 @@ small window that says `Loading...`, and closes it when the download is done.
 Only a cache miss. A run that already holds the verified payload has nothing to wait for and goes
 straight to the script, drawing nothing — the window marks a download, not a launch.
 
+And only a download that takes long enough to be worth one. The window is not raised until the
+downloader has been running for 100 ms, so a small payload from a near host — which is most of
+them, once — never gets a window at all. Once raised it stays up for at least 400 ms, however soon
+the bytes stop: a download that crossed the first line by a hair is otherwise a window that appears
+and is gone inside a blink, which is not information. The delay is measured inside the fetch,
+because the wait it is about is the fetch's own and nothing outside it can see how far along that
+wait is; the hold is the splash's, because it is the same on every platform and about nothing but
+the window. A testing build reads `NEUTRINO_SPLASH_HOLD_MS` to lengthen the hold — it is how the
+suite keeps the window still for a photograph, and how a person gets to look at it for longer than
+four hundred milliseconds — and it can only lengthen it. A release binary reads nothing.
+
 It says one word and carries nothing else, and that is a limit rather than a taste. What an app
 looks like — its title, its size, its colour — lives inside the payload, and this runs before there
 is a payload to read it from. A launcher that invented an appearance here would be describing
@@ -869,7 +880,10 @@ two different ways), `phases.sh` (what confines the downloader on each platform,
 curl's own config file rather than asserted from the source, and that a build refuses to fetch when
 nothing does), `writable.sh` (what a confined app can actually put bytes into, enumerated from
 inside the confinement), `env.sh` (the loader environment, and what the sandbox does *not* do about
-it), and `e2e.sh` (a real neutrino polyglot fetched, verified and launched).
+it), `splash.sh` (the Loading... window: raised once for a download that was stalled long enough to
+deserve one, not at all for one that was not, held for as long as it must be, torn down on every
+path out, and photographed once for the lane's sheet), and `e2e.sh` (a real neutrino polyglot
+fetched, verified and launched).
 
 **What a launch is asked here, and what it is not.** `e2e.sh` starts a real webview and wants one
 thing from it: that the confinement just applied still lets a webview come up and run the page's
@@ -886,7 +900,11 @@ suites red on four lanes, each reporting a webview defect under a sandbox's name
 
 The app is `test/alive.js`, which this suite owns. It sets one title and holds the window, so there
 is no eleven-second head start to wait out and no step list to fall out of step with. The suites
-here take no screenshots at all now.
+here take one picture between them, and it is not of the webview: `splash.sh` photographs the
+Loading... window, over a download `hostile.py` stalled on purpose so the window was due and with
+`NEUTRINO_SPLASH_HOLD_MS` keeping it up while the shutter fired. It goes to the lane's sheet under
+its own heading, on the three lanes that draw one — the Linux one under Xvfb, Windows, and macOS —
+when `NEUTRINO_SPLASH_SHOTS` names a directory, and nowhere otherwise.
 
 Two probes do not run by default. `crashdump.sh` (Windows) measures where a crash puts bytes, and
 `landlockfloor.sh` (Linux, needs Docker) reads what kernel each supported distribution ships; both
@@ -895,4 +913,6 @@ behind `NEUTRINO_JOB_UI_BISECT=1`, and takes about ten minutes because every fla
 webview launch.
 
 The `NEUTRINO_TEST_ORIGIN` override the suite needs to serve fixtures from loopback is compiled
-in only under `-DNEUTRINO_TESTING`; release binaries ignore it entirely.
+in only under `-DNEUTRINO_TESTING`; release binaries ignore it entirely. So are the two splash
+knobs: `NEUTRINO_SPLASH_TRACE`, which narrates the window's lifecycle on stderr for `splash.sh`,
+and `NEUTRINO_SPLASH_HOLD_MS`, which lengthens the hold and cannot shorten it.

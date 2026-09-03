@@ -179,6 +179,11 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          # The one picture the netinstall suite takes: splash.sh photographs
+          # the Loading... window over a stalled download, for the sheet. Its
+          # own directory, so the sheet can head it separately from the
+          # verifiers' frames; unset, the suite skips the case and says so.
+          export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
           bash netinstall/test/run.sh
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
@@ -382,6 +387,7 @@ jobs:
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh gjs ~/sheet/gjs.html \
             "The suites=$HOME/screenshots" \
+            "netinstall=$HOME/netinstall-screenshots" \
             "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -1828,6 +1834,9 @@ jobs:
           # PR 20 wrote this lesson down for a probe that piped the launcher.
           # This is the step on this lane that never got it.
           NT_EXIT=0
+          # Where splash.sh puts its one picture of the Loading... window; the
+          # sheet step below heads it as netinstall's own.
+          export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
           bash netinstall/test/run.sh > ~/netinstall.log 2>&1 || NT_EXIT=$?
           cat ~/netinstall.log
           exit $NT_EXIT
@@ -1955,6 +1964,7 @@ jobs:
           cp ~/*.png ~/*.log ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh windows-launch ~/sheet/windows-launch.html \
             "The suites=$HOME/sheetsrc" \
+            "netinstall=$HOME/netinstall-screenshots" \
             "Under load, replica 1=$HOME/load-shots-1" \
             "Under load, replica 2=$HOME/load-shots-2"
       - uses: actions/upload-artifact@v7
@@ -2662,24 +2672,35 @@ jobs:
   # nothing is the one result no round can act on. A lane that exceeds this has
   # not got slower, it has stopped.
   #
-  # No shotroom step. The suite takes no pictures any more -- what it asks of a
-  # launch is whether a webview started and ran its script, which is a title and
-  # not a photograph -- so the screen recording alert this lane used to clear
-  # has nothing left to sit in front of. test/shotroom-macos.sh stays for the
-  # `macos` job, which does photograph its app.
+  # The shotroom step is back, for one picture. The suite stopped photographing
+  # the webview -- what it asks of a launch is whether a webview started and
+  # ran its script, which is a title and not a photograph -- and the step left
+  # with the pictures. splash.sh now takes one frame of the Loading... window
+  # for the sheet, and without the room cleared first that frame carries the
+  # screen recording alert over the window it is a picture of, which is
+  # exactly what the lane's captures looked like before the step existed.
   macos-netinstall:
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
+      - name: the room the picture is taken in
+        timeout-minutes: 3
+        continue-on-error: true
+        run: |
+          bash test/shotroom-macos.sh > ~/shotroom.log 2>&1 || true
+          cat ~/shotroom.log
       - name: netinstall suite
         timeout-minutes: 30
         run: |
+          # Where splash.sh puts its one picture; the sheet step below heads
+          # it as netinstall's own.
+          export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
           bash netinstall/test/run.sh
-      # One artifact, one file: this lane's logs as a page that opens in a
-      # browser, the same page every other lane publishes. The other lanes fill
-      # it with pictures as well; this one has none to give, and the sheet is
-      # still the one place its assertions can be read without opening a job log.
+      # One artifact, one file: this lane's logs and its one picture as a page
+      # that opens in a browser, the same page every other lane publishes. The
+      # sheet is the one place its assertions can be read without opening a
+      # job log.
       #
       # continue-on-error, because this is a reporting tool. A lane that passed
       # every control it has and goes red because the page builder tripped is
@@ -2695,12 +2716,12 @@ jobs:
           # read for what the lane asserted.
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
-          # Logs and nothing else. `The suites=$HOME/screenshots` used to be
-          # named here and was never written on this lane -- that directory
-          # belongs to the `macos` job -- and now that the netinstall suite
-          # takes no pictures at all, a section for them would be a heading
-          # over an empty room.
+          # The suite's picture and its logs. `The suites=$HOME/screenshots`
+          # used to be named here and was never written on this lane -- that
+          # directory belongs to the `macos` job -- so the directory named is
+          # the one the suite step above pointed splash.sh at, and no other.
           bash test/sheet.sh macos-netinstall ~/sheet/macos-netinstall.html \
+            "netinstall=$HOME/netinstall-screenshots" \
             "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()

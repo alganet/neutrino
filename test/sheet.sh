@@ -74,6 +74,10 @@ subject() {
         std-doc)      echo "document.title, reaching the native window title" ;;
         std-win)      echo "The standard window verbs -- resize, move, fullscreen, close" ;;
         std-geom)     echo "Window geometry" ;;
+        # netinstall's own picture, one per lane, named for what drew it. The
+        # download behind it was stalled on purpose so the window was due, and
+        # NEUTRINO_SPLASH_HOLD_MS kept it up while the shutter fired.
+        splash-*)     echo "netinstall's Loading... window, drawn with ${1#splash-} over a download the host stalled; held open for the shutter by NEUTRINO_SPLASH_HOLD_MS" ;;
         *)            echo "" ;;
     esac
 }
