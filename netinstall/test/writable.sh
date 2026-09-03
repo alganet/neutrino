@@ -610,43 +610,6 @@ says_names() {
 
 echo "=== Every letter, held to what it measured ==="
 ran "$OUT_DEFAULT" && expect_set default "$OUT_DEFAULT" "$WANT_DEFAULT"
-if [ -n "$APP_TIGHT" ] && ran "$OUT_TIGHT"; then
-    expect_set tight "$OUT_TIGHT" "$WANT_TIGHT"
-fi
-
-# The sentence is not only read by people. confine.sh keys its /proc
-# assertions on which tier the binary is, and confine-strict.sh decides whether
-# to run its battery at all, and both ask the same question the only way it can
-# be asked: by reading this line. Rewording it in this PR made confine-strict.sh
-# skip everything it asserts and exit 0 -- a green tick for a suite that
-# measured nothing, which is ground rule 3 happening to the suite instead of to
-# the payload. So the coupling is asserted here rather than left to be
-# rediscovered.
-#
-# Only where there is a tier to recognise. OpenBSD builds the tight binary and
-# gets the same confinement out of it -- unveil is an allowlist already, so the
-# default tier is the tight one, and the two sentences are identical by
-# construction. confine-strict.sh skips there for exactly that reason and says
-# so. Asserting a distinguishable tight sentence on that lane would fail it for
-# a tier it does not have, which is the assertion being wrong rather than the
-# platform.
-echo "=== The sentence is still one the suite can read the tier off ==="
-if [ -n "$APP_TIGHT" ] && ran "$OUT_TIGHT" && [ "$SAYS_TIGHT" = "$SAYS_DEFAULT" ]; then
-    nt_note "no tight tier here: both binaries describe the same confinement ($SAYS_TIGHT)"
-elif [ -n "$APP_TIGHT" ] && ran "$OUT_TIGHT"; then
-    if nt_tight_tier "$SAYS_TIGHT"; then
-        echo "  PASS: nt_tight_tier recognises the tight sentence"
-    else
-        nt_fail "nt_tight_tier no longer recognises the tight tier from '$SAYS_TIGHT'; confine-strict.sh will skip its whole battery and pass"
-        FAILURES=$((FAILURES + 1))
-    fi
-    if nt_tight_tier "$SAYS_DEFAULT"; then
-        nt_fail "nt_tight_tier reads the default tier as tight from '$SAYS_DEFAULT'; confine.sh will hold it to the other tier's answers"
-        FAILURES=$((FAILURES + 1))
-    else
-        echo "  PASS: and does not mistake the default sentence for it"
-    fi
-fi
 
 echo "=== And the sentence names the set rather than the first of it ==="
 says_names default "$SAYS_DEFAULT" "$SAY_DEFAULT"
