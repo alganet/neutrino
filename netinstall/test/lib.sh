@@ -179,6 +179,12 @@ nt_note() {
 # powershell started for the purpose. That start is the slow part -- seconds on
 # a cold runner -- and it is why the splash case holds its window for as long
 # as it does before the shutter is due.
+#
+# Wayland is asked before X11, and not as a preference: `import` reads the X
+# root window, so on a session running XWayland it returns a picture of the X
+# half -- which is everything except the surface this suite is photographing,
+# since the splash took the wayland path on exactly that session. A wrong
+# picture is worse than none here, because it is captioned as the window.
 nt_screenshot() {
     local out="$1" ps
     mkdir -p "$(dirname "$out")" 2>/dev/null
@@ -198,6 +204,8 @@ nt_screenshot() {
         " >/dev/null 2>&1
     elif [ "$(uname -s)" = "Darwin" ]; then
         screencapture -x "$out" 2>/dev/null
+    elif [ -n "${WAYLAND_DISPLAY:-}" ] && command -v grim >/dev/null 2>&1; then
+        grim "$out" 2>/dev/null
     elif command -v import >/dev/null 2>&1; then
         import -window root "$out" 2>/dev/null
     fi

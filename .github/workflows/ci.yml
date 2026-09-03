@@ -27,7 +27,9 @@ on: [push]
 # A job's ceiling is not the sum of its steps. It answers "has this lane stopped"
 # rather than "is this step slow", so it sits above the lane's measured wall
 # clock with room for a slow runner, and every lane here measures between 11 and
-# 19 minutes.
+# 19 minutes -- except `wayland`, which is a splash suite behind an apt install
+# and is expected in single digits. Its ceiling is the one guess in this file,
+# and it is a guess because the lane is new; the first complete run replaces it.
 #
 # Measured on run 33446055662 and 33450686867, not guessed, and the two hangs
 # above are from 33363744511 and 33366711441.
@@ -184,6 +186,11 @@ jobs:
           # own directory, so the sheet can head it separately from the
           # verifiers' frames; unset, the suite skips the case and says so.
           export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
+          # What this lane draws with, asserted rather than reported. The
+          # splash declines silently where it cannot draw, so a lane that lost
+          # its display server would pass splash.sh by skipping every case in
+          # it. Measured on run 33750772253, not hoped for.
+          export NEUTRINO_SPLASH_EXPECT=x11
           bash netinstall/test/run.sh
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
@@ -1364,6 +1371,97 @@ jobs:
           name: kde-sheet
           path: ~/sheet/kde.html
 
+  # The wayland splash, which nothing in this file had ever run.
+  #
+  # netinstall speaks two display protocols and this matrix only ever spoke
+  # one. Every Linux lane here is Xvfb, macOS is AppKit and Windows is user32,
+  # so `splash_wayland.c` -- the longest of the five platform files, and the
+  # only one carrying its own glyph rasteriser, because the protocol has no
+  # drawing in it and the compositor takes finished pixels -- was compiled on
+  # six targets a push and executed on none. Both cases in splash.sh that are
+  # about wayland ended in "no compositor on this machine", on every lane,
+  # every round.
+  #
+  # Splash and nothing else, which is the whole of what wayland changes here.
+  # The rest of the netinstall suite asks what a kernel refuses, and this lane
+  # is ubuntu-latest like gjs and kde: running the rest would be the same
+  # measurement on the same machine a third time. NEUTRINO_SUITES is read by
+  # run.sh and exists for exactly this.
+  #
+  # An X server as well as the compositor, and it is not redundancy. Two cases
+  # in that suite are about the choice *between* the two -- that a stale
+  # WAYLAND_DISPLAY falls back to X11 rather than leaving an X session with no
+  # window, and that a reachable compositor is preferred when DISPLAY is also
+  # set, because a session running XWayland sets both and taking the X path
+  # there would draw through a compatibility layer to reach the compositor the
+  # other path talks to directly. Neither can be asserted on a machine with one
+  # server. This is the only lane with both, so it is the only lane where
+  # either of them is more than a skip.
+  #
+  # Unmeasured, unlike every other ceiling in this file: the first complete run
+  # is what replaces it. The work is an apt install, one compositor, the three
+  # builds run.sh always does and a suite that takes fifteen seconds elsewhere.
+  wayland:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      # sway rather than weston, which is also in the archive and is the
+      # reference implementation. See test/wayland-up.sh: the deciding
+      # difference is that this lane has to come away with a picture, and grim
+      # takes one through wlr-screencopy without ceremony.
+      - run: |
+          sudo apt update
+          sudo apt install -y sway grim xvfb \
+            || sudo apt install -y sway grim xvfb
+      - name: netinstall splash suite
+        timeout-minutes: 10
+        run: |
+          export DISPLAY=:99
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; }
+          # Not piped into tee. These steps run under `bash -e` with no
+          # pipefail, so a compositor that failed to start would hand its exit
+          # status to tee, the lane would carry on, the splash would decline
+          # silently on a machine with no compositor, and the run would be
+          # green having measured nothing -- which is the exact failure this
+          # lane exists to notice.
+          WL_RC=0
+          bash test/wayland-up.sh ~/wayland.env 1024x768 > ~/wayland-up.log 2>&1 || WL_RC=$?
+          cat ~/wayland-up.log
+          [ "$WL_RC" = 0 ] || exit "$WL_RC"
+          . ~/wayland.env
+          echo "report: wayland lane has WAYLAND_DISPLAY=$WAYLAND_DISPLAY and DISPLAY=$DISPLAY"
+          export NEUTRINO_SUITES=splash
+          export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
+          # The reason this lane exists, said out loud, and the one line that
+          # keeps it honest. See the gjs lane.
+          export NEUTRINO_SPLASH_EXPECT=wayland
+          # Redirected so the sheet below has a log to show, then echoed by a
+          # process that exits -- which is also what puts the ::error from a
+          # failed assertion back in front of the runner.
+          NT_EXIT=0
+          bash netinstall/test/run.sh > ~/netinstall-splash.log 2>&1 || NT_EXIT=$?
+          cat ~/netinstall-splash.log
+          exit $NT_EXIT
+      # continue-on-error, because this is a reporting tool. A lane that passed
+      # every control it has and goes red because the page builder tripped is
+      # reporting about itself, and the thing it was built to report on is the
+      # one nobody would then read.
+      - name: sheet
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p ~/sheetsrc
+          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          bash test/sheet.sh wayland ~/sheet/wayland.html \
+            "netinstall=$HOME/netinstall-screenshots" \
+            "Logs=$HOME/sheetsrc"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: wayland-sheet
+          path: ~/sheet/wayland.html
+
   # netinstall away from the desktop lanes: cross-compiled for six targets, and
 
   # then run on the three BSDs, in that order on one runner.
@@ -1837,6 +1935,9 @@ jobs:
           # Where splash.sh puts its one picture of the Loading... window; the
           # sheet step below heads it as netinstall's own.
           export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
+          # Measured on run 33750772253. See the gjs lane for why it is an
+          # assertion and not a report.
+          export NEUTRINO_SPLASH_EXPECT=win32
           bash netinstall/test/run.sh > ~/netinstall.log 2>&1 || NT_EXIT=$?
           cat ~/netinstall.log
           exit $NT_EXIT
@@ -2696,6 +2797,9 @@ jobs:
           # Where splash.sh puts its one picture; the sheet step below heads
           # it as netinstall's own.
           export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
+          # Measured on run 33750772253. See the gjs lane for why it is an
+          # assertion and not a report.
+          export NEUTRINO_SPLASH_EXPECT=appkit
           bash netinstall/test/run.sh
       # One artifact, one file: this lane's logs and its one picture as a page
       # that opens in a browser, the same page every other lane publishes. The

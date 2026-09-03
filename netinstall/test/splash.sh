@@ -149,6 +149,26 @@ probe "slow download: $(grep -aE 'netinstall: splash: (up|none):' "$WORK/err1" |
 MECH="$(mech_of "$WORK/err1")"
 MECHNAME="$(mech_name "$MECH")"
 
+# --- the mechanism this lane was set up to exercise --------------------------
+# Reported everywhere, asserted where the lane says what it expects. The
+# failure this closes is the one that looks like success: netinstall's splash
+# declines silently on a machine it cannot draw on, by design, so a lane whose
+# display server did not start turns every window case below into a skip and
+# goes green having measured nothing. A lane that installed a compositor in
+# order to exercise one code path should say so, and find out when it stops.
+#
+# Unset is the ordinary case and stays a report -- a developer's machine, and
+# the BSD guests, where what draws is a finding rather than a requirement.
+STEP="the mechanism is the one this lane was set up for"
+if [ -z "${NEUTRINO_SPLASH_EXPECT:-}" ]; then
+    echo "  SKIP: $STEP (NEUTRINO_SPLASH_EXPECT is unset; the mechanism is reported, not asserted)"
+elif [ "$MECHNAME" = "$NEUTRINO_SPLASH_EXPECT" ]; then
+    echo "  PASS: $STEP ($MECH)"
+else
+    nt_fail "$STEP: expected $NEUTRINO_SPLASH_EXPECT, drew with '${MECH:-nothing at all}'"
+    FAILURES=$((FAILURES + 1))
+fi
+
 # --- the quick download: a window was thinkable, and not wanted --------------
 # The loopback host answers before the window is due, so the right outcome is
 # the "unneeded" line and no decision at all. It is a reading where it is a
