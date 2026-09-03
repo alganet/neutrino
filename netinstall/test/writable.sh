@@ -508,8 +508,12 @@ case "$(uname -s)" in
         # the app dir because TMPDIR is redirected here.
         WANT_DEFAULT="appdir=CTO home=--- tmp=--- runtime=--- shm=CTO tmpdir=CTO"
         WANT_TIGHT="$WANT_DEFAULT"
-        SAY_DEFAULT=", /dev, /dev/shm and every process's /proc entry"
-        SAY_TIGHT=", /dev, /dev/shm and /proc/self" ;;
+        # One sentence now, because there is one rule. The default build used
+        # to say "every process's /proc entry" and mean it; the grant is
+        # /proc/self on every build, so this is the line that would have failed
+        # before the narrowing landed.
+        SAY_DEFAULT=", /dev, /dev/shm and /proc/self"
+        SAY_TIGHT="$SAY_DEFAULT" ;;
     Darwin)
         # Four writable trees outside the app dir, in both tiers, every one of
         # them load-bearing: the Darwin per-user temp dir under two names

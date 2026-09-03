@@ -133,11 +133,18 @@ struct nt_ruleset_attr {
  * "writes confined to" is a claim about a set. It named the first member of it
  * for as long as this file has existed.
  */
-#ifdef NEUTRINO_CONFINE_TIGHT
+/*
+ * "and /proc/self", not "and every process's /proc entry", on every build --
+ * because the rule below is the narrow one on every build now. These two were
+ * a tier apart, and a sentence that outlived its rule by one commit is the
+ * defect ground rule 5 exists for: --info would have promised the wide grant
+ * while the ruleset refused it, which is the same lie in the safer direction
+ * and still a lie.
+ */
 #define NT_ALSO_WRITABLE ", /dev, /dev/shm and /proc/self"
+#ifdef NEUTRINO_CONFINE_TIGHT
 #define NT_FETCH_ALSO_WRITABLE " and /dev"
 #else
-#define NT_ALSO_WRITABLE ", /dev, /dev/shm and every process's /proc entry"
 #define NT_FETCH_ALSO_WRITABLE ""
 #endif
 
@@ -1329,12 +1336,29 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
          * have changed both the pid /proc/self resolves to and the /proc it is
          * resolved in.
          */
-#ifdef NEUTRINO_CONFINE_TIGHT
+        /*
+         * The write is on this process's own entry and not on every process's,
+         * and that used to be the difference between the tiers.
+         *
+         * The wide grant was a real reach across: measured, thirteen files
+         * under a peer's /proc/<pid> open for writing -- oom_score_adj, sched,
+         * clear_refs, coredump_filter, timerslack_ns and the id maps among
+         * them -- and a write to a peer's oom_score_adj succeeding, which marks
+         * a same-uid process for the OOM killer. That is not code execution and
+         * it reads nothing, but it reaches a process this same ruleset scopes
+         * signals away from, so the narrow rule is what makes the sentence
+         * beside it true.
+         *
+         * It costs nothing measured. PROCSELFREAD_OK says a confined app still
+         * reads under its own entry, because Landlock takes the union along a
+         * path and the read rule above sits over the narrowed write; and
+         * verify-linux.sh renders identically under both grants on WebKitGTK
+         * and QtWebEngine, with identical oom_score_adj on every engine
+         * process. Chromium's "Failed to adjust OOM score of renderer" predates
+         * this and is the kernel refusing without CAP_SYS_RESOURCE.
+         */
         nt_allow(ruleset, "/proc", NT_READ_RIGHTS);
         nt_allow(ruleset, "/proc/self", LANDLOCK_ACCESS_FS_WRITE_FILE);
-#else
-        nt_allow(ruleset, "/proc", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
-#endif
         /*
          * Reads here, and no write, and the write is what this rule used to be.
          * It granted WRITE_FILE with no MAKE_REG beside it, and the two halves

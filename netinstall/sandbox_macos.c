@@ -143,7 +143,6 @@ static const char nt_profile[] =
     "  (global-name \"com.apple.securityd.xpc\")\n"
     "  (global-name \"com.apple.tccd\")\n"
     "  (global-name \"com.apple.tccd.system\"))\n"
-#ifdef NEUTRINO_CONFINE_TIGHT
     /*
      * LaunchServices, and the door that walks out of every profile in the
      * stack. A confined app writes an .app bundle into the directory this
@@ -169,13 +168,18 @@ static const char nt_profile[] =
      * bundle the app itself wrote, which is the escape, and not on
      * LaunchServices as such.
      *
-     * confine.sh asserts the outcome in both tiers, so a macOS that makes
-     * either name sufficient -- or neither -- is a failure and not a silence.
+     * It used to be behind -DNEUTRINO_CONFINE_TIGHT, which left the shipped
+     * profile with a full escape in it: a bundle written into the one directory
+     * this profile makes writable, handed to a daemon in nobody's sandbox. A
+     * write confinement an app can step out of is not one, so closing this is
+     * part of keeping the sentence beside it rather than an extra on top.
+     *
+     * confine.sh asserts the outcome, so a macOS that makes either name
+     * sufficient -- or neither -- is a failure and not a silence.
      */
     "(deny mach-lookup\n"
     "  (global-name \"com.apple.coreservices.launchservicesd\")\n"
     "  (global-name \"com.apple.coreservices.quarantine-resolver\"))\n"
-#endif
     "(deny appleevent-send)\n"
     /* The macOS spelling of ptrace: a task port is read and write access to
      * another process's memory. Signals are scoped to our own sandbox, which is
