@@ -90,22 +90,34 @@ probe() {
 # to do with Landlock -- which is exactly the kind of null result this probe
 # must not produce.
 BIN="$ROOT/netinstall/dist/neutrino-netinstall-linux-$(uname -m)"
-if [ ! -x "$BIN" ]; then
-    if command -v zig >/dev/null 2>&1; then
-        echo "  building the static musl binary"
-        bash "$ROOT/netinstall/build.sh" >"$WORK/build.log" 2>&1 ||
-            { nt_fail "the cross build failed: $(tail -3 "$WORK/build.log" | tr '\n' ' ')"; exit 1; }
-    fi
-fi
-if [ ! -x "$BIN" ]; then
-    echo "=== SKIP: no static musl binary and no zig to build one ==="
-    exit 0
+if [ ! -x "$BIN" ] && command -v zig >/dev/null 2>&1; then
+    echo "  building the static musl binary"
+    bash "$ROOT/netinstall/build.sh" >"$WORK/build.log" 2>&1 ||
+        nt_note "the cross build failed: $(tail -3 "$WORK/build.log" | tr '\n' ' ')"
 fi
 
-# netinstall reads its own filename, so it has to be installed under a spec
-# before it will do anything -- including print --info.
-SPEC="floor-example-com-1$(nt_pin "$BIN")"
-APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
+# The binary is optional, and this used to be a skip that took the whole suite
+# with it. run.sh builds host binaries into dist/netinstall-*; it does not
+# cross-compile, and no CI lane running this has zig -- so on CI the entire
+# probe exited before it had asked anything, including the half that needs no
+# binary at all.
+#
+# The kernel each base ships is a question for that base's package index and
+# nothing else. Only the userland control needs something to run, and it wants
+# the static musl build specifically: a host binary is linked against the host's
+# libc and would fail on alpine for a reason that has nothing to do with
+# netinstall, which is the null result this suite exists to avoid reporting.
+# So the control is skipped by name when there is no musl build, rather than
+# faked with a binary that cannot answer it.
+APP=""
+if [ -x "$BIN" ]; then
+    # netinstall reads its own filename, so it has to be installed under a spec
+    # before it will do anything -- including print --info.
+    SPEC="floor-example-com-1$(nt_pin "$BIN")"
+    APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
+else
+    nt_note "no static musl binary here; the userland control is not run and the kernel rows below are unaffected"
+fi
 
 # Reads the one field this suite is about out of the confine line.
 #
@@ -157,14 +169,16 @@ kernel_cmd_for() {
 # actually running on and the one confine.sh has just finished proving enforces.
 # Every container row below is a reading of this same kernel and is reported as
 # a userland result, not as a Landlock result.
-"$APP" --info > "$WORK/host.info" 2>&1
-HOST_LINE="$(confine_line "$WORK/host.info")"
-HOST_ABI="$(abi_from "$HOST_LINE")"
-probe "report: landlockfloor host kernel=$(uname -r) abi=$HOST_ABI"
-if [ "$HOST_ABI" = "?" ] || [ -z "$HOST_ABI" ]; then
-    nt_fail "could not read a confine line from --info on the host; the instrument is broken and nothing below is worth reading"
-    probe "report: landlockfloor control=UNMEASURED"
-    exit 1
+if [ -n "$APP" ]; then
+    "$APP" --info > "$WORK/host.info" 2>&1
+    HOST_LINE="$(confine_line "$WORK/host.info")"
+    HOST_ABI="$(abi_from "$HOST_LINE")"
+    probe "report: landlockfloor host kernel=$(uname -r) abi=$HOST_ABI"
+    if [ "$HOST_ABI" = "?" ] || [ -z "$HOST_ABI" ]; then
+        nt_fail "could not read a confine line from --info on the host; the userland rows below are unreadable the same way"
+    fi
+else
+    probe "report: landlockfloor host kernel=$(uname -r) abi=NOT-RUN (no musl build)"
 fi
 
 # =====================================================================
@@ -207,15 +221,19 @@ for entry in $BASES; do
     # a userland question into a syscall-filter one. HOME because these images
     # do not agree on it -- some leave it unset -- and netinstall resolves the
     # cache directory under it before it prints anything.
-    docker run --rm --security-opt seccomp=unconfined -e HOME=/tmp \
-        -v "$WORK/bin:/probe:ro" "$image" /probe/"$(basename "$APP")" --info \
-        > "$WORK/$name.info" 2>&1
-    if grep -q '^appdir ' "$WORK/$name.info"; then
-        runs=yes
-        RUNS_OK="$RUNS_OK $name"
+    if [ -n "$APP" ]; then
+        docker run --rm --security-opt seccomp=unconfined -e HOME=/tmp \
+            -v "$WORK/bin:/probe:ro" "$image" /probe/"$(basename "$APP")" --info \
+            > "$WORK/$name.info" 2>&1
+        if grep -q '^appdir ' "$WORK/$name.info"; then
+            runs=yes
+            RUNS_OK="$RUNS_OK $name"
+        else
+            runs=no
+            RUNS_BAD="$RUNS_BAD $name"
+        fi
     else
-        runs=no
-        RUNS_BAD="$RUNS_BAD $name"
+        runs=NOT-RUN
     fi
 
     # And what kernel does it ship? Asked of the base's own package index, so
