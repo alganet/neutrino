@@ -124,8 +124,15 @@ NT_TIER_OVERLAYS=""
 for nt_t in $(printf '%s' "$NT_TIERS" | tr ',' ' '); do
     case "$nt_t" in
         default) continue ;;
-        testing|offline|tight) ;;
-        *) echo "mkapp.sh: unknown tier '$nt_t' (want: default, testing, offline, tight)" >&2; exit 1 ;;
+        testing) ;;
+        # offline and tight were the other two and are gone. Named in the
+        # refusal rather than folded into "unknown", because roughly a hundred
+        # call sites spelled a tier and a caller who still spells one of these
+        # should be told it was removed, not told it was a typo.
+        offline|tight)
+            echo "mkapp.sh: the '$nt_t' tier was removed; there is one confinement now and every build has it" >&2
+            exit 1 ;;
+        *) echo "mkapp.sh: unknown tier '$nt_t' (want: default, testing)" >&2; exit 1 ;;
     esac
     if [ ! -d "$SOURCE/tier/$nt_t" ]; then
         echo "mkapp.sh: no overlay at $SOURCE/tier/$nt_t" >&2
