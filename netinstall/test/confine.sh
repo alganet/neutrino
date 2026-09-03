@@ -804,12 +804,11 @@ esac
 # What this does not say is that the grant is harmless. mem is the one file the
 # hook takes off the table, and the survey in the results below is there
 # because the rest of the peer's entry is still writable.
-# Which tier this binary is, taken from what it reports rather than from how the
-# suite was invoked. The /proc write rule differs between the two and the
-# assertions have to follow the binary, or a tier could be measured against the
-# other one's expectations and pass.
-NT_TIGHT=0
-nt_tight_tier "$CONFINE" && NT_TIGHT=1
+# There is one answer here now, and that is the change. The /proc write rule
+# used to differ between the tiers, so this suite read the tier off the binary's
+# own sentence and forked every assertion below on it. The narrow rule --
+# /proc/self and no peer -- is what ships, so each of those forks collapses to
+# the arm that used to be the tight one.
 
 case "$CONFINE" in
     *landlock*)
@@ -818,21 +817,16 @@ case "$CONFINE" in
         else
             check "cannot write a peer's memory through /proc"  PEERMEM_BLOCKED
             check "cannot read a peer's maps either"            PEERMAPS_BLOCKED
-            if [ "$NT_TIGHT" = "1" ]; then
-                check "nothing under a peer's entry is writable"  PEERWRITABLE_NONE
-                check "a peer's oom_score_adj is out of reach"    PEEROOM_BLOCKED
-                # The narrowed rule takes the in-domain child with it. Asserted
-                # so the pair above cannot be read as the ptrace hook doing the
-                # work: here it is the filesystem rule, and both are refusing.
-                check "an in-domain child goes with it"           CHILDMEM_BLOCKED
-            else
-                check "the same /proc rule still reaches its own" CHILDMEM_ESCAPED
-                # Asserted to the measured value, not to the desirable one. This
-                # is the default tier's ceiling and the README says so; if it
-                # ever reads BLOCKED the ceiling moved and the README is wrong,
-                # which is a failure worth having rather than silence.
-                check "a peer's oom_score_adj is writable here"   PEEROOM_ESCAPED
-            fi
+            check "nothing under a peer's entry is writable"  PEERWRITABLE_NONE
+            # PEEROOM_ESCAPED is what this line used to assert, and it was the
+            # honest reading of a real hole: a write to a same-uid peer's
+            # oom_score_adj succeeded, marking it for the OOM killer, across a
+            # boundary this same ruleset scopes signals over.
+            check "a peer's oom_score_adj is out of reach"    PEEROOM_BLOCKED
+            # The narrowed rule takes the in-domain child with it. Asserted
+            # so the pair above cannot be read as the ptrace hook doing the
+            # work: here it is the filesystem rule, and both are refusing.
+            check "an in-domain child goes with it"           CHILDMEM_BLOCKED
         fi
         if grep -qx PROCSELF_SKIP <<<"$OUT"; then
             nt_note "no /proc/self probe here"
@@ -844,37 +838,33 @@ case "$CONFINE" in
             # having quietly stopped reading its own /proc would look like a
             # clean result, so this is asked rather than assumed.
             check "reads under its own /proc entry still work" PROCSELFREAD_OK
-            if [ "$NT_TIGHT" = "1" ]; then
-                check "its own /proc entry is read-only now"      PROCSELF_BLOCKED
-                check "a descendant's /proc entry is out of reach" PROCCHILD_BLOCKED
-            else
-                check "its own /proc entries stay writable"        PROCSELF_OK
-                check "a descendant's /proc entry stays writable"  PROCCHILD_OK
-            fi
-            # The write bubblewrap and chromium's namespace_sandbox.c depend on:
-            # a parent setting up a child's user namespace by writing that
-            # child's setgroups and uid_map. It is what the tight tier pays for
-            # the peer being out of reach, and what the default tier keeps by
-            # not narrowing. Asserted both ways so the trade cannot move in
-            # either direction without the suite saying so.
+            check "its own /proc entry is read-only now"      PROCSELF_BLOCKED
+            check "a descendant's /proc entry is out of reach" PROCCHILD_BLOCKED
+            # The write bubblewrap and chromium's namespace_sandbox.c depend
+            # on: a parent setting up a child's user namespace by writing that
+            # child's setgroups and uid_map. It is the price of the peer being
+            # out of reach, and it is now paid on every build rather than only
+            # under a flag -- so if the engines ever do get their own sandboxes
+            # started under netinstall, this is the line that says what took it
+            # away.
             if grep -qx USERNSMAP_SKIP <<<"$OUT"; then
                 nt_note "no user namespace to map here: $(grep '^usernsmap ' <<<"$OUT")"
-            elif [ "$NT_TIGHT" = "1" ]; then
-                check "and the map write an engine sandbox needs" USERNSMAP_BLOCKED
             else
-                check "the map write an engine sandbox needs works" USERNSMAP_OK
+                check "and the map write an engine sandbox needs" USERNSMAP_BLOCKED
             fi
         fi ;;
     *)  nt_note "the /proc verdict needs a landlock domain; got $CONFINE" ;;
 esac
 
 if [ "$(uname -s)" = "Darwin" ]; then
-    echo "=== LaunchServices, in whichever tier this binary carries ==="
-    # Asserted in both directions and keyed on what the binary reports, not on
-    # how it was invoked -- the same discipline the /proc rules above use. The
-    # default tier's answer is a finding rather than a fix, so ground rule 6
-    # applies and it is asserted to the value that was measured: a change in
-    # either direction is a failure and not a silence.
+    echo "=== LaunchServices ==="
+    # Both doors, asserted closed, on every build. This used to fork on the
+    # tier and assert LSD_APP_ESCAPED / LSD_WS_ESCAPED for the shipped one --
+    # a finding rather than a fix, recorded under ground rule 6 because the
+    # escape was real and the tier that closed it was opt-in. It is not opt-in
+    # any more: a write confinement an app can step out of by handing a bundle
+    # it wrote to a daemon in nobody's sandbox is not a write confinement, so
+    # these two lines are what would have failed before this commit.
     #
     # The .command door is closed in both tiers and always was. It is
     # (deny appleevent-send) doing that, not anything added here -- with
@@ -882,13 +872,8 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # that has been denied since the profile was written. Asserted so a future
     # change cannot quietly open it while attention is on the other two.
     check "an apple event to Terminal is refused" LSD_COMMAND_BLOCKED
-    if [ "$NT_TIGHT" = "1" ]; then
-        check "cannot launch a bundle it wrote through open(1)"   LSD_APP_BLOCKED
-        check "cannot launch one through NSWorkspace either"      LSD_WS_BLOCKED
-    else
-        check "the default tier leaves open(1) reaching out"      LSD_APP_ESCAPED
-        check "and NSWorkspace with it"                           LSD_WS_ESCAPED
-    fi
+    check "cannot launch a bundle it wrote through open(1)"   LSD_APP_BLOCKED
+    check "cannot launch one through NSWorkspace either"      LSD_WS_BLOCKED
 
     # The warm state is a second question, not a second reading of the first:
     # with Terminal already up LaunchServices routes differently, and a denial
@@ -896,8 +881,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # manufactures. It carries its own control -- the warmup is an unconfined
     # launch through the same service moments before the confined attempt -- and
     # without it a BLOCKED here would be indistinguishable from a wedged daemon.
-    NT_LSD_WARM_WANT="ESCAPED"
-    [ "$NT_TIGHT" = "1" ] && NT_LSD_WARM_WANT="BLOCKED"
+    NT_LSD_WARM_WANT="BLOCKED"
     case "$NT_LSD_WARM" in
         "not measured"*)
             nt_note "warm launchservices state not measured here" ;;
@@ -973,22 +957,22 @@ echo "=== Recorded beside the assertions ==="
 # fills that bucket long before this line, and the step summary does not come
 # back out through the API at all.
 nt_tokens() { grep -oE "$1" <<<"$OUT" | tr '\n' ' '; }
-NT_TIER="$([ "${NT_TIGHT:-0}" = "1" ] && echo tight || echo default)"
+NT_TIER="$(basename "$BIN")"
+
 
 case "$(uname -s)" in
     Linux)
-        nt_result "linux /proc peers [$NT_TIER tier]: ptrace_scope=$NT_PTRACE_STATE peer=${NEUTRINO_TEST_PEER:-none} confined: $(nt_tokens '(PEER|CHILD)(MEM|MAPS|WRITABLE|OOM)_[A-Z]+')[$(grep -E '^(peer|child) ' <<<"$OUT" | tr '\n' ';')] unconfined-control: $NT_PROC_CONTROL"
-        nt_result "linux /proc write grant [$NT_TIER tier]: $(nt_tokens '(PROCSELFREAD|PROCSELFTRUNC|PROCSELF|PROCCHILD|USERNSMAP|USERNSCHILD|UIDMAPCHILD)_[A-Z]+')[$(grep -E '^(proc(selfread|self|child)|usernsmap|usernschild|uidmapchild) ' <<<"$OUT" | tr '\n' ';')] confine=$CONFINE"
+        nt_result "linux /proc peers [$NT_TIER]: ptrace_scope=$NT_PTRACE_STATE peer=${NEUTRINO_TEST_PEER:-none} confined: $(nt_tokens '(PEER|CHILD)(MEM|MAPS|WRITABLE|OOM)_[A-Z]+')[$(grep -E '^(peer|child) ' <<<"$OUT" | tr '\n' ';')] unconfined-control: $NT_PROC_CONTROL"
+        nt_result "linux /proc write grant [$NT_TIER]: $(nt_tokens '(PROCSELFREAD|PROCSELFTRUNC|PROCSELF|PROCCHILD|USERNSMAP|USERNSCHILD|UIDMAPCHILD)_[A-Z]+')[$(grep -E '^(proc(selfread|self|child)|usernsmap|usernschild|uidmapchild) ' <<<"$OUT" | tr '\n' ';')] confine=$CONFINE"
         ;;
     Darwin)
-        # Named by the binary: this suite runs twice on macos, once against the
-        # default tier and once against the tight one, and two annotations
-        # reading the same thing are one annotation as far as a reader is
-        # concerned. Asserted above; recorded here because no assertion carries
-        # the rcs, and under the tight tier open(1) reports failure while
+        # Named by the binary, because this suite still runs more than once on
+        # macos and two annotations reading the same thing are one annotation as
+        # far as a reader is concerned. Asserted above; recorded here because no
+        # assertion carries the rcs, and open(1) reports failure while
         # NSWorkspace reports success and neither launches anything.
-        nt_result "launchservices cold [$(basename "$BIN")] [$NT_TIER tier]: $(nt_tokens 'LSD_[A-Z]+_(ESCAPED|BLOCKED)')$(nt_tokens 'LSD_[A-Z]+_RC=[0-9]+')$(nt_tokens 'LSD_TERM_UP=[a-z]+')unconfined-control: $NT_LSD_CONTROL"
-        nt_result "launchservices warm [$(basename "$BIN")] [$NT_TIER tier]: $NT_LSD_WARM"
+        nt_result "launchservices cold [$NT_TIER]: $(nt_tokens 'LSD_[A-Z]+_(ESCAPED|BLOCKED)')$(nt_tokens 'LSD_[A-Z]+_RC=[0-9]+')$(nt_tokens 'LSD_TERM_UP=[a-z]+')unconfined-control: $NT_LSD_CONTROL"
+        nt_result "launchservices warm [$NT_TIER]: $NT_LSD_WARM"
         ;;
 esac
 
