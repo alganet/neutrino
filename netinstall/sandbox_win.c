@@ -17,28 +17,6 @@
 #include "sandbox.h"
 
 /*
- * There is no unprivileged way to deny an app the network on windows: WFP needs
- * administrator, and a job object does not express it. Naming that is better
- * than letting an -DNEUTRINO_CONFINE_OFFLINE build look like it did something.
- */
-#ifdef NEUTRINO_CONFINE_OFFLINE
-#define NT_OFFLINE_NOTE " (offline tier unavailable here)"
-#else
-#define NT_OFFLINE_NOTE ""
-#endif
-
-/*
- * The session tier is namespaces and the X11 SECURITY extension, and there is
- * nothing here shaped like either. Saying so beats letting a
- * -DNEUTRINO_CONFINE_NOSESSION build look like it did something.
- */
-#ifdef NEUTRINO_CONFINE_NOSESSION
-#define NT_SESSION_NOTE " (session tier unavailable here)"
-#else
-#define NT_SESSION_NOTE ""
-#endif
-
-/*
  * The rest of the writable set, spelled where a user can read it.
  *
  * Low integrity is a label on a token, not a directory, and windows keeps two
@@ -614,7 +592,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         snprintf(desc, desclen, "job object%s%s + low integrity, writes "
                                 "confined to %s" NT_ALSO_WRITABLE
                                 " (reads are not confined)"
-                                NT_OFFLINE_NOTE NT_SESSION_NOTE,
+                               ,
                  uinote, privs, appdir);
         return 0;
     }
@@ -670,7 +648,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     }
     snprintf(desc, desclen, "job object%s%s + low integrity, writes confined to "
                             "%s" NT_ALSO_WRITABLE " (reads are not confined)"
-                            NT_OFFLINE_NOTE NT_SESSION_NOTE,
+                           ,
              uinote, privs, appdir);
     return 0;
 }

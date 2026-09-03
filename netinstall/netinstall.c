@@ -1894,22 +1894,19 @@ static int nt_main(int argc, char **argv)
          */
         int got = nt_apply_confine(NT_PHASE_RUN, home, appdir, 1, desc, sizeof(desc));
 
-        if (got == -3) {
-            /*
-             * Not a matter of how much confinement was applied: the process
-             * this left is one an app cannot run in. Every build refuses.
-             */
-            fprintf(stderr, "netinstall: refusing to run: %s\n", desc);
-            return 3;
-        }
         if (got != 0) {
-            const char *how = got == -2 ? "half confined" : "unconfined";
-
+            /*
+             * One failure shape now. -2 and -3 -- "half confined" and "the
+             * process this left is one an app cannot run in" -- were the
+             * session tier's, and it was the only mechanism here assembled from
+             * steps that could fail separately after the first had already
+             * changed the process. Nothing left has that shape.
+             */
 #ifdef NEUTRINO_STRICT_SANDBOX
-            fprintf(stderr, "netinstall: refusing to run %s: %s\n", how, desc);
+            fprintf(stderr, "netinstall: refusing to run unconfined: %s\n", desc);
             return 3;
 #else
-            fprintf(stderr, "netinstall: warning: running %s: %s\n", how, desc);
+            fprintf(stderr, "netinstall: warning: running unconfined: %s\n", desc);
 #endif
         }
     }
