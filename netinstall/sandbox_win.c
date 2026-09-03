@@ -10,10 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef NEUTRINO_CONFINE_TIGHT
 #include <aclapi.h>
 #include <sddl.h>
-#endif
 
 #include "netinstall.h"
 #include "sandbox.h"
@@ -41,7 +39,7 @@
 #endif
 
 /*
- * The rest of the tight tier's writable set, spelled where a user can read it.
+ * The rest of the writable set, spelled where a user can read it.
  *
  * Low integrity is a label on a token, not a directory, and windows keeps two
  * places writable at that level on purpose so that low-integrity processes have
@@ -49,29 +47,35 @@
  * is the app dir and neither can be taken away from here -- they are what the
  * mechanism is, not something this program grants.
  *
- * Measured on a windows-latest runner, tight tier: locallow=CT- and reglow=K--
- * writable, against home, the user temp dir, C:\Windows\Temp and
- * HKCU\Software all refused, and the same battery fully writable in the
- * default tier, which confines no writes and says so.
+ * Measured on a windows-latest runner: locallow=CT- and reglow=K-- writable,
+ * against home, the user temp dir, C:\Windows\Temp and HKCU\Software all
+ * refused.
  */
 /* No percent signs: this is concatenated into a printf format string. */
 #define NT_ALSO_WRITABLE ", the user's AppData\\LocalLow folder and " \
                          "HKCU\\Software\\AppDataLow"
 
 /*
- * A job object is a resource boundary, not a filesystem one, and this file does
- * not pretend otherwise. Low integrity was the obvious next step and does not
- * work: it stops writes but not reads, %TEMP% does not redirect so jsc.exe
- * fails, and WebView2 puts up a window that never draws in a low-IL host.
+ * A job object is a resource boundary, not a filesystem one, so low integrity
+ * is what actually confines a write here. This paragraph used to say it did not
+ * work -- that WebView2 puts up a window which never draws in a low-IL host,
+ * which is what Microsoft documents -- and it was wrong. On run 33674586566 the
+ * suite recorded a window 23 ms after launch and then the app's whole sequence
+ * through it: `neutrino` at 106 ms, a resize at 16474, the desktop palette read
+ * at 22506 and the tests done at 24538. That is a view that got a surface, laid
+ * a document out on it and took window calls from the page, all at low
+ * integrity. jsc.exe compiles there too, once %TEMP% is redirected, which
+ * netinstall.c does.
  *
- * AppContainer is the only mechanism that would confine reads, and it does not
- * work either -- measured, not inferred: launched inside a real one, with its
- * capabilities granted and the app dir handed to its SID, no window appears at
- * all. Every unprivileged mechanism windows offers has now been tried against a
- * real webview, so reads staying unconfined here is a ceiling rather than an
- * omission.
+ * Reads are the ceiling, not writes. Low integrity is a no-write-up rule and
+ * leaves reads alone, and AppContainer -- the only mechanism that would close
+ * them -- does not work either, measured rather than inferred: launched inside
+ * a real one, with its capabilities granted and the app dir handed to its SID,
+ * no window appears at all. Every unprivileged mechanism windows offers has now
+ * been tried against a real webview, so reads staying unconfined here is a
+ * ceiling rather than an omission -- and, since no platform confines reads any
+ * more, it is the same ceiling everywhere rather than this one's alone.
  */
-#ifdef NEUTRINO_CONFINE_TIGHT
 /*
  * A low integrity process cannot write to anything that lacks a Low mandatory
  * label, so the app dir has to carry one or the app cannot write its own files.
@@ -120,10 +124,9 @@ static int nt_drop_to_low(void)
     LocalFree(low);
     return ok;
 }
-#endif
 
 /*
- * The fetch phase's half of the tight tier, which the run phase's half above
+ * The fetch phase's half, which the run phase's half above
  * cannot be: nt_confine runs in the launcher, and a process may never raise its
  * own integrity back. Everything after nt_fetch returns -- the digest, the pin,
  * the rename, the hard link, the app directory -- is work at the launcher's own
@@ -159,7 +162,6 @@ static int nt_drop_to_low(void)
  * netinstall does not re-read it between nt_sha256_file and the rename -- so a
  * label left on is a digest checked against content that can still change.
  */
-#ifdef NEUTRINO_CONFINE_TIGHT
 /*
  * Built by nt_confine and spent by nt_fetch, because the fetch phase's answer
  * has one caller and one consumer and threading a handle through nt_confine's
@@ -231,20 +233,14 @@ static int nt_label_file_low(const char *path)
     LocalFree(sd);
     return ok;
 }
-#endif
 
 void *nt_fetch_token(void)
 {
-#ifdef NEUTRINO_CONFINE_TIGHT
     return (void *)nt_fetch_low_token;
-#else
-    return NULL;
-#endif
 }
 
 int nt_fetch_grant(const char *dest)
 {
-#ifdef NEUTRINO_CONFINE_TIGHT
     HANDLE h;
 
     if (!nt_fetch_low_token) {
@@ -269,15 +265,10 @@ int nt_fetch_grant(const char *dest)
         return 0;
     }
     return 1;
-#else
-    (void)dest;
-    return 1;
-#endif
 }
 
 int nt_fetch_revoke(const char *dest)
 {
-#ifdef NEUTRINO_CONFINE_TIGHT
     ACL empty;
 
     if (!nt_fetch_low_token) {
@@ -306,10 +297,6 @@ int nt_fetch_revoke(const char *dest)
         return 0;
     }
     return 1;
-#else
-    (void)dest;
-    return 1;
-#endif
 }
 
 /*
@@ -498,37 +485,29 @@ static int nt_strip_privileges(int commit)
  * object of its own afterwards -- that second one is a nested job, which
  * windows has only allowed since 8.
  *
- * The tight tier adds low integrity, and adds it to the child rather than here
- * -- see nt_fetch_token above for why the launcher cannot take it itself, and
- * for the two narrower-looking mechanisms that lost. Reads are not confined at
- * either tier; see the run phase for why that is a ceiling rather than an
- * omission.
+ * Low integrity goes on the child rather than here -- see nt_fetch_token above
+ * for why the launcher cannot take it itself, and for the two narrower-looking
+ * mechanisms that lost. Reads are not confined; see the run phase for why that
+ * is a ceiling rather than an omission.
  */
 /*
  * The sentence, built once from the same three answers both callers have. Kept
- * out of the two snprintf sites because the tight tier's version has to name
- * what the run phase's NT_ALSO_WRITABLE names -- a low integrity child can
- * write LocalLow and AppDataLow whatever this program grants -- and PR 16 is
- * what happens when a "writes confined to" sentence names less than it means.
+ * out of the two snprintf sites because it has to name what the run phase's
+ * NT_ALSO_WRITABLE names -- a low integrity child can write LocalLow and
+ * AppDataLow whatever this program grants -- and PR 16 is what happens when a
+ * "writes confined to" sentence names less than it means.
  */
 static void nt_fetch_desc(char *desc, size_t desclen, const char *privs,
                           int lowered)
 {
-    (void)lowered;
-#ifdef NEUTRINO_CONFINE_TIGHT
     if (lowered) {
         snprintf(desc, desclen, "job object%s + low integrity, writes confined "
                                 "to the payload file" NT_ALSO_WRITABLE
                                 " (reads are not confined)", privs);
         return;
     }
-    snprintf(desc, desclen, "job object%s (process limits only; the tight "
-                            "tier's low integrity token was unavailable)",
-             privs);
-#else
-    snprintf(desc, desclen, "job object%s (process limits only; no "
-                            "filesystem confinement on windows)", privs);
-#endif
+    snprintf(desc, desclen, "job object%s (process limits only; the low "
+                            "integrity token was unavailable)", privs);
 }
 
 static int nt_fetch_confine_win(int enforce, char *desc, size_t desclen)
@@ -540,10 +519,9 @@ static int nt_fetch_confine_win(int enforce, char *desc, size_t desclen)
 
     if (!enforce) {
         privs = nt_strip_privileges(0) ? " + privileges stripped" : "";
-#ifdef NEUTRINO_CONFINE_TIGHT
         /*
          * Built and dropped, so --info reports a token that this machine really
-         * produced rather than one the tier promises -- the shape nt_confine
+         * produced rather than one this file promises -- the shape nt_confine
          * already uses for the privilege stripping on the line above, and for
          * the landlock ruleset on linux.
          */
@@ -555,7 +533,6 @@ static int nt_fetch_confine_win(int enforce, char *desc, size_t desclen)
                 CloseHandle(probe);
             }
         }
-#endif
         nt_fetch_desc(desc, desclen, privs, lowered);
         return lowered ? 0 : -1;
     }
@@ -584,23 +561,21 @@ static int nt_fetch_confine_win(int enforce, char *desc, size_t desclen)
     /* Best effort, and --info must not claim it happened when it did not --
      * the same rule the run phase follows two screens down. */
     privs = nt_strip_privileges(1) ? " + privileges stripped" : "";
-#ifdef NEUTRINO_CONFINE_TIGHT
     /*
      * After the stripping, which is the order that had to be measured:
      * CreateProcessAsUser is documented to want SeIncreaseQuotaPrivilege and the
      * line above has just removed it. It works anyway, on a token with nothing
-     * left but SeChangeNotify -- so the tier does not depend on privileges the
-     * user this ships to would not have had in the first place.
+     * left but SeChangeNotify -- so this does not depend on privileges the user
+     * this ships to would not have had in the first place.
      */
     nt_fetch_low_token = nt_low_token();
     lowered = nt_fetch_low_token != NULL;
-#endif
     nt_fetch_desc(desc, desclen, privs, lowered);
     /*
-     * A tight build whose token could not be made has the default tier's fetch
-     * phase and must say so as a failure, not as a quieter sentence: a strict
-     * build refuses on it, which is the whole point of the phase having an
-     * answer at all.
+     * A build whose token could not be made has a job object and nothing that
+     * confines a write, and must say so as a failure rather than as a quieter
+     * sentence: the caller refuses on it, which is the whole point of the phase
+     * having an answer at all.
      */
     return lowered ? 0 : -1;
 }
@@ -636,17 +611,11 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
          * --info promised a stripping whatever the token turned out to be.
          */
         privs = nt_strip_privileges(0) ? " + privileges stripped" : "";
-#ifdef NEUTRINO_CONFINE_TIGHT
         snprintf(desc, desclen, "job object%s%s + low integrity, writes "
                                 "confined to %s" NT_ALSO_WRITABLE
                                 " (reads are not confined)"
                                 NT_OFFLINE_NOTE NT_SESSION_NOTE,
                  uinote, privs, appdir);
-#else
-        snprintf(desc, desclen, "job object%s%s (process limits only; no "
-                                "filesystem confinement on windows)"
-                                NT_OFFLINE_NOTE NT_SESSION_NOTE, uinote, privs);
-#endif
         return 0;
     }
 
@@ -680,11 +649,16 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
      * to give up the job object, but --info must not then claim it. */
     privs = nt_strip_privileges(1) ? " + privileges stripped" : "";
 
-#ifdef NEUTRINO_CONFINE_TIGHT
     /*
      * Low integrity blocks writes, not reads: this stops an app trashing the
      * profile, but it can still read ~/.ssh and browser stores. Only an
      * AppContainer would close that, and a webview does not come up inside one.
+     *
+     * Both steps are fatal. Without the label the app cannot write its own
+     * files, and without the drop nothing confines a write at all -- and a
+     * process that is only in a job object is one whose --info line would have
+     * to say so, which is the same thing as failing. The caller decides what to
+     * do with -1; what this must not do is return 0 for either.
      */
     if (!nt_label_low(appdir)) {
         snprintf(desc, desclen, "job object only (could not label %s low)", appdir);
@@ -699,12 +673,6 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
                             NT_OFFLINE_NOTE NT_SESSION_NOTE,
              uinote, privs, appdir);
     return 0;
-#else
-    snprintf(desc, desclen, "job object%s%s (process limits only; "
-                            "no filesystem confinement on windows)"
-                            NT_OFFLINE_NOTE NT_SESSION_NOTE, uinote, privs);
-    return 0;
-#endif
 }
 
 #endif

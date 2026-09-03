@@ -1876,7 +1876,7 @@ static int nt_main(int argc, char **argv)
      */
     setenv_dir("TMPDIR", appdir, "tmp");
 #endif
-#if defined(_WIN32) && defined(NEUTRINO_CONFINE_TIGHT)
+#ifdef _WIN32
     /*
      * %TEMP% does not redirect on its own at low integrity, so jsc.exe would
      * fail writing intermediates into the medium-labelled default.
