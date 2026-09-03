@@ -479,11 +479,24 @@ else
     # curl keeps dribbling until its own deadline. Taking it for the holder
     # reported the kernel's guarantee as broken while the window was long
     # gone. Measured, the round this suite moved to the stalled host.
+    #
+    # The basename, and not what ps prints. The two platforms disagree about
+    # what `comm` is: linux gives the name alone, macOS gives the whole path,
+    # so a pattern anchored at `curl` matched on one and not the other -- and
+    # the one it missed is the one where the holder is a separate process, so
+    # macOS picked curl for the holder and failed a control that was working.
+    # Measured on run 33750772253: "splash process 9954 outlived a SIGKILLed
+    # parent", with the window itself long gone.
     HELD=""
+    HELDNAME=""
+    KIDS=""
     for p in $(pgrep -P "$SLOWPID" 2>/dev/null); do
-        case "$(ps -o comm= -p "$p" 2>/dev/null)" in
+        C="$(ps -o comm= -p "$p" 2>/dev/null)"
+        C="${C##*/}"
+        KIDS="$KIDS $p:${C:-?}"
+        case "$C" in
             curl*|wget*) ;;
-            *) HELD="$p"; break ;;
+            *) [ -n "$HELD" ] || { HELD="$p"; HELDNAME="${C:-?}"; } ;;
         esac
     done
     if [ -z "$HELD" ] && [ "$MECHNAME" = "win32" ]; then
@@ -496,7 +509,7 @@ else
         probe "orphan check: skipped, $MECHNAME holds the window in-process"
         kill -9 "$SLOWPID" 2>/dev/null
     elif [ -z "$HELD" ]; then
-        nt_fail "$STEP: a window is up but no child is holding it -- the control is broken, not the case"
+        nt_fail "$STEP: a window is up but no child is holding it -- the control is broken, not the case; children were${KIDS:- none}"
         FAILURES=$((FAILURES + 1))
         kill -9 "$SLOWPID" 2>/dev/null
     else
@@ -509,11 +522,11 @@ else
         if [ "$GONE" = "YES" ]; then
             echo "  PASS: $STEP"
         else
-            nt_fail "$STEP: splash process $HELD outlived a SIGKILLed parent"
+            nt_fail "$STEP: splash process $HELD ($HELDNAME) outlived a SIGKILLed parent; children were$KIDS"
             FAILURES=$((FAILURES + 1))
             kill -9 "$HELD" 2>/dev/null
         fi
-        probe "orphan check: parent killed, holder $HELD gone=$GONE"
+        probe "orphan check: parent killed, holder $HELD ($HELDNAME) gone=$GONE, children were$KIDS"
     fi
 fi
 wait "$SLOWPID" 2>/dev/null
