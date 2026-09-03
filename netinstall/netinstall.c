@@ -31,6 +31,7 @@
 #define NT_SEP '\\'
 #else
 #include <sys/resource.h>
+#include <time.h>
 #include <unistd.h>
 #define NT_SEP '/'
 #endif
@@ -823,6 +824,45 @@ static long nt_pid(void)
 #endif
 }
 
+long nt_now_ms(void)
+{
+#ifdef _WIN32
+    return (long)GetTickCount64();
+#else
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    return (long)ts.tv_sec * 1000L + (long)(ts.tv_nsec / 1000000L);
+#endif
+}
+
+void nt_sleep_ms(long ms)
+{
+    if (ms <= 0) {
+        return;
+    }
+#ifdef _WIN32
+    Sleep((DWORD)ms);
+#else
+    {
+        struct timespec ts;
+
+        ts.tv_sec = ms / 1000L;
+        ts.tv_nsec = (ms % 1000L) * 1000000L;
+        /*
+         * A signal cuts a sleep short and nanosleep says by how much; the
+         * loop puts the remainder back. Without it the fetch's own alarm,
+         * arriving during the hold, would shorten the hold to nothing.
+         */
+        while (nanosleep(&ts, &ts) < 0 && errno == EINTR) {
+            /* again */
+        }
+    }
+#endif
+}
+
 static void nt_setenv(const char *key, const char *val)
 {
 #ifdef _WIN32
@@ -950,7 +990,7 @@ static int nt_build_cmdline(char *const *args, char *out, size_t len)
  */
 int nt_win_spawn(const char *exe, char *const *args)
 {
-    return nt_win_spawn_as(exe, args, NULL);
+    return nt_win_spawn_as(exe, args, NULL, 0, NULL);
 }
 
 /*
@@ -1052,7 +1092,8 @@ static void nt_win_report(int code)
     nt_win_errlog[0] = '\0';
 }
 
-int nt_win_spawn_as(const char *exe, char *const *args, void *token)
+int nt_win_spawn_as(const char *exe, char *const *args, void *token,
+                    long slow_ms, void (*slow)(void))
 {
     LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;
     PROCESS_INFORMATION pi;
@@ -1245,6 +1286,16 @@ int nt_win_spawn_as(const char *exe, char *const *args, void *token)
         free(attrs);
     }
     free(cmdline);
+    /*
+     * The first wait is bounded and the second is not, and the line between
+     * them is where the caller learns that this is taking a while. A child
+     * that finishes inside the bound never triggers the callback, which is
+     * the whole point: the fetch's window is for a download, not for the
+     * hundred milliseconds a cached-by-the-network one takes.
+     */
+    if (slow && WaitForSingleObject(pi.hProcess, (DWORD)slow_ms) == WAIT_TIMEOUT) {
+        slow();
+    }
     WaitForSingleObject(pi.hProcess, INFINITE);
     GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hThread);
@@ -1749,10 +1800,18 @@ static int nt_main(int argc, char **argv)
         }
         remove(tmpfile);
         /*
-         * The only place a window is raised, and it is inside `!cached` for the
+         * The only place a window is wanted, and it is inside `!cached` for the
          * reason the branch exists: a run that already holds the payload has
          * nothing to wait for, and drawing Loading... over a launch that is
          * about to happen anyway would be a lie about where the time went.
+         *
+         * Wanted, and not yet raised. The fetch is handed nt_splash_up to call
+         * if the downloader is still running NT_SPLASH_DELAY_MS in -- a
+         * download that finishes inside that never gets a window, because a
+         * window that appears and vanishes within a blink is not a message, it
+         * is a flicker. The delay has to live inside the fetch: the wait it
+         * measures is the fetch's own, and nothing outside it can see how far
+         * along that wait is. See splash.h for the other half, the hold.
          *
          * atexit rather than a call beside each return. Between here and the
          * end of the branch there are nine ways out -- a pin mismatch, a
@@ -1771,9 +1830,10 @@ static int nt_main(int argc, char **argv)
          * child it could no longer kill, and never reached nt_exec.
          */
         atexit(nt_splash_down);
-        nt_splash_up();
+        nt_splash_arm();
         {
-            int got = nt_fetch(spec.url, tmpfile, home, shown, sizeof(shown));
+            int got = nt_fetch(spec.url, tmpfile, home, shown, sizeof(shown),
+                               NT_SPLASH_DELAY_MS, nt_splash_up);
 
             /*
              * The bytes have stopped moving, one way or the other, so the
@@ -1785,6 +1845,12 @@ static int nt_main(int argc, char **argv)
              * failed download it says after this point, so a teardown that ran
              * later put its own line at the end of stderr, underneath the
              * message that mattered. fetchbound.sh reads that last line.
+             *
+             * "Goes now" is up to NT_SPLASH_HOLD_MS after it came up, and no
+             * sooner -- this call waits out the rest of that, so a refusal of
+             * a download that took 120 ms arrives 400 ms after it was raised
+             * rather than 20. That is the same trade as the delay above, from
+             * the other side: a window has to stay long enough to be read.
              *
              * What follows -- the digest, the text check, the link -- is
              * bounded by NT_MAX_PAYLOAD and is not a wait worth decorating.

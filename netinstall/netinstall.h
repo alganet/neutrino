@@ -66,6 +66,17 @@ int nt_mkdir_p(const char *path);
 int nt_sha256_file(const char *path, char *hex65);
 int nt_is_text(const char *path);
 
+/*
+ * A clock that only goes forward, in milliseconds from a moment nobody is told
+ * about, and a sleep against it. Two things need to know how long a stretch of
+ * a run took -- the fetch, to raise the window only once it has waited long
+ * enough to be worth decorating, and the splash, to keep the window up long
+ * enough to be seen -- and neither can be trusted to the wall clock, which a
+ * time daemon may move under them in either direction.
+ */
+long nt_now_ms(void);
+void nt_sleep_ms(long ms);
+
 #ifndef _WIN32
 /* Leaves only 0, 1 and 2 open, so nothing the caller had open reaches the app. */
 void nt_close_inherited(void);
@@ -81,7 +92,15 @@ int nt_win_spawn(const char *exe, char *const *args);
  * -- is work at the launcher's own level, so the tight tier's confinement has
  * to reach the child alone.
  */
-int nt_win_spawn_as(const char *exe, char *const *args, void *token);
+/*
+ * `slow`, when not NULL, is called once from this thread if the child is still
+ * running after `slow_ms` -- and never otherwise. It is how the fetch raises
+ * its window only for a download that turned out to be worth one: the wait it
+ * decorates is inside this function, so this function is the only thing that
+ * can say whether it is still going on. The run phase passes NULL.
+ */
+int nt_win_spawn_as(const char *exe, char *const *args, void *token,
+                    long slow_ms, void (*slow)(void));
 #endif
 
 #endif

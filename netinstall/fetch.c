@@ -347,7 +347,7 @@ static int nt_fetch_confine(const char *home, char *desc, size_t desclen)
 }
 
 int nt_fetch(const char *url, const char *dest, const char *home,
-             char *shown, size_t shownlen)
+             char *shown, size_t shownlen, long slow_ms, void (*slow)(void))
 {
     char maxsize[32];
     char *argv[24];
@@ -408,7 +408,7 @@ int nt_fetch(const char *url, const char *dest, const char *home,
                             "could not be made the downloader's only write\n");
             return -2;
         }
-        rc = nt_win_spawn_as(bin, argv, nt_fetch_token());
+        rc = nt_win_spawn_as(bin, argv, nt_fetch_token(), slow_ms, slow);
         /*
          * In every build, not only a strict one. This is not the tier failing
          * to apply -- it is the tier having applied and not come back off, and
@@ -540,16 +540,45 @@ int nt_fetch(const char *url, const char *dest, const char *home,
                     alarm(NT_FETCH_MAX_SECONDS);
                 }
             }
-            while (waitpid(pid, &status, 0) < 0) {
-                if (errno != EINTR) {
-                    if (armed) {
-                        alarm(0);
-                        sigaction(SIGALRM, &old, NULL);
+            /*
+             * The first slow_ms are polled and the rest is a blocking wait.
+             * waitpid has no timeout of its own and the alternatives -- a
+             * second alarm racing the wget one, a self-pipe and poll -- are
+             * more mechanism than a hundred milliseconds deserves: ten looks
+             * at WNOHANG, a short sleep between each, and a download that
+             * finished under the bound is reaped by the first look that sees
+             * it. Only then is the caller told it is waiting on something.
+             */
+            {
+                pid_t got = 0;
+
+                if (slow) {
+                    long t0 = nt_now_ms();
+
+                    for (;;) {
+                        got = waitpid(pid, &status, WNOHANG);
+                        if (got == pid || (got < 0 && errno != EINTR)) {
+                            break;
+                        }
+                        got = 0;
+                        if (nt_now_ms() - t0 >= slow_ms) {
+                            slow();
+                            break;
+                        }
+                        nt_sleep_ms(10);
                     }
-                    return -1;
                 }
-                if (nt_fetch_timed_out) {
-                    kill(pid, SIGKILL);
+                while (got != pid && waitpid(pid, &status, 0) < 0) {
+                    if (errno != EINTR) {
+                        if (armed) {
+                            alarm(0);
+                            sigaction(SIGALRM, &old, NULL);
+                        }
+                        return -1;
+                    }
+                    if (nt_fetch_timed_out) {
+                        kill(pid, SIGKILL);
+                    }
                 }
             }
             if (armed) {

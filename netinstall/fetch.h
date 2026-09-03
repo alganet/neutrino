@@ -14,9 +14,16 @@
  * that sent more than NT_MAX_PAYLOAD, or a host that held the transfer open
  * past the deadline. Every -2 has already been explained on stderr, in terms
  * the generic "fetch failed" line cannot improve on.
+ *
+ * `slow`, when not NULL, is called once -- in this process, on this thread --
+ * if the downloader is still running `slow_ms` after it was started, and is
+ * not called at all for a download that finished inside that. It is the
+ * splash's cue, and it lives here because the wait it is about is this
+ * function's: main() is blocked in this call for the whole of the download
+ * and has no way to act a hundred milliseconds into it.
  */
 int nt_fetch(const char *url, const char *dest, const char *home,
-             char *shown, size_t shownlen);
+             char *shown, size_t shownlen, long slow_ms, void (*slow)(void));
 
 /*
  * Builds the command that a fetch would run, without running it. `bounds`, when

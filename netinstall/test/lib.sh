@@ -165,6 +165,45 @@ nt_note() {
     echo "  $*"
 }
 
+# The whole screen, to $1, as a PNG -- on whichever of the three desktops this
+# is. Returns non-zero when nothing was written, and says nothing itself: the
+# caller is the one that knows whether a missing picture is a finding.
+#
+# The whole screen and not the window, on every platform, for the reason
+# verify-linux.sh and its siblings take theirs that way: a capture that had to
+# find the window first would be an instrument that fails exactly when the
+# thing it exists to photograph is not where it was expected, and a picture of
+# the desktop with nothing on it is the more useful of the two failures.
+#
+# Windows goes through the same CopyFromScreen the verifiers use, in a
+# powershell started for the purpose. That start is the slow part -- seconds on
+# a cold runner -- and it is why the splash case holds its window for as long
+# as it does before the shutter is due.
+nt_screenshot() {
+    local out="$1" ps
+    mkdir -p "$(dirname "$out")" 2>/dev/null
+    rm -f "$out"
+    if [ "${NT_WINDOWS:-0}" = "1" ]; then
+        ps=powershell
+        command -v pwsh >/dev/null 2>&1 && ps=pwsh
+        "$ps" -NoProfile -ExecutionPolicy Bypass -Command "
+            Add-Type -AssemblyName System.Drawing
+            Add-Type -AssemblyName System.Windows.Forms
+            \$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            \$bmp = New-Object System.Drawing.Bitmap \$b.Width, \$b.Height
+            \$g = [System.Drawing.Graphics]::FromImage(\$bmp)
+            \$g.CopyFromScreen(\$b.X, \$b.Y, 0, 0, \$bmp.Size)
+            \$g.Dispose()
+            \$bmp.Save('$(cygpath -w "$out")', [System.Drawing.Imaging.ImageFormat]::Png)
+        " >/dev/null 2>&1
+    elif [ "$(uname -s)" = "Darwin" ]; then
+        screencapture -x "$out" 2>/dev/null
+    elif command -v import >/dev/null 2>&1; then
+        import -window root "$out" 2>/dev/null
+    fi
+    [ -s "$out" ]
+}
+
 # Runs a command under a wall-clock bound where coreutils timeout exists.
 # macOS ships none by default, so there it just runs the command.
 nt_timeout() {
