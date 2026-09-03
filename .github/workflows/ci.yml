@@ -2269,7 +2269,7 @@ jobs:
       # the four-job split was bought for, kept without the four jobs.
       - if: always()
         shell: bash
-        run: bash test/mkapp.sh --tier=offline test/neutrinonav.js test/neutrinonav.cmd
+        run: bash test/mkapp.sh --overlay test/nav-hermetic test/neutrinonav.js test/neutrinonav.cmd
       - if: always()
         timeout-minutes: 12
         shell: pwsh

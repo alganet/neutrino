@@ -1,20 +1,23 @@
 // The app under test is a page that navigates itself away, on a build where
 // the navigation can actually arrive.
 //
-// Built `--tier=offline`, and that is what keeps this suite hermetic rather
-// than a preference about tiers. Since `window.open` was given its standard
-// meaning, an external url handed to it -- or to a new window the guard
-// refuses -- is forwarded to the machine's browser, which is the correct
-// behaviour and ruinous here: the browser would fetch the very url this
-// suite's instrument is a request log for, and every refusal assertion below
-// would be answering a question about a browser. The offline tier closes
+// Built `--overlay test/nav-hermetic`, and that is what keeps this suite
+// hermetic rather than a preference about builds. Since `window.open` was
+// given its standard meaning, an external url handed to it -- or to a new
+// window the guard refuses -- is forwarded to the machine's browser, which is
+// the correct behaviour and ruinous here: the browser would fetch the very url
+// this suite's instrument is a request log for, and every refusal assertion
+// below would be answering a question about a browser. The overlay closes
 // mayOpenExternal, so nothing leaves the process and a beacon can only arrive
 // if a *document* was created to fetch it -- which is exactly what is being
-// asked. Nothing else about the guard is tier-dependent.
+// asked. Nothing else about the guard depends on it.
+//
+// This used to be `--tier=offline`, which supplied the same file plus a denying
+// content policy the suite never needed.
 //
 // What that costs is real and is named here rather than left to be discovered:
-// the default tier's forwarding is not exercised on this lane. It is not
-// exercised on any lane, and the row for it is in WEBSTD's Still open.
+// forwarding is not exercised on this lane. It is not exercised on any lane,
+// and the row for it is in WEBSTD's Still open.
 //
 // test/neutrinoattack.js already tries this, at a host that never resolves --
 // which test/early-target.html's own comment says is not a test: the load fails
