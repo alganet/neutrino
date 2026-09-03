@@ -78,44 +78,37 @@ struct nt_ruleset_attr {
 };
 
 /*
- * Only write-shaped rights are handled, so reads stay unrestricted. That is
- * deliberate: a read allowlist forces WebKitGTK's bubblewrap and Chromium's
- * zygote to fight our ruleset, and Landlock unconditionally denies mount and
- * pivot_root to any domain handling a filesystem right. Trading the renderer's
- * own sandbox for our allowlist is not obviously a win, so v1 does not.
- *
- * IOCTL_DEV is likewise left unhandled: handling it means granting it on
- * /dev/dri or losing the GPU, for no benefit here.
+ * IOCTL_DEV is left unhandled: handling it means granting it on /dev/dri or
+ * losing the GPU, for no benefit here.
  */
 /*
- * Opt-in second tier. Handling read rights turns the ruleset into an allowlist
- * for reads too, which is the only way to put $HOME/.ssh out of reach -- but it
- * is also what risks starving WebKitGTK's bubblewrap and Chromium's zygote, so
- * it is a build-time choice and the default stays writes-only.
+ * Reads are not confined, here or on any other platform, and this is where that
+ * decision lands on linux.
+ *
+ * Handling read rights would turn the ruleset into an allowlist for reads too,
+ * which is the only way to put $HOME/.ssh out of reach -- and it worked. It is
+ * gone because windows cannot do it at all: low integrity is a no-write-up rule
+ * and AppContainer, the one mechanism that would, is measured not to start a
+ * webview. A capability three platforms have and the fourth cannot is the shape
+ * that gets reported as a bug against the fourth, so it is not a capability any
+ * of them has.
+ *
+ * The ruleset stays write-shaped, which is what it was in the shipped build all
+ * along.
  */
-#ifdef NEUTRINO_CONFINE_TIGHT
-#define NT_READ_RIGHTS ( \
-    LANDLOCK_ACCESS_FS_READ_FILE | \
-    LANDLOCK_ACCESS_FS_READ_DIR)
-#else
 #define NT_READ_RIGHTS 0ULL
-#endif
 
 /*
- * Write xor execute, tight tier only.
+ * Write xor execute is not expressible here without the read allowlist above.
  *
  * Landlock takes the union of every rule matching along a path, not the closest
  * one, so there is no way to grant execute broadly and subtract it for one
- * directory -- it has to be an allowlist. That is only affordable in the tight
- * tier, which already allowlists the same system paths for reads. The writable
- * directories are simply absent from it, so an app can drop a binary in its own
- * directory and never run it.
+ * directory -- it has to be an allowlist, and the allowlist went with the
+ * reads. macOS keeps its (deny process-exec*) and OpenBSD gets w^x free from
+ * unveil, because those cost nothing there; neither is promised, and windows
+ * has none either way.
  */
-#ifdef NEUTRINO_CONFINE_TIGHT
-#define NT_EXEC_RIGHT LANDLOCK_ACCESS_FS_EXECUTE
-#else
 #define NT_EXEC_RIGHT 0ULL
-#endif
 
 /*
  * The rest of the writable set, spelled where a user can read it.
@@ -123,12 +116,10 @@ struct nt_ruleset_attr {
  * Every path in here is granted deliberately, a few lines from the sentence
  * that used to name one directory and stop: /dev/shm is where a renderer puts
  * its shared memory and takes the full write set; /dev takes the writes every
- * shell redirection in a launched script depends on; /proc is every process's
- * entry in the default tier, narrowed to this one's in the tight tier, and the
- * README explains what that trade costs. Each was measured -- shm=CTO,
- * devnull=OK, and confine.sh's PEEROOM_ESCAPED for the /proc half -- and the
- * one grant that measured backwards, $XDG_RUNTIME_DIR, is gone rather than
- * described.
+ * shell redirection in a launched script depends on; /proc is this process's
+ * own entry and no peer's, and confine.sh's PEEROOM_BLOCKED is what says so.
+ * Each was measured -- shm=CTO, devnull=OK -- and the one grant that measured
+ * backwards, $XDG_RUNTIME_DIR, is gone rather than described.
  *
  * "writes confined to" is a claim about a set. It named the first member of it
  * for as long as this file has existed.
@@ -203,51 +194,6 @@ static int nt_x11_replaced;
 #define nt_x11_replaced 0
 #endif
 
-#ifdef NEUTRINO_CONFINE_TIGHT
-/*
- * Everything a GTK or Qt webview reads on the way up. Anything absent here is
- * denied, which is the point: $HOME as a whole is not on the list.
- */
-static void nt_allow_system_reads(int ruleset)
-{
-    static const char *const system_paths[] = {
-        "/usr", "/bin", "/sbin", "/lib", "/lib64", "/lib32", "/libx32",
-        "/opt", "/etc", "/sys", "/run", "/tmp/.X11-unix", NULL
-    };
-    static const char *const home_paths[] = {
-        "/.config/fontconfig", "/.config/gtk-3.0", "/.config/gtk-4.0",
-        "/.config/dconf", "/.config/QtProject", "/.config/mimeapps.list",
-        "/.local/share/fonts", "/.local/share/icons", "/.local/share/mime",
-        "/.local/share/applications", "/.local/share/glib-2.0",
-        "/.icons", "/.fonts", "/.themes", "/.Xauthority", NULL
-    };
-    char path[NT_PATH_MAX];
-    const char *userhome;
-    const char *xauth;
-    int i;
-
-    for (i = 0; system_paths[i]; i++) {
-        nt_allow(ruleset, system_paths[i], NT_READ_RIGHTS | NT_EXEC_RIGHT);
-    }
-
-    userhome = getenv("HOME");
-    if (userhome && *userhome) {
-        for (i = 0; home_paths[i]; i++) {
-            if (nt_x11_replaced && strcmp(home_paths[i], "/.Xauthority") == 0) {
-                continue;
-            }
-            snprintf(path, sizeof(path), "%s%s", userhome, home_paths[i]);
-            nt_allow(ruleset, path, NT_READ_RIGHTS);
-        }
-    }
-
-    /* Without the X cookie an X11 client cannot connect at all. */
-    xauth = getenv("XAUTHORITY");
-    if (xauth && *xauth) {
-        nt_allow(ruleset, xauth, LANDLOCK_ACCESS_FS_READ_FILE);
-    }
-}
-#endif
 
 
 /*
@@ -1284,11 +1230,6 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     if (phase == NT_PHASE_FETCH) {
         snprintf(path, sizeof(path), "%s/blobs", home);
         nt_allow(ruleset, path, rights);
-#ifdef NEUTRINO_CONFINE_TIGHT
-        nt_allow_system_reads(ruleset);
-        nt_allow(ruleset, "/proc", NT_READ_RIGHTS);
-        nt_allow(ruleset, "/dev", NT_READ_RIGHTS | LANDLOCK_ACCESS_FS_WRITE_FILE);
-#endif
         snprintf(desc, desclen, "landlock abi %d%s%s, writes confined to %s"
                  NT_FETCH_ALSO_WRITABLE,
                  abi, notes, secc, path);
@@ -1381,43 +1322,16 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
          * a different one: a tmpfs over this directory with the compositor and
          * audio sockets bound back in. See nt_seal_runtime.
          */
-#ifdef NEUTRINO_CONFINE_TIGHT
-        {
-            const char *runtime = getenv("XDG_RUNTIME_DIR");
-
-            if (runtime && *runtime) {
-                nt_allow(ruleset, runtime, NT_READ_RIGHTS);
-            }
-        }
-#endif
-#ifdef NEUTRINO_CONFINE_TIGHT
         /*
-         * The script lives one level above the writable dir so an app cannot
-         * rewrite its own launcher. Once reads are handled that same split
-         * hides the script from sh, so the parent needs read and execute --
-         * and only those, or the split stops meaning anything.
+         * No read grants here at all any more, and none needed: nothing is
+         * denied a read, so nothing has to be handed one back. The script
+         * living one level above the writable directory still stops an app
+         * rewriting its own launcher, which was always the point of the split
+         * -- it just no longer costs a rule to keep sh able to read it.
          */
-        {
-            char parent[NT_PATH_MAX];
-            char *cut;
-
-            snprintf(parent, sizeof(parent), "%s", appdir);
-            cut = strrchr(parent, '/');
-            if (cut && cut != parent) {
-                *cut = '\0';
-                nt_allow(ruleset, parent, NT_READ_RIGHTS);
-            }
-        }
-        nt_allow_system_reads(ruleset);
-        snprintf(desc, desclen,
-                 "landlock abi %d%s%s, reads allowlisted, writes confined to "
-                 "%s" NT_ALSO_WRITABLE,
-                 abi, notes, secc, appdir);
-#else
         snprintf(desc, desclen, "landlock abi %d%s%s, writes confined to "
                  "%s" NT_ALSO_WRITABLE,
                  abi, notes, secc, appdir);
-#endif
     }
 
     if (!enforce) {

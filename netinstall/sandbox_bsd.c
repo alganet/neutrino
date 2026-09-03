@@ -92,12 +92,27 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
          * phase could not download anything on this platform. Measured: the one
          * line is the whole difference between SIGKILL and a completed fetch.
          */
-        if (unveil(path, "rwc") != 0 ||
+        /*
+         * "/" readable, and this is the one place in the collapse where a
+         * platform is deliberately widened rather than narrowed.
+         *
+         * unveil is a read allowlist by construction, so OpenBSD got read
+         * confinement free while no other platform could promise it -- windows
+         * cannot confine a read at all. Keeping it would have been a bonus, and
+         * the rule is that a capability three platforms lack is not one any of
+         * them has.
+         *
+         * It closes a divergence on the way out, which is the part worth
+         * having: this list did not include the user's curl configuration, so
+         * ~/.curlrc was read on linux and macOS -- where it is part of the
+         * trust model -- and silently not read here. Somebody's proxy settings
+         * stopped applying on exactly one platform.
+         */
+        if (unveil("/", "r") != 0 ||
+            unveil(path, "rwc") != 0 ||
             unveil("/var/run/ld.so.hints", "r") != 0 ||
             unveil("/usr", "rx") != 0 ||
             unveil("/bin", "rx") != 0 ||
-            unveil("/etc/ssl", "r") != 0 ||
-            unveil("/etc/resolv.conf", "r") != 0 ||
             unveil("/dev/urandom", "r") != 0 ||
             unveil(NULL, NULL) != 0) {
             snprintf(desc, desclen, "none (unveil failed)");
@@ -143,12 +158,17 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
      * /tmp/.X11-unix and there is no display on the lane to measure a narrower
      * rule against. Recorded in the README rather than quietly dropped.
      */
-    if (unveil(appdir, "rwc") != 0 ||
-        unveil(home, "r") != 0 ||
+    /*
+     * "/" readable -- see the fetch phase above for why a platform is being
+     * widened here. unveil resolves the most specific matching path, so the
+     * "rwc" and "rx" entries below still decide their own subtrees; only the
+     * reads everywhere else change, from denied to allowed.
+     */
+    if (unveil("/", "r") != 0 ||
+        unveil(appdir, "rwc") != 0 ||
         unveil("/var/run/ld.so.hints", "r") != 0 ||
         unveil("/usr", "rx") != 0 ||
         unveil("/bin", "rx") != 0 ||
-        unveil("/etc", "r") != 0 ||
         unveil("/dev", "rwc") != 0 ||
         unveil("/tmp", "rw") != 0 ||
         unveil(NULL, NULL) != 0) {
