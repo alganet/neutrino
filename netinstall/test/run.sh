@@ -63,7 +63,7 @@ SUITES="pinfloor crashdump landlockfloor fetchbound envlen writable fetchconf na
 # than anything about the confinement. Everything that measures unveil and
 # pledge stays in.
 case "$(uname -s)" in
-    OpenBSD|FreeBSD|NetBSD|DragonFly)
+    OpenBSD)
         SUITES="pinfloor fetchbound envlen writable fetchconf names verify confine phases splash" ;;
 esac
 [ "${NEUTRINO_JOB_UI_BISECT:-}" = "1" ] && SUITES="$SUITES job-ui"

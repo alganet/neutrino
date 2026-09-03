@@ -3,23 +3,25 @@
  * SPDX-License-Identifier: ISC
  */
 
-#if defined(__OpenBSD__) || defined(__FreeBSD__) || defined(__NetBSD__)
+/*
+ * OpenBSD only. FreeBSD and NetBSD were compiled here too and nt_confine
+ * returned -1 for both -- neither has an unprivileged sandbox: jail, chroot,
+ * ugidfw and rctl all need root, and Capsicum is an API a program uses to
+ * confine itself, which neither curl nor a webview does. FreeBSD had
+ * PROC_NO_NEW_PRIVS_CTL, which is a floor and not a boundary.
+ *
+ * They are not targets any more. A promise that is the same everywhere cannot
+ * survive two platforms where none of it holds, and with the refusal now
+ * unconditional a build there would compile and then decline to run.
+ */
+#ifdef __OpenBSD__
 
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
-#ifdef __FreeBSD__
-#include <sys/procctl.h>
-#include <sys/types.h>
-#endif
-
 #include "netinstall.h"
 #include "sandbox.h"
-
-/* Never on the fetch: the download is the one thing that has to reach out. */
-
-#ifdef __OpenBSD__
 
 /*
  * The rest of the run phase's writable set, spelled where a user can read it.
@@ -180,43 +182,4 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     return 0;
 }
 
-#else
-
-/*
- * Capsicum only confines programs that cooperate, and jail/chroot/ugidfw all
- * need root, so there is still nothing here that confines a GUI child.
- *
- * What FreeBSD does have unprivileged is PROC_NO_NEW_PRIVS_CTL, which at least
- * stops the app picking up privileges from a setuid binary. That is a floor,
- * not confinement, so this still returns -1 and a strict build still refuses to
- * run -- but the description says what was actually applied rather than "none".
- */
-int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce,
-               char *desc, size_t desclen)
-{
-    const char *floor = "";
-
-    (void)phase;
-    (void)home;
-    (void)appdir;
-
-#if defined(__FreeBSD__) && defined(PROC_NO_NEW_PRIVS_CTL)
-    {
-        int arg = PROC_NO_NEW_PRIVS_ENABLE;
-
-        if (!enforce ||
-            procctl(P_PID, (id_t)getpid(), PROC_NO_NEW_PRIVS_CTL, &arg) == 0) {
-            floor = "; no-new-privs set";
-        }
-    }
-#else
-    (void)enforce;
-#endif
-
-    snprintf(desc, desclen,
-             "none (no unprivileged confinement on this system%s)", floor);
-    return -1;
-}
-
-#endif
 #endif

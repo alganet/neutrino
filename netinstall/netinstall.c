@@ -1379,7 +1379,21 @@ static const char *nt_limits(int enforce)
 /*
  * The forced-off hook exists only in test builds, so a release binary has no
  * way to be talked out of confining anything.
+ *
+ * It needs a flag of its own now that refusing is the only behaviour. The
+ * suites' unconfined control is a run with this set -- it is what says a
+ * refusal elsewhere was the confinement and not the payload failing on its own,
+ * which is ground rule 3 -- and once an unconfined run became a refusal, that
+ * control produced nothing and every assertion resting on it was unearned.
+ *
+ * So the two refusal sites ask whether confinement was declined on purpose,
+ * rather than reading -1 as one thing. A release binary compiles neither the
+ * getenv nor the flag, so there is nothing there to ask.
  */
+#ifdef NEUTRINO_TESTING
+static int nt_confine_forced_off;
+#endif
+
 static int nt_apply_confine(nt_phase phase, const char *home, const char *appdir,
                             int enforce, char *desc, size_t desclen)
 {
@@ -1388,10 +1402,21 @@ static int nt_apply_confine(nt_phase phase, const char *home, const char *appdir
 
     if (off && *off == '1') {
         snprintf(desc, desclen, "none (disabled for testing)");
+        nt_confine_forced_off = 1;
         return -1;
     }
 #endif
     return nt_confine(phase, home, appdir, enforce, desc, desclen);
+}
+
+/* Nonzero only in a test build, and only when the hook above fired. */
+static int nt_confine_declined(void)
+{
+#ifdef NEUTRINO_TESTING
+    return nt_confine_forced_off;
+#else
+    return 0;
+#endif
 }
 
 typedef enum {
@@ -1852,14 +1877,9 @@ static int nt_main(int argc, char **argv)
      * report as done.
      */
     if (nt_env_scrub(1, NULL) < 0) {
-#ifdef NEUTRINO_STRICT_SANDBOX
         fprintf(stderr, "netinstall: refusing to run: the environment could not "
                         "be reduced to the allowlist\n");
         return 3;
-#else
-        fprintf(stderr, "netinstall: warning: running with the environment the "
-                        "caller had; it could not be reduced to the allowlist\n");
-#endif
     }
     nt_limits(1);
 
@@ -1902,12 +1922,14 @@ static int nt_main(int argc, char **argv)
              * steps that could fail separately after the first had already
              * changed the process. Nothing left has that shape.
              */
-#ifdef NEUTRINO_STRICT_SANDBOX
-            fprintf(stderr, "netinstall: refusing to run unconfined: %s\n", desc);
-            return 3;
-#else
-            fprintf(stderr, "netinstall: warning: running unconfined: %s\n", desc);
-#endif
+            if (nt_confine_declined()) {
+                fprintf(stderr, "netinstall: warning: running unconfined: %s\n",
+                        desc);
+            } else {
+                fprintf(stderr, "netinstall: refusing to run unconfined: %s\n",
+                        desc);
+                return 3;
+            }
         }
     }
 
