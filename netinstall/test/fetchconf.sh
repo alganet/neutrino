@@ -530,23 +530,44 @@ nt_result "report: fetchconf output cfg=$CFGWHERE in[$STEAL_IN] out[$STEAL_OUT] 
 nt_result "report: fetchconf output-tight in[${STEAL_TIN:-unasked}] out[$STEAL_TIGHT]"
 
 if [ -n "$CFGENV" ]; then
-    # The control, first: the steal has to work somewhere, or "refused" below
-    # is a mechanism that was never running.
-    case "$STEAL_IN" in
-        *"/31b/"*) ok "a config's output flag does take the payload" ;;
-        *) bad "steal control expected=31b actual='$STEAL_IN'; the verdicts below prove nothing" ;;
-    esac
-
-    # The other half of this PR. netinstall used to answer this with "payload
-    # too large or unreadable" -- a true sentence about a file that is not
-    # there. This assertion fails against the commit before this one.
-    if grep -aq 'wrote nothing to' "$WORK/steal-in.err" 2>/dev/null; then
-        ok "and netinstall says the downloader wrote nothing where it was told"
+    if [ "$NT_WINDOWS" = "1" ]; then
+        # Windows grants the payload file and not the blobs directory, so
+        # "inside blobs" is not a place the steal can land either -- the
+        # redirected write is refused by the label before curl has anywhere to
+        # put it, and curl reports error 23 rather than a completed transfer.
+        #
+        # This whole block used to read the other way, and it read that way
+        # because the fetch phase confined nothing here. The control moved with
+        # the mechanism: liveness is no longer "the steal lands somewhere" --
+        # there is nowhere -- it is that the *payload* still arrives through the
+        # same lowered child, which is PAYLOADCURL_OK below and would be absent
+        # if the confinement had simply broken the downloader.
+        case "$STEAL_IN" in
+            *"/0b/"*) ok "a config's output flag cannot land even inside blobs" ;;
+            *) bad "steal expected=0b inside blobs actual='$STEAL_IN'; the file grant is wider than the payload file" ;;
+        esac
+        # And the sentence is about a download that failed, not about a
+        # downloader that succeeded and wrote nothing -- a different path, so
+        # the assertion below does not apply and is not silently skipped.
+        nt_note "the 'wrote nothing to' sentence is not reached here: the steal fails in curl, before netinstall inspects a destination"
     else
-        bad "steal message expected=names-the-empty-destination actual='$(said "$WORK/steal-in.err")'"
-    fi
-    if grep -aq 'payload too large or unreadable' "$WORK/steal-in.err" 2>/dev/null; then
-        bad "steal message: the old sentence is still being printed for a file that was never written"
+        # The control, first: the steal has to work somewhere, or "refused"
+        # below is a mechanism that was never running.
+        case "$STEAL_IN" in
+            *"/31b/"*) ok "a config's output flag does take the payload" ;;
+            *) bad "steal control expected=31b actual='$STEAL_IN'; the verdicts below prove nothing" ;;
+        esac
+
+        # netinstall used to answer this with "payload too large or unreadable"
+        # -- a true sentence about a file that is not there.
+        if grep -aq 'wrote nothing to' "$WORK/steal-in.err" 2>/dev/null; then
+            ok "and netinstall says the downloader wrote nothing where it was told"
+        else
+            bad "steal message expected=names-the-empty-destination actual='$(said "$WORK/steal-in.err")'"
+        fi
+        if grep -aq 'payload too large or unreadable' "$WORK/steal-in.err" 2>/dev/null; then
+            bad "steal message: the old sentence is still being printed for a file that was never written"
+        fi
     fi
 
     # Where those bytes land is reported here and asserted in phases.sh, which

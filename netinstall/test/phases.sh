@@ -258,7 +258,33 @@ rm -rf "$NEUTRINO_HOME"
 mkdir -p "$NEUTRINO_HOME/blobs"
 nt_curlrc "$NEUTRINO_HOME/blobs" "$BLOBJAR"
 OUT="$(CURL_HOME="$(nt_native "$NEUTRINO_HOME/blobs")" nt_timeout 60 "$APP" 2>"$WORK/err")"
-if [ -f "$BLOBJAR" ]; then
+if [ "$NT_WINDOWS" = "1" ]; then
+    # Windows grants one file, not the directory, so there is no second
+    # writable thing in blobs to use as an in-reach control -- and this
+    # assertion used to fail for exactly that reason once low integrity became
+    # the tier rather than an opt-in on top of it.
+    #
+    # The in-reach control here is the payload itself: the child ran, read the
+    # config (which is what BLOBJAR being absent would otherwise be ambiguous
+    # about) and completed a transfer into the one file it was granted. If that
+    # did not happen, every BLOCKED above is unearned in the same way.
+    #
+    # And the jar staying absent is the assertion, not a control. It is what
+    # says the grant is a file and not a directory: the obvious implementation
+    # -- labelling blobs -- would write this jar and pass everything above it.
+    if ! grep -q APP_RAN <<<"$OUT"; then
+        nt_fail "in-reach control expected=APP_RAN actual=nothing; the fetch never completed and every BLOCKED above is unearned; err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
+        FAILURES=$((FAILURES + 1))
+    elif [ -f "$BLOBJAR" ]; then
+        probe "default: BLOBJAR_ESCAPED -- the grant is wider than the payload file"
+        nt_fail "BLOBJAR expected=BLOCKED actual=ESCAPED; the fetch child wrote $BLOBJAR"
+        FAILURES=$((FAILURES + 1))
+    else
+        probe "default: BLOBJAR_BLOCKED -- the payload file was the only write"
+        echo "  PASS: BLOBJAR_BLOCKED -- the child ran and the payload file was its only write"
+    fi
+    rm -f "$BLOBJAR"
+elif [ -f "$BLOBJAR" ]; then
     echo "  PASS: INJAR_WRITTEN -- the config is read from inside the confinement"
 else
     nt_fail "in-reach control expected=INJAR_WRITTEN actual=nothing at $BLOBJAR; every BLOCKED above is unearned"
