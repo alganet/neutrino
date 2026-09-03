@@ -591,12 +591,24 @@ fi
 # What the sandbox does not do about any of this
 # =====================================================================
 #
-# Asserted, not recorded, and asserted to the value four probing rounds measured
-# on both platforms: the tight tier refuses to execve a file in the app's own
-# writable directory and maps a library out of that same directory without a
-# word. That is why the deny list above is the defence rather than one of two.
-# A kernel or a profile that closes this should fail here and be read about,
-# not pass quietly and leave the comment in env.c stale.
+# Asserted, not recorded, and asserted to what is measured now rather than to
+# what used to be true. Three of these read the other way before reads stopped
+# being confined on any platform, and they are the clearest statement in the
+# suite of what that cost:
+#
+#   EXEC_BLOCKED    -> EXEC_OWN_DIR       linux w^x needed the exec allowlist,
+#                                         and the exec allowlist needed the read
+#                                         allowlist, so it went with it. macOS
+#                                         and OpenBSD still refuse this; neither
+#                                         is promised, and windows never could.
+#   DLOPEN_HOME_BLOCKED -> DLOPEN_HOME_OK a library anywhere under $HOME maps
+#   MODCTOR_HOME_SILENT -> MODCTOR_HOME_RAN  ...and its constructor runs
+#
+# Which is exactly why the environment deny list above is the defence and not
+# one of two: it is now the only thing standing between a loader variable and
+# code of the caller's choosing in the process that renders the page. A kernel
+# or a profile that closes any of this again should fail here and be read
+# about, not pass quietly.
 if [ -n "$NT_DL_TIGHT" ] && [ "$NT_MOD_BUILT" = "1" ]; then
     echo "=== The tight tier, on a library rather than a program ==="
     tight_check() {
@@ -607,11 +619,11 @@ if [ -n "$NT_DL_TIGHT" ] && [ "$NT_MOD_BUILT" = "1" ]; then
             FAILURES=$((FAILURES + 1))
         fi
     }
-    tight_check "execve of a file in the app dir is refused"      EXEC_BLOCKED
+    tight_check "execve of a file in the app dir is not refused"  EXEC_OWN_DIR
     tight_check "the same directory's library maps anyway"        DLOPEN_OWNDIR_OK
     tight_check "and its constructor runs"                        MODCTOR_OWNDIR_RAN
-    tight_check "a library under \$HOME is out of reach"          DLOPEN_HOME_BLOCKED
-    tight_check "so nothing of it ran"                            MODCTOR_HOME_SILENT
+    tight_check "a library under \$HOME is in reach"              DLOPEN_HOME_OK
+    tight_check "and it runs"                                     MODCTOR_HOME_RAN
 fi
 
 # =====================================================================

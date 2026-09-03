@@ -74,24 +74,6 @@ static const char nt_profile[] =
     "  (subpath (param \"LIBSTATE\"))\n"
     "  (subpath \"/private/var/folders\")\n"
     "  (regex #\"^/dev/(null|zero|random|urandom|tty|dtracehelper)$\"))\n"
-#ifdef NEUTRINO_CONFINE_TIGHT
-    /*
-     * The tight tier denies $HOME wholesale rather than naming secrets one at a
-     * time, then hands back the few subtrees Cocoa and WebKit read on the way
-     * up. Metadata stays readable so traversal and stat still work; only file
-     * contents are withheld.
-     */
-    "(deny file-read* (subpath (param \"HOME\")))\n"
-    "(allow file-read-metadata (subpath (param \"HOME\")))\n"
-    "(allow file-read*\n"
-    "  (subpath (param \"APPDIR\"))\n"
-    "  (subpath (param \"SCRIPTDIR\"))\n"
-    "  (subpath (param \"LIBCACHE\"))\n"
-    "  (subpath (param \"LIBPREFS\"))\n"
-    "  (subpath (param \"LIBWEBKIT\"))\n"
-    "  (subpath (param \"LIBSTATE\"))\n"
-    "  (subpath (param \"LIBFONTS\")))\n"
-#endif
     /*
      * Write xor execute, and it has to name every writable path or it means
      * nothing. Denying exec on the app dir alone left the carve-outs above --
@@ -113,10 +95,12 @@ static const char nt_profile[] =
     "  (subpath (param \"LIBSTATE\"))\n"
     "  (subpath \"/private/var/folders\"))\n"
     /*
-     * The file denials below are necessary and not sufficient. A keychain is not
-     * read by opening a file -- the request goes to securityd over Mach, so
-     * denying ~/Library/Keychains alone was theatre. Denying the service is what
-     * actually closes it. Certificate trust lives in a different daemon
+     * These are the denials that survived reads being given up, and they are
+     * the reason giving them up costs less than it looks. A keychain is not
+     * read by opening a file -- the request goes to securityd over Mach -- so
+     * denying ~/Library/Keychains was always the weaker half and denying the
+     * service is what actually closes it. Certificate trust lives in a
+     * different daemon
      * (com.apple.trustd) and is deliberately left reachable, or TLS inside the
      * webview would stop working.
      *
@@ -185,15 +169,23 @@ static const char nt_profile[] =
      * another process's memory. Signals are scoped to our own sandbox, which is
      * what LANDLOCK_SCOPE_SIGNAL buys on the other side. */
     "(deny mach-priv-task-port)\n"
-    "(deny signal (target others))\n"
-    "(deny file-read*\n"
-    "  (subpath (param \"SSH\"))\n"
-    "  (subpath (param \"GNUPG\"))\n"
-    "  (subpath (param \"AWS\"))\n"
-    "  (subpath (param \"KEYCHAINS\"))\n"
-    "  (subpath (param \"MESSAGES\"))\n"
-    "  (subpath (param \"MAIL\"))\n"
-    "  (subpath (param \"SAFARI\")))\n";
+    "(deny signal (target others))\n";
+/*
+ * There is no read rule left in that profile, and this is the largest single
+ * thing given up in the collapse.
+ *
+ * It used to deny ~/.ssh, ~/.gnupg, ~/.aws, the keychains, Messages, Mail and
+ * Safari by name, and under the tight tier it denied all of $HOME and handed
+ * back the subtrees Cocoa and WebKit read on the way up. Both worked. Both are
+ * gone because windows cannot confine a read at all -- low integrity is a
+ * no-write-up rule, and AppContainer, the one mechanism that would, is measured
+ * not to start a webview -- and a promise made on three platforms and not the
+ * fourth is not a promise, it is a support matrix.
+ *
+ * What is not given up, because none of it is a read: the app still cannot
+ * write outside its own directory, cannot execute what it wrote, and cannot
+ * hand a bundle it wrote to LaunchServices.
+ */
 
 /*
  * The per-user temp dir is deliberately *not* writable here, unlike in the run
@@ -255,8 +247,6 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
                char *desc, size_t desclen)
 {
     char dirbuf[NT_PATH_MAX], tmpbuf[NT_PATH_MAX], blobs[NT_PATH_MAX];
-    char scriptdir[NT_PATH_MAX];
-    char *cut;
     char under[12][NT_PATH_MAX];
     const char *params[40];
     const char *userhome;
@@ -265,11 +255,16 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     int n = 0;
     int i;
 
-    static const char *const subdirs[12] = {
+    /*
+     * Four, where there were twelve. The other eight -- .ssh, .gnupg, .aws,
+     * Keychains, Messages, Mail, Safari and Library/Fonts -- existed only to be
+     * named by read rules, and there are no read rules left. Removed rather
+     * than left resolving into parameters no line of the profile mentions,
+     * which is how a profile comes to look like it is protecting something.
+     */
+    static const char *const subdirs[4] = {
         "/Library/Caches", "/Library/Preferences", "/Library/WebKit",
-        "/Library/Saved Application State", "/.ssh", "/.gnupg", "/.aws",
-        "/Library/Keychains", "/Library/Messages", "/Library/Mail",
-        "/Library/Safari", "/Library/Fonts"
+        "/Library/Saved Application State"
     };
 
     /*
@@ -318,7 +313,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     dir = nt_resolve(appdir ? appdir : "/var/empty", dirbuf, sizeof(dirbuf));
     snprintf(tmpbuf, sizeof(tmpbuf), "%s/tmp", dir);
 
-    for (i = 0; i < 12; i++) {
+    for (i = 0; i < 4; i++) {
         snprintf(under[i], sizeof(under[i]), "%s%s", userhome, subdirs[i]);
     }
 
@@ -328,27 +323,14 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     params[n++] = "LIBPREFS";   params[n++] = under[1];
     params[n++] = "LIBWEBKIT";  params[n++] = under[2];
     params[n++] = "LIBSTATE";   params[n++] = under[3];
-    params[n++] = "SSH";        params[n++] = under[4];
-    params[n++] = "GNUPG";      params[n++] = under[5];
-    params[n++] = "AWS";        params[n++] = under[6];
-    params[n++] = "KEYCHAINS";  params[n++] = under[7];
-    params[n++] = "MESSAGES";   params[n++] = under[8];
-    params[n++] = "MAIL";       params[n++] = under[9];
-    params[n++] = "SAFARI";     params[n++] = under[10];
-    params[n++] = "LIBFONTS";   params[n++] = under[11];
     params[n++] = "HOME";       params[n++] = userhome;
 
     /*
-     * The script sits one level above the app dir, and the default cache lives
-     * under $HOME -- which the tight tier denies. Without this the launcher
-     * would be unreadable to sh, exactly as it was on linux.
+     * SCRIPTDIR is gone with the read rules. It existed so the tight profile
+     * could hand back a read of the launcher one level above the app dir,
+     * which nothing denies now -- and no surviving rule mentions it, so
+     * resolving it would have left a parameter the profile never reads.
      */
-    snprintf(scriptdir, sizeof(scriptdir), "%s", dir);
-    cut = strrchr(scriptdir, '/');
-    if (cut && cut != scriptdir) {
-        *cut = '\0';
-    }
-    params[n++] = "SCRIPTDIR";  params[n++] = scriptdir;
     params[n] = NULL;
 
     /*
@@ -364,18 +346,9 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         return -1;
     }
 
-#ifdef NEUTRINO_CONFINE_TIGHT
-    /* Not "reads confined to the app dir": the tight profile denies reads under
-     * $HOME and hands back the subtrees Cocoa and WebKit read on the way up,
-     * and everything outside $HOME is readable as it is in the default tier. */
-    snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", reads denied under "
-                            "$HOME, writes confined to %s" NT_ALSO_WRITABLE,
-             NT_OFFLINE_NOTE, dir);
-#else
     snprintf(desc, desclen, "seatbelt%s" NT_SESSION_NOTE ", writes confined to "
                             "%s" NT_ALSO_WRITABLE,
              NT_OFFLINE_NOTE, dir);
-#endif
     return 0;
 }
 
