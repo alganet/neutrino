@@ -903,8 +903,23 @@ is no eleven-second head start to wait out and no step list to fall out of step 
 here take one picture between them, and it is not of the webview: `splash.sh` photographs the
 Loading... window, over a download `hostile.py` stalled on purpose so the window was due and with
 `NEUTRINO_SPLASH_HOLD_MS` keeping it up while the shutter fired. It goes to the lane's sheet under
-its own heading, on the three lanes that draw one — the Linux one under Xvfb, Windows, and macOS —
-when `NEUTRINO_SPLASH_SHOTS` names a directory, and nowhere otherwise.
+its own heading, on the four lanes that draw one — X11 under Xvfb, wayland under a headless sway,
+Windows, and macOS — when `NEUTRINO_SPLASH_SHOTS` names a directory, and nowhere otherwise.
+
+Those four lanes also name the mechanism they expect in `NEUTRINO_SPLASH_EXPECT`, and the suite
+fails when the measured one differs. That is not belt and braces: the splash declines silently
+wherever it cannot draw, which is correct on a headless machine and indistinguishable from a lane
+whose display server failed to start. Without the expectation such a lane skips every window case
+and goes green having measured nothing. Unset — a developer's machine, and the BSD guests — the
+mechanism stays a reading.
+
+The wayland half had never run anywhere until it got a lane of its own. Every other lane is X11,
+AppKit or `user32`, so the longest of the five platform files was compiled six times a push and
+executed never, and both of the suite's wayland cases ended in "no compositor on this machine". The
+lane brings up a headless `sway` (see `test/wayland-up.sh` for why sway and not weston: `grim` can
+photograph it) and an X server beside it, which is also the only place the two cases about the
+*choice* between the protocols can be more than a skip — a stale `WAYLAND_DISPLAY` falling back to
+X11, and a reachable compositor being preferred when `DISPLAY` is set too.
 
 Two probes do not run by default. `crashdump.sh` (Windows) measures where a crash puts bytes, and
 `landlockfloor.sh` (Linux, needs Docker) reads what kernel each supported distribution ships; both
