@@ -1410,10 +1410,16 @@ jobs:
       # reference implementation. See test/wayland-up.sh: the deciding
       # difference is that this lane has to come away with a picture, and grim
       # takes one through wlr-screencopy without ceremony.
+      #
+      # wayland-utils is `wayland-info`, and it is not optional here even
+      # though the helper treats it as such. It is the only thing in this lane
+      # that connects to the compositor as a wayland client before the suite
+      # does, so it is what tells a compositor that is up but advertising no
+      # xdg_wm_base apart from a splash that failed to draw on a good one.
       - run: |
           sudo apt update
-          sudo apt install -y sway grim xvfb \
-            || sudo apt install -y sway grim xvfb
+          sudo apt install -y sway grim xvfb wayland-utils \
+            || sudo apt install -y sway grim xvfb wayland-utils
       - name: netinstall splash suite
         timeout-minutes: 10
         run: |
