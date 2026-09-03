@@ -275,16 +275,21 @@ case "$DEFAULT_SHIP$CONFIGURED_SHIP" in
     *localappdata*|*appdata*|*programdata*|*configured-dumpdir*) OUTSIDE=yes ;;
 esac
 probe "report: crashdump WRITES_OUTSIDE_APPDIR=$OUTSIDE"
-# And which of the two closed it, when it is closed, because "the job object
-# does this" and "the label does this" have different consequences for anyone
-# who later changes either.
-case "$DEFAULT_LOW" in
-    none) ;;
-    *) case "$DEFAULT_JOB" in
-           none) probe "report: crashdump CLOSED_BY=job-object (the label alone does not)" ;;
-           *)    probe "report: crashdump CLOSED_BY=${DEFAULT_SHIP:-none} -- neither alone was enough" ;;
-       esac ;;
-esac
+# And which mechanism closed it, when one did. Written as four named outcomes
+# rather than by interpolating a cell value, because the first version of this
+# printed "CLOSED_BY=localappdata-temp(+2) -- neither alone was enough", which
+# names the place the bytes landed in a field whose name says they did not.
+if [ "$DEFAULT_SHIP" = "none" ]; then
+    if [ "$DEFAULT_LOW" = "none" ]; then
+        probe "report: crashdump CLOSED_BY=low-integrity"
+    elif [ "$DEFAULT_JOB" = "none" ]; then
+        probe "report: crashdump CLOSED_BY=job-object"
+    else
+        probe "report: crashdump CLOSED_BY=both-together -- neither alone was enough"
+    fi
+else
+    probe "report: crashdump CLOSED_BY=nothing -- the shipping combination still writes to $DEFAULT_SHIP"
+fi
 
 echo "=== crashdump: $FAILURES failure(s) ==="
 exit $((FAILURES > 0))
