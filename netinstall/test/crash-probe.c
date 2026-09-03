@@ -16,15 +16,27 @@
  * process whose %TEMP% has been redirected, which is the shipping condition
  * once low integrity is the tier rather than an opt-in.
  *
- *   crash-probe report          prints the integrity level it is running at
- *   crash-probe low report      lowers to S-1-16-4096 first, then reports
- *   crash-probe crash           unhandled access violation at the current level
- *   crash-probe low crash       lowers first, then the same crash
+ *   crash-probe report              prints the integrity level it is running at
+ *   crash-probe low report          lowers to S-1-16-4096 first, then reports
+ *   crash-probe crash               unhandled access violation, current level
+ *   crash-probe low crash           lowers first, then the same crash
+ *   crash-probe job crash           inside a job object shaped like nt_confine's
+ *   crash-probe low job crash       both, which is the shipping condition
  *
- * Four modes in one file so the control and the measurement are the same bytes.
- * `low report` is the control that says the drop is real: a `crash` that
- * produced no dump means nothing if the process was never lowered, and a suite
- * that only ever runs the crashing modes cannot tell those apart.
+ * `job` is not decoration and this probe was wrong without it. nt_confine puts
+ * the process in a job carrying JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
+ * which is documented to make the system terminate the process rather than call
+ * the default handler -- and the default handler is what invokes WER. A crash
+ * measured outside that job is a crash under a different exception path than
+ * any app netinstall launches will ever take, so the first run of this suite
+ * measured the wrong process and said WRITES_OUTSIDE_APPDIR=yes about it.
+ *
+ * The modes compose so the four cells can be told apart: whether it is the
+ * label or the job that closes the channel is a different fact from whether the
+ * channel closes, and a suite that only ran the shipping combination could not
+ * say which. `low report` stays the control that says the drop is real -- a
+ * `crash` that produced no dump means nothing if the process was never
+ * lowered.
  *
  * The drop is nt_drop_to_low from sandbox_win.c, copied rather than shared
  * because a probe that imports the thing it is measuring cannot fail
@@ -119,6 +131,35 @@ static void crash(void)
     *p = 1;
 }
 
+/*
+ * The same job nt_confine builds for the run phase, minus the UI restrictions
+ * it does not apply by default: DIE_ON_UNHANDLED_EXCEPTION and an active
+ * process limit. Assigned to this process, which is what nt_confine does.
+ */
+static int join_job(void)
+{
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
+    HANDLE job = CreateJobObjectA(NULL, NULL);
+
+    if (!job) {
+        return 0;
+    }
+    ZeroMemory(&limits, sizeof(limits));
+    limits.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION |
+        JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+    limits.BasicLimitInformation.ActiveProcessLimit = 64;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                 &limits, sizeof(limits)) ||
+        !AssignProcessToJobObject(job, GetCurrentProcess())) {
+        CloseHandle(job);
+        return 0;
+    }
+    /* Deliberately leaked: closing it while this process is a member is the
+     * one thing that could take the process down before it crashes. */
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     int i = 1;
@@ -134,6 +175,15 @@ int main(int argc, char **argv)
              * is the one wrong answer this probe could give.
              */
             printf("il=DROPFAILED err=%lu\n", (unsigned long)GetLastError());
+            return 2;
+        }
+        i++;
+    }
+    if (i < argc && strcmp(argv[i], "job") == 0) {
+        if (!join_job()) {
+            /* Same rule as the drop: a crash outside the job recorded as a
+             * crash inside it is an answer about the wrong process. */
+            printf("il=JOBFAILED err=%lu\n", (unsigned long)GetLastError());
             return 2;
         }
         i++;

@@ -230,7 +230,9 @@ reg delete "$WERKEY" /f >/dev/null 2>&1
 
 DEFAULT_UNCONFINED="$(run_crash default-unconfined plain crash)"
 DEFAULT_LOW="$(run_crash default-low redirect low crash)"
-probe "report: crashdump default unconfined=$DEFAULT_UNCONFINED low+redirect=$DEFAULT_LOW"
+DEFAULT_JOB="$(run_crash default-job plain job crash)"
+DEFAULT_SHIP="$(run_crash default-ship redirect low job crash)"
+probe "report: crashdump default unconfined=$DEFAULT_UNCONFINED low+redirect=$DEFAULT_LOW job=$DEFAULT_JOB shipping=$DEFAULT_SHIP"
 
 # =====================================================================
 # The configured machine -- LocalDumps under HKCU
@@ -242,7 +244,8 @@ reg add "$WERKEY" /v DumpCount /t REG_DWORD /d 8 /f >/dev/null 2>&1
 
 CONFIGURED_UNCONFINED="$(run_crash configured-unconfined plain crash)"
 CONFIGURED_LOW="$(run_crash configured-low redirect low crash)"
-probe "report: crashdump localdumps unconfined=$CONFIGURED_UNCONFINED low+redirect=$CONFIGURED_LOW"
+CONFIGURED_SHIP="$(run_crash configured-ship redirect low job crash)"
+probe "report: crashdump localdumps unconfined=$CONFIGURED_UNCONFINED low+redirect=$CONFIGURED_LOW shipping=$CONFIGURED_SHIP"
 
 # =====================================================================
 # Control 2 -- WER wrote something for somebody
@@ -262,11 +265,26 @@ fi
 # Stated as one line somebody can grep out of a log, because this is the thing
 # the wording turns on: OUTSIDE means a crash puts bytes somewhere the app dir
 # does not contain, in a state a real machine can be in.
+#
+# Read off the two shipping cells only. The four-cell grid above is there to say
+# which mechanism does the work -- the Low label, the job object, or neither --
+# and that is worth having in the log, but the promise is a claim about the
+# process netinstall actually launches, which is lowered AND in the job.
 OUTSIDE=no
-case "$DEFAULT_LOW$CONFIGURED_LOW" in
+case "$DEFAULT_SHIP$CONFIGURED_SHIP" in
     *localappdata*|*appdata*|*programdata*|*configured-dumpdir*) OUTSIDE=yes ;;
 esac
 probe "report: crashdump WRITES_OUTSIDE_APPDIR=$OUTSIDE"
+# And which of the two closed it, when it is closed, because "the job object
+# does this" and "the label does this" have different consequences for anyone
+# who later changes either.
+case "$DEFAULT_LOW" in
+    none) ;;
+    *) case "$DEFAULT_JOB" in
+           none) probe "report: crashdump CLOSED_BY=job-object (the label alone does not)" ;;
+           *)    probe "report: crashdump CLOSED_BY=${DEFAULT_SHIP:-none} -- neither alone was enough" ;;
+       esac ;;
+esac
 
 echo "=== crashdump: $FAILURES failure(s) ==="
 exit $((FAILURES > 0))
