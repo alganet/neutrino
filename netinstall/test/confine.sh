@@ -749,33 +749,20 @@ echo "=== Descriptors the caller left open ==="
 check "an inherited descriptor does not reach the app" FD_CLOSED
 
 echo "=== Sockets the app has no path-based rule against ==="
-# Abstract-socket scoping is deliberately skipped when a display is set, because
-# an X11 client does not survive it. Asserting it therefore needs a run without
-# one -- and the run above, with whatever display CI has, is what proves the
-# skip really happens rather than being a claim in a comment.
+# Asserted to ABSTRACT_OK, and asserted rather than dropped.
+#
+# Landlock's abstract-socket scoping is gone. It needed ABI 6, which is 6.12,
+# while Debian 12 ships 6.1 and Ubuntu 24.04 ships 6.8 -- and it was applied
+# only when $DISPLAY was unset, because an X11 client does not survive it: the
+# scoped refusal is EPERM, libxcb retries only on ENOENT and ECONNREFUSED, so
+# the client never falls back to the pathname socket and the display is gone.
+#
+# Two ways for the same build to confine differently, then: by kernel version
+# and by whether a display happened to be set. Neither can be in a promise made
+# on four platforms, so an abstract socket is reachable everywhere now, and this
+# says so where it used to assert the refusal on the lanes that had ABI 6.
 if [ "$(uname -s)" = "Linux" ]; then
-    NOX_OUT="$(env -u DISPLAY "$APP" 2>/dev/null 3<"$SERVE/hostile.cmd")"
-    NOX_CONFINE="$(env -u DISPLAY "$APP" --info 2>/dev/null |
-        awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')"
-    nt_note "without a display: $NOX_CONFINE"
-    case "$NOX_CONFINE" in
-        *"sockets+signals scoped"*)
-            if grep -qx ABSTRACT_BLOCKED <<<"$NOX_OUT"; then
-                echo "  PASS: cannot reach an abstract unix socket outside the sandbox"
-            else
-                nt_fail "abstract socket expected=ABSTRACT_BLOCKED actual=$(grep -o 'ABSTRACT_[A-Z]*' <<<"$NOX_OUT")"
-                FAILURES=$((FAILURES + 1))
-            fi ;;
-        *)  nt_note "socket scoping needs landlock abi 6; got $NOX_CONFINE" ;;
-    esac
-    case "$CONFINE" in
-        *"sockets+signals scoped"*)
-            nt_note "no display was set here, so socket scoping applied to the main run too" ;;
-        *"signals scoped"*)
-            echo "  PASS: with a display set, socket scoping is skipped so X11 survives" ;;
-    esac
-else
-    nt_note "landlock scoping is linux-only; got $(grep -o 'ABSTRACT_[A-Z]*' <<<"$OUT")"
+    check "an abstract unix socket is not mediated" ABSTRACT_OK
 fi
 
 echo "=== Syscalls that reach across process boundaries ==="
