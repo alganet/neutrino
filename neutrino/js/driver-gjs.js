@@ -77,7 +77,7 @@
                  * userns to 1 and refuse, while the same kernel version
                  * elsewhere allows it -- netinstall's README records the
                  * same split for the same reason, and its test suite has to
-                 * lift that knob to exercise the session tier at all.
+                 * lift that knob at all; what needed it is gone.
                  *
                  * It also does not degrade when it cannot start. The web
                  * process simply fails and the window comes up empty, which
@@ -378,7 +378,7 @@
                 // of the line, and it hands a string to the desktop's URI
                 // handler, which will happily act on file: or on a .desktop
                 // entry if it is given one. It is also where the navigation
-                // refusal above arrives, so the tier half of the check
+                // refusal above arrives, so the build half of the check
                 // closes that route as well as this one.
                 if (!self.mayOpenExternal(url)) {
                     return;

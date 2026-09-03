@@ -106,7 +106,7 @@
              * allowlist keeps the whole NEUTRINO_ prefix, so it arrived
              * intact there too; a release build no longer reads it, and the
              * tests that need to point at another document build with the
-             * testing tier. The batch region has stopped setting it, so on
+             * testing build. The batch region has stopped setting it, so on
              * both launch paths the name an attacker would set is one
              * nothing reads.
              *
@@ -570,7 +570,7 @@
                         /*
                          * Still swallowed -- this loop has always been
                          * allowed to outlive a bad turn -- but no longer in
-                         * silence. Once, and only under the testing tier.
+                         * silence. Once, and only under a testing build.
                          *
                          * String() and not a typed catch: `catch (ex :
                          * Exception)` is the spelling that reaches the CLR
@@ -616,8 +616,8 @@
                  * package/download." whatever had gone wrong. That was true
                  * of the one failure that could reach here and it is not
                  * true of the ones that can now: a file this launcher
-                 * cannot split, and a document the offline tier cannot make
-                 * offline, both refuse before any download starts. An error
+                 * cannot split, and a document whose policy refuses before
+                 * any download starts. An error
                  * this file raises says so in its own words and keeps them.
                  */
                 var detail;

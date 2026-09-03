@@ -232,12 +232,12 @@ while [ $SECONDS -lt $deadline ] && [ -z "$(read_status_title)" ]; do sleep $POL
 if [ -z "$(read_status_title)" ]; then
     # This verifier cannot see a window. It sees a status file that the macOS
     # driver writes, and the driver only writes one when the app was built with
-    # --tier=testing. A build without it looks exactly like an app that never
+    # --testing. A build without it looks exactly like an app that never
     # started, so say which of the two this is rather than making the next
     # person find out from a stack of green assertions and one red one.
     if [ ! -e "$STATUS_FILE" ]; then
         echo "FAIL: no status file at $STATUS_FILE"
-        echo "      the app writes one only when built with --tier=testing;"
+        echo "      the app writes one only when built with --testing;"
         echo "      a release build is silent here and looks identical to a crash"
     else
         echo "FAIL: window never appeared"

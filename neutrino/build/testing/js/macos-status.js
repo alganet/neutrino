@@ -67,7 +67,7 @@
                  * when the window had arrived.
                  *
                  * Scaffolding like the rest of writeStatus, behind the
-                 * same tier gate, and read by nothing that asserts.
+                 * same gate, and read by nothing that asserts.
                  */
                 var winNum = "?";
                 try { winNum = String(win.windowNumber); } catch (_) {}

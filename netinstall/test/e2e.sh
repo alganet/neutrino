@@ -31,7 +31,7 @@ echo "=== Build the app under test ==="
 # six-state window contract belongs to neutrino's verifiers, which every lane
 # that runs this suite has already run against a standalone launch of its own.
 # See nt_app_probe in lib.sh for the whole of that argument.
-bash "$ROOT/test/mkapp.sh" --tier=testing "$NT_TESTDIR/alive.js" "$SERVE/alive.cmd"
+bash "$ROOT/test/mkapp.sh" --testing "$NT_TESTDIR/alive.js" "$SERVE/alive.cmd"
 SPEC="alive-example-com-1$(nt_pin "$SERVE/alive.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 echo "  built and pinned as $SPEC"

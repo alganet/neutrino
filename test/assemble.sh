@@ -612,8 +612,8 @@ fi
 # There used to be four `//#` sentinels in the artifact, a tier list stamped
 # into the config object, a `sed` that read it back at every launch, and nine
 # runtime conditionals that consulted it. All of that is gone and none of it was
-# replaced: neutrino/tier/<name> is an overlay, so a tier is decided by which
-# parts an artifact was assembled from.
+# replaced: neutrino/build/<name> is an overlay, so what an artifact is is
+# decided by which parts it was assembled from.
 #
 # What that buys is the thing a stamp could not. A release build does not carry
 # the testing scaffolding behind a flag -- it does not carry it, so there is no
@@ -624,7 +624,7 @@ echo "=== a release build does not carry the testing scaffolding ==="
 T="$(tree tiers)"
 bash "$T/neutrino/assemble.sh" "$T/release.cmd" >/dev/null 2>&1
 eq "a release build assembles" "$?" "0"
-bash "$T/neutrino/assemble.sh" --overlay "$T/neutrino/tier/testing" "$T/testing.cmd" >/dev/null 2>&1
+bash "$T/neutrino/assemble.sh" --overlay "$T/neutrino/build/testing" "$T/testing.cmd" >/dev/null 2>&1
 eq "the testing overlay assembles" "$?" "0"
 
 # One overlay left, and the probes are the same shape they were: each names a
@@ -1019,24 +1019,22 @@ else
     eq "and the app is in it" \
        "$(grep -c 'document.title = "example";' "$WORK/mk-default.cmd" | head -1)" "1"
 
-    # --tier names overlays under neutrino/tier and nothing else. Asserted on
-    # what the artifact carries, because that is now the whole of what a tier
-    # is -- there is no stamp to read back.
-    bash "$MK" --tier=testing "$WORK/plainapp.js" "$WORK/mk-tier.cmd" >/dev/null 2>&1
-    eq "--tier=testing puts the scaffolding in" \
+    # --testing lays neutrino/build/testing over the launcher. Asserted on what
+    # the artifact carries, because there is no stamp to read back -- and never
+    # was, since the tier stamp went before the tiers did.
+    bash "$MK" --testing "$WORK/plainapp.js" "$WORK/mk-tier.cmd" >/dev/null 2>&1
+    eq "--testing puts the scaffolding in" \
        "$([ "$(grep -cF 'neutrino-title.txt' "$WORK/mk-tier.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
     eq "and a build without it has none" \
        "$(grep -cF 'neutrino-title.txt' "$WORK/mk-default.cmd" || true)" "0"
-    # A removed tier is refused by name rather than as an unknown one: roughly a
-    # hundred call sites spelled a tier, and a caller who still spells offline
-    # or tight should be told it was removed, not told it was a typo.
-    bash "$MK" --tier=testing,offline "$WORK/plainapp.js" "$WORK/mk-two.cmd" >"$WORK/mk-two.err" 2>&1
-    eq "a removed tier is refused" "$?" "1"
-    eq "and the refusal says it was removed" \
-       "$(grep -c 'was removed' "$WORK/mk-two.err" || true)" "1"
+    # --tier is refused by name rather than as an unknown option: every call
+    # site in this suite spelled it until the word went, and a caller who still
+    # spells it should be told what replaced it rather than told it is a typo.
     rm -f "$WORK/mk-bogus.cmd"
-    bash "$MK" --tier=paranoid "$WORK/plainapp.js" "$WORK/mk-bogus.cmd" >/dev/null 2>&1
-    eq "and a tier with no overlay is refused" "$?" "1"
+    bash "$MK" --tier=testing "$WORK/plainapp.js" "$WORK/mk-bogus.cmd" >"$WORK/mk-tier.err" 2>&1
+    eq "--tier is refused" "$?" "1"
+    eq "and the refusal names --testing" \
+       "$([ "$(grep -c -- '--testing' "$WORK/mk-tier.err" || true)" -gt 0 ] && echo yes || echo no)" "yes"
 
     bash "$MK" --title "My App" --size 1024x768 --background '#12141a' --decorations=none \
         "$WORK/plainapp.js" "$WORK/mk-full.cmd" >/dev/null 2>&1

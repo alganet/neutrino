@@ -7,21 +7,20 @@
 # Every platform ends nt_confine with one sentence naming one directory, and
 # --info prints it, and a non-strict build prints it on stderr as the warning a
 # user actually reads. Every platform then grants writes somewhere else as well:
-# /dev, /dev/shm, /proc and $XDG_RUNTIME_DIR on linux; the whole Darwin per-user
-# temp dir and four Library subtrees on macOS; /dev and /tmp on OpenBSD; and on
-# windows low integrity is not a directory at all. All of it deliberate, all of
-# it with a reason in the source, none of it in the sentence.
+# /dev, /dev/shm and /proc/self on linux; the whole Darwin per-user temp dir and
+# four Library subtrees on macOS; /dev and /tmp on OpenBSD; and on windows low
+# integrity is not a directory at all. All of it deliberate, all of it with a
+# reason in the source, none of it in the sentence.
 #
 # It enumerates what a confined app can actually put bytes into, from inside the
-# confinement, on every lane and in both tiers, and asserts the sentence names
-# what it finds. It was a probe for one round; every letter below is now held to
+# confinement, on every lane, and asserts the sentence names what it finds. It was a probe for one round; every letter below is now held to
 # what that round measured, so a platform that changes its mind in either
 # direction is a failure and not a silence.
 #
 # What it would have caught before the fix, on the lanes that measured it:
-# runtime=--O on both linux lanes, in both tiers -- a session runtime directory
-# an app could write over but not create in -- against a sentence that named the
-# app dir and stopped. And on macOS and OpenBSD, an --info fetch line naming the
+# runtime=--O on both linux lanes -- a session runtime directory an app could
+# write over but not create in -- against a sentence that named the app dir and
+# stopped. And on macOS and OpenBSD, an --info fetch line naming the
 # cache root while the confinement was the blobs directory inside it.
 #
 # Three letters per target, because the mechanisms distinguish three operations
@@ -41,14 +40,11 @@
 set -uo pipefail
 
 BIN="${1:-}"
-TIGHT="${2:-}"
 if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
-    echo "usage: writable.sh <netinstall binary built with -DNEUTRINO_TESTING> [tight binary]" >&2
+    echo "usage: writable.sh <netinstall binary built with -DNEUTRINO_TESTING>" >&2
     exit 2
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
-[ -n "$TIGHT" ] && [ -x "$TIGHT" ] &&
-    TIGHT="$(cd "$(dirname "$TIGHT")" && pwd)/$(basename "$TIGHT")"
 . "$(dirname "$0")/lib.sh"
 
 WORK="$(mktemp -d)"
@@ -107,10 +103,10 @@ add_target() {
 
 if [ "$NT_WINDOWS" = "1" ]; then
     # =================================================================
-    # windows: a batch payload, the way privs.sh does it. confine.sh skips
-    # this platform entirely, so the tight tier's sentence -- "writes confined
-    # to <appdir>" over a mechanism that is a token label and not a directory
-    # -- has never been asked anything.
+    # windows: a batch payload, the way privs.sh does it. confine.sh skips this
+    # platform entirely, so the sentence here -- "writes confined to <appdir>"
+    # over a mechanism that is a token label and not a directory -- would
+    # otherwise never be asked anything.
     # =================================================================
     printf '@echo off\r\necho placeholder\r\n' > "$SERVE/writable.cmd"
     SPEC="writable-example-com-1$(nt_pin "$SERVE/writable.cmd")"
@@ -245,7 +241,7 @@ for t in $NEUTRINO_TEST_TARGETS; do
     # that carries no MAKE_REG with it.
     #
     # Which makes the interpreter part of the apparatus: with no python the O is
-    # a dash on every target at every tier, and that is a full set of denials
+    # a dash on every target in every run, and that is a full set of denials
     # this suite never made. Measured on the netbsd lane, where pkgsrc puts
     # python under /usr/pkg and the list above did not have it: eleven failures,
     # `py=none`, and the unconfined control refusing to certify any of it --
@@ -311,8 +307,6 @@ fi
 nt_serve "$SERVE" || exit 2
 SPEC="writable-example-com-1$(nt_pin "$SERVE/writable.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
-APP_TIGHT=""
-[ -n "$TIGHT" ] && [ -x "$TIGHT" ] && APP_TIGHT="$(nt_as "$TIGHT" "$SPEC" "$WORK/tbin")"
 
 # =====================================================================
 # The three runs
@@ -326,14 +320,6 @@ OUT_DEFAULT="$(env NEUTRINO_TEST_TAG=default "$APP" 2>"$WORK/err.default")"
 SAYS_DEFAULT="$(say_confine "$APP" confine)"
 SAYS_FETCH_DEFAULT="$(say_confine "$APP" fetch)"
 
-OUT_TIGHT=""
-SAYS_TIGHT="(no tight binary)"
-SAYS_FETCH_TIGHT="(no tight binary)"
-if [ -n "$APP_TIGHT" ]; then
-    OUT_TIGHT="$(env NEUTRINO_TEST_TAG=tight "$APP_TIGHT" 2>"$WORK/err.tight")"
-    SAYS_TIGHT="$(say_confine "$APP_TIGHT" confine)"
-    SAYS_FETCH_TIGHT="$(say_confine "$APP_TIGHT" fetch)"
-fi
 
 # The control, and ground rule 3: an instrument that writes nowhere reports a
 # perfectly confined app on a platform that confines nothing.
@@ -342,8 +328,6 @@ OUT_NOCONF="$(env NEUTRINO_TEST_TAG=noconf NEUTRINO_TEST_NO_CONFINE=1 "$APP" 2>/
 echo "=== What the sentence says ==="
 echo "  default confine: $SAYS_DEFAULT"
 echo "  default fetch:   $SAYS_FETCH_DEFAULT"
-echo "  tight confine:   $SAYS_TIGHT"
-echo "  tight fetch:     $SAYS_FETCH_TIGHT"
 
 # =====================================================================
 # Reading the three runs
@@ -371,12 +355,10 @@ set_of() {
 }
 
 SET_DEFAULT="$(set_of "$OUT_DEFAULT")"
-SET_TIGHT="$(set_of "$OUT_TIGHT")"
 SET_NOCONF="$(set_of "$OUT_NOCONF")"
 
-echo "=== What is writable, per tier ==="
+echo "=== What is writable, per run ==="
 echo "  default:    $SET_DEFAULT"
-echo "  tight:      $SET_TIGHT"
 echo "  unconfined: $SET_NOCONF"
 
 # =====================================================================
@@ -399,38 +381,22 @@ for pair in "default:$OUT_DEFAULT" "noconf:$OUT_NOCONF"; do
         FAILURES=$((FAILURES + 1))
     fi
 done
-if [ -n "$APP_TIGHT" ]; then
-    if ran "$OUT_TIGHT"; then
-        echo "  PASS: the tight payload ran to the end"
-    else
-        # Not fatal on windows: low integrity stopping the payload before it
-        # answers is itself the finding there, and a blank column that says why
-        # beats a failure that says nothing.
-        if [ "$NT_WINDOWS" = "1" ]; then
-            nt_result "report: writable windows tight payload produced no PROBE_END: $(printf '%s' "$OUT_TIGHT" | tr '\n' ' ' | cut -c1-120) err=$(tr '\n' ' ' < "$WORK/err.tight" | cut -c1-120)"
-        else
-            nt_fail "the tight payload did not finish: $(printf '%s' "$OUT_TIGHT" | tr '\n' ' ' | cut -c1-160)"
-            FAILURES=$((FAILURES + 1))
-        fi
-    fi
-fi
 
-# The write every payload in this suite depends on, in every state. A tier that
+# The write every payload in this suite depends on, in every state. A run that
 # lost it would fail a dozen probes elsewhere for a reason none of them names.
 DEVNULL=""
-for pair in default tight noconf; do
+for pair in default noconf; do
     case "$pair" in
         default) out="$OUT_DEFAULT" ;;
-        tight)   out="$OUT_TIGHT"; [ -n "$APP_TIGHT" ] || continue ;;
         noconf)  out="$OUT_NOCONF" ;;
     esac
     ran "$out" || continue
     v="$(printf '%s\n' "$out" | tr -d '\r' | sed -n 's/^devnull=//p' | tail -1)"
     DEVNULL="$DEVNULL $pair=${v:-??}"
     if [ "$v" = "OK" ]; then
-        echo "  PASS: $pair tier can still write /dev/null"
+        echo "  PASS: the $pair run can still write /dev/null"
     else
-        nt_fail "$pair tier /dev/null expected=OK actual=${v:-<absent>}"
+        nt_fail "the $pair run's /dev/null expected=OK actual=${v:-<absent>}"
         FAILURES=$((FAILURES + 1))
     fi
 done
@@ -453,7 +419,7 @@ else
     FAILURES=$((FAILURES + 1))
 fi
 
-# And the two the whole design rests on, in every tier that applied something.
+# And the two the whole design rests on, in every run that applied something.
 confines_writes() {
     [ -n "$1" ] || return 1
     case "$1" in
@@ -462,35 +428,34 @@ confines_writes() {
     return 0
 }
 
-check_tier() {
-    local tier="$1" set_str="$2" says="$3"
+check_run() {
+    local run="$1" set_str="$2" says="$3"
 
     case " $set_str " in
-        *" appdir=CT"*) echo "  PASS: $tier tier keeps its own dir writable" ;;
+        *" appdir=CT"*) echo "  PASS: the $run run keeps its own dir writable" ;;
         *)
-            nt_fail "$tier tier app dir expected=writable actual=$(printf '%s' "$set_str" | grep -o 'appdir=[A-Z?-]*')"
+            nt_fail "the $run run app dir expected=writable actual=$(printf '%s' "$set_str" | grep -o 'appdir=[A-Z?-]*')"
             FAILURES=$((FAILURES + 1)) ;;
     esac
     # A platform that applied nothing is not a platform that failed to confine:
     # it is the one whose sentence is already true, and the letters above are
     # the unconfined answer read twice. Read off the sentence rather than off a
     # list of platforms, because the sentence is what this suite is about --
-    # windows says "no filesystem confinement on windows" in its default tier
+    # a platform that confines no writes says so in its sentence
     # and FreeBSD says "none", and both mean it.
     if ! confines_writes "$says"; then
-        nt_note "$tier tier confines no writes here ($says); the letters above are that, not a failure"
+        nt_note "the $run run confines no writes here ($says); the letters above are that, not a failure"
         return 0
     fi
     case " $set_str " in
-        *" home=--- "*) echo "  PASS: $tier tier still refuses a directory outside the app dir" ;;
+        *" home=--- "*) echo "  PASS: the $run run still refuses a directory outside the app dir" ;;
         *)
-            nt_fail "$tier tier outside-write expected=home=--- actual=$(printf '%s' "$set_str" | grep -o 'home=[A-Z?-]*')"
+            nt_fail "the $run run outside-write expected=home=--- actual=$(printf '%s' "$set_str" | grep -o 'home=[A-Z?-]*')"
             FAILURES=$((FAILURES + 1)) ;;
     esac
 }
 
-ran "$OUT_DEFAULT" && check_tier default "$SET_DEFAULT" "$SAYS_DEFAULT"
-[ -n "$APP_TIGHT" ] && ran "$OUT_TIGHT" && check_tier tight "$SET_TIGHT" "$SAYS_TIGHT"
+ran "$OUT_DEFAULT" && check_run default "$SET_DEFAULT" "$SAYS_DEFAULT"
 
 # =====================================================================
 # What each platform is held to
@@ -507,31 +472,25 @@ case "$(uname -s)" in
         # runtime dir takes nothing at all, which is this PR; tmpdir is inside
         # the app dir because TMPDIR is redirected here.
         WANT_DEFAULT="appdir=CTO home=--- tmp=--- runtime=--- shm=CTO tmpdir=CTO"
-        WANT_TIGHT="$WANT_DEFAULT"
         # One sentence now, because there is one rule. The default build used
         # to say "every process's /proc entry" and mean it; the grant is
         # /proc/self on every build, so this is the line that would have failed
         # before the narrowing landed.
-        SAY_DEFAULT=", /dev, /dev/shm and /proc/self"
-        SAY_TIGHT="$SAY_DEFAULT" ;;
+        SAY_DEFAULT=", /dev, /dev/shm and /proc/self" ;;
     Darwin)
-        # Four writable trees outside the app dir, in both tiers, every one of
-        # them load-bearing: the Darwin per-user temp dir under two names
+        # Four writable trees outside the app dir, every one of them
+        # load-bearing: the Darwin per-user temp dir under two names
         # because TMPDIR is deliberately not redirected here, and the two
         # Library subtrees CFPreferences and WebKit write on every launch.
         WANT_DEFAULT="appdir=CTO home=--- tmp=--- runtime=--- tmpdir=CTO darwin=CTO libcache=CTO libprefs=CTO"
-        WANT_TIGHT="$WANT_DEFAULT"
-        SAY_DEFAULT="/private/var/folders"
-        SAY_TIGHT="/private/var/folders" ;;
+        SAY_DEFAULT="/private/var/folders" ;;
     OpenBSD)
         # tmp=--O is unveil "rw" without a "c", measured for the first time in
         # round 1 and matching what this tree has claimed since PR 11: an
         # existing file written, and neither created nor truncated, because
         # unveil counts O_CREAT as a create either way.
         WANT_DEFAULT="appdir=CTO home=--- tmp=--O runtime=--- tmpdir=CTO"
-        WANT_TIGHT="$WANT_DEFAULT"
-        SAY_DEFAULT="plus files that already exist under /tmp"
-        SAY_TIGHT="plus files that already exist under /tmp" ;;
+        SAY_DEFAULT="plus files that already exist under /tmp" ;;
     FreeBSD|NetBSD|DragonFly)
         # These are not OpenBSD and they were grouped with it for as long as
         # this arm has existed -- written from unveil's answer, on two platforms
@@ -551,31 +510,21 @@ case "$(uname -s)" in
         # this shape. Reasoned from the source, and said so rather than left to
         # look measured.
         WANT_DEFAULT="appdir=CTO home=CTO tmp=CTO runtime=CTO tmpdir=CTO"
-        WANT_TIGHT="$WANT_DEFAULT"
-        SAY_DEFAULT="none (no unprivileged confinement"
-        SAY_TIGHT="none (no unprivileged confinement" ;;
+        SAY_DEFAULT="none (no unprivileged confinement" ;;
     *)
         # Both rows are the same row now, and that is the assertion.
         #
-        # This arm used to hold the default tier to the unconfined control --
-        # appdir=CT- home=CT- usertemp=CT- wintemp=CT- reg=K--, every letter
-        # identical to no confinement at all -- because windows had no
-        # filesystem confinement outside the tight tier. Low integrity is the
-        # tier now, so the default binary has to measure what the tight one
-        # measured, and the two places the Low label leaves open by design are
-        # still not the app dir.
-        #
-        # Written as one value used twice rather than two equal literals: if
-        # they ever diverge again it is because somebody put a tier back, and
-        # this should not be the file that quietly permits it.
+        # This used to hold windows to the unconfined control -- appdir=CT-
+        # home=CT- usertemp=CT- wintemp=CT- reg=K--, every letter identical to
+        # no confinement at all -- because low integrity was behind a build
+        # flag. It is what every build does now, and the two places the Low
+        # label leaves open by design are still not the app dir.
         WANT_DEFAULT="appdir=CT- home=--- usertemp=--- locallow=CT- wintemp=--- reg=--- reglow=K--"
-        WANT_TIGHT="$WANT_DEFAULT"
-        SAY_DEFAULT="LocalLow"
-        SAY_TIGHT="LocalLow" ;;
+        SAY_DEFAULT="LocalLow" ;;
 esac
 
 expect_set() {
-    local tier="$1" out="$2" want="$3" pair l w v labels
+    local run="$1" out="$2" want="$3" pair l w v labels
     labels=" $(labels_of) "
 
     for pair in $want; do
@@ -585,25 +534,25 @@ expect_set() {
             *" $l "*) ;;
             # A target this lane could not plant into is named, not scored. The
             # dropped list in the report says why.
-            *) nt_note "$tier: $l is not a target on this lane"; continue ;;
+            *) nt_note "$run: $l is not a target on this lane"; continue ;;
         esac
         v="$(letters "$out" "$l")"
         if [ "$v" = "$w" ]; then
-            echo "  PASS: $tier $l=$v"
+            echo "  PASS: $run $l=$v"
         else
-            nt_fail "$tier $l expected=$w actual=$v"
+            nt_fail "$run $l expected=$w actual=$v"
             FAILURES=$((FAILURES + 1))
         fi
     done
 }
 
 says_names() {
-    local tier="$1" says="$2" needle="$3"
+    local run="$1" says="$2" needle="$3"
 
     case "$says" in
-        *"$needle"*) echo "  PASS: the $tier sentence names $needle" ;;
+        *"$needle"*) echo "  PASS: the $run sentence names $needle" ;;
         *)
-            nt_fail "$tier sentence expected to name '$needle' actual='$says'"
+            nt_fail "$run sentence expected to name '$needle' actual='$says'"
             FAILURES=$((FAILURES + 1)) ;;
     esac
 }
@@ -613,7 +562,6 @@ ran "$OUT_DEFAULT" && expect_set default "$OUT_DEFAULT" "$WANT_DEFAULT"
 
 echo "=== And the sentence names the set rather than the first of it ==="
 says_names default "$SAYS_DEFAULT" "$SAY_DEFAULT"
-[ -n "$APP_TIGHT" ] && says_names tight "$SAYS_TIGHT" "$SAY_TIGHT"
 
 # The fetch line, and both halves of what round 1 found wrong with it on macOS
 # and OpenBSD: it named the cache root rather than the blobs directory inside
@@ -625,18 +573,17 @@ says_names default "$SAYS_DEFAULT" "$SAY_DEFAULT"
 # Except where the fetch phase confines nothing, which is windows and now
 # FreeBSD and NetBSD: there is no directory to name, and a sentence that named
 # one would be the lie this assertion exists to catch. Keyed on the sentence
-# rather than on a list of platforms, for the same reason check_tier above is.
+# rather than on a list of platforms, for the same reason check_run above is.
 case "$SAYS_FETCH_DEFAULT" in
     none*|"no filesystem confinement"*) NT_FETCH_NAMES_A_DIR=0 ;;
     *)                                  NT_FETCH_NAMES_A_DIR=1 ;;
 esac
 if [ "$NT_WINDOWS" != "1" ] && [ "$NT_FETCH_NAMES_A_DIR" = "1" ]; then
     says_names "fetch default" "$SAYS_FETCH_DEFAULT" "blobs"
-    [ -n "$APP_TIGHT" ] && says_names "fetch tight" "$SAYS_FETCH_TIGHT" "blobs"
 elif [ "$NT_WINDOWS" != "1" ]; then
     nt_note "the fetch phase confines nothing here ($SAYS_FETCH_DEFAULT); there is no directory for it to name"
 fi
-for pair in "fetch default:$SAYS_FETCH_DEFAULT" "fetch tight:$SAYS_FETCH_TIGHT"; do
+for pair in "fetch default:$SAYS_FETCH_DEFAULT"; do
     case "${pair#*:}" in
         *"reads and writes confined to"*)
             nt_fail "${pair%%:*} claims reads are confined: '${pair#*:}'"
@@ -651,23 +598,19 @@ done
 os="$(uname -s)"
 if [ "$NT_WINDOWS" = "1" ]; then
     TEMP_SEEN="$(printf '%s\n' "$OUT_DEFAULT" | tr -d '\r' | sed -n 's/^temp=//p' | tail -1)"
-    TEMP_TIGHT="$(printf '%s\n' "$OUT_TIGHT" | tr -d '\r' | sed -n 's/^temp=//p' | tail -1)"
     nt_result "report: writable os=$os default=[$SET_DEFAULT]"
-    nt_result "report: writable os=$os tight=[$SET_TIGHT]"
     nt_result "report: writable os=$os unconfined=[$SET_NOCONF] dropped=[${DROPPED# }]"
-    nt_result "report: writable os=$os temp default='$TEMP_SEEN' tight='$TEMP_TIGHT' locallow='$W_LOCALLOW' devnull=[${DEVNULL# }]"
+    nt_result "report: writable os=$os temp='$TEMP_SEEN' locallow='$W_LOCALLOW' devnull=[${DEVNULL# }]"
 else
     PY_SEEN="$(printf '%s\n' "$OUT_DEFAULT" | sed -n 's/^py=//p' | tail -1)"
     TMP_SEEN="$(printf '%s\n' "$OUT_DEFAULT" | sed -n 's/^tmpdir=//p' | tail -1)"
     RT_SEEN="$(printf '%s\n' "$OUT_DEFAULT" | sed -n 's/^runtime=//p' | tail -1)"
     nt_result "report: writable os=$os default=[$SET_DEFAULT]"
-    nt_result "report: writable os=$os tight=[$SET_TIGHT]"
     nt_result "report: writable os=$os unconfined=[$SET_NOCONF] dropped=[${DROPPED# }]"
     nt_result "report: writable os=$os py=$PY_SEEN tmpdir=$TMP_SEEN runtime=$RT_SEEN had-runtime=$HAD_RUNTIME devnull=[${DEVNULL# }]"
 fi
 nt_result "report: writable says default(${#SAYS_DEFAULT})='$SAYS_DEFAULT'"
-nt_result "report: writable says tight(${#SAYS_TIGHT})='$SAYS_TIGHT'"
-nt_result "report: writable says fetch default='$SAYS_FETCH_DEFAULT' tight='$SAYS_FETCH_TIGHT'"
+nt_result "report: writable says fetch='$SAYS_FETCH_DEFAULT'"
 
 if [ "$NT_WINDOWS" = "1" ]; then
     reg delete "HKCU\\Software\\NeutrinoWritableProbe" /f >/dev/null 2>&1

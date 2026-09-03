@@ -456,7 +456,7 @@ fi
 
 if [ "$NT_HAVE_APP" = "1" ]; then
     echo "=== Build the app under test ==="
-    if bash "$ROOT/test/mkapp.sh" --tier=testing "$NT_TESTDIR/alive.js" \
+    if bash "$ROOT/test/mkapp.sh" --testing "$NT_TESTDIR/alive.js" \
             "$SERVE/alive.cmd" >/dev/null 2>&1 &&
        [ -s "$SERVE/alive.cmd" ]; then
         # With the launcher's own loader scrub cut out of it, and both launches

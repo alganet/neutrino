@@ -11,9 +11,8 @@ pulled in by an `@@include <path>` line, and `assemble.sh` puts the two together
 into an app.
 
 There used to be a second program. `assemble.sh` built a template and `build.sh`
-spliced an app into it with four text replacements — the app into a slot, the
-tier list into a stamp, five config keys into an object, and a rebuilt document
-line. Each of those was a pattern with no failure path of its own, so each
+spliced an app into it with four text replacements — the app into a slot, a tier
+list into a stamp, five config keys into an object, and a rebuilt document line. Each of those was a pattern with no failure path of its own, so each
 needed a read-back to say whether it had landed. There is one directive now and
 no substitutions: an app is a directory laid over this one with `--overlay`, and
 the things `build.sh` used to splice are parts it carries.
@@ -164,11 +163,11 @@ also where the page script stops.
 | Path | Language | What it is |
 |---|---|---|
 | `cmd/launcher.cmd` | Windows batch | compiles the file with `jsc.exe`, caches the exe against a digest of the source, writes the manifest and starts it |
-| `sh/tiers.sh` | POSIX shell | reads the tier stamp back out of the artifact |
+| `sh/script-path.sh` | POSIX shell | the artifact's own path, which every lane below needs |
 | `sh/loaders.sh` | POSIX shell | removes every environment variable that names a file to load or a program to run |
 | `sh/qt.sh` | POSIX shell | finds a QML runtime and hands it a document with no name |
 | `sh/webkit.sh` | POSIX shell | measures whether bubblewrap can start, before anything else does |
-| `sh/macos.sh` | POSIX shell | the seatbelt profile for the tight tier, and the JXA launch |
+| `sh/macos.sh` | POSIX shell | the seatbelt profile, and the JXA launch |
 | `sh/pygobject.sh` | POSIX shell | the lane of last resort |
 | `sh/dispatch.sh` | POSIX shell | the engine search, and the refusal when there is none |
 | `qml/window.qml` | QML | the Qt window, inside an unquoted here-document — so `$qml_url` is the shell's and **no backticks** may appear |
@@ -224,10 +223,10 @@ directory is always last. Any part is overridable and not only the four an app
 usually writes — an overlay carrying `js/policy.js` replaces the launcher's,
 because whoever writes the overlay is whoever ships the artifact.
 
-That is also what a tier is. `tier/testing`, `tier/offline` and `tier/tight`
-each replace the few parts their tier varies. There used to be a tier list
+That is also what `build/testing` is: an overlay replacing the few parts a test
+build varies. There used to be three such directories under `tier/`, a tier list
 stamped into the config object, a `sed` that read it back at every launch, and
-nine runtime conditionals that consulted it; all of it is gone, and the thing it
+nine runtime conditionals that consulted it. All of it is gone, and the thing it
 was trying to guarantee is now structural. A release build cannot be talked into
 the testing scaffolding because the scaffolding is not in it.
 
@@ -265,10 +264,9 @@ wrote:
   decide whether a `//` inside a string is a comment.
 - **There is no `//#` any more.** Four of them used to name regions a second
   program spliced between, and one outlived the splice for a while: the shell
-  had to search the built file for the tier list and be told where to stop.
-  `sh/tiers.sh` includes `config.json` as a here document now, so it has the
-  value instead of looking for it, and the artifact carries no marker of any
-  kind. A rule about what the strip must not remove is one less thing to be
+  had to search the built file for that stamp and be told where to stop.
+  `js/config.js` includes `config.json` as a literal now, so the artifact has
+  the value instead of looking for it, and carries no marker of any kind. A rule about what the strip must not remove is one less thing to be
   right about.
 - **An SPDX tag is not prose.** A build step that removes a licence notice from
   somebody else's source is not a size optimisation. A comment line carrying one

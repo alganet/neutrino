@@ -53,7 +53,7 @@
          * frame the desktop would have given the window anyway.
          *
          * An overlay replaces this file whole rather than a key at a time, so
-         * an app that names a title names its size and its tiers as well. That
+         * an app that names a title names its size and everything else as well. That
          * is the cost of having no merge in here, and it buys the thing above:
          * what the artifact carries is a file somebody wrote, not a file two
          * programs agreed on.
