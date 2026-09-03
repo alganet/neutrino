@@ -551,13 +551,22 @@ case "$(uname -s)" in
         SAY_DEFAULT="none (no unprivileged confinement"
         SAY_TIGHT="none (no unprivileged confinement" ;;
     *)
-        # The default tier here confines no writes and says so, which makes it
-        # the one sentence in the matrix that was true before this PR. The
-        # tight tier is low integrity, and the two places that label leaves
-        # open are not the app dir.
-        WANT_DEFAULT="appdir=CT- home=CT- usertemp=CT- locallow=CT- wintemp=CT- reg=K-- reglow=K--"
-        WANT_TIGHT="appdir=CT- home=--- usertemp=--- locallow=CT- wintemp=--- reg=--- reglow=K--"
-        SAY_DEFAULT="no filesystem confinement"
+        # Both rows are the same row now, and that is the assertion.
+        #
+        # This arm used to hold the default tier to the unconfined control --
+        # appdir=CT- home=CT- usertemp=CT- wintemp=CT- reg=K--, every letter
+        # identical to no confinement at all -- because windows had no
+        # filesystem confinement outside the tight tier. Low integrity is the
+        # tier now, so the default binary has to measure what the tight one
+        # measured, and the two places the Low label leaves open by design are
+        # still not the app dir.
+        #
+        # Written as one value used twice rather than two equal literals: if
+        # they ever diverge again it is because somebody put a tier back, and
+        # this should not be the file that quietly permits it.
+        WANT_DEFAULT="appdir=CT- home=--- usertemp=--- locallow=CT- wintemp=--- reg=--- reglow=K--"
+        WANT_TIGHT="$WANT_DEFAULT"
+        SAY_DEFAULT="LocalLow"
         SAY_TIGHT="LocalLow" ;;
 esac
 

@@ -213,31 +213,28 @@ report_confine() {
     probe "$label: fetch phase says '${line:-<nothing printed>}'"
 }
 
-# What each platform is asserted to. The other three confine the downloader to
-# the blobs directory at both tiers, and on macOS that is true only since the
-# per-user temp allow came out of the fetch profile.
+# What each platform is asserted to, and it is now one answer everywhere.
 #
-# Windows is the one that differs by tier, and since PR 18 it is the one place
-# in this suite where the two tiers are asserted to different answers. Its
-# default tier has no unprivileged mechanism that confines a write, so the job
-# object and stripped token are a resource boundary and nothing more -- asserted
-# as such rather than wished otherwise. Its tight tier spawns the downloader
-# under a low integrity token with a Low label on the payload file alone, so
-# both of these targets become refusals; WANT_TIGHT_* is what would have failed
-# before that landed.
+# The other three confine the downloader to the blobs directory, and on macOS
+# that is true only since the per-user temp allow came out of the fetch profile.
+#
+# Windows used to be the exception and the only place in this suite where two
+# tiers were asserted to different answers: its default tier had no unprivileged
+# mechanism that confined a write, so both of these targets escaped and were
+# asserted as escaping rather than wished otherwise. The low integrity token and
+# the Low label on the payload file alone are the fetch phase now, not an opt-in
+# on top of it, so windows is asserted to the same BLOCKED as everywhere else
+# and the special case is gone. These two lines are what would have failed
+# before this commit.
 WANT_HOME=BLOCKED
 WANT_TMP=BLOCKED
 WANT_TIGHT_HOME=BLOCKED
 WANT_TIGHT_TMP=BLOCKED
-if [ "$NT_WINDOWS" = "1" ]; then
-    WANT_HOME=ESCAPED
-    WANT_TMP=ESCAPED
-fi
 # And where the fetch phase confines nothing at all -- FreeBSD and NetBSD,
-# whose nt_confine returns -1 -- both targets escape in both tiers, because
-# there are no tiers. Read off the sentence and not off a list of platforms:
-# that is what --info is for, and windows above is the same fact spelled by
-# hand before there was a second platform with it.
+# whose nt_confine returns -1 -- both targets escape, because there is nothing
+# to confine them. Read off the sentence and not off a list of platforms: that
+# is what --info is for, and it is now the only special case left here, windows
+# having stopped being one.
 SAYS_FETCH="$("$APP" --info 2>/dev/null | grep '^fetch' | sed 's/^fetch *//')"
 case "$SAYS_FETCH" in
     none*)
