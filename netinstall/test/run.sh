@@ -83,7 +83,14 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-strict$NT_EXE"
 # record -- three probing and one candidate -- and it is an assertion suite now.
 # Its reports fall past the cap, a green tick is its whole answer, and a failure
 # is an ::error, which has a bucket of its own.
-SUITES="pinfloor fetchbound envlen writable fetchconf names verify confine confine-tight confine-strict confine-session privs env offline phases splash strict e2e"
+#
+# crashdump and landlockfloor are in front for the same reason envlen and
+# writable each were, for one round: they are probes whose whole output is a
+# reading somebody has to act on, and a reading taken last is one nobody scrolls
+# to. Both come out of this list once they have answered. Neither costs anything
+# on a platform it does not apply to -- crashdump is windows, landlockfloor is
+# linux with docker, and each says which it was rather than passing silently.
+SUITES="pinfloor crashdump landlockfloor fetchbound envlen writable fetchconf names verify confine confine-tight confine-strict confine-session privs env offline phases splash strict e2e"
 # The BSDs have no webview on any runner that can be had, so e2e and env -- the
 # two suites that launch one -- would fail for the absence of a toolkit rather
 # than anything about the confinement. Everything that measures unveil and
@@ -151,6 +158,18 @@ for t in $SUITES; do
     SUITE_T0=$SECONDS
     case "$t" in
         names) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-release$NT_EXE" ;;
+        # No binary. Both build or find their own instrument: crashdump compiles
+        # crash-probe.c, because what it measures is what WER does with an
+        # unhandled exception and netinstall is not the thing that has to raise
+        # it; landlockfloor wants the static musl build rather than the host one,
+        # since a host binary would fail to start on half the images it visits
+        # for a reason that is not about Landlock.
+        #
+        # Four crashes, each bounded and each followed by a wait for an
+        # asynchronous reporter, so this one needs more than the default leash.
+        crashdump) nt_timeout 900 bash "$HERE/$t.sh" ;;
+        # Seven image pulls before any of them runs.
+        landlockfloor) nt_timeout 1200 bash "$HERE/$t.sh" ;;
         confine-strict) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-strict$NT_EXE" ;;
         # The tight binary, because the tier is the question: nt_fetch_confine_win
         # has no tier branch in it, and the sentence this probe would change is
