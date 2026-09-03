@@ -111,9 +111,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     }
 
     if (!enforce) {
-        snprintf(desc, desclen, "unveil + pledge%s"
-                                ", writes confined to %s" NT_ALSO_WRITABLE,
-                , appdir);
+        snprintf(desc, desclen, "unveil + pledge, writes confined to %s"
+                                NT_ALSO_WRITABLE, appdir);
         return 0;
     }
 
@@ -176,9 +175,8 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         snprintf(desc, desclen, "none (pledge failed)");
         return -1;
     }
-    snprintf(desc, desclen, "unveil + pledge%s"
-                            ", writes confined to %s" NT_ALSO_WRITABLE,
-            , appdir);
+    snprintf(desc, desclen, "unveil + pledge, writes confined to %s"
+                            NT_ALSO_WRITABLE, appdir);
     return 0;
 }
 
