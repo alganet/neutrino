@@ -1802,7 +1802,7 @@ static int nt_main(int argc, char **argv)
         /*
          * The only place a window is wanted, and it is inside `!cached` for the
          * reason the branch exists: a run that already holds the payload has
-         * nothing to wait for, and drawing Loading... over a launch that is
+         * nothing to wait for, and putting a window up over a launch that is
          * about to happen anyway would be a lie about where the time went.
          *
          * Wanted, and not yet raised. The fetch is handed nt_splash_up to call

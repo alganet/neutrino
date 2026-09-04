@@ -8,7 +8,7 @@
 #ifdef __APPLE__
 
 /*
- * A Loading... window, drawn with AppKit, in a process of its own.
+ * The splash window, drawn with AppKit, in a process of its own.
  *
  * Two constraints decide the whole shape of this file, and neither is a
  * preference.
@@ -31,6 +31,15 @@
  * everyone in order to draw a box for the people on macOS. dlopen costs
  * nothing at build time and fails cleanly at runtime on a machine with no
  * window server, which is the same answer the other platforms give.
+ *
+ * Twelve boxes and no text. It was one NSTextField saying "Loading..." in
+ * whatever font that control defaults to, which is the part of this file that
+ * could not be made to match the other three lanes -- see splash.h. What
+ * replaced it is twelve NSBoxes, which are AppKit's way of asking for a filled
+ * rectangle without writing a view class, and a view class is exactly what this
+ * file cannot have: subclassing from C means building one at runtime with
+ * objc_allocateClassPair and hanging a C function off it as a method, which is
+ * a great deal of machinery for a colour and a frame.
  */
 
 #include <dlfcn.h>
@@ -48,9 +57,13 @@
 
 #include "netinstall.h"
 
-#define NT_M_TEXT "Loading..."
-#define NT_M_WIDTH 260.0
-#define NT_M_HEIGHT 96.0
+/*
+ * The geometry, as the doubles AppKit takes. splash.h has them as ints, because
+ * the other three platforms count pixels; a cast at each site would work and
+ * this says once that the numbers are the same numbers.
+ */
+#define NT_M_WIDTH ((double)NT_SPLASH_WIDTH)
+#define NT_M_HEIGHT ((double)NT_SPLASH_HEIGHT)
 
 /* ---------------------------------------------------------------- parent -- */
 
@@ -245,13 +258,35 @@ static void *nt_watch_thread(void *arg)
     return NULL;
 }
 
+/*
+ * One of splash.h's colours as an NSColor, retained. sRGB and not
+ * colorWithCalibratedRed:, which is the older spelling of the same call and
+ * means a device-dependent colour: the same three numbers, sent through a
+ * calibrated space, come out as a different pixel from the one the other three
+ * platforms wrote -- which is the whole thing this round is trying not to have
+ * happen.
+ */
+static nt_id nt_m_colour(unsigned long rgb)
+{
+    nt_id c = NT_MSG(nt_id, double, double, double, double)(
+        nt_cls("NSColor"), nt_selector("colorWithSRGBRed:green:blue:alpha:"),
+        NT_SPLASH_R(rgb) / 255.0, NT_SPLASH_G(rgb) / 255.0,
+        NT_SPLASH_B(rgb) / 255.0, 1.0);
+
+    return c ? NT_MSG(nt_id)(c, nt_selector("retain")) : NULL;
+}
+
 int nt_splash_macos_child(int deathfd, int readyfd)
 {
     void *appkit;
     void *objc;
-    nt_id app, win, field, str, view;
+    nt_id app, win, view, mode;
+    nt_id dim, lit, bg;
+    nt_id boxes[NT_SPLASH_CELLS];
     nt_rect frame, inner;
     pthread_t tid;
+    int phase;
+    int i;
 
     /*
      * AppKit for the classes, libobjc for the three functions that talk to
@@ -321,42 +356,86 @@ int nt_splash_macos_child(int deathfd, int readyfd)
     NT_MSG(void, long)(win, nt_selector("setLevel:"), 3);
     NT_MSG(void, char)(win, nt_selector("setReleasedWhenClosed:"), 0);
 
-    str = NT_MSG(nt_id, const char *)(nt_cls("NSString"),
-                                      nt_selector("stringWithUTF8String:"),
-                                      NT_M_TEXT);
+    /*
+     * The two colours, retained. Everything AppKit hands back here is
+     * autoreleased into a pool this process does not have -- a bundle-less main
+     * has none until the loop below makes one per frame -- and these two have
+     * to outlive every one of those.
+     */
+    dim = nt_m_colour(NT_SPLASH_RGB_DIM);
+    lit = nt_m_colour(NT_SPLASH_RGB_LIT);
+    bg = nt_m_colour(NT_SPLASH_RGB_BG);
+    if (!dim || !lit || !bg) {
+        return 1;
+    }
+    NT_MSG(void, nt_id)(win, nt_selector("setBackgroundColor:"), bg);
 
-    field = NT_MSG(nt_id)(nt_cls("NSTextField"), nt_selector("alloc"));
-    inner.origin.x = 0.0;
-    inner.origin.y = 0.0;
-    inner.size.w = NT_M_WIDTH;
-    inner.size.h = 20.0;
-    field = NT_MSG(nt_id, nt_rect)(field, nt_selector("initWithFrame:"), inner);
-    if (field && str) {
-        NT_MSG(void, nt_id)(field, nt_selector("setStringValue:"), str);
-        NT_MSG(void, char)(field, nt_selector("setEditable:"), 0);
-        NT_MSG(void, char)(field, nt_selector("setSelectable:"), 0);
-        NT_MSG(void, char)(field, nt_selector("setBezeled:"), 0);
-        NT_MSG(void, char)(field, nt_selector("setDrawsBackground:"), 0);
+    view = NT_MSG(nt_id)(win, nt_selector("contentView"));
+    if (!view) {
+        return 1;
+    }
+    /*
+     * The edge, as a box the size of the window added before the cells so that
+     * it is behind them. Borderless is the only NSWindow style this can use --
+     * a titled one has a title bar -- so the line the other three platforms
+     * draw has to be drawn here too rather than asked of the frame.
+     *
+     * 1 is NSLineBorder. The fill is the background, so this box is the
+     * window's whole surface and the cells sit on top of it.
+     */
+    {
+        nt_id edge = NT_MSG(nt_id)(nt_cls("NSBox"), nt_selector("alloc"));
+
+        inner.origin.x = 0.0;
+        inner.origin.y = 0.0;
+        inner.size.w = NT_M_WIDTH;
+        inner.size.h = NT_M_HEIGHT;
+        edge = edge ? NT_MSG(nt_id, nt_rect)(edge, nt_selector("initWithFrame:"),
+                                             inner)
+                    : NULL;
+        if (!edge) {
+            return 1;
+        }
+        NT_MSG(void, long)(edge, nt_selector("setBoxType:"), 4);
+        NT_MSG(void, long)(edge, nt_selector("setBorderType:"), 1);
+        NT_MSG(void, long)(edge, nt_selector("setTitlePosition:"), 2);
+        NT_MSG(void, double)(edge, nt_selector("setBorderWidth:"), 1.0);
+        NT_MSG(void, nt_id)(edge, nt_selector("setBorderColor:"), lit);
+        NT_MSG(void, nt_id)(edge, nt_selector("setFillColor:"), bg);
+        NT_MSG(void, nt_id)(view, nt_selector("addSubview:"), edge);
+    }
+
+    for (i = 0; i < NT_SPLASH_CELLS; i++) {
+        nt_id box = NT_MSG(nt_id)(nt_cls("NSBox"), nt_selector("alloc"));
+
+        inner.origin.x = NT_SPLASH_CELL_X(i);
         /*
-         * Sized to the text and then placed, rather than left full width with a
-         * centred alignment. NSTextAlignment's numbering changed when it was
-         * unified with UIKit -- centre is 1 in the modern spelling and 2 in the
-         * older one -- and picking the wrong constant here would be a silent
-         * left-aligned label. Measuring and positioning uses no constant at all.
+         * AppKit measures from the bottom of the window and splash.h from the
+         * top. The track is centred, so the two happen to agree -- which is
+         * exactly why the conversion is written out rather than left as the
+         * constant: the next person to move the track by ten pixels should find
+         * the flip here instead of discovering it.
          */
-        NT_MSG(void)(field, nt_selector("sizeToFit"));
-        {
-            nt_rect got = ((nt_rect (*)(nt_id, nt_sel))nt_msg_raw)(
-                field, nt_selector("frame"));
-
-            got.origin.x = (NT_M_WIDTH - got.size.w) / 2.0;
-            got.origin.y = (NT_M_HEIGHT - got.size.h) / 2.0;
-            NT_MSG(void, nt_rect)(field, nt_selector("setFrame:"), got);
+        inner.origin.y = NT_SPLASH_HEIGHT - NT_SPLASH_TRACK_Y - NT_SPLASH_CELL_H;
+        inner.size.w = NT_SPLASH_CELL_W;
+        inner.size.h = NT_SPLASH_CELL_H;
+        box = NT_MSG(nt_id, nt_rect)(box, nt_selector("initWithFrame:"), inner);
+        if (!box) {
+            return 1;
         }
-        view = NT_MSG(nt_id)(win, nt_selector("contentView"));
-        if (view) {
-            NT_MSG(void, nt_id)(view, nt_selector("addSubview:"), field);
-        }
+        /*
+         * 4 is NSBoxCustom, which is the one box type that draws a fill colour
+         * of its own; 0 is NSNoBorder, and 2 is NSNoTitle. Left at their
+         * defaults an NSBox is a bezelled group box with the word "Title" in
+         * the top left of it.
+         */
+        NT_MSG(void, long)(box, nt_selector("setBoxType:"), 4);
+        NT_MSG(void, long)(box, nt_selector("setBorderType:"), 0);
+        NT_MSG(void, long)(box, nt_selector("setTitlePosition:"), 2);
+        NT_MSG(void, nt_id)(box, nt_selector("setFillColor:"),
+                            nt_splash_cell_lit(0, i) ? lit : dim);
+        NT_MSG(void, nt_id)(view, nt_selector("addSubview:"), box);
+        boxes[i] = box;
     }
 
     NT_MSG(void)(win, nt_selector("center"));
@@ -379,12 +458,86 @@ int nt_splash_macos_child(int deathfd, int readyfd)
     }
 
     /*
-     * And then the run loop, which is the whole reason this process exists. It
+     * And then the loop, which is the whole reason this process exists. It
      * never returns: the parent kills this pid when the download ends, and the
      * watch thread ends it if the parent stops being able to.
+     *
+     * -[NSApplication run] is what this used to be and cannot be any more. It
+     * owns the thread and hands control back only through a delegate or a timer
+     * -- and a timer means a target object, which means a class built at
+     * runtime, which is the machinery this file avoided by using NSBox in the
+     * first place. Pumping the events by hand costs four messages and puts the
+     * frame clock in an ordinary C loop, where the other three platforms have
+     * theirs.
+     *
+     * finishLaunching first, because it is the half of `run` that is still
+     * wanted: it is what posts the app-did-launch notification AppKit's own
+     * machinery waits on before it will service a window.
      */
-    NT_MSG(void)(app, nt_selector("run"));
-    return 0;
+    NT_MSG(void)(app, nt_selector("finishLaunching"));
+    /*
+     * NSDefaultRunLoopMode, which is a string constant this process has no
+     * symbol for -- dlopening AppKit gets the classes, not the exported
+     * NSString globals. Its value is documented to be the Core Foundation mode
+     * of the same meaning, so the string is spelled out. Retained for the
+     * reason the colours are.
+     */
+    mode = NT_MSG(nt_id, const char *)(nt_cls("NSString"),
+                                       nt_selector("stringWithUTF8String:"),
+                                       "kCFRunLoopDefaultMode");
+    if (!mode) {
+        return 1;
+    }
+    NT_MSG(nt_id)(mode, nt_selector("retain"));
+
+    for (phase = 0; ; phase = (phase + 1) % NT_SPLASH_CELLS) {
+        nt_id pool = NT_MSG(nt_id)(nt_cls("NSAutoreleasePool"),
+                                   nt_selector("alloc"));
+        nt_id until;
+        nt_id ev;
+
+        /*
+         * A pool per frame, and this is the one place it matters. Each pass
+         * makes an NSDate and however many NSEvents the window server sent, all
+         * autoreleased -- and this loop runs for as long as a download does. A
+         * process with no pool at all does not crash, it accumulates, and the
+         * one that accumulates here is the one holding a window open for two
+         * minutes.
+         */
+        pool = pool ? NT_MSG(nt_id)(pool, nt_selector("init")) : NULL;
+
+        for (i = 0; i < NT_SPLASH_CELLS; i++) {
+            NT_MSG(void, nt_id)(boxes[i], nt_selector("setFillColor:"),
+                                nt_splash_cell_lit(phase, i) ? lit : dim);
+            NT_MSG(void, char)(boxes[i], nt_selector("setNeedsDisplay:"), 1);
+        }
+        NT_MSG(void)(win, nt_selector("displayIfNeeded"));
+
+        /*
+         * Everything the window server has, until the frame is up.
+         * nextEventMatchingMask: returns nil when the date passes with nothing
+         * left, so the inner loop is both the drain and the wait -- and an
+         * event that arrives early does not shorten the frame, because the date
+         * was fixed before the first one was asked for.
+         */
+        until = NT_MSG(nt_id, double)(nt_cls("NSDate"),
+                                      nt_selector("dateWithTimeIntervalSinceNow:"),
+                                      (double)NT_SPLASH_FRAME_MS / 1000.0);
+        while (until) {
+            ev = NT_MSG(nt_id, unsigned long, nt_id, nt_id, char)(
+                app, nt_selector("nextEventMatchingMask:untilDate:inMode:dequeue:"),
+                ~0UL, until, mode, 1);
+            if (!ev) {
+                break;
+            }
+            NT_MSG(void, nt_id)(app, nt_selector("sendEvent:"), ev);
+        }
+        if (pool) {
+            NT_MSG(void)(pool, nt_selector("drain"));
+        }
+    }
+    /* Not reached. The loop above has no exit and this function's callers --
+     * main(), on the --splash path -- treat a return as a failure to draw. */
 }
 
 #endif

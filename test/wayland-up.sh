@@ -24,9 +24,9 @@
 # for, so the compositor is chosen for the one that can be photographed.
 #
 # What is being tested is neither of them. splash_wayland.c speaks the protocol
-# over the socket itself -- no libwayland, a registry walked by hand, glyphs
-# rasterised into a shm buffer -- so the compositor here is the instrument and
-# not the subject. That is also why the version is reported: the day this
+# over the socket itself -- no libwayland, a registry walked by hand, the
+# window's pixels composed into a pair of shm buffers and alternated a frame at
+# a time -- so the compositor here is the instrument and not the subject. That is also why the version is reported: the day this
 # breaks, which compositor and which version answered is the first question.
 #
 # The liveness check is a wayland client and not `swaymsg`, which is what the

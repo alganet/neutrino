@@ -212,6 +212,90 @@ nt_screenshot() {
     [ -s "$out" ]
 }
 
+# A run of shots of the same screen, a fixed interval apart, into
+# <dir>/<prefix>-anim-NN.png. Answers 0 when every frame it was asked for is on
+# disk.
+#
+# It exists because one photograph cannot show a thing that moves. netinstall's
+# splash is an indicator that steps once every NT_SPLASH_FRAME_MS, and a single
+# frame of it is indistinguishable from an indicator that has stopped -- which
+# is the failure worth catching, since every one of the four mechanisms that
+# draws it has its own clock and its own way of losing one. Six frames a
+# hundred and thirty milliseconds apart cover most of one cycle without
+# sampling it at the cycle's own rate, which would photograph the same phase
+# six times and prove nothing.
+#
+# The interval is a floor and not a promise. Every capture below takes time of
+# its own -- `import` on a large screen is a tenth of a second, and the
+# powershell path is worse -- so the frames come out further apart than they
+# were asked for and unevenly spaced. That is fine for both readers: the sheet
+# animates them for a person, and the assertion counts how many are distinct.
+# It is also why a burst is not a substitute for a video and is not pretending
+# to be one.
+#
+# Windows takes the whole burst inside one powershell. Starting that interpreter
+# is seconds on a cold runner, and six of those would be a burst spread over
+# half a minute -- longer than the hold the window is being kept up for. One
+# start, a loop inside it, and the interval is the one the caller asked for.
+nt_screenshot_burst() {
+    local dir="$1" prefix="$2" count="$3" ms="$4" i out ps taken=0
+    mkdir -p "$dir" 2>/dev/null
+    rm -f "$dir/$prefix"-anim-*.png
+    if [ "${NT_WINDOWS:-0}" = "1" ]; then
+        ps=powershell
+        command -v pwsh >/dev/null 2>&1 && ps=pwsh
+        "$ps" -NoProfile -ExecutionPolicy Bypass -Command "
+            Add-Type -AssemblyName System.Drawing
+            Add-Type -AssemblyName System.Windows.Forms
+            \$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            for (\$i = 1; \$i -le $count; \$i++) {
+                \$bmp = New-Object System.Drawing.Bitmap \$b.Width, \$b.Height
+                \$g = [System.Drawing.Graphics]::FromImage(\$bmp)
+                \$g.CopyFromScreen(\$b.X, \$b.Y, 0, 0, \$bmp.Size)
+                \$g.Dispose()
+                \$n = '{0:d2}' -f \$i
+                \$bmp.Save('$(cygpath -w "$dir")\\$prefix-anim-' + \$n + '.png',
+                           [System.Drawing.Imaging.ImageFormat]::Png)
+                \$bmp.Dispose()
+                if (\$i -lt $count) { Start-Sleep -Milliseconds $ms }
+            }
+        " >/dev/null 2>&1
+    else
+        for i in $(seq 1 "$count"); do
+            out="$(printf '%s/%s-anim-%02d.png' "$dir" "$prefix" "$i")"
+            # nt_screenshot and not a fourth copy of the capture: the choice
+            # between grim, import and screencapture -- and the reason wayland
+            # is asked first -- belongs in one place.
+            nt_screenshot "$out" || true
+            # Integer arithmetic and a shell printf, not awk: awk writes the
+            # decimal separator its locale asks for, and `sleep 0,130` is an
+            # error on every one of these platforms.
+            [ "$i" = "$count" ] || sleep "$(printf '%d.%03d' "$((ms / 1000))" "$((ms % 1000))")"
+        done
+    fi
+    for i in $(seq 1 "$count"); do
+        out="$(printf '%s/%s-anim-%02d.png' "$dir" "$prefix" "$i")"
+        [ -s "$out" ] && taken=$((taken + 1))
+    done
+    [ "$taken" = "$count" ]
+}
+
+# How many of the files named are different from each other, by content. The
+# whole of what a burst can assert without reading pixels: an indicator that is
+# moving photographs differently from one frame to the next, and one that has
+# stopped photographs identically every time.
+#
+# It can be fooled by a desktop that is doing something else -- a clock with
+# seconds on it would make every frame distinct on its own -- so it is a floor
+# and not a proof. The lanes this runs on are a bare Xvfb, a headless sway, and
+# two runners with nothing but this window on them.
+nt_distinct_frames() {
+    local f
+    for f in "$@"; do
+        [ -s "$f" ] && nt_sha256 "$f"
+    done | sort -u | wc -l | tr -d ' '
+}
+
 # Runs a command under a wall-clock bound where coreutils timeout exists.
 # macOS ships none by default, so there it just runs the command.
 nt_timeout() {

@@ -1,5 +1,5 @@
 #!/bin/bash
-# splash.sh - the Loading... window's lifecycle, and the runs that must not have one
+# splash.sh - the splash window's lifecycle, and the runs that must not have one
 #
 # SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
 # SPDX-License-Identifier: ISC
@@ -18,14 +18,20 @@
 # with a stall, which holds every truthful response long enough for one to be
 # due. Every case about the window itself runs against the second.
 #
-# What is asserted here is the lifecycle and not the pixels. That split is
-# deliberate: the decision to raise a window is the same on every platform and
-# is made in main() and splash.c, while the drawing is five different
-# mechanisms. So the markers this reads come from splash.c, which owns the
-# decision, and they are already meaningful on a platform whose
-# nt_splash_platform_up does nothing but decline. The one picture this suite
-# takes is a picture and not an assertion: it goes to the lane's sheet, for a
-# reader who wants to see the thing rather than read that it existed.
+# What is asserted here is the lifecycle and very nearly not the pixels. That
+# split is deliberate: the decision to raise a window is the same on every
+# platform and is made in main() and splash.c, while the drawing is five
+# different mechanisms. So the markers this reads come from splash.c, which owns
+# the decision, and they are already meaningful on a platform whose
+# nt_splash_platform_up does nothing but decline. The pictures this suite takes
+# go to the lane's sheet, for a reader who wants to see the thing rather than
+# read that it existed.
+#
+# The one exception is the burst at the end, and it is what the window contains
+# rather than what it looks like: the indicator moves, so six photographs of it
+# are not six copies of one photograph. That much can be asserted without
+# reading a pixel, and it is the only part of the drawing that four different
+# mechanisms can be held to in the same words.
 #
 # The positive control is the payload. A netinstall that refused everything
 # would trivially pass "no window on a warm cache", so every case that expects
@@ -387,24 +393,40 @@ else
     esac
 fi
 
-# --- the picture -------------------------------------------------------------
-# One photograph of the window, for the lane's sheet. Not an assertion about
-# pixels -- nothing here reads the picture back -- but the shutter has to fire
-# while the window is up, and that part is asserted: a picture taken after the
-# down line is a picture of the desktop, captioned as the splash.
+# --- the picture, and the proof that it moves --------------------------------
+# One photograph of the window and then a burst of six, for the lane's sheet.
 #
-# The hold is what makes it possible. The window is up for the stall and then
-# the hold, half a second in all, and a screenshot on Windows starts a
-# powershell that can take longer than that to load System.Drawing. So the run
-# is told to hold for eight seconds, the shutter fires as soon as the up line
-# is seen, and the run is then left to finish on its own -- the payload still
-# has to run, because a picture of a launcher that never launched is not a
-# picture of the feature.
+# The single frame is the portrait: it goes on the page at the top of the
+# netinstall group, and it is what a reader compares against the other three
+# lanes when the question is whether the four windows are the same window. The
+# burst is the other question, which one photograph cannot answer at all: the
+# indicator steps once every NT_SPLASH_FRAME_MS, and a still of it is
+# indistinguishable from an indicator that has stopped. Six frames across most
+# of one cycle are enough for the sheet to animate and enough to assert
+# against -- see nt_distinct_frames in lib.sh for what that assertion can and
+# cannot see.
+#
+# Neither is an assertion about pixels; nothing here reads a picture back. But
+# the shutter has to fire while the window is up, and that part is asserted: a
+# picture taken after the down line is a picture of the desktop, captioned as
+# the splash.
+#
+# The hold is what makes it possible, and it is longer than it used to be. The
+# window is up for the stall and then the hold, and a screenshot on Windows
+# starts a powershell that can take seconds to load System.Drawing -- once for
+# the portrait and once for the whole burst. So the run is told to hold for
+# twenty seconds, both shutters fire as soon as the up line is seen, and the run
+# is then left to finish on its own: the payload still has to run, because a
+# picture of a launcher that never launched is not a picture of the feature.
 #
 # Only where the lane asked for it. NEUTRINO_SPLASH_SHOTS names the directory;
 # unset, the case is skipped rather than writing pictures into a developer's
 # home, and the skip is on the record.
 STEP="the window photographed while it is up"
+FRAMES=6
+FRAME_GAP_MS=130
+DISTINCT=0
+BURST=SKIP
 if [ -z "${NEUTRINO_SPLASH_SHOTS:-}" ]; then
     echo "  SKIP: $STEP (NEUTRINO_SPLASH_SHOTS is unset; no picture wanted)"
     probe "picture: not asked for"
@@ -416,7 +438,7 @@ else
     # Started in this shell and not a subshell, unlike the orphan check below:
     # this run is waited for, and a pid started under parentheses is not one
     # `wait` knows.
-    NEUTRINO_SPLASH_HOLD_MS=8000 NEUTRINO_TEST_ORIGIN="$SLOW" NEUTRINO_HOME="$WORK/home-shot" \
+    NEUTRINO_SPLASH_HOLD_MS=20000 NEUTRINO_TEST_ORIGIN="$SLOW" NEUTRINO_HOME="$WORK/home-shot" \
         "$APP" >"$WORK/out9" 2>"$WORK/err9" &
     SHOTPID=$!
     RAISED=NO
@@ -429,6 +451,10 @@ else
     if [ "$RAISED" = "YES" ]; then
         T0=$SECONDS
         nt_screenshot "$SHOT" && TAKEN=YES
+        BURST=NO
+        nt_screenshot_burst "$NEUTRINO_SPLASH_SHOTS" "splash-$MECHNAME" \
+            "$FRAMES" "$FRAME_GAP_MS" && BURST=YES
+        DISTINCT="$(nt_distinct_frames "$NEUTRINO_SPLASH_SHOTS/splash-$MECHNAME"-anim-*.png)"
         SHUTTER=$((SECONDS - T0))
     fi
     wait "$SHOTPID" 2>/dev/null
@@ -444,20 +470,47 @@ else
         nt_fail "$STEP: the run behind the picture did not finish: rc=$RC err=$(errtail "$WORK/err9")"
         FAILURES=$((FAILURES + 1))
     else
-        # Whether the shutter beat the teardown. The down line is written when
-        # the window goes; the capture returned before this check, so a down
-        # line already present when the capture returned means the picture
-        # may be of nothing. Re-read after the wait, so the check is against
-        # the held number rather than a race with the file.
+        # Whether both shutters beat the teardown. The down line is written when
+        # the window goes; the captures returned before this check, so a hold
+        # that had already run out means the pictures may be of nothing.
+        # Re-read after the wait, so the check is against the held number rather
+        # than a race with the file.
         H="$(held "$WORK/err9")"
-        if [ -n "$H" ] && [ "$H" -ge 8000 ] && [ "$SHUTTER" -lt 8 ]; then
-            echo "  PASS: $STEP ($(wc -c < "$SHOT" | tr -d ' ') bytes, shutter ${SHUTTER}s into an ${H}ms hold)"
+        if [ -n "$H" ] && [ "$H" -ge 20000 ] && [ "$SHUTTER" -lt 20 ]; then
+            echo "  PASS: $STEP ($(wc -c < "$SHOT" | tr -d ' ') bytes, shutter and burst ${SHUTTER}s into an ${H}ms hold)"
         else
-            nt_fail "$STEP: shutter took ${SHUTTER}s against a hold of ${H:-none}ms -- the picture may be of an empty desktop"
+            nt_fail "$STEP: the shutter took ${SHUTTER}s against a hold of ${H:-none}ms -- the pictures may be of an empty desktop"
             FAILURES=$((FAILURES + 1))
         fi
     fi
-    probe "picture: raised=$RAISED taken=$TAKEN down=$D at $SHOT"
+    probe "picture: raised=$RAISED taken=$TAKEN burst=$BURST frames=$FRAMES distinct=$DISTINCT down=$D at $SHOT"
+fi
+
+# --- the indicator is an indicator -------------------------------------------
+# The one case here that is about what the window contains rather than about
+# whether it exists. Six frames of a moving indicator are not all the same
+# picture; six frames of one that has stopped are. A third of them differing is
+# the floor: the frames are a hundred and thirty milliseconds apart against a
+# cycle of NT_SPLASH_CELLS * NT_SPLASH_FRAME_MS, so a healthy window gives five
+# or six distinct, and asking for three leaves room for a runner whose captures
+# are slow enough to land twice on the same phase.
+#
+# What this cannot tell apart is a splash that is moving from a desktop that is
+# moving behind it. The four lanes that reach this are a bare Xvfb, a headless
+# sway and two runners with nothing else on screen, which is why the reading is
+# worth having; it is a floor and not a proof, and it is reported with its own
+# count so a lane where it starts passing for the wrong reason can be seen.
+STEP="the indicator moved while it was photographed"
+if [ "$BURST" = "SKIP" ]; then
+    echo "  SKIP: $STEP (no burst was taken)"
+elif [ "$BURST" != "YES" ]; then
+    nt_fail "$STEP: the burst wrote fewer than $FRAMES frames"
+    FAILURES=$((FAILURES + 1))
+elif [ "$DISTINCT" -ge 3 ]; then
+    echo "  PASS: $STEP ($DISTINCT of $FRAMES frames differ)"
+else
+    nt_fail "$STEP: $DISTINCT of $FRAMES frames differ -- the window is on screen and not moving"
+    FAILURES=$((FAILURES + 1))
 fi
 
 # --- the parent dies without tearing down ------------------------------------

@@ -96,7 +96,8 @@ for entry in "${TARGETS[@]}"; do
         # -mwindows is the subsystem, and the reason the two below are needed:
         # with no console of its own this binary has nowhere to print, so
         # MessageBoxA carries the diagnostics and a real window carries the
-        # Loading... -- both of which live in user32.
+        # splash -- user32 for both, gdi32 for the brushes the splash fills its
+        # cells with.
         #
         # -Wl,--subsystem,windows and not -mwindows. zig cc accepts -mwindows,
         # warns that it went unused, and links a CONSOLE binary anyway -- so the

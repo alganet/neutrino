@@ -3,25 +3,33 @@
  * SPDX-License-Identifier: ISC
  */
 
+#include "netinstall.h"
 #include "splash.h"
 
 #if defined(__linux__) || defined(__OpenBSD__) || defined(__FreeBSD__) || \
     defined(__NetBSD__)
 
 /*
- * A Loading... window, drawn by talking to a wayland compositor over its own
+ * The splash window, drawn by talking to a wayland compositor over its own
  * socket. No libwayland, for the reason splash_x11.c does not use libX11: the
  * linux binaries are static musl, where dlopen is a stub, and linking a toolkit
  * would trade a launcher that runs anywhere for one that runs where its
  * libraries are.
  *
  * This is the more expensive of the two, and the reason is worth stating
- * because it is the opposite of what one expects. X11 has PolyText8 and
- * server-side fonts: the string is sent and the server draws it. Wayland has no
- * drawing in it at all -- the compositor is handed a buffer of finished pixels
- * -- so there is no text here to send, and the glyphs have to be carried in the
- * binary and rasterised by hand. That is what nt_wl_font below is, and it is
- * most of what makes this file longer than its X11 counterpart.
+ * because it is the opposite of what one expects. X11 has PolyFillRectangle:
+ * the rectangles are sent and the server fills them. Wayland has no drawing in
+ * it at all -- the compositor is handed a buffer of finished pixels -- so every
+ * cell is a loop over its own pixels here, and every frame is a whole new
+ * buffer to attach and commit.
+ *
+ * It used to be worse than that, and the difference is what this file lost when
+ * the window stopped saying "Loading...": a bitmap table of the eight distinct
+ * characters in that word, six by eight pixels each, one bit per pixel, with a
+ * rasteriser under it. That was carried in the binary because the protocol
+ * offers no text, and it was also the reason the wayland window never looked
+ * quite like the other four. Rectangles are the one thing this protocol and the
+ * X11 one can both be asked for at exactly the same size. See splash.h.
  *
  * The rest of the difference is the protocol's shape. There is a registry to
  * enumerate before anything can be created, a shared-memory file to make and
@@ -33,6 +41,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,34 +50,22 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#define NT_WL_W 260
-#define NT_WL_H 96
-#define NT_WL_SCALE 2
-#define NT_WL_BG 0x00ffffff
-#define NT_WL_FG 0x00000000
-
 /* Object ids. 1 is the display, and everything else is allocated from 2 up. */
 #define NT_WL_DISPLAY 1
 
 /*
- * The eight distinct characters in "Loading...", six pixels wide and eight
- * tall, one bit per pixel with the leftmost in bit 5. Everything a proportional
- * font would give is absent on purpose: this is the smallest thing that can put
- * the word on a surface that only accepts pixels.
+ * The buffer, twice.
+ *
+ * A frame is written into the mapping the compositor is reading out of, so
+ * writing the next one into the buffer that is currently on screen is a torn
+ * cell for as long as it takes to fill twelve rectangles. Two buffers in one
+ * pool, alternated, is the whole fix and costs a hundred kilobytes. The
+ * protocol's own answer -- wait for wl_buffer.release before touching a buffer
+ * again -- is not used: it is a fourth thing for the event loop to be right
+ * about, and at eleven frames a second with two buffers the release for the one
+ * about to be reused arrived a whole frame ago.
  */
-static const unsigned char nt_wl_font[8][8] = {
-    /* L */ { 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x3e, 0x00 },
-    /* o */ { 0x00, 0x00, 0x1c, 0x22, 0x22, 0x22, 0x1c, 0x00 },
-    /* a */ { 0x00, 0x00, 0x1c, 0x02, 0x1e, 0x22, 0x1e, 0x00 },
-    /* d */ { 0x02, 0x02, 0x1e, 0x22, 0x22, 0x22, 0x1e, 0x00 },
-    /* i */ { 0x08, 0x00, 0x18, 0x08, 0x08, 0x08, 0x1c, 0x00 },
-    /* n */ { 0x00, 0x00, 0x2c, 0x32, 0x22, 0x22, 0x22, 0x00 },
-    /* g */ { 0x00, 0x00, 0x1e, 0x22, 0x22, 0x1e, 0x02, 0x1c },
-    /* . */ { 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00 }
-};
-/* Indices into the table above, spelling the word. */
-static const unsigned char nt_wl_word[] = { 0, 1, 2, 3, 4, 5, 6, 7, 7, 7 };
-#define NT_WL_GLYPHS ((int)(sizeof(nt_wl_word) / sizeof(nt_wl_word[0])))
+#define NT_WL_SLOTS 2
 
 static unsigned nt_wl_next_id = 2;
 
@@ -78,6 +75,21 @@ static unsigned nt_wl_shm = 0;
 static unsigned nt_wl_base = 0;
 static unsigned nt_wl_surface = 0;
 static unsigned nt_wl_xdgsurf = 0;
+
+/*
+ * What the child redraws with, filled by nt_splash_wayland_up and read by
+ * nt_splash_wayland_serve on the other side of a fork -- which copies the
+ * variables and shares the mapping, since it was made MAP_SHARED on a
+ * descriptor the compositor holds too.
+ *
+ * The mapping is deliberately not unmapped when the first frame has been
+ * painted, which is what this file did when there was only ever one frame.
+ */
+static unsigned char *nt_wl_map = NULL;
+static size_t nt_wl_slotbytes = 0;
+static unsigned nt_wl_buffer[NT_WL_SLOTS] = { 0, 0 };
+/* The last slot, so that the first frame lands in the first one. */
+static int nt_wl_slot = NT_WL_SLOTS - 1;
 
 static unsigned nt_wl_id(void)
 {
@@ -374,38 +386,83 @@ static int nt_wl_globals(int fd)
     return nt_wl_compositor && nt_wl_shm && nt_wl_base ? 0 : -1;
 }
 
-/* The pixels, drawn once into the mapping the compositor will read. */
-static void nt_wl_paint(unsigned *px)
+/*
+ * One frame of pixels, into one of the two slots.
+ *
+ * No bounds checks in the inner loop, unlike the rasteriser this replaced. The
+ * track is NT_SPLASH_TRACK_W wide inside a window NT_SPLASH_WIDTH wide and both
+ * are constants in splash.h, so a cell that ran off the edge would be a
+ * compile-time arithmetic error and not a runtime one -- and a clamp here would
+ * hide it rather than prevent it.
+ */
+static void nt_wl_paint(unsigned *px, int phase)
 {
-    int total = NT_WL_GLYPHS * 6 * NT_WL_SCALE;
-    int ox = (NT_WL_W - total) / 2;
-    int oy = (NT_WL_H - 8 * NT_WL_SCALE) / 2;
-    int i, row, col, sx, sy;
+    int i, x, y;
 
-    for (i = 0; i < NT_WL_W * NT_WL_H; i++) {
-        px[i] = NT_WL_BG;
+    for (i = 0; i < NT_SPLASH_WIDTH * NT_SPLASH_HEIGHT; i++) {
+        px[i] = (unsigned)NT_SPLASH_RGB_BG;
     }
-    for (i = 0; i < NT_WL_GLYPHS; i++) {
-        const unsigned char *g = nt_wl_font[nt_wl_word[i]];
+    /* The edge, which on this platform is four runs of the background loop's
+     * own pixels rather than anything the compositor is asked for. */
+    for (x = 0; x < NT_SPLASH_WIDTH; x++) {
+        px[x] = (unsigned)NT_SPLASH_RGB_EDGE;
+        px[(NT_SPLASH_HEIGHT - 1) * NT_SPLASH_WIDTH + x] = (unsigned)NT_SPLASH_RGB_EDGE;
+    }
+    for (y = 0; y < NT_SPLASH_HEIGHT; y++) {
+        px[y * NT_SPLASH_WIDTH] = (unsigned)NT_SPLASH_RGB_EDGE;
+        px[y * NT_SPLASH_WIDTH + NT_SPLASH_WIDTH - 1] = (unsigned)NT_SPLASH_RGB_EDGE;
+    }
+    for (i = 0; i < NT_SPLASH_CELLS; i++) {
+        unsigned colour = nt_splash_cell_lit(phase, i)
+                              ? (unsigned)NT_SPLASH_RGB_LIT
+                              : (unsigned)NT_SPLASH_RGB_DIM;
 
-        for (row = 0; row < 8; row++) {
-            for (col = 0; col < 6; col++) {
-                if (!(g[row] & (1 << (5 - col)))) {
-                    continue;
-                }
-                for (sy = 0; sy < NT_WL_SCALE; sy++) {
-                    for (sx = 0; sx < NT_WL_SCALE; sx++) {
-                        int x = ox + (i * 6 + col) * NT_WL_SCALE + sx;
-                        int y = oy + row * NT_WL_SCALE + sy;
+        for (y = 0; y < NT_SPLASH_CELL_H; y++) {
+            unsigned *row = px + (NT_SPLASH_TRACK_Y + y) * NT_SPLASH_WIDTH +
+                            NT_SPLASH_CELL_X(i);
 
-                        if (x >= 0 && x < NT_WL_W && y >= 0 && y < NT_WL_H) {
-                            px[y * NT_WL_W + x] = NT_WL_FG;
-                        }
-                    }
-                }
+            for (x = 0; x < NT_SPLASH_CELL_W; x++) {
+                row[x] = colour;
             }
         }
     }
+}
+
+/*
+ * Paint the next phase into the slot that is not on screen and put it there:
+ * attach, damage, commit, which is the three-request sequence any change to a
+ * wayland surface is. Used for the first frame in the parent and for every one
+ * after it in the child, so that the two cannot disagree about what a frame is.
+ */
+static int nt_wl_frame(int fd, int phase)
+{
+    unsigned char buf[64];
+    size_t n;
+
+    nt_wl_slot = (nt_wl_slot + 1) % NT_WL_SLOTS;
+    nt_wl_paint((unsigned *)(nt_wl_map + (size_t)nt_wl_slot * nt_wl_slotbytes),
+                phase);
+
+    n = 0;
+    nt_wl_head(buf, &n, nt_wl_surface, 1);      /* attach */
+    nt_wl_put32(buf, &n, nt_wl_buffer[nt_wl_slot]);
+    nt_wl_put32(buf, &n, 0);
+    nt_wl_put32(buf, &n, 0);
+    if (nt_wl_finish(fd, buf, n, 1, -1) != 0) {
+        return -1;
+    }
+    n = 0;
+    nt_wl_head(buf, &n, nt_wl_surface, 2);      /* damage */
+    nt_wl_put32(buf, &n, 0);
+    nt_wl_put32(buf, &n, 0);
+    nt_wl_put32(buf, &n, NT_SPLASH_WIDTH);
+    nt_wl_put32(buf, &n, NT_SPLASH_HEIGHT);
+    if (nt_wl_finish(fd, buf, n, 2, -1) != 0) {
+        return -1;
+    }
+    n = 0;
+    nt_wl_head(buf, &n, nt_wl_surface, 6);      /* commit */
+    return nt_wl_finish(fd, buf, n, 6, -1);
 }
 
 /*
@@ -443,9 +500,11 @@ int nt_splash_wayland_up(char *desc, size_t desclen)
     unsigned char buf[512];
     unsigned char body[4096];
     size_t n, blen;
-    unsigned toplevel, pool, buffer;
-    size_t stride = (size_t)NT_WL_W * 4;
-    size_t size = stride * NT_WL_H;
+    unsigned toplevel, pool;
+    size_t stride = (size_t)NT_SPLASH_WIDTH * 4;
+    size_t slotbytes = stride * NT_SPLASH_HEIGHT;
+    size_t size = slotbytes * NT_WL_SLOTS;
+    int slot;
     unsigned serial = 0;
     int shmfd;
     void *map;
@@ -556,8 +615,10 @@ int nt_splash_wayland_up(char *desc, size_t desclen)
         snprintf(desc, desclen, "none (cannot map the buffer)");
         return -1;
     }
-    nt_wl_paint((unsigned *)map);
-    munmap(map, size);
+    /* Kept, not unmapped: the child paints every frame after this one through
+     * it, and the fork below shares it rather than copying it. */
+    nt_wl_map = (unsigned char *)map;
+    nt_wl_slotbytes = slotbytes;
 
     pool = nt_wl_id();
     n = 0;
@@ -570,92 +631,138 @@ int nt_splash_wayland_up(char *desc, size_t desclen)
     }
     close(shmfd);
 
-    buffer = nt_wl_id();
-    n = 0;
-    nt_wl_head(buf, &n, pool, 0);               /* create_buffer */
-    nt_wl_put32(buf, &n, buffer);
-    nt_wl_put32(buf, &n, 0);                    /* offset */
-    nt_wl_put32(buf, &n, NT_WL_W);
-    nt_wl_put32(buf, &n, NT_WL_H);
-    nt_wl_put32(buf, &n, (unsigned)stride);
-    nt_wl_put32(buf, &n, 1);                    /* xrgb8888 */
-    if (nt_wl_finish(fd, buf, n, 0, -1) != 0) {
+    /* Both buffers out of the one pool, at their two offsets into it. They are
+     * made here rather than as each is first needed because the child has no
+     * way to allocate an object id the parent does not already know about. */
+    for (slot = 0; slot < NT_WL_SLOTS; slot++) {
+        nt_wl_buffer[slot] = nt_wl_id();
+        n = 0;
+        nt_wl_head(buf, &n, pool, 0);           /* create_buffer */
+        nt_wl_put32(buf, &n, nt_wl_buffer[slot]);
+        nt_wl_put32(buf, &n, (unsigned)((size_t)slot * slotbytes));
+        nt_wl_put32(buf, &n, NT_SPLASH_WIDTH);
+        nt_wl_put32(buf, &n, NT_SPLASH_HEIGHT);
+        nt_wl_put32(buf, &n, (unsigned)stride);
+        nt_wl_put32(buf, &n, 1);                /* xrgb8888 */
+        if (nt_wl_finish(fd, buf, n, 0, -1) != 0) {
+            goto fail;
+        }
+    }
+
+    if (nt_wl_frame(fd, 0) != 0) {
         goto fail;
     }
 
-    n = 0;
-    nt_wl_head(buf, &n, nt_wl_surface, 1);      /* attach */
-    nt_wl_put32(buf, &n, buffer);
-    nt_wl_put32(buf, &n, 0);
-    nt_wl_put32(buf, &n, 0);
-    if (nt_wl_finish(fd, buf, n, 1, -1) != 0) {
-        goto fail;
-    }
-    n = 0;
-    nt_wl_head(buf, &n, nt_wl_surface, 2);      /* damage */
-    nt_wl_put32(buf, &n, 0);
-    nt_wl_put32(buf, &n, 0);
-    nt_wl_put32(buf, &n, NT_WL_W);
-    nt_wl_put32(buf, &n, NT_WL_H);
-    if (nt_wl_finish(fd, buf, n, 2, -1) != 0) {
-        goto fail;
-    }
-    n = 0;
-    nt_wl_head(buf, &n, nt_wl_surface, 6);      /* commit */
-    if (nt_wl_finish(fd, buf, n, 6, -1) != 0) {
-        goto fail;
-    }
-
-    snprintf(desc, desclen, "wayland (%dx%d)", NT_WL_W, NT_WL_H);
+    snprintf(desc, desclen, "wayland (%dx%d)", NT_SPLASH_WIDTH, NT_SPLASH_HEIGHT);
     return fd;
 
 fail:
     close(fd);
+    /* The mapping too, on the paths that made it. There is no child on this
+     * side of the label, so nothing is left that would have read it -- and this
+     * function's caller goes on to run a download in this process. */
+    if (nt_wl_map) {
+        munmap(nt_wl_map, size);
+        nt_wl_map = NULL;
+    }
     snprintf(desc, desclen, "none (compositor closed the connection)");
     return -1;
 }
 
 /*
- * The child. Answering ping is the part that is not optional: a compositor that
- * does not get a pong back within its own timeout is entitled to tell the user
- * this window is not responding, and to remove it. Configure is answered too,
+ * The child. Three things now, where the X11 child has two.
+ *
+ * Answering ping is the part that is not optional: a compositor that does not
+ * get a pong back within its own timeout is entitled to tell the user this
+ * window is not responding, and to remove it. Configure is answered too,
  * because one arrives whenever the window is resized or moved between outputs,
- * and an unacknowledged configure is a protocol error.
+ * and an unacknowledged configure is a protocol error. And a frame falls due
+ * every NT_SPLASH_FRAME_MS whether or not either of those has arrived, which is
+ * why this waits in poll rather than in the read it used to sit in.
+ *
+ * The phase is advanced against the clock and not against the number of times
+ * poll returned, for the reason splash_x11.c says at more length: a compositor
+ * that sends anything at all -- and one that has released a buffer sends
+ * something on every frame -- would otherwise set the speed of the animation.
  */
 void nt_splash_wayland_serve(int fd)
 {
     unsigned char buf[64];
     unsigned char body[4096];
     size_t n, blen;
+    int phase = 0;
+    long last = nt_now_ms();
+    long due = NT_SPLASH_FRAME_MS;
 
     for (;;) {
+        struct pollfd pfd;
         unsigned obj, op;
+        long now;
+        int ready;
 
-        if (nt_wl_event(fd, &obj, &op, body, sizeof(body), &blen) != 0) {
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        ready = poll(&pfd, 1, (int)due);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
             _exit(0);
         }
-        if (obj == NT_WL_DISPLAY && op == 0) {
-            _exit(0);
+        if (ready > 0) {
+            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                _exit(0);
+            }
+            if (nt_wl_event(fd, &obj, &op, body, sizeof(body), &blen) != 0) {
+                _exit(0);
+            }
+            if (obj == NT_WL_DISPLAY && op == 0) {
+                _exit(0);
+            }
+            if (obj == nt_wl_base && op == 0 && blen >= 4) {
+                n = 0;
+                nt_wl_head(buf, &n, nt_wl_base, 3);
+                nt_wl_put32(buf, &n, nt_wl_get32(body));
+                if (nt_wl_finish(fd, buf, n, 3, -1) != 0) {
+                    _exit(0);
+                }
+            } else if (obj == nt_wl_xdgsurf && op == 0 && blen >= 4) {
+                n = 0;
+                nt_wl_head(buf, &n, nt_wl_xdgsurf, 4);
+                nt_wl_put32(buf, &n, nt_wl_get32(body));
+                if (nt_wl_finish(fd, buf, n, 4, -1) != 0) {
+                    _exit(0);
+                }
+                /*
+                 * A bare commit, which shows the buffer already attached.
+                 * Painting a fresh frame here instead would work and was the
+                 * first spelling of this -- but a configure is the compositor's
+                 * to send as often as it likes, and a handler that flips the
+                 * buffer on each one can write into the buffer being read from
+                 * if two arrive inside a frame. The clock below owes a frame
+                 * within NT_SPLASH_FRAME_MS regardless, so there is nothing for
+                 * this path to be in a hurry about.
+                 */
+                n = 0;
+                nt_wl_head(buf, &n, nt_wl_surface, 6);
+                if (nt_wl_finish(fd, buf, n, 6, -1) != 0) {
+                    _exit(0);
+                }
+            }
+            /* Everything else, wl_buffer.release included, is the compositor
+             * saying something this does not need to act on. */
         }
-        if (obj == nt_wl_base && op == 0 && blen >= 4) {
-            n = 0;
-            nt_wl_head(buf, &n, nt_wl_base, 3);
-            nt_wl_put32(buf, &n, nt_wl_get32(body));
-            if (nt_wl_finish(fd, buf, n, 3, -1) != 0) {
-                _exit(0);
-            }
-        } else if (obj == nt_wl_xdgsurf && op == 0 && blen >= 4) {
-            n = 0;
-            nt_wl_head(buf, &n, nt_wl_xdgsurf, 4);
-            nt_wl_put32(buf, &n, nt_wl_get32(body));
-            if (nt_wl_finish(fd, buf, n, 4, -1) != 0) {
-                _exit(0);
-            }
-            n = 0;
-            nt_wl_head(buf, &n, nt_wl_surface, 6);
-            if (nt_wl_finish(fd, buf, n, 6, -1) != 0) {
-                _exit(0);
-            }
+        now = nt_now_ms();
+        if (now - last < NT_SPLASH_FRAME_MS) {
+            due = NT_SPLASH_FRAME_MS - (now - last);
+            continue;
+        }
+        last = now;
+        due = NT_SPLASH_FRAME_MS;
+        phase = (phase + 1) % NT_SPLASH_CELLS;
+        if (nt_wl_frame(fd, phase) != 0) {
+            _exit(0);
         }
     }
 }
