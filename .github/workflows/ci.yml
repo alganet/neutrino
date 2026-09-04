@@ -1797,6 +1797,28 @@ jobs:
           # threshold nobody can defend is a red lane nobody believes. What it
           # is for is the shape -- how much of a launch is before the window,
           # and how much is the browser starting behind it.
+          # Whether the browser actually got the switches this build sets, read
+          # off the process table rather than inferred from a clock.
+          #
+          # WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is documented as the runtime's
+          # variable, but the Evergreen path bypasses WebView2Loader.dll and
+          # calls the runtime's own entry point -- so whether the variable is
+          # read by the component this build still uses is a question about
+          # someone else's code, and a timing delta cannot answer it. A command
+          # line either carries `--no-first-run` or it does not. Reported and
+          # not asserted while it is the first reading; it becomes an assertion
+          # once there is a measured value to hold it to.
+          $browsers = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" -ErrorAction SilentlyContinue)
+          $carrying = @($browsers | Where-Object { $_.CommandLine -like "*--no-first-run*" })
+          Write-Output "report: browser processes=$($browsers.Count) carrying our arguments=$($carrying.Count)"
+          if ($carrying.Count -gt 0) {
+            $cl = $carrying[0].CommandLine
+            Write-Output "report:   $($cl.Substring(0, [Math]::Min(220, $cl.Length)))"
+          } elseif ($browsers.Count -gt 0) {
+            $cl = $browsers[0].CommandLine
+            Write-Output "report:   none carried them; one command line was:"
+            Write-Output "report:   $($cl.Substring(0, [Math]::Min(220, $cl.Length)))"
+          }
           $trace = ".\test\neutrinowarm\neutrino-trace.log"
           if (Test-Path $trace) {
             Write-Output "report: the startup path, unloaded:"

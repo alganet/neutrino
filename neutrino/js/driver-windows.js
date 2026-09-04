@@ -114,6 +114,21 @@
                 self.trace("init: app folder " + appFolder);
 
                 /*
+                 * Before either path chooses anything, because both of them end
+                 * in a browser and both read this. The Evergreen path calls the
+                 * runtime's entry point and the package path goes through the
+                 * managed wrapper; the variable is the runtime's either way.
+                 *
+                 * Set unconditionally, including over one that arrived from
+                 * outside -- see webView2BrowserArguments, where that is half
+                 * the reason it exists.
+                 */
+                SystemRef.Environment.SetEnvironmentVariable(
+                    "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                    self.webView2BrowserArguments);
+                self.trace("init: browser arguments set");
+
+                /*
                  * The runtime already on the machine, before anything is
                  * fetched. It is there on almost every Windows install -- it
                  * ships with 11 and reached 10 through Windows Update -- and
