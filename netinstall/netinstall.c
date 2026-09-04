@@ -1388,10 +1388,29 @@ static int nt_exec(const char *script, int argc, char **argv, int rest)
 
         nt_win_launched = 1;
         rc = nt_win_spawn("C:\\Windows\\System32\\cmd.exe", args);
+        /*
+         * And here is the rest of the wait the window was raised for. This
+         * call did not exec, it waited: everything the .cmd does before an app
+         * exists -- the certutil over the script, the compile that every
+         * netinstall launch pays because the app folder cannot keep a stamp,
+         * the START -- happened above this line with the window still on
+         * screen. It comes down one CreateProcess short of the app's own,
+         * which is as far as anything here can see.
+         *
+         * Idempotent, so a cached run that never armed one, and a download
+         * that was too quick to earn one, both reach this and do nothing.
+         */
+        nt_splash_down();
         free(args);
         return rc;
     }
 #else
+    /*
+     * Nothing to take down here, and it is not an omission. The window is
+     * already gone -- it went when the download ended, because the run phase's
+     * confinement stands between that line and this one and after it the kill
+     * that removes the holder does not arrive. See NT_SPLASH_OUTLIVES_HANDOFF.
+     */
     nt_close_inherited();
     execv("/bin/sh", args);
     free(args);
@@ -1854,8 +1873,21 @@ static int nt_main(int argc, char **argv)
              *
              * What follows -- the digest, the text check, the link -- is
              * bounded by NT_MAX_PAYLOAD and is not a wait worth decorating.
+             * What follows *that* is, on one platform, and it is the reason
+             * this is a condition now rather than a call. Where this program
+             * outlives the handoff it keeps the window over that instead, and
+             * nt_exec takes it down; see NT_SPLASH_OUTLIVES_HANDOFF in
+             * splash.h for which platform that is and why it is only one.
+             *
+             * A refused download still ends the window here on every platform.
+             * The window is about a wait, and a wait that produced nothing is
+             * over the moment that is known -- the refusals below say so, and
+             * none of them should be explained underneath a window still
+             * claiming the bytes are moving.
              */
-            nt_splash_down();
+            if (got != 0 || !NT_SPLASH_OUTLIVES_HANDOFF) {
+                nt_splash_down();
+            }
 
             if (got != 0) {
                 remove(tmpfile);

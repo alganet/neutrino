@@ -55,6 +55,41 @@
 #define NT_SPLASH_HOLD_MS 400L
 
 /*
+ * Whether this program is still running once it has handed the payload
+ * control, and so whether the window can stay up over that too.
+ *
+ * The window was coming down when the bytes stopped, and on windows that is
+ * nowhere near when anything appears. What happens after the download there is
+ * cmd.exe on the .cmd: an escape probe, a certutil over the whole script, and
+ * -- on every netinstall launch, because the app folder cannot keep a stamp the
+ * app itself could not rewrite -- a full jsc.exe compile, before an exe is even
+ * started. The download is the short half of that wait, and it was the only
+ * half wearing a window.
+ *
+ * So on windows nt_exec does not exec. It spawns cmd.exe and waits for it, and
+ * the window it raised for the download stays up across that wait and comes
+ * down when the .cmd returns -- which is one CreateProcess short of the app's
+ * own window. The splash there is a thread of this process with its own pump
+ * and timer, so it keeps animating through a blocking wait and costs the wait
+ * nothing.
+ *
+ * Everywhere else this is 0, and it is a fact about the platform rather than a
+ * decision. nt_exec execs /bin/sh: there is no "after", because the process
+ * that would hold the window has become the app. The last moment this program
+ * exists is the line before that exec, and it is already too late for the
+ * window -- the run phase's confinement runs first and scopes signals, so the
+ * kill that removes the forked holder no longer reaches it. Measured: the
+ * parent sat in do_wait on a child it could no longer kill. What is left to
+ * gain on those platforms is a digest, a rename and a link, which is
+ * milliseconds and not a wait.
+ */
+#ifdef _WIN32
+#define NT_SPLASH_OUTLIVES_HANDOFF 1
+#else
+#define NT_SPLASH_OUTLIVES_HANDOFF 0
+#endif
+
+/*
  * What is drawn, to the pixel, in one place because five files draw it. Every
  * number below is used by all of them: the window is the same size on X11, on
  * wayland, on windows and on macOS, the track sits in the same place inside it,
