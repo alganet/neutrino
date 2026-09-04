@@ -33,7 +33,28 @@ param(
     # version is that decoflip and the theme flip each launch this probe twice
     # and both launches wrote one filename, so the pair was never shipped. A
     # lone launch keeps the name the eye already knows.
-    [string]$ShotName = ""
+    [string]$ShotName = "",
+    # The artifact to launch, and the switch that says to launch it. Off by
+    # default so every caller that starts the app itself keeps working.
+    [string]$Artifact = "",
+    # Start the app from here rather than from the step, which is the same fix
+    # verify-windows.ps1 carries and for the same reading.
+    #
+    # This script loads two assemblies and compiles a C# type before it looks
+    # for a window, and the app it is watching has been running the whole time.
+    # Measured on this lane: the doc probe's first state is held 1500ms and the
+    # record opened on it with 2ms to spare on one run and 498ms on another --
+    # a margin that is a property of how long Add-Type took, not of anything
+    # this project controls. Then the app got faster and the margin went
+    # negative: `control ctl was never observed`, on a state the app had
+    # performed correctly with nobody watching.
+    #
+    # A dwell cannot win that. Raising it buys one more runner and one more
+    # speed-up takes it back, which is what verify-windows.ps1 says it paid for
+    # three times before fixing the order instead. So the order is fixed here
+    # too: everything expensive happens first, and the app is started by the
+    # process that is about to watch it.
+    [switch]$Launch
 )
 
 $ErrorActionPreference = "Stop"
@@ -725,6 +746,25 @@ if ($Replay) {
     $rec = [pscustomobject]@{ Rows = $rows; MaxGap = 0; Turns = $rows.Count }
     Write-Host "verify-std.ps1: replaying $Replay -- apparatus checks are not a measurement here"
 } else {
+    # -WorkingDirectory explicitly: Start-Process takes the child's directory
+    # from [Environment]::CurrentDirectory and not from $PWD.
+    if ($Launch) {
+        if (-not $Artifact) {
+            Fail "-Launch needs -Artifact"
+            Finish
+        }
+        # Two files and both named `.log`, so the lane's sheet step -- which
+        # gathers `~/*.log` -- picks up the launcher's account beside this
+        # script's. Separate paths because Start-Process refuses to point both
+        # redirections at one file.
+        $launchLog = Join-Path $ScreenshotDir "launch-$AppName-out.log"
+        $launchErr = Join-Path $ScreenshotDir "launch-$AppName-err.log"
+        Write-Host "=== Launching $Artifact ==="
+        Start-Process -FilePath "cmd.exe" -WorkingDirectory (Get-Location).Path `
+            -ArgumentList "/c", $Artifact -WindowStyle Hidden `
+            -RedirectStandardOutput $launchLog -RedirectStandardError $launchErr |
+            Out-Null
+    }
     $proc = Wait-ForApp
     if (-not $proc) { Finish }
     # `win` is photographed here, with its window up, and every other probe

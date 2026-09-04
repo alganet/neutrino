@@ -88,17 +88,14 @@ function Run-Half($app, $tag, $shot) {
         $script:halfBroken = $true
         return
     }
-    # Through cmd.exe by name, and not the .cmd as the executable: redirection
-    # turns off ShellExecute, and CreateProcess cannot run a batch file. Two
-    # separate files because PowerShell refuses to point both streams at one.
-    # -NoNewWindow rather than -WindowStyle, which does not combine with
-    # redirection everywhere.
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $artifact `
-        -RedirectStandardOutput (Join-Path $logdir "deco-$tag-app.log") `
-        -RedirectStandardError  (Join-Path $logdir "deco-$tag-app.err") `
-        -NoNewWindow | Out-Null
+    # Launched by the verifier rather than here, which is the same ordering
+    # fix verify-std.ps1's own -Launch header describes: that script loads two
+    # assemblies and compiles a type before it looks for a window, and an app
+    # started first spends all of it running unwatched. Doing it there also
+    # keeps the two log files this used to write, under the verifier's naming.
     & (Join-Path $root "test\verify-std.ps1") -Probe geom -AppName $app `
-        -ScreenshotDir $ScreenshotDir -ShotName "frame-$shot" *>&1 |
+        -ScreenshotDir $ScreenshotDir -ShotName "frame-$shot" `
+        -Launch -Artifact $artifact *>&1 |
         Tee-Object -FilePath (Join-Path $logdir "deco-$tag.log") | Out-Null
     $rc = $LASTEXITCODE
     if ($null -eq $rc) { $rc = 0 }
