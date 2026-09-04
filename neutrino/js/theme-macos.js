@@ -75,7 +75,40 @@
             var appearance = dollar.NSAppearance.appearanceNamed(
                 wantsDark ? "NSAppearanceNameDarkAqua" : "NSAppearanceNameAqua");
             if (appearance) {
-                dollar.NSAppearance.currentAppearance = appearance;
+                /*
+                 * The setter called, and not the property assigned, and the
+                 * difference is the whole of whether this function works.
+                 *
+                 * `$.NSAppearance.currentAppearance = a` is the spelling
+                 * that was here, and on macOS 26 it does nothing at all --
+                 * no error, no exception, and the very next read of
+                 * currentAppearance still answers NSAppearanceNameAqua.
+                 * `$.NSAppearance.setCurrentAppearance(a)` sets it. Measured
+                 * side by side on one launch, on a light desktop, asking
+                 * NSColor.windowBackgroundColor after each:
+                 *
+                 *   baseline                       bg=255 current=Aqua
+                 *   after property assignment      bg=255 current=Aqua
+                 *   after setCurrentAppearance()   bg=30  current=DarkAqua
+                 *
+                 * It is a bridge defect and not a deprecation: JXA does not
+                 * route an assignment to a *class* property to the class
+                 * setter, and +[NSAppearance setCurrentAppearance:] itself
+                 * still works, as the third line says.
+                 *
+                 * What it cost was hidden by the one thing that makes this
+                 * function look right: a process inherits the desktop's
+                 * appearance at launch, so on a first read the assignment is
+                 * a no-op that agrees with the answer anyway. Every launch
+                 * reported the right palette. What could not work was the
+                 * second read -- the theme watcher's -- because that is the
+                 * one that has to *change* the appearance to a value the
+                 * process did not start with. So the flip fired the
+                 * observer, this function returned the palette it returned
+                 * at startup, applyTheme's diff found no change and did
+                 * nothing, and a two-launch suite saw two correct launches.
+                 */
+                dollar.NSAppearance.setCurrentAppearance(appearance);
             }
         } catch (e) {
             this.noteOnce("could not set the drawing appearance: " + e);

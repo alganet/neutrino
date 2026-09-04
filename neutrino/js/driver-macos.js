@@ -278,21 +278,30 @@
                  * the end: what does not survive is the *return*.
                  *
                  * `return null` is the reason. JXA turns a JS null into
-                 * NSNull rather than nil in an ObjC context -- visible in
-                 * this same lane's log, where the theme watcher raises
-                 * "-[NSNull length]: unrecognized selector" for the same
-                 * conversion -- so WebKit is handed an NSNull where a
-                 * WKWebView or nil was promised, and sends it messages.
+                 * NSNull rather than nil in an ObjC context -- it is the
+                 * same conversion that was breaking the theme watcher in
+                 * runEventLoop, where it raised "-[NSNull length]:
+                 * unrecognized selector" -- so WebKit is handed an NSNull
+                 * where a WKWebView or nil was promised, and sends it
+                 * messages.
                  *
                  * Every method in this file returns void, and this was the
-                 * first that would not. No spelling of nil that JXA can
-                 * return from a registerSubclass implementation is known
-                 * here, and this desk has no macOS to find one on. Two
-                 * rounds of CI went to learning the above; a third spent
-                 * guessing at a return value would be the thing this file's
-                 * Method section already refuses. The refusal works without
-                 * any of it, so what is left undone is a log line and a
-                 * forward, and it is written down instead of shipped.
+                 * first that would not. The spelling is now known and it is
+                 * `$()`: a registerSubclass implementation with types
+                 * ["id", []] returning `$()` hands back `[id nil]`, where
+                 * returning `null` hands back `[id NSNull]`. Measured on
+                 * macOS 26 / Darwin 25.6, apple silicon, on the same desk
+                 * that fixed the theme watcher -- so the sentence this
+                 * paragraph used to carry, that no such spelling was known
+                 * and there was no macOS here to find one on, is retired.
+                 *
+                 * It is still not shipped, and that is now a scope answer
+                 * rather than an unknown. The refusal works without the
+                 * delegate: nothing opens a window this file did not ask
+                 * for, and what is missing is the log line and the forward.
+                 * Writing the delegate is a change with a suite behind it
+                 * and not a return value to slot in, so it stays written
+                 * down until it is done properly.
                  */
 
                 try {
@@ -418,11 +427,37 @@
                 if (!documentLoaded) {
                     return;
                 }
-                // A nil completion handler, which is the one thing JXA can
-                // do with a block parameter: it cannot call one, and the
-                // navigation delegate above records what happens when a
-                // selector requires it. Nothing here needs the result.
-                wv.evaluateJavaScriptCompletionHandler(js, null);
+                /*
+                 * An empty function, and not a nil of any spelling. This
+                 * line said `null` and the comment above it said that was a
+                 * nil completion handler and the one thing JXA can do with
+                 * a block parameter. Both halves were wrong, and measured
+                 * against a real WKWebView with a committed document, one
+                 * spelling per launch:
+                 *
+                 *   null            crash: TypeError: null is not an object
+                 *   $()             crash: TypeError: undefined is not an object
+                 *   function () {}  survived the completion
+                 *
+                 * JXA cannot express a nil block at all -- `null` arrives as
+                 * NSNull and `$()` as something no less non-nil, and WebKit
+                 * keeps whichever it is handed and calls it when the
+                 * evaluation returns. What it *can* do is the thing the old
+                 * comment said it could not: a JS function bridges to a
+                 * block and is called correctly. So the handler is a real
+                 * one that does nothing, which is what "nothing here needs
+                 * the result" always meant.
+                 *
+                 * The crash was unreachable until this week and that is the
+                 * only reason it is not an old bug report. This function
+                 * returns early until the document commits, and the only
+                 * caller afterwards is applyTheme delivering a *changed*
+                 * theme -- which needs the theme watcher, which was dead for
+                 * its own NSNull reason two functions down. Fixing the
+                 * watcher is what first made this line run, and the first
+                 * desktop flip that reached it took the whole process down.
+                 */
+                wv.evaluateJavaScriptCompletionHandler(js, function () {});
             },
             createWindow: function (config) {
                 var frame = dollar.NSMakeRect(0, 0, config.width, config.height);
@@ -878,6 +913,46 @@
                  * actually cares about. Whichever is right, applyTheme's
                  * diff means the other one costs nothing: a second read
                  * returning the same palette is not an update.
+                 *
+                 * `dollar()` and not `null` for the object: argument, and
+                 * this is the conversion the Method section warns about
+                 * arriving somewhere it could be fixed. JXA turns a JS null
+                 * into NSNull rather than nil, and both of these calls took
+                 * it badly, in two different ways that look like one bug and
+                 * are not:
+                 *
+                 *   - NSDistributedNotificationCenter sends -length to the
+                 *     object, because a distributed notification's object
+                 *     has to be a string. NSNull does not answer it, so the
+                 *     call raised -- measured on macOS 26 / Darwin 25.6,
+                 *     apple silicon:
+                 *
+                 *       no theme watcher on this lane: Error: exception
+                 *       raised by object: -[NSNull length]: unrecognized
+                 *       selector sent to instance
+                 *
+                 *     which the catch below turned into a note, and the
+                 *     theme watcher was simply not attached from then on.
+                 *   - NSNotificationCenter took the same NSNull without a
+                 *     word and used it as the filter it is: an observer
+                 *     registered for object NSNull matches notifications
+                 *     posted with object NSNull, and nothing posts one. It
+                 *     never raised and it never fired, which is the worse
+                 *     of the two, because the note above was the only
+                 *     evidence either existed. Measured with a local post
+                 *     of the same name: object:null fired 0, object:$()
+                 *     fired 1.
+                 *
+                 * `$()` is the spelling -- it evaluates to `[id nil]`, and
+                 * the alias this file already keeps for `$` calls the same
+                 * way. It is also the answer the Method section says is not
+                 * known here for a *returned* nil: a registerSubclass
+                 * implementation with types ["id", []] returning `$()`
+                 * hands back nil and returning `null` hands back NSNull,
+                 * measured the same afternoon. That one is written down
+                 * rather than acted on, because nothing in this file
+                 * returns id yet and the delegate that would is still not
+                 * written.
                  */
                 driverRef = this;
                 try {
@@ -885,11 +960,11 @@
                     dollar.NSDistributedNotificationCenter.defaultCenter
                         .addObserverSelectorNameObject(
                             observerRef, "desktopThemeChanged:",
-                            "AppleInterfaceThemeChangedNotification", null);
+                            "AppleInterfaceThemeChangedNotification", dollar());
                     dollar.NSNotificationCenter.defaultCenter
                         .addObserverSelectorNameObject(
                             observerRef, "desktopThemeChanged:",
-                            "NSSystemColorsDidChangeNotification", null);
+                            "NSSystemColorsDidChangeNotification", dollar());
                 } catch (e) {
                     self.note("no theme watcher on this lane: " + e);
                 }
