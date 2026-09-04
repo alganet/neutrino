@@ -145,6 +145,8 @@ void nt_splash_up(void)
 void nt_splash_down(void)
 {
     long held;
+    long hold;
+    int rounds;
 
     switch (nt_splash_state) {
     case NT_SPLASH_UP:
@@ -170,11 +172,50 @@ void nt_splash_down(void)
      * is about to go, and the caller is a launcher with nothing else to do in
      * the meantime -- the payload is on disk, verified, and can wait the
      * quarter second a person needs to see what was on screen.
+     *
+     * Asked again rather than once, because one sleep cannot keep an "at the
+     * least" promise. This was `if` and a single nt_sleep_ms, and it reported
+     * whatever that sleep happened to give back -- which on windows was
+     * reliably short. nt_now_ms there is GetTickCount64, whose counter moves
+     * in steps of about 15.6 ms, and Sleep rounds to the same tick: a hold of
+     * 400 came back measured at 390 and 391 on two runs, one tick under, while
+     * the run beside it that reached this line with more of the hold left to
+     * sleep came back at 406. Both are the same code asking for the same 400 --
+     * the difference is only how much of it was spent in one sleep whose
+     * undershoot is a whole tick either way.
+     *
+     * A tenth of a second is not the point. The point is that the header
+     * promises a floor and the arithmetic under it was a single sample: on any
+     * platform whose sleep can return early, or whose clock reads coarser than
+     * the remainder being asked for, the window went before the promise was
+     * kept and the program said so in its own trace without noticing.
+     *
+     * Bounded twice, and the first bound is the one that matters: a round that
+     * does not move the clock ends the loop. A stopped clock therefore costs
+     * one hold's worth of sleeping and no more -- the same cost the promise had
+     * anyway -- while a coarse one gets the extra tick it is owed. The round
+     * cap behind it is for the clock that is neither: one that advances, but by
+     * so much less than it was asked to sleep that the remainder never closes.
+     * Four is double what a working clock has ever needed here, which is two.
+     *
+     * The bound has to be the movement and not the sleeping, and that is a
+     * measurement rather than a preference. Written as "stop once a hold's
+     * worth has been slept" it gave up in precisely the case it was written
+     * for: the first round asks for the whole hold, spends it, and comes back
+     * one tick short -- so the budget was exactly used up at the moment the
+     * catch-up round was due. Simulated against a 15.625 ms tick, that reported
+     * the same 390 the loop was added to fix.
      */
+    hold = nt_splash_hold_ms();
     held = nt_now_ms() - nt_splash_up_at;
-    if (held < nt_splash_hold_ms()) {
-        nt_sleep_ms(nt_splash_hold_ms() - held);
+    for (rounds = 0; held < hold && rounds < 4; rounds++) {
+        long before = held;
+
+        nt_sleep_ms(hold - held);
         held = nt_now_ms() - nt_splash_up_at;
+        if (held <= before) {
+            break;
+        }
     }
     nt_splash_platform_down();
     nt_splash_state = NT_SPLASH_IDLE;
