@@ -1,4 +1,10 @@
-FOR /F %%E IN ('ECHO PROMPT $E ^| CMD') DO SET "ESC=%%E"
+REM The first thing every launch used to do was spawn a cmd.exe to work out
+REM what byte an escape is -- `FOR /F %%E IN ('ECHO PROMPT $E ^| CMD') DO SET
+REM "ESC=%%E"`, and through a pipe, so two of them. Nothing ever read it. The
+REM line below carries literal escape bytes instead and always has: the probe
+REM was written for a %ESC% that no version of this file has ever contained,
+REM measured over every commit it appears in. Two process starts an app launch,
+REM ahead of everything else, for a variable with no reader.
 <NUL SET /P =[1A[K[1A
 SETLOCAL ENABLEEXTENSIONS ENABLEDELAYEDEXPANSION
 SET "SCRIPT_NAME=%~n0"
