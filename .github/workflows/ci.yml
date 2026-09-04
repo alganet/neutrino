@@ -2845,11 +2845,19 @@ jobs:
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
+          # The live half's probe, built and parse-checked here with the other
+          # one. themeflip.sh builds it itself when it is missing, so this step
+          # is what puts it through parse.sh rather than what makes the half run.
+          bash test/mkapp.sh --testing test/neutrinolivetheme.js test/neutrinolivetheme.cmd
+          bash test/parse.sh test/neutrinolivetheme.cmd
           TEST_EXIT=0
           bash test/themeflip.sh macos test/neutrinostdtheme.cmd ~/screenshots \
+            test/neutrinolivetheme.cmd \
             > ~/themediff.log 2>&1 || TEST_EXIT=$?
-          # Both halves' own logs, beside the differential that read them.
-          cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
+          # Both halves' own logs, beside the differential that read them, and
+          # the live half's app log -- which is where a driver that raised on
+          # its way to the theme says so.
+          cat ~/flip-a.log ~/flip-b.log ~/flip-live-app.log ~/themediff.log 2>/dev/null || true
           exit $TEST_EXIT
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which
