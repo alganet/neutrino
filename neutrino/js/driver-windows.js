@@ -235,6 +235,33 @@
                 return wv;
             },
             attachWebView: function (win, wv) {
+                /*
+                 * On screen here, and not in runEventLoop where the Show used
+                 * to be. This is the other end of the complaint the splash
+                 * answers from netinstall's side: the window was appearing
+                 * after the WebView2 controller had been created and waited
+                 * for, so everything that pump costs was time with nothing on
+                 * screen at all.
+                 *
+                 * There is nothing to wait for. The Form is built, it is
+                 * painted with the desktop's own colour -- or the one the build
+                 * named -- and that is exactly the surface `background` exists
+                 * to put up before the document arrives. Showing it earlier
+                 * does not make an empty window last longer; it makes the same
+                 * empty window start sooner, and the run below is unchanged.
+                 *
+                 * DoEvents once behind it, so the first paint happens now
+                 * rather than on whichever later pump gets round to it. The
+                 * controller's own pumpUntil calls DoEvents too, so the window
+                 * stays responsive across the wait that follows this line.
+                 *
+                 * What is still ahead of the window is the environment, which
+                 * driver.init creates before boot has made a Form to show. That
+                 * one needs init and boot reordered rather than a line moved,
+                 * and it is the larger half.
+                 */
+                win.Show();
+                SystemRef.Windows.Forms.Application.DoEvents();
                 if (evergreen) {
                     // The handle, which is the first moment there is one: a
                     // Form makes it on demand and boot has not shown the window
