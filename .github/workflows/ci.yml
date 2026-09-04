@@ -2557,6 +2557,12 @@ jobs:
       # into a build is the step most able to go wrong. Naming it also keeps
       # this step off assemble.sh, which it would otherwise call for itself.
       - run: bash test/confine-macos.sh test/neutrinotest.cmd
+      # The engine walk, on the platform whose order it is now about. lanes.sh
+      # is stub-driven and needs no display, and it ran on three Linux lanes and
+      # nowhere else -- so the two assertions that name osascript had never
+      # executed, and the ordering this lane depends on was asserted only where
+      # osascript does not exist.
+      - run: bash test/lanes.sh test/neutrinotest.cmd
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
       # assembles anything -- once per sed, because the spelling of what it

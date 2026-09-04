@@ -135,6 +135,15 @@ QMLEOF
     # open for writing and nothing can reach it by name at all. /dev/fd first
     # because it is the spelling more than one kernel has; both were measured
     # working on the lane that runs this.
+    #
+    # "More than one kernel" is not every kernel, and the two spellings are not
+    # the same mechanism. Linux's /proc/self/fd/N is a symlink to the file, so
+    # opening it is a fresh open of the inode at offset zero -- which is what
+    # this wants. macOS's /dev/fd/N is a dup of the descriptor: it carries fd
+    # 8's write-only mode, so the `[ -r ]` below is false and the hand-off does
+    # not happen at all. dispatch.sh no longer reaches this on macOS for that
+    # reason, and it is written here as well because this loop is where the
+    # assumption lives.
     qml_fd=""
     for qml_fddir in /dev/fd /proc/self/fd; do
         if [ -r "$qml_fddir/8" ] && exec 9<"$qml_fddir/8"; then
@@ -144,8 +153,17 @@ QMLEOF
     done
     exec 8>&-
     if [ -z "$qml_fd" ]; then
+        # The reserved status and not 1, which is the difference between this
+        # lane being unavailable and the whole launch being over. Nothing has
+        # been created that outlives this function -- the document is already
+        # unlinked and the descriptor is closed -- and no engine has been
+        # started, which is exactly the condition dispatch.sh's 69 is defined
+        # for. Returning 1 made a kernel whose /dev/fd cannot do this take the
+        # launcher down with it rather than move it to the next lane, and on
+        # macOS that meant a machine with Homebrew's qt got no window while a
+        # working osascript sat two lines below.
         echo "neutrino: cannot hand the engine a document without a name here" >&2
-        return 1
+        return "$nt_ex_noengine"
     fi
 
 @@include sh/qt-sandbox.sh
