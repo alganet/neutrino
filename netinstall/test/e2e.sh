@@ -128,6 +128,62 @@ elif command -v osascript >/dev/null 2>&1 && [ "$(uname -s)" = "Darwin" ]; then
     # WKWebView creating its content process all happen before any title.
     STATE="$(nt_app_probe 180)"
     nt_kill_tree $APP_PID
+
+    # What the launcher said about its own confinement, which until now was
+    # written to app.log and read by nobody: the dump at the bottom of this
+    # file is behind `if [ "$FAILURES" -ne 0 ]`, so on a green run these lines
+    # went nowhere. Two defects lived in that gap for as long as this suite has
+    # been green, both on this exact branch. The window came up through both,
+    # so STATE said CONTENT_OK and the suite agreed.
+    #
+    # Silence is the pass, and it means the launcher applied its own seatbelt
+    # profile on top of netinstall's. That it *can* is worth stating, because
+    # the obvious reasoning says otherwise: a process already inside a seatbelt
+    # profile cannot apply a second one, and `sandbox-exec` inside
+    # `sandbox-exec` does fail with `sandbox_apply: Operation not permitted`
+    # for any profile at all. netinstall is not that case. It confines itself
+    # with sandbox_init_with_parameters and then execs, and a sandbox-exec
+    # after *that* is accepted -- measured here, on this branch, by this
+    # assertion going quiet while --info reports the fetch-and-run profile
+    # applied. The two SPIs do not answer the same way and only one of them is
+    # in this path.
+    #
+    # So each of the launcher's four messages is a failure here, and they are
+    # told apart because they want different fixes:
+    #
+    #   could not build   the here-document defect returning. /bin/sh here is
+    #                     bash 3.2, its here-documents go to /tmp whatever
+    #                     $TMPDIR says, and netinstall's profile does not grant
+    #                     /tmp. test/confine-macos.sh asserts the same thing
+    #                     without a window.
+    #   rejected          sandbox-exec refused the profile on its merits: the
+    #                     launcher's own profile has gone bad.
+    #   not nesting       the trivial-profile probe was refused, so this
+    #                     process could not have applied anything. If this ever
+    #                     fires, the SPI difference above has stopped holding
+    #                     and the app is running on netinstall's profile alone.
+    #   not found         no /usr/bin/sandbox-exec on a macos runner.
+    # -oE and not a basic-regex alternation: `\|` is a GNU extension, and this
+    # branch runs on the one platform whose grep is BSD. It happens to accept
+    # it, measured; an extended regex is what is portable and it costs a letter.
+    NT_CONFINE_SAID="$(grep -oE 'neutrino: (sandbox-exec not found|could not build the seatbelt profile|already inside a seatbelt profile|seatbelt rejected the profile)' \
+        "$WORK/app.log" 2>/dev/null | head -1)"
+    case "${NT_CONFINE_SAID:-}" in
+        "")
+            echo "  PASS: the launcher applied its own seatbelt profile over netinstall's" ;;
+        *"could not build"*)
+            nt_fail "launcher confinement expected=silence actual=could-not-build (a here-document under a profile that denies /tmp)"
+            FAILURES=$((FAILURES + 1)) ;;
+        *"rejected"*)
+            nt_fail "launcher confinement expected=silence actual=seatbelt-rejected (the launcher's own profile is bad)"
+            FAILURES=$((FAILURES + 1)) ;;
+        *"already inside"*)
+            nt_fail "launcher confinement expected=silence actual=not-nesting (a second profile is no longer accepted after netinstall's; the app has only netinstall's)"
+            FAILURES=$((FAILURES + 1)) ;;
+        *)
+            nt_fail "launcher confinement expected=silence actual=$NT_CONFINE_SAID"
+            FAILURES=$((FAILURES + 1)) ;;
+    esac
 elif [ -n "${DISPLAY:-}" ] && nt_linux_runtime; then
     echo "=== Launch through the linux runtime ==="
     nt_app_gone
