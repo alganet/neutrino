@@ -457,6 +457,10 @@ $envIid = ""
 $envSlots = @()
 $iidOf = @{}
 $slotsOf = @{}
+# Which interface each one derives from, because a derived interface's slot
+# numbers count its base's vtable first and the table section below cannot
+# reconstruct that from the own-methods list alone.
+$baseOf = @{}
 $handlerIid = ""
 $idlFile = Join-Path $work "webview2-idl.txt"
 
@@ -497,6 +501,16 @@ if ($pinVersion) {
                 "ICoreWebView2Controller2",
                 "ICoreWebView2",
                 "ICoreWebView2Settings",
+                # Settings2 is in this list and nothing calls it. It is the
+                # link in the chain: Settings3's own methods start at slot 20
+                # because Settings and Settings2 fill nought to nineteen, and a
+                # parse that skipped it would compute every index after it two
+                # short while looking perfectly plausible.
+                "ICoreWebView2Settings2",
+                "ICoreWebView2Settings3",
+                "ICoreWebView2Settings4",
+                "ICoreWebView2Settings5",
+                "ICoreWebView2Settings6",
                 "ICoreWebView2WebMessageReceivedEventHandler",
                 "ICoreWebView2WebMessageReceivedEventArgs",
                 "ICoreWebView2NavigationStartingEventHandler",
@@ -538,6 +552,7 @@ if ($pinVersion) {
                 $lines += "$name iid=$iid base=$base slots=$($methods.Count) order=$($methods -join ',')"
                 $iidOf[$name] = $iid
                 $slotsOf[$name] = $methods
+                $baseOf[$name] = $base
                 if ($name -eq "ICoreWebView2Environment") {
                     $envIid = $iid
                     $envSlots = $methods
@@ -558,8 +573,8 @@ if ($pinVersion) {
             }
             Set-Content -Path $idlFile -Value ($lines -join "`n") -Encoding UTF8
             foreach ($l in $lines) { Report "idl $l" }
-            if ($found -lt 10) {
-                Fail "idl parsed only $found of $($wanted.Count) interfaces; the parse, not the header, is the likely fault"
+            if ($found -lt $wanted.Count) {
+                Fail "idl parsed only $found of $($wanted.Count) interfaces; the parse, not the header, is the likely fault -- and the table section below computes slot indices from these, so a missing base is a wrong index rather than a missing row"
             }
             # An interface made entirely of properties. Zero slots for it means
             # the method regex is dropping accessors, which is a slot count that
@@ -573,6 +588,164 @@ if ($pinVersion) {
     }
 } else {
     Report "idl skipped, no pin readable from the artifact"
+}
+
+# =====================================================================
+Section "table - the constants the artifact ships, against that header"
+# =====================================================================
+#
+# The section above prints the header's answer. This one asks whether the
+# artifact agrees with it, which is a different question and the one that was
+# never being asked.
+#
+# js/webview2-interfaces.js said, in its own comment, that this file re-derived
+# its table on every push and failed on any disagreement. It did not. It parsed
+# the header and generated its *own* interfaces from that parse, which proves
+# the technique and says nothing at all about the constants that ship: a slot
+# index edited in the driver and nowhere else would have driven a green run.
+# That is exactly the constant the same file warns about -- "a hand-copied IID
+# is a wrong QueryInterface at run time and a hand-counted slot is a call into
+# the wrong function, and neither says which it was".
+#
+# So the table is lifted out of the built artifact and compared, entry by entry:
+# every IID against the header's, and every call against the name sitting at
+# that index in the full vtable. `name` on each entry is what makes it possible
+# -- the artifact says which interface it means, so there is no second mapping
+# here to fall out of step with the first.
+#
+# The full vtable, not the interface's own methods. COM single inheritance puts
+# the base's slots first, so ICoreWebView2Settings3's own first method is slot
+# 20 rather than slot 0, and a comparison against the own-methods list would
+# call every derived entry wrong.
+
+function Get-FullVtable($name) {
+    $chain = @()
+    $n = $name
+    while ($n -and $script:slotsOf.ContainsKey($n)) {
+        $chain = @($n) + $chain
+        $n = $script:baseOf[$n]
+    }
+    # The walk has to end at IUnknown. Ending anywhere else means a base this
+    # parse never read, and every index computed from it would be short by
+    # however many methods that base has -- which is the failure that looks
+    # like a correct answer.
+    if ($n -ne "IUnknown") {
+        return $null
+    }
+    $out = @()
+    foreach ($c in $chain) { $out += @($script:slotsOf[$c]) }
+    return ,$out
+}
+
+if (-not $iidOf.Count) {
+    Report "table skipped, the header was not parsed"
+} elseif (-not (Test-Path $artifact)) {
+    Report "table skipped, no artifact at $artifact"
+} else {
+    # The same lift parse.sh and verify-windows.ps1 take, and the same anchors:
+    # the whole object, from the literal to the call that runs it, with that
+    # call left out. node is being asked for two constants, not for a window.
+    $tl = Get-Content -LiteralPath $artifact
+    $tstart = -1; $tstop = -1
+    for ($i = 0; $i -lt $tl.Count; $i++) {
+        if ($tstart -lt 0 -and $tl[$i] -eq '    var NeutrinoWebview = {') { $tstart = $i; continue }
+        if ($tstart -ge 0 -and $tl[$i] -eq '    NeutrinoWebview.run();') { $tstop = $i - 1; break }
+    }
+    if ($tstart -lt 0 -or $tstop -lt $tstart) {
+        Fail "table could not lift NeutrinoWebview out of $artifact"
+    } else {
+        $tw = Join-Path $work "table"
+        New-Item -ItemType Directory -Force -Path $tw | Out-Null
+        ($tl[$tstart..$tstop] + 'module.exports = NeutrinoWebview;') |
+            Set-Content -LiteralPath (Join-Path $tw 'obj.js') -Encoding UTF8
+        'var o = require("./obj.js"); console.log(JSON.stringify({i:o.webView2Interfaces,h:o.webView2Handlers}));' |
+            Set-Content -LiteralPath (Join-Path $tw 'dump.js') -Encoding UTF8
+        # Push-Location, the way verify-windows.ps1 runs its own lift: `require`
+        # resolves against the requiring file either way, and running from the
+        # directory is one less thing that has to be true.
+        Push-Location $tw
+        $dumped = (& node dump.js 2>&1 | Out-String).Trim()
+        Pop-Location
+        $shipped = $null
+        # -ErrorAction Stop, because this file runs under $ErrorActionPreference
+        # = "Continue": without it a malformed answer writes an error and leaves
+        # $shipped null outside the catch, which reads the same as node not
+        # being here and says neither.
+        if ($dumped) {
+            try { $shipped = $dumped | ConvertFrom-Json -ErrorAction Stop } catch { }
+        }
+        if (-not $shipped -or -not $shipped.i) {
+            Fail "table node would not read the artifact's table: $dumped"
+        } else {
+            $checked = 0
+            $ifaces = @($shipped.i.PSObject.Properties)
+            # A table that lifted as empty is a lift that went wrong, and it
+            # would otherwise pass every comparison below by making none.
+            if ($ifaces.Count -lt 8) {
+                Fail "table the artifact carries $($ifaces.Count) interfaces; the lift is the likely fault"
+            }
+            foreach ($prop in $ifaces) {
+                $key = $prop.Name
+                $spec = $prop.Value
+                if (-not $spec.name) {
+                    Fail "table $key carries no name, so nothing here can say which interface it is"
+                    continue
+                }
+                $hname = $spec.name
+                if (-not $iidOf.ContainsKey($hname)) {
+                    Fail "table $key names $hname, which this header has no interface for"
+                    continue
+                }
+                if ($spec.iid.ToLower() -ne $iidOf[$hname].ToLower()) {
+                    Fail "table $key iid=$($spec.iid) but $hname is $($iidOf[$hname]); a wrong IID is a QueryInterface that refuses and reads as an absent runtime"
+                    continue
+                }
+                $vt = Get-FullVtable $hname
+                if ($null -eq $vt) {
+                    Fail "table $hname derives from something this parse never read, so its slot numbers cannot be checked"
+                    continue
+                }
+                foreach ($call in @($spec.calls.PSObject.Properties)) {
+                    $slot = [int]$call.Value[0]
+                    $at = if ($slot -lt $vt.Count) { $vt[$slot] } else { "<past the end of a $($vt.Count)-slot vtable>" }
+                    if ($at -ne $call.Name) {
+                        Fail "table $key.$($call.Name) is slot $slot, where $hname has $at"
+                    }
+                    $checked++
+                }
+                Report "table $key = $hname iid=ok slots=$(@($spec.calls.PSObject.Properties).Count)/$($vt.Count) ok"
+            }
+            foreach ($prop in @($shipped.h.PSObject.Properties)) {
+                $key = $prop.Name
+                $spec = $prop.Value
+                if (-not $spec.name -or -not $iidOf.ContainsKey($spec.name)) {
+                    Fail "table handler $key names $(if ($spec.name) { $spec.name } else { '<nothing>' }), which this header has no interface for"
+                    continue
+                }
+                if ($spec.iid.ToLower() -ne $iidOf[$spec.name].ToLower()) {
+                    Fail "table handler $key iid=$($spec.iid) but $($spec.name) is $($iidOf[$spec.name]); the runtime would refuse this callback and the driver would wait out its timeout"
+                    continue
+                }
+                # One method, because the emitter gives each of these exactly
+                # one `Invoke` and puts it in slot 0. An interface the header
+                # says has two would leave the second unimplemented.
+                $own = @($slotsOf[$spec.name])
+                if ($own.Count -ne 1) {
+                    Fail "table handler $key -> $($spec.name) has $($own.Count) methods in the header; the emitted sink implements one"
+                }
+                $checked++
+                Report "table handler $key = $($spec.name) iid=ok"
+            }
+            # The control. A comparison loop that ran over nothing prints no
+            # failures either, and this section exists precisely because a
+            # check that was not happening looked like a check that passed.
+            if ($checked -lt 25) {
+                Fail "table only $checked constants were compared; the loop is not reaching the table"
+            } else {
+                Report "table $checked constants agree with the pinned header"
+            }
+        }
+    }
 }
 
 # =====================================================================

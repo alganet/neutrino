@@ -146,6 +146,12 @@
         var types = session.types;
         var lastWidth = -1;
         var lastHeight = -1;
+        // The frame's own corner on the desktop, which is a different reading
+        // from the view's rectangle inside it and is watched for a different
+        // reason -- see NotifyParentWindowPositionChanged in the table.
+        var lastX = -100000;
+        var lastY = -100000;
+        var focused = false;
 
         var handler = NeutrinoEvergreen.MakeSink("NeutrinoCtlSink",
             this.webView2Handlers.controllerCompleted.iid,
@@ -229,28 +235,65 @@
                 return true;
             },
             /*
-             * Four of the nine doors the package view closes. The other five
-             * are not on ICoreWebView2Settings at all -- they arrived in
-             * Settings3 through 6, which are separate IIDs -- so this build
-             * hardens less, and js/webview2-interfaces.js names which.
+             * All nine doors the package view closes, across the five
+             * interfaces they are spread over.
+             *
+             * One pointer, asked for each revision in turn. `get_Settings`
+             * hands back ICoreWebView2Settings and the rest are
+             * QueryInterfaces on the same object, so a runtime too old to know
+             * one of them refuses that one wrap and keeps every door the
+             * others closed -- which is why this is four questions and not one
+             * for the newest.
+             *
+             * What is counted is doors and not interfaces, because that is the
+             * quantity the other path can be compared on: nine here is parity,
+             * and anything less says how much less.
              */
             harden: function () {
-                var settings = NeutrinoEvergreen.Wrap(
-                    types.webview.GetMethod("get_Settings").Invoke(core, null),
-                    types.settings);
-                if (!settings) {
+                var handed = types.webview.GetMethod("get_Settings").Invoke(core, null);
+                // Not `base`. This file has been caught once by a name that
+                // means something to jsc.exe and nothing to the other three --
+                // the driver's quoted "close" carries the story -- and `base`
+                // is a member-access keyword in more than one .NET language.
+                var baseSettings = NeutrinoEvergreen.Wrap(handed, types.settings);
+                if (!baseSettings) {
                     self.note("the view would not hand over its settings");
                     return;
                 }
-                var off = self.webView2Interfaces.settings.calls;
                 var no = SystemRef.Convert.ToInt32(0);
-                for (var name in off) {
-                    if (!off.hasOwnProperty(name)) {
-                        continue;
-                    }
+                var names = self.webView2SettingsInterfaces;
+                var closed = 0;
+                var wanted = 0;
+                for (var i = 0; i < names.length; i++) {
+                    var spec = self.webView2Interfaces[names[i]];
+                    var revision = null;
                     try {
-                        types.settings.GetMethod(name).Invoke(settings, [no]);
-                    } catch (_) {}
+                        revision = NeutrinoEvergreen.Wrap(handed, types[names[i]]);
+                    } catch (e) {
+                        revision = null;
+                    }
+                    for (var name in spec.calls) {
+                        if (!spec.calls.hasOwnProperty(name)) {
+                            continue;
+                        }
+                        wanted++;
+                        if (!revision) {
+                            continue;
+                        }
+                        try {
+                            types[names[i]].GetMethod(name).Invoke(revision, [no]);
+                            closed++;
+                        } catch (_) {}
+                    }
+                }
+                self.trace("evergreen: closed " + closed + " of " + wanted + " settings");
+                // Said out loud rather than left to a trace a release build
+                // does not carry: a launch that hardened less than the other
+                // path is the difference this view exists to not have.
+                if (closed < wanted) {
+                    self.note("this WebView2 runtime closed " + closed + " of " +
+                        wanted + " settings; the rest are on interface revisions " +
+                        "it does not offer");
                 }
             },
             wireMessages: function () {
@@ -360,18 +403,69 @@
             syncBounds: function () {
                 var width = SystemRef.Convert.ToInt32(win.ClientSize.Width);
                 var height = SystemRef.Convert.ToInt32(win.ClientSize.Height);
-                if (width === lastWidth && height === lastHeight) {
-                    return;
+                if (width !== lastWidth || height !== lastHeight) {
+                    lastWidth = width;
+                    lastHeight = height;
+                    try {
+                        types.controller.GetMethod("put_Bounds")
+                            .Invoke(controller, [NeutrinoEvergreen.MakeRect(width, height)]);
+                        types.controller.GetMethod("put_IsVisible")
+                            .Invoke(controller, [SystemRef.Convert.ToInt32(1)]);
+                    } catch (e) {
+                        self.noteOnce("could not size the view: " + e);
+                    }
                 }
-                lastWidth = width;
-                lastHeight = height;
-                try {
-                    types.controller.GetMethod("put_Bounds")
-                        .Invoke(controller, [NeutrinoEvergreen.MakeRect(width, height)]);
-                    types.controller.GetMethod("put_IsVisible")
-                        .Invoke(controller, [SystemRef.Convert.ToInt32(1)]);
-                } catch (e) {
-                    self.noteOnce("could not size the view: " + e);
+
+                /*
+                 * The window's corner, watched on the same clock and told to
+                 * the runtime when it moves. Nothing the page does depends on
+                 * this and everything the runtime puts on top of the page
+                 * does: a select's dropdown, an autofill panel and an IME
+                 * candidate list are separate top-level windows placed against
+                 * a parent position the runtime cached when the controller was
+                 * made. A form that has been dragged and never said so opens
+                 * them where it used to be.
+                 *
+                 * Free on the package path, where the control forwards its own
+                 * WM_MOVE, and this loop is where that forwarding lives here.
+                 */
+                var x = SystemRef.Convert.ToInt32(win.Location.X);
+                var y = SystemRef.Convert.ToInt32(win.Location.Y);
+                if (x !== lastX || y !== lastY) {
+                    lastX = x;
+                    lastY = y;
+                    try {
+                        types.controller.GetMethod("NotifyParentWindowPositionChanged")
+                            .Invoke(controller, null);
+                    } catch (e) {
+                        self.noteOnce("could not tell the view its window moved: " + e);
+                    }
+                }
+
+                /*
+                 * And where the keyboard goes, once, at the first turn that
+                 * has a sized view to give it to.
+                 *
+                 * A controller is a child window nothing routes WM_SETFOCUS
+                 * into, so without this a launch comes up with the caret
+                 * nowhere: the page is on screen, an input is in it, and
+                 * typing does nothing until the user clicks. Measured against
+                 * the package path, whose control does exactly this from its
+                 * own WndProc -- so this is the difference being closed rather
+                 * than a behaviour being added.
+                 *
+                 * PROGRAMMATIC, which is 0 in the pinned header's
+                 * COREWEBVIEW2_MOVE_FOCUS_REASON: the app is being given
+                 * focus, not tabbed into from either direction.
+                 */
+                if (!focused) {
+                    focused = true;
+                    try {
+                        types.controller.GetMethod("MoveFocus")
+                            .Invoke(controller, [SystemRef.Convert.ToInt32(0)]);
+                    } catch (e) {
+                        self.noteOnce("could not give the view the keyboard: " + e);
+                    }
                 }
             },
             close: function () {

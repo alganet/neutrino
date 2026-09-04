@@ -28,13 +28,29 @@
             "IsPinchZoomEnabled"
         ];
 
+        var closed = 0;
         for (var i = 0; i < off.length; i++) {
             try {
                 var prop = settings.GetType().GetProperty(off[i]);
                 if (prop && prop.CanWrite) {
                     prop.SetValue(settings, false, null);
+                    closed++;
                 }
             } catch (_) {}
+        }
+        /*
+         * Counted and said, in the words the Evergreen view uses for the same
+         * reading. That is the whole reason it is here: the two paths close the
+         * same list through completely different mechanisms -- named properties
+         * on a managed wrapper, and a QueryInterface per interface revision --
+         * and "the same list" was a claim about the source rather than
+         * something either of them reported. One spelling means a verifier
+         * asserts parity instead of asserting this one and hoping.
+         */
+        this.trace("package: closed " + closed + " of " + off.length + " settings");
+        if (closed < off.length) {
+            this.note("this WebView2 package closed " + closed + " of " +
+                off.length + " settings");
         }
     };
 
