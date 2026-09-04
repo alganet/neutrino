@@ -37,8 +37,13 @@ if (-not (Test-Path -LiteralPath $Artifact)) {
     exit 1
 }
 
+# Start-Process and no pipe, which is the idiom the warm-up step in ci.yml
+# already carries and the reason it gives: the batch region STARTs a detached
+# exe and exits, so a pipe on the launcher outlives the launcher and this would
+# wait on a handle the app never closes. -WindowStyle Hidden hides the console
+# cmd.exe opens, not the window the app is about to show.
 Note "launching $Artifact"
-& cmd.exe /c $Artifact | Out-Null
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $Artifact -WindowStyle Hidden | Out-Null
 
 Write-Host "=== Waiting for the demo to report ==="
 $title = ""
@@ -155,7 +160,11 @@ Note "desktop $desktop"
 if ($bound -eq "yes") {
     Note "the Close button has a handler on it"
 } else {
-    Fail "bound=$bound: the Close button on the published demo has no handler, which is exactly the defect this file was written for"
+    # ${bound} and not $bound. A colon after a variable in a double-quoted
+    # string is PowerShell's scope qualifier -- `$bound:` is read as a
+    # namespace, and the whole file then fails to parse rather than this line
+    # failing to interpolate. It cost a round: nothing in demo.ps1 ran.
+    Fail "bound=${bound}: the Close button on the published demo has no handler, which is exactly the defect this file was written for"
 }
 
 Get-Process -Name $AppName -ErrorAction SilentlyContinue |
