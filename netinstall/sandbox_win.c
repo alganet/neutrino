@@ -80,37 +80,27 @@ static int nt_label_low(const char *path)
     return ok;
 }
 
-/* A process may lower its own integrity level, never raise it. Children inherit. */
-static int nt_drop_to_low(void)
-{
-    TOKEN_MANDATORY_LABEL tml;
-    HANDLE token = NULL;
-    PSID low = NULL;
-    int ok = 0;
-
-    if (!ConvertStringSidToSidA("S-1-16-4096", &low)) {
-        return 0;
-    }
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_DEFAULT, &token)) {
-        ZeroMemory(&tml, sizeof(tml));
-        tml.Label.Attributes = SE_GROUP_INTEGRITY;
-        tml.Label.Sid = low;
-        ok = SetTokenInformation(token, TokenIntegrityLevel, &tml,
-                                 (DWORD)(sizeof(tml) + GetLengthSid(low))) ? 1 : 0;
-        CloseHandle(token);
-    }
-    LocalFree(low);
-    return ok;
-}
-
 /*
- * The fetch phase's half, which the run phase's half above
- * cannot be: nt_confine runs in the launcher, and a process may never raise its
- * own integrity back. Everything after nt_fetch returns -- the digest, the pin,
- * the rename, the hard link, the app directory -- is work at the launcher's own
- * level, so lowering it here would trade the download's confinement for the
- * install. The child is the only thing that can be lowered, which is why this
- * is a token handed to nt_win_spawn_as rather than a call that changes anyone.
+ * Both phases lower a child rather than themselves, and until the build slot
+ * the run phase did the opposite.
+ *
+ * nt_confine runs in the launcher, and a process may lower its own integrity
+ * but never raise it back, so a phase that lowers itself gives up everything it
+ * had left to do at its own level. For the fetch that was always fatal:
+ * the digest, the pin, the rename, the hard link and the app directory all
+ * happen after nt_fetch returns, so lowering here would trade the download's
+ * confinement for the install's. The run phase had nothing left to do --
+ * nt_exec was the last line -- so it lowered itself and the child inherited.
+ *
+ * It has something left to do now. On windows nt_exec does not exec: it spawns
+ * cmd.exe and waits for it, and the build slot's Low label has to come back off
+ * when that returns, before anything trusts what the payload left there. A
+ * launcher that has lowered itself cannot take a label off anything. So the run
+ * phase is a token handed to nt_win_spawn_as as well, which makes the two
+ * phases one shape rather than two -- and it leaves the launcher at medium
+ * while the app is at low, which a low child cannot open for writing.
+ *
+ * What follows is the fetch's, and it is why the grant there is one file.
  *
  * Measured on windows-latest, and each of these was a candidate that lost:
  *
@@ -146,6 +136,13 @@ static int nt_drop_to_low(void)
  * signature would put a windows type in a header three other platforms include.
  */
 static HANDLE nt_fetch_low_token = NULL;
+
+/*
+ * The run phase's, on the same terms and for the reason at the top of this
+ * file: it is spent by nt_exec rather than by nt_fetch, and it is what keeps
+ * this process at medium across the wait so nt_build_revoke can run.
+ */
+static HANDLE nt_run_low_token = NULL;
 
 /*
  * A duplicate of this process's own token, lowered. Deliberately after
@@ -190,6 +187,27 @@ static HANDLE nt_low_token(void)
     return dup;
 }
 
+/*
+ * Takes a label back off one object, whichever of the two above put it there.
+ *
+ * An empty but valid sacl removes the label, and the object falls back to the
+ * default -- this process's own level. Measured: while the label is on, an
+ * unrelated low integrity process writes the file; the moment it is off, the
+ * same process is refused, and the hard link the commit makes carries no label
+ * either.
+ */
+static int nt_label_clear(const char *path)
+{
+    ACL empty;
+
+    if (!InitializeAcl(&empty, sizeof(empty), ACL_REVISION)) {
+        return 0;
+    }
+    return SetNamedSecurityInfoA((LPSTR)path, SE_FILE_OBJECT,
+                                 LABEL_SECURITY_INFORMATION,
+                                 NULL, NULL, NULL, &empty) == ERROR_SUCCESS;
+}
+
 /* One object, no inheritance: this is a file, and nothing is created under it. */
 static int nt_label_file_low(const char *path)
 {
@@ -215,6 +233,117 @@ static int nt_label_file_low(const char *path)
 void *nt_fetch_token(void)
 {
     return (void *)nt_fetch_low_token;
+}
+
+/*
+ * What the run phase's sentence has to say beyond the app dir, set by the
+ * caller because nt_confine cannot work it out: whether this launch owes a
+ * build is a question about a record on disk and a digest, and answering it
+ * here would put both in a file three other platforms include.
+ *
+ * A sealed launch leaves the sentence exactly as it was before any of this, to
+ * the byte, which is what keeps writable.sh's reading of it a reading of the
+ * same thing.
+ */
+static const char *nt_slot_shown = NULL;
+static int nt_slot_granting = 0;
+
+void nt_build_slot(const char *slot, int owed)
+{
+    nt_slot_shown = slot;
+    nt_slot_granting = owed;
+}
+
+/* The writable set the sentence names, which is one directory or two. */
+static void nt_slot_where(char *buf, size_t len, const char *appdir)
+{
+    if (nt_slot_granting && nt_slot_shown) {
+        snprintf(buf, len, "%s and %s for this build", appdir, nt_slot_shown);
+        return;
+    }
+    snprintf(buf, len, "%s", appdir);
+}
+
+void *nt_run_token(void)
+{
+    return (void *)nt_run_low_token;
+}
+
+/*
+ * The build slot's grant, and the two ways it is not the fetch's.
+ *
+ * It is a directory. The fetch grants one file -- narrower, and possible there
+ * because netinstall knows the name and can create it first. Here it cannot:
+ * the launcher compiles to <name>.new<RANDOM>.exe and MOVEs, because windows
+ * refuses to overwrite a running image but allows renaming one, so the payload
+ * needs create and delete in the directory itself. What that costs is written
+ * down rather than reasoned away: for the length of a build run, any low
+ * integrity process on the machine can create, delete and rename in here.
+ *
+ * And a failure is not fatal. Everywhere else in this file a confinement that
+ * did not apply is a refusal, because what was promised did not happen. This is
+ * the other direction: the slot is a *relaxation*, so a launch that does not
+ * get one is more confined than one that does, not less. The caller carries on
+ * and the launcher falls back to compiling every launch, which is what it did
+ * before any of this existed.
+ */
+int nt_build_grant(const char *slot)
+{
+    if (!nt_run_low_token) {
+        /* Nothing was lowered, so there is nothing to widen for. */
+        return 1;
+    }
+    return nt_label_low(slot);
+}
+
+/*
+ * And back off again, from the container *and* from everything in it.
+ *
+ * nt_label_low writes OICI -- object and container inherit -- so every file the
+ * payload created in there carries a Low label of its own, and clearing the
+ * directory's does not touch them. The fetch's revoke is one call because the
+ * fetch grants one file; this one is a walk, and a missed entry is a file that
+ * stays writable by every low integrity process on the machine for as long as
+ * it exists. So it answers, on sandbox.h's rule, and the caller wipes the slot
+ * rather than sealing a directory it could not close.
+ *
+ * Flat, matching the seal: a subdirectory here is refused by nt_slot_read
+ * rather than descended into, so a tree cannot make this walk unbounded.
+ */
+int nt_build_revoke(const char *slot)
+{
+    WIN32_FIND_DATAA fd;
+    char pattern[NT_PATH_MAX];
+    char full[NT_PATH_MAX];
+    HANDLE h;
+    int ok = 1;
+
+    if (!nt_run_low_token) {
+        return 1;
+    }
+    if (GetFileAttributesA(slot) == INVALID_FILE_ATTRIBUTES) {
+        /* Never created, or already gone: the same absence either way. */
+        return 1;
+    }
+    if (!nt_label_clear(slot)) {
+        return 0;
+    }
+    snprintf(pattern, sizeof(pattern), "%s\\*", slot);
+    h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        return ok;
+    }
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) {
+            continue;
+        }
+        snprintf(full, sizeof(full), "%s\\%s", slot, fd.cFileName);
+        if (!nt_label_clear(full)) {
+            ok = 0;
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return ok;
 }
 
 int nt_fetch_grant(const char *dest)
@@ -247,8 +376,6 @@ int nt_fetch_grant(const char *dest)
 
 int nt_fetch_revoke(const char *dest)
 {
-    ACL empty;
-
     if (!nt_fetch_low_token) {
         return 1;
     }
@@ -261,20 +388,7 @@ int nt_fetch_revoke(const char *dest)
     if (GetFileAttributesA(dest) == INVALID_FILE_ATTRIBUTES) {
         return 1;
     }
-    /*
-     * An empty but valid sacl removes the label, and the object falls back to
-     * the default -- this process's own level. Measured: while the label is on,
-     * an unrelated low integrity process writes the file; the moment it is off,
-     * the same process is refused, and the hard link the commit makes carries no
-     * label either.
-     */
-    if (!InitializeAcl(&empty, sizeof(empty), ACL_REVISION) ||
-        SetNamedSecurityInfoA((LPSTR)dest, SE_FILE_OBJECT,
-                              LABEL_SECURITY_INFORMATION,
-                              NULL, NULL, NULL, &empty) != ERROR_SUCCESS) {
-        return 0;
-    }
-    return 1;
+    return nt_label_clear(dest);
 }
 
 /*
@@ -564,6 +678,7 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
     char uishown[256];
     char uinote[288];
+    char where[NT_PATH_MAX * 2 + 32];
     DWORD uimask;
     const char *privs;
     HANDLE job;
@@ -589,11 +704,31 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
          * --info promised a stripping whatever the token turned out to be.
          */
         privs = nt_strip_privileges(0) ? " + privileges stripped" : "";
+        /*
+         * Built and dropped, so this reports a token this machine really
+         * produced rather than one this file promises -- the shape
+         * nt_fetch_confine_win already uses two screens up, and the shape the
+         * privilege stripping on the line above has always used. It described a
+         * low integrity launch unconditionally while the mechanism was a drop
+         * this branch never attempted.
+         */
+        {
+            HANDLE probe = nt_low_token();
+
+            if (!probe) {
+                snprintf(desc, desclen, "job object%s%s (process limits only; "
+                                        "the low integrity token was "
+                                        "unavailable)", uinote, privs);
+                return -1;
+            }
+            CloseHandle(probe);
+        }
+        nt_slot_where(where, sizeof(where), appdir);
         snprintf(desc, desclen, "job object%s%s + low integrity, writes "
                                 "confined to %s" NT_ALSO_WRITABLE
                                 " (reads are not confined)"
                                ,
-                 uinote, privs, appdir);
+                 uinote, privs, where);
         return 0;
     }
 
@@ -642,14 +777,17 @@ int nt_confine(nt_phase phase, const char *home, const char *appdir, int enforce
         snprintf(desc, desclen, "job object only (could not label %s low)", appdir);
         return -1;
     }
-    if (!nt_drop_to_low()) {
-        snprintf(desc, desclen, "job object only (could not drop to low integrity)");
+    nt_run_low_token = nt_low_token();
+    if (!nt_run_low_token) {
+        snprintf(desc, desclen, "job object only (the low integrity token was "
+                                "unavailable)");
         return -1;
     }
+    nt_slot_where(where, sizeof(where), appdir);
     snprintf(desc, desclen, "job object%s%s + low integrity, writes confined to "
                             "%s" NT_ALSO_WRITABLE " (reads are not confined)"
                            ,
-             uinote, privs, appdir);
+             uinote, privs, where);
     return 0;
 }
 

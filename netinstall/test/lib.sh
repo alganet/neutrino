@@ -39,6 +39,16 @@ nt_sha256() {
     fi
 }
 
+# Modification time in whole seconds, and the three spellings that exist for it.
+# GNU stat and BSD stat disagree on the flag, and the fallback is `ls` because a
+# reading that is only ever compared with itself does not need a format anyone
+# else can parse.
+nt_mtime() {
+    stat -c %Y "$1" 2>/dev/null ||
+        stat -f %m "$1" 2>/dev/null ||
+        ls -l "$1" 2>/dev/null
+}
+
 # Thirty-two, which is the floor the parser enforces. Every fixture in this
 # suite gets its name from here, so this one number is what keeps the suite
 # above the floor; it was run at 32 for a full round before the floor moved,

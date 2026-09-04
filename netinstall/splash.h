@@ -60,11 +60,14 @@
  *
  * The window was coming down when the bytes stopped, and on windows that is
  * nowhere near when anything appears. What happens after the download there is
- * cmd.exe on the .cmd: an escape probe, a certutil over the whole script, and
- * -- on every netinstall launch, because the app folder cannot keep a stamp the
- * app itself could not rewrite -- a full jsc.exe compile, before an exe is even
- * started. The download is the short half of that wait, and it was the only
- * half wearing a window.
+ * cmd.exe on the .cmd: a certutil over the whole script, and -- on every
+ * netinstall launch, because the app folder cannot keep a stamp the app itself
+ * could not rewrite -- a full jsc.exe compile, before an exe is even started.
+ * The download is the short half of that wait, and it was the only half wearing
+ * a window.
+ *
+ * The escape probe this used to name first is gone: 2e4cd50 removed the two
+ * cmd.exe that worked out what byte an escape is for a variable nothing read.
  *
  * So on windows nt_exec does not exec. It spawns cmd.exe and waits for it, and
  * the window it raised for the download stays up across that wait and comes

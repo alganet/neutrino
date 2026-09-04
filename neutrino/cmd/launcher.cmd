@@ -59,14 +59,71 @@ REM
 REM Two ways this ends up in the app folder compiling every launch, which is the
 REM old path kept whole rather than a degraded one. An exe already sitting
 REM beside the script with no stamp of ours next to it is somebody else's file
-REM and is not adopted. And a script directory that refuses the stamp -- the
-REM tight tier lowers this process's integrity and the shelf is above it -- has
+REM and is not adopted. And a script directory that refuses the stamp -- under
+REM netinstall this process is low integrity and the shelf is above it -- has
 REM nowhere to keep anything.
+REM
+REM Which is why there is a third place, and netinstall is the only thing that
+REM makes one. <name>.build beside the script is the build slot: netinstall
+REM opens it for writing on the one launch that owes a compile and closes it
+REM again when this file returns, so an exe kept there is out of reach of the
+REM app on every launch after the one that built it. It is ".build" and not
+REM "build" because this file finds it from %~dp0 and cannot tell netinstall's
+REM shelf from a source tree, and a .cmd sitting next to an ordinary build/
+REM directory is not exotic.
+REM
+REM Nothing is read from the environment to find it and nothing is told to this
+REM file. The slot's own writability is the signal: under netinstall "this
+REM directory takes a write" *is* "netinstall granted it this launch", because
+REM that is the mechanism and nothing else produces it. That is the idea below
+REM -- claiming the stamp is also the test of whether the directory can be
+REM written -- used the other way round.
 SET "CERTUTIL=%WINDIR%\System32\certutil.exe"
+SET "SLOT=%SCRIPT_DIR%%SCRIPT_NAME%.build"
+SET "APP_EXE=%SCRIPT_DIR%%SCRIPT_NAME%.exe"
+SET "APP_STAMP=%SCRIPT_DIR%%SCRIPT_NAME%.stamp"
+SET "MANIFEST=%APP_EXE%.manifest"
+REM Both digests start empty here rather than beside the reads that fill them,
+REM because the slot's branch below reaches the comparison without passing
+REM either read, and an inherited variable of the same name would otherwise be
+REM answering for one.
+SET "SRC_HASH="
+SET "CACHED_HASH="
+
+REM The slot is asked first, and that ordering is the point rather than a
+REM detail. What is beside the script is trusted -- a stamp says "this exe was
+REM built from this script" and nothing says who wrote the stamp -- while what
+REM is in the slot is verified, because netinstall holds a digest of every file
+REM in there somewhere the app cannot reach. Under netinstall the shelf is
+REM medium integrity and the .cmd on it is re-pinned every launch, so a same-user
+REM process that cannot change the program *can* still put an <name>.exe and a
+REM matching <name>.stamp beside it. Asking the slot first is what makes that
+REM plant lose to the artifact somebody vouched for.
+IF NOT EXIST "%SLOT%\" GOTO :BESIDE
+SET "APP_EXE=%SLOT%\%SCRIPT_NAME%.exe"
+SET "APP_STAMP="
+SET "MANIFEST=%SLOT%\%SCRIPT_NAME%.exe.manifest"
+SET "SLOT_PROBE=%SLOT%\.w%RANDOM%%RANDOM%"
+2>NUL > "%SLOT_PROBE%" ECHO x
+IF EXIST "%SLOT_PROBE%" (
+    REM Granted, so this is the launch that owes the build. No stamp is kept
+    REM here and none is read: netinstall holds the record, out of reach, and a
+    REM stamp written beside an exe in a directory that is open right now would
+    REM be exactly as writable as the exe it vouched for -- which is the defect
+    REM that took the cache out in the first place.
+    DEL /Q "%SLOT_PROBE%" >NUL 2>&1
+    GOTO :NAMES
+)
+REM Sealed. The program is there, nothing can write over it, and there is
+REM nothing left to check: no certutil, no stamp, no compile.
+IF EXIST "%APP_EXE%" GOTO :LAUNCH
+REM A slot that is neither writable nor holding a program is one this launch
+REM has no use for.
 SET "APP_EXE=%SCRIPT_DIR%%SCRIPT_NAME%.exe"
 SET "APP_STAMP=%SCRIPT_DIR%%SCRIPT_NAME%.stamp"
 SET "MANIFEST=%APP_EXE%.manifest"
 
+:BESIDE
 IF EXIST "%APP_EXE%" IF NOT EXIST "%APP_STAMP%" (
     SET "APP_EXE=%APP_FOLDER%\%SCRIPT_NAME%.exe"
     SET "APP_STAMP="
@@ -84,7 +141,6 @@ REM version of this shipped a stamp reading "ECHO is off." while everything else
 REM looked right. %WINDIR%\System32 cannot contain a space, so the quotes bought
 REM nothing there; "%~f0" keeps its own, and a script under a path with spaces
 REM was measured hashing correctly.
-SET "SRC_HASH="
 IF EXIST "%CERTUTIL%" (
     FOR /F "usebackq skip=1 tokens=* delims=" %%H IN (`%CERTUTIL% -hashfile "%~f0" SHA256`) DO (
         IF NOT DEFINED SRC_HASH SET "SRC_HASH=%%H"
@@ -92,19 +148,23 @@ IF EXIST "%CERTUTIL%" (
 )
 IF DEFINED SRC_HASH SET "SRC_HASH=!SRC_HASH: =!"
 
-SET "CACHED_HASH="
 IF DEFINED APP_STAMP IF EXIST "%APP_STAMP%" (
     FOR /F "usebackq tokens=* delims=" %%S IN ("%APP_STAMP%") DO (
         IF NOT DEFINED CACHED_HASH SET "CACHED_HASH=%%S"
     )
 )
 
+:NAMES
 FOR %%D IN ("%APP_EXE%") DO SET "EXE_DIR=%%~dpD"
 SET "APP_NEW=%EXE_DIR%%SCRIPT_NAME%.new%RANDOM%%RANDOM%.exe"
 SET "APP_OLD=%EXE_DIR%%SCRIPT_NAME%.old%RANDOM%%RANDOM%.exe"
 DEL /Q "%EXE_DIR%%SCRIPT_NAME%.new*.exe" >NUL 2>&1
 DEL /Q "%EXE_DIR%%SCRIPT_NAME%.old*.exe" >NUL 2>&1
 
+REM The slot's granted branch arrives here with no stamp and no digests, having
+REM skipped both reads above, and the first line is what sends it to the
+REM compile. Nowhere to keep a digest is nowhere to have read one from.
+IF NOT DEFINED APP_STAMP GOTO :BUILD
 IF NOT DEFINED SRC_HASH GOTO :BUILD
 IF NOT DEFINED CACHED_HASH GOTO :BUILD
 IF NOT EXIST "%APP_EXE%" GOTO :BUILD

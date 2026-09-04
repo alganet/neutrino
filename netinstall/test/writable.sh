@@ -148,6 +148,13 @@ if [ "$NT_WINDOWS" = "1" ]; then
     # The two keys are not files and nothing has to be planted for them: reg add
     # creates or opens, and either way the answer is whether it succeeded.
     TARGETS="$TARGETS reg= reglow="
+    # The build slot, which the payload finds the way the real launcher does --
+    # beside its own script, from %~dp0 -- and nothing has to be planted because
+    # netinstall creates it. Every launch of this suite owes a build, because
+    # this payload is a batch probe and never leaves a program behind for the
+    # record to seal, so what this measures is the granted state. slot.sh is
+    # what reads the other one.
+    TARGETS="$TARGETS buildslot="
 
     export NEUTRINO_TEST_T_HOME="$W_HOME"
     export NEUTRINO_TEST_T_USERTEMP="$W_USERTEMP"
@@ -170,6 +177,7 @@ call :try home     "%NEUTRINO_TEST_T_HOME%"
 call :try usertemp "%NEUTRINO_TEST_T_USERTEMP%"
 call :try locallow "%NEUTRINO_TEST_T_LOCALLOW%"
 call :try wintemp  "%NEUTRINO_TEST_T_WINTEMP%"
+call :try buildslot "%~dp0%~n0.build"
 call :reg reg      "%NEUTRINO_TEST_T_REG%"
 call :reg reglow   "%NEUTRINO_TEST_T_REGLOW%"
 > nul echo x 2>nul
@@ -519,7 +527,10 @@ case "$(uname -s)" in
         # no confinement at all -- because low integrity was behind a build
         # flag. It is what every build does now, and the two places the Low
         # label leaves open by design are still not the app dir.
-        WANT_DEFAULT="appdir=CT- home=--- usertemp=--- locallow=CT- wintemp=--- reg=--- reglow=K--"
+        # buildslot=CT- is the grant, and it is the one letter here that is
+        # conditional on the launch rather than on the platform: a launch that
+        # does not owe a build reads --- and slot.sh asserts that direction.
+        WANT_DEFAULT="appdir=CT- home=--- usertemp=--- locallow=CT- wintemp=--- reg=--- reglow=K-- buildslot=CT-"
         SAY_DEFAULT="LocalLow" ;;
 esac
 

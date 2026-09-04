@@ -539,12 +539,20 @@ detection would find the same answer.
   can replace, which was measured, and a stamp sitting beside it is exactly as
   writable as the thing it vouches for.
 
-  **Under netinstall it compiles every launch, about a third of a second.** That
-  is the same rule seen from the other side: netinstall puts the verified `.cmd`
-  one level above the only writable directory, so the launcher cannot keep a
-  stamp beside it either, and an app folder cache is the one thing it will not
-  do. Nothing is wrong when this happens — it is the placement rule holding —
-  and it is why netinstall's own window now stays up across the `.cmd` run.
+  **Under netinstall it used to compile every launch, about a third of a
+  second.** That was the same rule seen from the other side: netinstall puts the
+  verified `.cmd` one level above the directory the app can write, so the
+  launcher could not keep a stamp beside it either, and an app folder cache is
+  the one thing it will not do.
+
+  netinstall answers it with a **build slot** — `<name>.build` beside the
+  script, which netinstall opens for writing on the launch that owes a compile
+  and closes again when the `.cmd` returns, keeping a digest of everything in it
+  somewhere the app cannot reach. So the exe there is not merely kept, it is
+  checked: a launch that finds the slot sealed runs it and hashes nothing at
+  all. The launcher finds the slot from its own location and is told nothing —
+  the slot being writable *is* netinstall having granted it. See
+  [netinstall's README](netinstall/README.md).
 - WebView2 runtime. Usually nothing to do: it ships with Windows 11 and reached
   Windows 10 through Windows Update, and the launcher renders through the one
   the machine already has. It reads the version out of EdgeUpdate, loads the
