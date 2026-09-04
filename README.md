@@ -261,11 +261,26 @@ isn't one. Measured on every lane and asserted on every push: WebKitGTK under
 gjs, cjs and PyGObject, QtWebEngine, WKWebView and WebView2 all have the API in
 scope when the first line of the app script runs.
 
+**Your markup is in scope too.** The early shell — your `body.html` and
+`style.css` — is parsed before your app's first statement, on every lane, so
+`document.getElementById` answers on the first line and you do not have to wait
+for anything to read your own page.
+
+That is four engines doing it and one being asked to. WebKitGTK takes a
+`DOCUMENT_END` user script, WKWebView takes injection time 1 and Qt runs the
+page script from `LoadSucceeded`; WebView2 has one hook before a navigation and
+it runs before the parser has produced anything, so the launcher holds your
+script until `DOMContentLoaded` there. It was not always so, and what that cost
+is worth writing down: the sample app on the download page did
+`getElementById("close").onclick = …` on its third line, which threw on Windows
+and nowhere else, and the Close button on the demo everybody downloads did
+nothing there for as long as that was true. `body0=yes` is asserted on every
+lane on every push now.
+
 `document.readyState` is a separate question and it is *not* uniform — it reads
-`interactive` on WebKit, `complete` on QtWebEngine and `loading` on WebView2. If
-your script touches an element, put it after that element or wait for the
-document, exactly as you would in a browser. What you do not have to wait for is
-neutrino.
+`interactive` on WebKit and WebView2 and `complete` on QtWebEngine. That is a
+difference between engines rather than between launchers, and none of the three
+is a state in which your markup is missing.
 
 Your app moves and names its window with the spelling it would use in a
 browser.
@@ -307,23 +322,16 @@ Only the document this launcher loaded can name the window. A page that somehow
 got itself loaded in the view cannot, and neither can a frame — a subframe's
 title is its own document's on every engine here.
 
-**Wait for a document before you name it.** `document.title` writes into the
+**You can name it on the first line.** `document.title` writes into the
 `<title>` of a `<head>`, and where the page has neither yet the DOM's own rule
-is to do nothing — no error, no title. `window.neutrino` is in scope at your
-first statement on every platform and the document is not: `document.readyState`
-is `interactive` on WebKitGTK, `complete` on QtWebEngine and **`loading` on
-WebView2**, where your script really does start before the head is parsed. So a
-title written at the top of the file is silently dropped on Windows and lands
-everywhere else, which is the worst shape a difference can have. `doc.body` is
-the cheap proof that `</head>` has been passed:
+is to do nothing — no error, no title. That used to be a real hazard on one
+platform: your script started before the head was parsed on WebView2, so a title
+written at the top of the file was silently dropped on Windows and landed
+everywhere else, and this section carried a `doc.body` poll to work around it.
 
-```javascript
-function start() {
-    if (!doc.body) { return win.setTimeout(start, 16); }
-    doc.title = "My App";
-}
-start();
-```
+The launcher holds your script until the document is there instead, so the poll
+is gone and so is the difference. `doc.title = "My App"` on line one is a title
+on all five lanes.
 
 Two consequences worth knowing. `close()` does not run `beforeunload`, and it
 does not set `window.closed` — the engines already disagree about that flag,
@@ -532,6 +540,14 @@ detection would find the same answer.
   runtime's own library by path, and drives the COM surface behind it from the
   same `jsc.exe` that compiles everything else — so on very nearly every machine
   a first run downloads nothing at all.
+
+  **The two paths render the same app.** Whichever one a machine takes, it gets
+  the same nine engine settings closed, the same navigation guard, the same
+  keyboard focus and the same window verbs. That is asserted rather than
+  intended: both halves report how many doors they shut, in one spelling, and
+  CI fails a launch where the count differs from the list. It was not always
+  true — the installed-runtime path used to close four of the nine, because the
+  other five live on interface revisions it has to ask for one at a time.
 - WebView2 SDK package, on a machine that has no runtime — Server, LTSC, a
   stripped image — where the above finds nothing to render through. Then it is
   downloaded automatically with a progress bar on first run, 8.8 MiB, which is

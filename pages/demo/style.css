@@ -1,10 +1,23 @@
 /*
  * SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+ *
  * SPDX-License-Identifier: ISC
  *
  * The sample app's early shell. assemble.sh includes this into the document,
  * so it is in the first paint -- there is no frame in which the window is up
  * and this has not been applied.
+ *
+ * Every colour here is one of the seven custom properties the launcher writes
+ * from the desktop's own palette, with the system-colour keyword it is named
+ * after as the fallback. So this stylesheet has no colours of its own: on a
+ * lane that read a toolkit the window is the desktop's, and on one that could
+ * not the declaration falls through to the engine's own answer at the point of
+ * use. Nothing here branches, and nothing here waits for script.
+ *
+ * config.json says "background": "auto" for the same reason and it is the other
+ * half of it: the native window and the view are painted from that same palette
+ * before this document exists, so the app appears out of its own colour rather
+ * than out of a white flash.
  *
  * Written across as many lines as it wants to be, this comment included: the
  * document is a region of the artifact rather than a single line, and nothing
@@ -13,31 +26,111 @@
  * not --comments was asked for, because the pair that closes one also closes
  * the block comment the whole shell region of the polyglot lives inside.
  */
-html, body { margin: 0 }
-
-body {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    background: #12141a;
-    color: #e6e8ee;
-    text-align: center;
-    font: 14px/1.6 -apple-system, Segoe UI, Cantarell, sans-serif;
+:root {
+    --fg:      var(--neutrino-CanvasText, CanvasText);
+    --bg:      var(--neutrino-Canvas, Canvas);
+    --face:    var(--neutrino-ButtonFace, ButtonFace);
+    --facefg:  var(--neutrino-ButtonText, ButtonText);
+    --line:    var(--neutrino-ButtonBorder, ButtonBorder);
+    --accent:  var(--neutrino-Highlight, Highlight);
+    --accentfg: var(--neutrino-HighlightText, HighlightText);
 }
 
-h1 { margin: 0 0 8px; font-size: 22px; font-weight: 600 }
-p  { margin: 0 0 20px; color: #8b93a7 }
-b  { color: #e6e8ee; font-weight: 500 }
+html, body { margin: 0; height: 100% }
+
+body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 13px/1.5 -apple-system, Segoe UI, Cantarell, Ubuntu, sans-serif;
+}
+
+main {
+    box-sizing: border-box;
+    height: 100%;
+    padding: 22px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em }
+
+header p { margin: 4px 0 0; opacity: 0.7 }
+
+/*
+ * A two-column grid rather than a table, so a value that grows -- a long
+ * engine name, a size that gains a digit -- moves nothing beside it.
+ */
+.facts {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 4px 12px;
+    align-content: start;
+}
+
+.facts dt {
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    opacity: 0.55;
+    align-self: center;
+}
+
+.facts dd {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 12px;
+}
+
+.palette { display: flex; gap: 6px }
+
+.sw {
+    display: block;
+    width: 100%;
+    height: 26px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+}
+
+.sw.base       { background: var(--bg) }
+.sw.text       { background: var(--fg) }
+.sw.face       { background: var(--face) }
+.sw.facetext   { background: var(--facefg) }
+.sw.line       { background: var(--line) }
+.sw.accent     { background: var(--accent) }
+.sw.accenttext { background: var(--accentfg) }
+
+.controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: auto;
+}
 
 button {
     font: inherit;
-    padding: 8px 18px;
-    border: 1px solid #2c3140;
+    padding: 6px 12px;
+    border: 1px solid var(--line);
     border-radius: 6px;
-    background: #1b1f29;
-    color: #e6e8ee;
+    background: var(--face);
+    color: var(--facefg);
     cursor: pointer;
 }
 
-button:hover { background: #232733 }
+button:hover { border-color: var(--accent) }
+
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }
+
+button.primary {
+    background: var(--accent);
+    color: var(--accentfg);
+    border-color: var(--accent);
+}
+
+.hint { margin: 0; font-size: 11px; opacity: 0.55 }
+
+code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+}

@@ -19,6 +19,28 @@
         // path, which is what every launch did before this and what every
         // launch still does when anything about the other one does not hold.
         var evergreen = null;
+        var viewClosed = false;
+
+        /*
+         * The view, shut down before the window that carries it, and at most
+         * once however many ways the run ends.
+         *
+         * Two ways in: the page called close(), and the user pressed the
+         * frame's own button so the loop simply stopped. Both go through here,
+         * because on the Evergreen path the order matters -- the controller
+         * owns a child of this form's handle, and the runtime is documented to
+         * be closed before its parent window is destroyed. The package view
+         * answers this with nothing: its control is a child the form disposes.
+         */
+        var closeView = function () {
+            if (viewClosed || !view) {
+                return;
+            }
+            viewClosed = true;
+            try {
+                view.close();
+            } catch (_) {}
+        };
 
         return {
             /*
@@ -299,6 +321,7 @@
             // jsc.exe is stricter than the other three engines about names
             // that look like they might mean something.
             "close": function (win) {
+                closeView();
                 win.Close();
             },
             onWebMessage: function (cb) {
@@ -372,8 +395,15 @@
                             // The API first, then the page's own code, both
                             // through the engine so the document itself can
                             // forbid script.
+                            //
+                            // The API at document creation, and the app held
+                            // back until there is a document -- which is what
+                            // every other lane's engine does for it and what
+                            // this one has to be asked for. deferredPageScript
+                            // says why, and what it cost before.
                             view.addScripts(pendingPageScript
-                                ? [pendingPreload, pendingPageScript]
+                                ? [pendingPreload,
+                                   self.deferredPageScript(pendingPageScript)]
                                 : [pendingPreload]);
                             if (pendingDocument) {
                                 /*
@@ -474,7 +504,15 @@
                          * refused rather than trusted, which is the rule
                          * isTrustedView already settled.
                          */
-                        if (coreReady) {
+                        /*
+                         * And not after the view has gone. A page that called
+                         * close() did so from the message drain a few lines
+                         * up, so this turn is still running with a controller
+                         * that has been shut down -- every read below would
+                         * throw into the catch and write one puzzled trace
+                         * line about a window that closed exactly as asked.
+                         */
+                        if (coreReady && !viewClosed) {
                             /*
                              * The fifth lane arming the way the other four
                              * do, and remembering the reading it is going to
@@ -605,6 +643,10 @@
                         } catch (_) {}
                     }
                 }
+                // However the window went -- the page's close() or the frame's
+                // own button -- the view goes with it. Idempotent, so the run
+                // that came through driver.close has already done this.
+                closeView();
             },
             handleError: function (ex) {
                 var message = "";

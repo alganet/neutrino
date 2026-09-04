@@ -372,6 +372,36 @@ jobs:
           # Both halves' own logs, beside the differential that read them.
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
           exit $TEST_EXIT
+      # The app on the download page, which until now was the one artifact in
+      # this tree nobody ran.
+      #
+      # Everything else here builds a probe written by someone who knew which
+      # lanes need a document waited for. pages/demo is written the way the
+      # README tells an author to write an app, and it is what people actually
+      # download -- so it is the artifact whose defects reach users first, and
+      # it shipped with a Close button that did nothing on Windows. What found
+      # that was a person on Windows Home, not this file.
+      #
+      # test/demoapp.sh builds the published four files with a reporter
+      # concatenated onto the end of the app's own script; the app itself is
+      # unmodified, because the point is to measure what ships.
+      - if: always()
+        name: the app on the download page
+        timeout-minutes: 8
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash test/demoapp.sh test/neutrinodemo.cmd
+          bash test/parse.sh test/neutrinodemo.cmd
+          bash test/neutrinodemo.cmd > ~/demo-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/demo.sh ~/screenshots > ~/demo.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/demo.log
+          exit $TEST_EXIT
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which
       # made comparing the decorated frame against the chromeless one a matter
@@ -2393,6 +2423,34 @@ jobs:
           bash test/themediff.sh ~/flip-a.log ~/flip-b.log >> ~/themediff.log 2>&1 || TEST_EXIT=$?
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
           exit $TEST_EXIT
+      # The app on the download page, and this is the lane it broke on.
+      #
+      # Everything else here builds a probe written by someone who knew which
+      # lanes need a document waited for. pages/demo is written the way the
+      # README tells an author to write an app, and it is what people actually
+      # download -- so its Close button doing nothing on Windows, and working
+      # everywhere else, was found by a person on Windows Home rather than by
+      # anything in this file.
+      #
+      # A release build, deliberately: everything else on this lane is
+      # --testing because it needs the trace channel, and the thing under test
+      # here is the download.
+      - if: always()
+        shell: bash
+        run: |
+          bash test/demoapp.sh test/neutrinodemo.cmd
+          bash test/parse.sh test/neutrinodemo.cmd
+      - if: always()
+        name: the app on the download page
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          & .\test\demo.ps1 -ScreenshotDir $env:USERPROFILE *>&1 |
+            Tee-Object -FilePath "$HOME\demo.log"
+          $e = $LASTEXITCODE
+          Get-Process -Name neutrinodemo -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $e
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which
       # made comparing the decorated frame against the chromeless one a matter

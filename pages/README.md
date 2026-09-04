@@ -63,7 +63,32 @@ The sample app is an overlay laid over `neutrino/` — `app.js`, `config.json`,
 `neutrino/assemble.sh`. There are no build flags here: everything the app
 declares lives in the app's own directory.
 
-`app.js` is ES5 only — the same source runs under JScript.NET, gjs, QtWebEngine and WKWebView. One
-constraint worth knowing: no top-level closing brace may be indented four spaces, because
-[`test/parse.sh`](../test/parse.sh) lifts the `NeutrinoWebview` object out of a built `.cmd`
-with a `sed` range ending at `/^    };$/`, and an app carrying that line truncates it.
+It is the app most people will ever run, so it is written to be read: every
+button on it is one of the standard calls the README documents — `resizeBy`,
+`moveTo`, `document.title`, `open`, `close` — and every colour on it is one of
+the seven custom properties the launcher writes from the desktop's own palette,
+so the window is the desktop's on any machine and follows a theme change with no
+script at all. `config.json` says `"background": "auto"` for the other half of
+that: the native window and the view are painted from the same palette before
+the document exists.
+
+`app.js` is ES5 only — the same source runs under JScript.NET, gjs, QtWebEngine
+and WKWebView. One constraint worth knowing: no line may read
+`NeutrinoWebview.run();`, because [`test/parse.sh`](../test/parse.sh) lifts the
+launcher's object out of a built `.cmd` with a `sed` range that ends there and
+the app is spliced inside that range.
+
+### What broke here once
+
+The first version of this app set `getElementById("close").onclick` on its third
+line. That works on four of the five lanes and threw on the fifth: WebView2's
+only pre-navigation hook runs the page script before the parser has produced
+anything, so `getElementById` answered null and the Close button on the
+published demo did nothing on Windows. Nothing caught it, because nothing in CI
+runs this app and the suites that do run wait for a document by hand.
+
+The launcher holds an app's script until the document is there now, on every
+lane, and `body0=yes` is asserted on all five on every push — see
+[`test/neutrinostddoc.js`](../test/neutrinostddoc.js). This app is written the
+way that fix allows: no polling, no ready guard, `getElementById` on the first
+line.

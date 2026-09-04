@@ -60,15 +60,31 @@ var RB_AT_START = "?";
 try { RB_AT_START = String(doc.title); } catch (_) { RB_AT_START = "threw"; }
 
 // And what the document was at that moment, because the two answers explain
-// each other. This is `interactive` on WebKit, `complete` on QtWebEngine and
-// `loading` on WebView2 -- already measured, already recorded -- and on the
-// lane that says `loading` the first statement runs before `<head>` exists.
-// `document.title` has nothing to write into there and the assignment is a
-// no-op by the DOM's own rule, so `rb0` reads empty on exactly the lane `rs0`
-// says it would. Reported and not asserted: it is a platform difference and
-// the wait below is what an app does about it.
+// each other. It reads `interactive` on WebKit and WebView2 and `complete` on
+// QtWebEngine -- a difference between engines and not between launchers, which
+// is why it is reported and not asserted. What *is* asserted is `body0` below.
 var RS0 = "?";
 try { RS0 = String(doc.readyState); } catch (_) { RS0 = "threw"; }
+
+// Whether the early shell was on the page when this file's first statement ran,
+// and this one is an assertion on every lane.
+//
+// It used to be four lanes out of five. WebKitGTK takes a DOCUMENT_END user
+// script, WKWebView injection time 1 and Qt runs the page script from
+// LoadSucceeded, so on all four an app's first statement had its own markup in
+// hand; WebView2 has one hook before a navigation and it runs before the parser
+// has produced anything, so the fifth ran with `document.body` null. Nothing
+// said so. The published sample app was written the way the other four allow --
+// `getElementById("close").onclick = ...` -- and on Windows that threw on the
+// first line, which is why the demo everybody downloads had a Close button that
+// did nothing there and worked everywhere else.
+//
+// `doc.body` and not `doc.documentElement`, for the reason `ready()` at the
+// bottom of neutrinostdwin.js gives: the parser inserts `<html>` before
+// `<head>`, so documentElement is already there inside the window this is
+// asking about.
+var BODY0 = "?";
+try { BODY0 = doc.body ? "yes" : "no"; } catch (_) { BODY0 = "threw"; }
 
 var RB_AT_EMPTY = "?";
 var RB_AT_MARK = "?";
@@ -138,6 +154,7 @@ function step6() {
     var tx = "none";
     try { tx = String(win.neutrino.transport); } catch (_) {}
     dom("STD-DOC-RB-SELF rb0=[" + RB_AT_START + "] rs0=" + RS0 +
+        " body0=" + BODY0 +
         " rbe=[" + RB_AT_EMPTY + "] rbm=[" + RB_AT_MARK + "] tx=" + tx +
         " eng=" + engine() + " dwell=" + DWELL);
     win.setTimeout(step7, DWELL);
@@ -148,10 +165,16 @@ function step7() { dom("STD-DOC-END"); }
 // The wait is for a document and not only for the API, and this suite is the
 // one that had to learn why. `document.title` writes into the `<title>` of a
 // `<head>`, and where there is neither the DOM's rule is to do nothing at all --
-// so on WebView2, whose page script runs at `loading`, the first report of the
-// run went nowhere and the state it named was simply missing from the record.
-// `doc.body` is the cheap proof that `</head>` has been passed, which is the
-// same condition the four test apps have always waited on.
+// so on WebView2, whose page script used to run at `loading`, the first report
+// of the run went nowhere and the state it named was simply missing from the
+// record. `doc.body` is the cheap proof that `</head>` has been passed, which
+// is the same condition the four test apps have always waited on.
+//
+// It waits for something that has already happened now, on every lane, and
+// BODY0 above is the measurement that says so. Kept anyway, and not out of
+// caution: this is the probe that asserts the promise, so it must not be the
+// probe that depends on it. A suite that stopped reporting the moment the
+// promise broke would take its own failure off the record.
 function ready() {
     if (doc.body && win.neutrino) { step1(); }
     else { win.setTimeout(ready, 16); }
