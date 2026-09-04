@@ -2284,8 +2284,8 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          .\test\neutrinostddoc.cmd
-          & .\test\verify-std.ps1 -Probe doc -ScreenshotDir $env:USERPROFILE *>&1 |
+          & .\test\verify-std.ps1 -Probe doc -ScreenshotDir $env:USERPROFILE `
+            -Launch -Artifact .\test\neutrinostddoc.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stddoc.log"
           $e = $LASTEXITCODE
           Get-Process -Name neutrinostddoc -ErrorAction SilentlyContinue |
@@ -2318,8 +2318,8 @@ jobs:
         timeout-minutes: 12
         shell: pwsh
         run: |
-          .\test\neutrinostdwin.cmd
-          & .\test\verify-std.ps1 -Probe win -ScreenshotDir $env:USERPROFILE *>&1 |
+          & .\test\verify-std.ps1 -Probe win -ScreenshotDir $env:USERPROFILE `
+            -Launch -Artifact .\test\neutrinostdwin.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdwin.log"
           $e = $LASTEXITCODE
           Get-Process -Name neutrinostdwin -ErrorAction SilentlyContinue |
@@ -2329,8 +2329,8 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          .\test\neutrinostdtheme.cmd
-          & .\test\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE *>&1 |
+          & .\test\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE `
+            -Launch -Artifact .\test\neutrinostdtheme.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdtheme.log"
           $e = $LASTEXITCODE
           Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |
@@ -2394,9 +2394,8 @@ jobs:
           function Run-Half($tag, $shot) {
             Add-Type -AssemblyName System.Drawing
             Read-Knob $tag | Tee-Object -FilePath "$HOME\flip-knobs.log" -Append | Write-Host
-            .\test\neutrinostdtheme.cmd
             & .\test\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE `
-              -ShotName "theme-$shot" *>&1 |
+              -ShotName "theme-$shot" -Launch -Artifact .\test\neutrinostdtheme.cmd *>&1 |
               Tee-Object -FilePath "$HOME\flip-$tag.log" | Out-Null
             Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |
               Stop-Process -Force -ErrorAction SilentlyContinue
