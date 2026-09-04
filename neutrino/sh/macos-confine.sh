@@ -12,51 +12,78 @@
 # to. Leaving them here would have made the two halves of one product disagree
 # about what an app may read, which is worse than either answer.
 
+# printf and not a here-document, and on this platform that is a correctness
+# rule rather than a style one.
+#
+# /bin/sh on macOS is bash 3.2, and its here-document goes to a temp file whose
+# directory is `/tmp` -- not $TMPDIR, which it does not consult for this one
+# thing. Under netinstall the launcher is already inside the fetch-and-run
+# seatbelt profile, and that profile does not make /tmp writable: it grants the
+# app dir, $TMPDIR, the four Library subtrees and six /dev nodes, deliberately
+# and with `--info` printing the list. So the redirection failed with
+#
+#   line NNN: cannot create temp file for here document: Operation not permitted
+#
+# `cat` then wrote nothing, $profile came back empty, and the check below --
+# which asks whether the profile is empty -- took the unconfined fallback and
+# said "seatbelt rejected the profile". Seatbelt had not seen it. Every
+# netinstall launch on macOS lost this profile, and the message named the wrong
+# half of the failure while doing it.
+#
+# What was not lost is the confinement itself: netinstall had already applied
+# its own profile, which is this one with the same rules and its own
+# parameters, so the app was confined throughout and the line saying otherwise
+# was the defect a user actually saw.
+#
+# Widening the outer profile to include /tmp was the other way to fix this, and
+# it is the wrong one: it would hand every confined app a writable directory
+# outside its own, to buy back a shell feature this function is the only macOS
+# user of. So the here-document goes instead. printf writes to the pipe and
+# needs no file anywhere.
 nt_macos_profile() {
     appdir_r="$(nt_sbquote "$(nt_resolve "$1")")"
     tmpdir_r="$(nt_sbquote "$(nt_resolve "${TMPDIR:-/tmp}")")"
     home_r="$(nt_sbquote "$(nt_resolve "$HOME")")"
-    cat <<PROFILE
-(version 1)
-(allow default)
-
-(deny file-write*)
-(allow file-write*
-  (subpath "$appdir_r")
-  (subpath "$tmpdir_r")
-  (subpath "$home_r/Library/Caches")
-  (subpath "$home_r/Library/Preferences")
-  (subpath "$home_r/Library/WebKit")
-  (subpath "$home_r/Library/Saved Application State")
-  (subpath "/private/var/folders")
-  (regex #"^/dev/(null|zero|random|urandom|tty|dtracehelper)\$"))
-
-(deny process-exec*
-  (subpath "$appdir_r")
-  (subpath "$tmpdir_r")
-  (subpath "$home_r/Library/Caches")
-  (subpath "$home_r/Library/Preferences")
-  (subpath "$home_r/Library/WebKit")
-  (subpath "$home_r/Library/Saved Application State")
-  (subpath "/private/var/folders"))
-
-(deny mach-lookup
-  (global-name "com.apple.SecurityServer")
-  (global-name "com.apple.securityd.xpc")
-  (global-name "com.apple.tccd")
-  (global-name "com.apple.tccd.system"))
-
-; LaunchServices. Both names, and it has to be both -- see the comment above
-; this function. Denying either one on its own leaves an .app bundle written
-; from inside the sandbox launching normally.
-(deny mach-lookup
-  (global-name "com.apple.coreservices.launchservicesd")
-  (global-name "com.apple.coreservices.quarantine-resolver"))
-(deny appleevent-send)
-(deny mach-priv-task-port)
-(deny signal (target others))
-
-PROFILE
+    printf '%s\n' \
+'(version 1)' \
+'(allow default)' \
+'' \
+'(deny file-write*)' \
+'(allow file-write*' \
+"  (subpath \"$appdir_r\")" \
+"  (subpath \"$tmpdir_r\")" \
+"  (subpath \"$home_r/Library/Caches\")" \
+"  (subpath \"$home_r/Library/Preferences\")" \
+"  (subpath \"$home_r/Library/WebKit\")" \
+"  (subpath \"$home_r/Library/Saved Application State\")" \
+'  (subpath "/private/var/folders")' \
+'  (regex #"^/dev/(null|zero|random|urandom|tty|dtracehelper)$"))' \
+'' \
+'(deny process-exec*' \
+"  (subpath \"$appdir_r\")" \
+"  (subpath \"$tmpdir_r\")" \
+"  (subpath \"$home_r/Library/Caches\")" \
+"  (subpath \"$home_r/Library/Preferences\")" \
+"  (subpath \"$home_r/Library/WebKit\")" \
+"  (subpath \"$home_r/Library/Saved Application State\")" \
+'  (subpath "/private/var/folders"))' \
+'' \
+'(deny mach-lookup' \
+'  (global-name "com.apple.SecurityServer")' \
+'  (global-name "com.apple.securityd.xpc")' \
+'  (global-name "com.apple.tccd")' \
+'  (global-name "com.apple.tccd.system"))' \
+'' \
+'; LaunchServices. Both names, and it has to be both -- see the comment above' \
+'; this function. Denying either one on its own leaves an .app bundle written' \
+'; from inside the sandbox launching normally.' \
+'(deny mach-lookup' \
+'  (global-name "com.apple.coreservices.launchservicesd")' \
+'  (global-name "com.apple.coreservices.quarantine-resolver"))' \
+'(deny appleevent-send)' \
+'(deny mach-priv-task-port)' \
+'(deny signal (target others))' \
+''
 }
 
 run_macos() {
@@ -95,6 +122,16 @@ run_macos() {
     # argv goes with it.
     profile="$(nt_macos_profile "$app_dir")"
 
+    # Two sentences, because they were one and the one was wrong. An empty
+    # profile means this shell could not produce the text -- the here-document
+    # failure above was exactly that -- and seatbelt was never asked. Saying
+    # "seatbelt rejected the profile" for it sent the reading of a shell bug to
+    # the sandbox, which is the one place it was not.
+    if [ -z "$profile" ]; then
+        echo "neutrino: could not build the seatbelt profile; running unconfined" >&2
+        NEUTRINO_SCRIPT_PATH="$script_path" exec osascript -l JavaScript "$script_path"
+    fi
+
     # Proven against a program that does nothing before it is trusted with one
     # that matters. A rejected profile makes sandbox-exec exit immediately, and
     # once the app is the thing being launched there is no way to tell that
@@ -105,8 +142,36 @@ run_macos() {
     # trigger it, so it is what it was always meant to be -- a compatibility
     # answer for a macOS that will not take this profile -- and not a downgrade
     # a same-uid process can reach for.
-    if [ -z "$profile" ] || ! /usr/bin/sandbox-exec -p "$profile" /usr/bin/true >/dev/null 2>&1; then
-        echo "neutrino: seatbelt rejected the profile; running unconfined" >&2
+    if ! /usr/bin/sandbox-exec -p "$profile" /usr/bin/true >/dev/null 2>&1; then
+        # Seatbelt sometimes does not nest, and the failure above cannot say
+        # whether that is what happened. A process inside a profile applied by
+        # sandbox-exec cannot apply a second one: sandbox_apply returns EPERM
+        # for *any* profile there, `(version 1)(allow default)` included --
+        # and that one cannot be rejected on its merits, so it separates "this
+        # process may not confine itself at all" from "this profile is bad".
+        #
+        # Which is not netinstall, and that distinction cost a wrong reading
+        # before it was measured. netinstall confines itself with
+        # sandbox_init_with_parameters and then execs the launcher, and a
+        # sandbox-exec after *that* is accepted: the launcher applies this
+        # profile on top of netinstall's, and netinstall/test/e2e.sh asserts
+        # the silence that says so. The two SPIs do not answer the same way.
+        # So this branch is for an outer profile that came from sandbox-exec
+        # -- somebody wrapping the artifact in one of their own -- and under
+        # the downloader it should never be reached.
+        #
+        # The probe is on the failure path alone, so a launch that confines
+        # itself pays nothing for it, and it is a measurement rather than a
+        # marker in the environment. A marker would be the downgrade the
+        # paragraph above refuses: anything that can set a variable could
+        # then tell a standalone artifact it was already confined and get it
+        # to skip its own profile.
+        if ! /usr/bin/sandbox-exec -p '(version 1)(allow default)' \
+                /usr/bin/true >/dev/null 2>&1; then
+            echo "neutrino: already inside a seatbelt profile; not nesting" >&2
+        else
+            echo "neutrino: seatbelt rejected the profile; running unconfined" >&2
+        fi
         NEUTRINO_SCRIPT_PATH="$script_path" exec osascript -l JavaScript "$script_path"
     fi
 

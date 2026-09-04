@@ -2542,6 +2542,21 @@ jobs:
       - uses: actions/checkout@v7
       - run: bash test/mkapp.sh --testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
+      # The launcher's own seatbelt profile, asserted as a value: that it can be
+      # built inside a profile that denies /tmp, that the text is the same
+      # either way, that seatbelt takes it, and that what seatbelt takes
+      # confines. Every other macOS step here launches the launcher and then
+      # asks about the window, and the window comes up with the profile
+      # silently missing -- which is how a here-document in a shell whose
+      # here-documents go to /tmp cost every netinstall launch its inner
+      # profile without one step going red. No display, no engine, about a
+      # second, so it sits with parse.sh at the top of the lane.
+      #
+      # Handed the artifact parse.sh just read, for parse.sh's own reason: this
+      # asserts what shipped, and the `@@include` that puts macos-confine.sh
+      # into a build is the step most able to go wrong. Naming it also keeps
+      # this step off assemble.sh, which it would otherwise call for itself.
+      - run: bash test/confine-macos.sh test/neutrinotest.cmd
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
       # assembles anything -- once per sed, because the spelling of what it
