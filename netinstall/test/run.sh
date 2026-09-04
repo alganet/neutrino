@@ -57,7 +57,7 @@ mv "$HERE/../dist/netinstall$NT_EXE" "$HERE/../dist/netinstall-wget$NT_EXE"
 # to. Both come out of this list once they have answered. Neither costs anything
 # on a platform it does not apply to -- crashdump is windows, landlockfloor is
 # linux with docker, and each says which it was rather than passing silently.
-SUITES="pinfloor crashdump landlockfloor fetchbound envlen writable fetchconf names verify confine privs env phases splash e2e"
+SUITES="pinfloor crashdump landlockfloor fetchbound envlen writable fetchconf names verify confine privs env phases slot splash e2e"
 # The BSDs have no webview on any runner that can be had, so e2e and env -- the
 # two suites that launch one -- would fail for the absence of a toolkit rather
 # than anything about the confinement. Everything that measures unveil and

@@ -134,11 +134,11 @@ small window with a moving indicator in it, and closes it when the wait is over.
 **When the wait is over is not always when the download is.** On Windows this program does not
 exec — it spawns `cmd.exe` on the `.cmd` and waits for it — so the window stays up over that too,
 and comes down when the `.cmd` returns. That matters there more than anywhere: what happens after
-the bytes stop is a `certutil` over the whole script and, on every netinstall launch, a full
-`jsc.exe` compile, because the app folder cannot keep a compiled exe the app itself could not
-rewrite. The download is the short half of that wait and it used to be the only half wearing a
-window. It still comes down one `CreateProcess` short of the app's own window, which is as far as
-anything here can see.
+the bytes stop is a `certutil` over the whole script and a full `jsc.exe` compile — on the launch
+that owes one. It used to be every launch, because there was nowhere to keep a compiled exe the
+app itself could not rewrite; the build slot is that somewhere. The download is the short half of
+that wait and it used to be the only half wearing a window. It still comes down one
+`CreateProcess` short of the app's own window, which is as far as anything here can see.
 
 Everywhere else the window goes when the bytes stop, and that is the platform rather than a
 choice: `nt_exec` execs `/bin/sh`, so there is no "after" — the process that would hold the window
@@ -262,7 +262,9 @@ $NEUTRINO_HOME/                    # XDG_CACHE_HOME/neutrino
 ├── blobs/<full-sha256>            # content-addressed, read-only, every version
 └── apps/<spec without the pin>/   # shape kept, pin dropped
     ├── <file>.cmd                 # read-only, hardlink to the current pin
-    └── <file>/                    # the only writable directory
+    ├── <file>.build/              # writable only on a launch that owes a build
+    ├── <file>.build.stamp         # what is in it, and what it was built from
+    └── <file>/                    # the always-writable directory
 ```
 
 **The app directory is keyed on the app, not the pin.** A new pin of the same name, shape and host replaces
@@ -283,9 +285,14 @@ Consequences worth knowing:
   delete it.
 - **Uninstall is `rm -rf apps/<spec without the pin>/`**, which takes the app and its state together.
 
-The script sits one level *above* the only writable directory, so an app cannot rewrite the
+The script sits one level *above* every directory an app can write, so an app cannot rewrite the
 launcher it was verified from. neutrino puts its own generated files in `<name>/` because it
 derives that path from the script's own location, so this costs nothing.
+
+`<file>.build/` is the exception that proves the sentence, and it is the subject of
+[The build slot](#the-build-slot-and-the-launch-that-owes-a-build) below: it is writable on
+the one launch that has a program to build and read-only on every launch after it, and it is
+never the script.
 
 The pin is re-checked on every launch, not just on download, which keeps the name-to-content
 binding true even where no confinement is available.
@@ -510,7 +517,7 @@ was never on the table.
 | **Linux** | Landlock. Writes confined to the app dir, `/dev`, `/dev/shm` and `/proc/self` — this process's own entry and no peer's. Reads unrestricted. A seccomp filter on top. The session bus stays reachable; see [what is still open](#what-is-still-open). |
 | **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. Writes confined to the app dir and `/dev`, plus files that already exist under `/tmp`, and **write xor execute** on the app dir — the one directory the app can write to is one it cannot run anything from, at every tier. Reads are an allowlist too, because `unveil` is one. See the caveat below. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, the Darwin per-user temp directory, four `~/Library` subtrees and six `/dev` nodes — the carve-outs are what CFPreferences and WebKit need and are listed in [write xor execute on macOS](#write-xor-execute-on-macos). Read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
-| **Windows** | Low integrity: writes outside the app dir fail, except the two places the label leaves open by design, `AppData\LocalLow` and `HKCU\Software\AppDataLow`. Plus a job object and every token privilege but `SeChangeNotify` removed. Measured: `%USERPROFILE%`, the user temp directory, `C:\Windows\Temp` and `HKCU\Software` all refuse. |
+| **Windows** | Low integrity: writes outside the app dir fail, except the two places the label leaves open by design, `AppData\LocalLow` and `HKCU\Software\AppDataLow`. Plus a job object and every token privilege but `SeChangeNotify` removed. Measured: `%USERPROFILE%`, the user temp directory, `C:\Windows\Temp` and `HKCU\Software` all refuse. On a launch that owes a build, and only then, the [build slot](#the-build-slot-and-the-launch-that-owes-a-build) is writable too, and `--info` says so. |
 
 Each of those sets is what `--info`'s `confine` line names, in full. It named the app dir alone
 until it was measured: every platform grants writes somewhere else as well, deliberately and for
@@ -554,6 +561,64 @@ The fetch refuses when nothing applied, on the same terms the run phase does. Th
 thrown away, so a strict build downloaded the payload unconfined and refused afterwards — which is
 not strict, it is late. `phases.sh` asserts both halves on every
 platform, including that a strict build still fetches and runs when both phases *are* confined.
+
+### The build slot, and the launch that owes a build
+
+The Windows payload compiles itself. `jsc.exe` turns the polyglot `.cmd` into an exe, which is
+about a third of a second, and until this it happened on **every** netinstall launch — the
+launcher keeps its exe beside the script, that directory is the shelf, and the shelf is exactly
+the place this design refuses to make writable.
+
+So there is one more directory, `apps/<app>/<name>.build`, and netinstall opens it for writing on
+the launch that owes a build and closes it again when the `.cmd` returns. A launch that does not
+owe one grants nothing: the slot is read-only, the launcher runs what is in it, and nothing is
+compiled and nothing is hashed.
+
+**What decides.** `<name>.build.stamp` sits beside the slot, is written by netinstall at its own
+integrity level and is never granted to anything. It holds the digest of the script the slot was
+built from and the size and SHA-256 of every file in the slot. A launch owes a build unless all
+of that still matches — so a slot holding a file the record does not name owes one too, which is
+what a plant looks like.
+
+That record is the difference between keeping the exe and trusting it. Without it, the pin would
+stop reaching what actually runs: netinstall re-checks the `.cmd` against the pin on every launch,
+but a cache keyed on nothing would let a same-user process at *this program's own* integrity level
+replace the exe while the `.cmd` still passed. With it, the pin's guarantee survives the cache.
+
+**The grant is a directory**, and that is wider than the fetch's and deliberately so. The launcher
+compiles to `<name>.new<random>.exe` and renames — Windows will rename a running image but not
+overwrite one — so the payload needs create and delete in the directory itself. netinstall cannot
+pre-create a random name, so the fetch's one-file grant is not available here. What it costs is
+that, for the length of a build run, any low integrity process on the machine can create, delete
+and rename in the slot.
+
+**The label comes off before the record is taken**, which is the fetch phase's rule and its
+reason: while it is on, what the record would be vouching for can still change. `OICI` is
+inheritable, so every file the payload created carries a label of its own and the revoke clears
+each of them as well as the container. A revoke that could not close the slot empties it instead
+and writes no record, so the next launch builds into a directory this one could not leave open.
+
+**A payload that builds nothing gets an open slot on every launch, and that is
+vacuous rather than lax.** There is nothing to record, so nothing is sealed, so the next launch
+grants again. What the seal protects is the program that gets run out of the slot, and an app that
+never puts one there has none to protect — the slot is a directory inside that app's own tree, and
+writing it reaches nothing the app dir does not already reach. `--info` says so on every launch
+rather than hiding it.
+
+**A grant that fails is not a refusal.** Everywhere else here a confinement that did not apply is
+a reason to stop, because what was promised did not happen. This is the other direction: the slot
+is a relaxation, so a launch that does not get one is *more* confined, not less. netinstall says
+so on stderr and the app compiles on every launch, which is what it did before any of this.
+
+**The launcher is told nothing.** It finds the slot beside its own script and probes it, and the
+slot being writable *is* netinstall having granted it this launch — no variable, no marker, and
+nothing in the `NEUTRINO_` prefix the allowlist admits. It is `<name>.build` rather than `build`
+because the launcher cannot tell this shelf from a source tree, and a `.cmd` next to an ordinary
+`build/` directory is not exotic.
+
+**Windows only.** Everywhere else `nt_exec` execs, so there is no "after" in which to take a grant
+back — the same asymmetry `NT_SPLASH_OUTLIVES_HANDOFF` names — and no other platform's launcher
+compiles anything.
 
 ### What was measured
 
@@ -630,6 +695,16 @@ What the probing did *not* find is much worth adding. That is the honest result:
 Worth being concrete about the ceiling, because further tightening has sharply diminishing returns
 while these stand:
 
+- **A build run's slot is writable by every low integrity process on the machine, not only by the
+  app.** A mandatory label cannot name one process, so this is the same exposure the fetch phase's
+  single-file grant has. It is worse here in two ways, both of them the entry above: the grant is a
+  directory, and the app is alive for the tail of the window because `cmd.exe` `START`s it and
+  returns. What a plant landing inside that window buys is the program the *next* launch runs — the
+  record is taken after the label comes off, so it seals what is there at that moment and cannot
+  tell a compiler's output from a plant. The window does not exist on a launch that does not build,
+  which is every launch after the first of a pin. Closing it needs the payload to be told "build,
+  do not launch", and that is a protocol netinstall cannot have: it runs arbitrary `.cmd` files, and
+  one that did not implement it would simply launch twice.
 - **Session D-Bus and X11 are reachable in the default tier**, and either is a full escape.
   Connecting to a pathname unix socket is not mediated by any filesystem rule — measured on ABI 8,
   with a ruleset granting nothing but `/usr`, the session bus, the ssh-agent socket and

@@ -20,7 +20,7 @@
  * draw a box, is the exact shape every EDR product is built to notice.
  *
  * The pump runs on a thread of its own, and that is the one structural choice
- * worth explaining. nt_win_spawn ends in WaitForSingleObject(INFINITE) -- it is
+ * worth explaining. nt_win_spawn_as ends in WaitForSingleObject(INFINITE) -- it is
  * shared by the fetch and by the payload launch, and turning it into a message
  * loop would put a window's redraw schedule inside the function that runs the
  * app. So the window gets a thread, the main line keeps its blocking wait, and

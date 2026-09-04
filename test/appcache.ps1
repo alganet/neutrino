@@ -31,6 +31,9 @@
 #   adopt      an exe beside the script that this launcher did not write is not
 #              overwritten, and the compile falls back into the app folder
 #   second     a second instance still opens while the first holds its exe
+#   slot       a <name>.build directory beside the script takes the program,
+#              and nothing is left beside the script
+#   sealed     a slot this launch cannot write is run rather than rebuilt
 #
 # Controls: the shipped build has to come up, and the planted exe has to be
 # proven live by running it directly -- an exe that does nothing would make
@@ -255,6 +258,69 @@ $instances = @(Get-Process -Name "neutrinocache" -ErrorAction SilentlyContinue).
 Report "second first=$firstUp launcher_exited=$p3Exited instances=$instances exit=$($p3.ExitCode)"
 if ($p3.ExitCode -ne 0) { Fail "second expected=a second launch succeeds while the first runs actual=exit $($p3.ExitCode)" }
 if ($instances -lt 2) { Fail "second expected=two instances actual=$instances" }
+
+# =====================================================================
+# slot: a <name>.build directory beside the script is where the program goes
+# =====================================================================
+#
+# netinstall makes one of these and opens it for the launch that owes a build,
+# and the launcher finds it from its own location with nothing in the
+# environment naming it. There is no netinstall here, so what this measures is
+# the half that lives in the launcher: the derivation, and which of the three
+# placements wins.
+#
+# Writable is the granted state -- under netinstall "this directory takes a
+# write" is "netinstall granted it this launch" -- so a writable slot beside a
+# standalone script builds into it and keeps no stamp, because netinstall is
+# what holds the record and there is no netinstall here.
+Stop-App
+$work3 = Join-Path $env:TEMP ("appcache3-" + [System.IO.Path]::GetRandomFileName())
+New-Item -ItemType Directory -Path $work3 -Force | Out-Null
+$lane3 = Join-Path $work3 "neutrinocache.cmd"
+Copy-Item $src $lane3 -Force
+$slot3 = Join-Path $work3 "neutrinocache.build"
+New-Item -ItemType Directory -Path $slot3 -Force | Out-Null
+$slotExe = Join-Path $slot3 "neutrinocache.exe"
+
+$p4 = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $lane3 -PassThru -WindowStyle Hidden
+if (-not $p4.WaitForExit(180000)) { $p4.Kill() }
+$up4 = Window-Up 180
+$besideExe = Test-Path (Join-Path $work3 "neutrinocache.exe")
+$besideStamp = Test-Path (Join-Path $work3 "neutrinocache.stamp")
+Report "slot exe=$(Test-Path $slotExe) beside_exe=$besideExe beside_stamp=$besideStamp window=$up4"
+if (-not (Test-Path $slotExe)) { Fail "slot expected=the program in the slot actual=none" }
+if ($besideExe) { Fail "slot expected=nothing beside the script actual=an exe" }
+if ($besideStamp) { Fail "slot expected=no stamp beside the script actual=one" }
+if ($up4 -ne "UP") { Fail "slot expected=the app comes up from the slot actual=DOWN" }
+
+# =====================================================================
+# sealed: a slot this launch cannot write is one it runs and does not rebuild
+# =====================================================================
+#
+# The deny ACE is standing in for what netinstall does with a mandatory label,
+# and it is the same question either way: the launcher's only signal is whether
+# the write lands. Without this arm a launcher that rebuilt every launch into a
+# writable slot would read exactly like one that keeps what is there.
+if (Test-Path $slotExe) {
+    Stop-App
+    $slotHash1 = (Get-FileHash $slotExe -Algorithm SHA256).Hash
+    $slotMt1 = (Get-Item $slotExe).LastWriteTimeUtc
+    & icacls $slot3 /deny "$env:USERNAME:(W)" *>&1 | Out-Null
+    $p5 = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $lane3 -PassThru -WindowStyle Hidden
+    if (-not $p5.WaitForExit(180000)) { $p5.Kill() }
+    $up5 = Window-Up 180
+    $slotHash2 = (Get-FileHash $slotExe -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
+    $slotMt2 = (Get-Item $slotExe -ErrorAction SilentlyContinue).LastWriteTimeUtc
+    & icacls $slot3 /remove:d "$env:USERNAME" *>&1 | Out-Null
+    Report ("sealed rebuilt=" + $(if ($slotHash1 -ne $slotHash2) { "YES" } else { "NO" }) +
+            " mtime_moved=" + $(if ($slotMt1 -ne $slotMt2) { "YES" } else { "NO" }) +
+            " window=$up5")
+    if ($slotHash1 -ne $slotHash2) { Fail "sealed expected=the kept program is reused actual=it was rebuilt" }
+    if ($slotMt1 -ne $slotMt2) { Fail "sealed expected=the program is not rewritten actual=its mtime moved" }
+    if ($up5 -ne "UP") { Fail "sealed expected=the app comes up from the sealed slot actual=DOWN" }
+}
+Stop-App
+Remove-Item $work3 -Recurse -Force -ErrorAction SilentlyContinue
 
 # =====================================================================
 # What a kept launch costs, and what is left beside the script

@@ -977,23 +977,6 @@ static int nt_build_cmdline(char *const *args, char *out, size_t len)
 }
 
 /*
- * Runs a program to completion and returns its exit code, replacing _spawnv.
- *
- * The reason is not style. _spawnv gives no way to say which handles a child
- * may inherit and no way to attach process attributes, so both of the things
- * windows still has no answer for -- handle hygiene and any kind of token
- * confinement -- are unreachable behind it. CreateProcess is the only door.
- *
- * Standard handles are named explicitly rather than left to chance, because a
- * caller that redirected stdout to a file expects the app to write there, and
- * they are the only handles the app is given.
- */
-int nt_win_spawn(const char *exe, char *const *args)
-{
-    return nt_win_spawn_as(exe, args, NULL, 0, NULL);
-}
-
-/*
  * Where a diagnostic goes when there is no console to put it in.
  *
  * netinstall is a GUI subsystem binary, so nothing is attached to stderr unless
@@ -1314,7 +1297,7 @@ int nt_win_spawn_as(const char *exe, char *const *args, void *token,
  * Only 0, 1 and 2 survive. A script that expected an fd on 3 stops getting one;
  * that is the intended behaviour, and it is why this is worth documenting.
  *
- * Windows gets the same guarantee by a different route: nt_win_spawn hands
+ * Windows gets the same guarantee by a different route: nt_win_spawn_as hands
  * CreateProcess an explicit list holding only the standard handles, so nothing
  * else the caller left open is inherited.
  */
@@ -1387,14 +1370,22 @@ static int nt_exec(const char *script, int argc, char **argv, int rest)
         int rc;
 
         nt_win_launched = 1;
-        rc = nt_win_spawn("C:\\Windows\\System32\\cmd.exe", args);
+        /*
+         * Under the run phase's low integrity token rather than this process's
+         * own level, because this process no longer has a low one: it stays at
+         * medium so that the build slot's label can come back off when this
+         * call returns. nt_run_token is NULL only where nt_apply_confine
+         * already answered -1 and the caller refused, so a launch that reaches
+         * here with NULL is one running unconfined on purpose.
+         */
+        rc = nt_win_spawn_as("C:\\Windows\\System32\\cmd.exe", args,
+                             nt_run_token(), 0, NULL);
         /*
          * And here is the rest of the wait the window was raised for. This
          * call did not exec, it waited: everything the .cmd does before an app
-         * exists -- the certutil over the script, the compile that every
-         * netinstall launch pays because the app folder cannot keep a stamp,
-         * the START -- happened above this line with the window still on
-         * screen. It comes down one CreateProcess short of the app's own,
+         * exists -- the certutil over the script, the compile on a launch that
+         * owes one, the START -- happened above this line with the window still
+         * on screen. It comes down one CreateProcess short of the app's own,
          * which is as far as anything here can see.
          *
          * Idempotent, so a cached run that never armed one, and a download
@@ -1586,6 +1577,297 @@ static int nt_exists(const char *path)
     return stat(path, &st) == 0;
 }
 
+#ifdef _WIN32
+/*
+ * The build slot, and the record that says whether it is still the one this
+ * launch would have built.
+ *
+ * The launcher compiles the polyglot with jsc.exe and wants to keep the exe.
+ * Beside the script is where a standalone run keeps it, and under netinstall
+ * that directory is the shelf -- deliberately not writable by the app, which is
+ * what makes "an app cannot rewrite the launcher it was verified from" true --
+ * so the launcher finds nowhere to keep a stamp and compiles every launch,
+ * about a third of a second, measured.
+ *
+ * So netinstall opens one directory beside the script, on the one launch that
+ * owes a build, and closes it again when the .cmd returns. It is a directory
+ * and not a file -- the fetch phase's grant is one file, which is narrower --
+ * because the launcher rotates the exe through random names, and a running exe
+ * can be renamed but not overwritten. That difference is the cost, and it is
+ * written down in README.md rather than left to be discovered.
+ *
+ * ".build" beside the script rather than a "build" of its own inside the
+ * shelf. The launcher derives the slot from %~dp0 and cannot tell netinstall's
+ * shelf from a source tree, and a standalone .cmd sitting next to an ordinary
+ * build/ directory is not exotic.
+ *
+ * WHAT THE RECORD IS FOR. Keying the artifact on the source digest alone --
+ * naming it <sha256>.exe and calling the name a stamp -- is not enough, and
+ * that was this design's first draft. Today the netinstall path derives the
+ * program from the pinned script on *every* launch, so "the pin is re-checked
+ * on every launch" holds for what actually runs. A cache keyed on the name
+ * alone gives that up: a same-user process at *medium* integrity could replace
+ * the exe, the pin check on the .cmd would still pass, and the program that
+ * runs would not be the pinned one. The record holds a digest of every entry,
+ * so it holds. It also answers "the kept exe is trusted, not verified" on this
+ * path, which standalone still cannot.
+ *
+ * It is flat and bounded on purpose. A slot holding a subdirectory, more than
+ * NT_SLOT_MAX entries, or an entry over NT_SLOT_MAX_BYTES is not sealed, and a
+ * slot that is not sealed is one that gets rebuilt -- which is the behaviour
+ * before any of this, kept whole rather than degraded. Unbounded per-launch
+ * verification is a cost the one payload that uses this does not need.
+ */
+#define NT_SLOT_MAX 8
+#define NT_SLOT_MAX_BYTES (64L * 1024L * 1024L)
+#define NT_SLOT_STAMP_MAGIC "nt-build-slot 1"
+
+/*
+ * One entry, and the whole reason the walk is bounded: this is a fixed array
+ * with no allocation behind it, so a slot with more in it than the record can
+ * hold is refused by arithmetic rather than by a limit somebody has to
+ * remember.
+ */
+typedef struct {
+    char name[128];
+    char hex[65];
+    long long size;
+} nt_slot_entry;
+
+/*
+ * Reads the slot into ent[], newest question first: is there anything here this
+ * program cannot describe? Returns the count, or -1 for "not describable",
+ * which every caller treats as owed.
+ */
+static int nt_slot_read(const char *slot, nt_slot_entry *ent)
+{
+    WIN32_FIND_DATAA fd;
+    char pattern[NT_PATH_MAX];
+    char full[NT_PATH_MAX];
+    HANDLE h;
+    int n = 0;
+    int i;
+
+    if (nt_pathf(pattern, sizeof(pattern), "%s%c*", slot, NT_SEP) != 0) {
+        return -1;
+    }
+    h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) {
+            continue;
+        }
+        /*
+         * A directory in here is not something to walk into. Recursing would
+         * make the seal's cost the payload's to choose, and the revoke below
+         * has to clear a label off every one of these -- so the answer to a
+         * tree is the same as the answer to too many files: do not seal it.
+         */
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            FindClose(h);
+            return -1;
+        }
+        if (n >= NT_SLOT_MAX ||
+            strlen(fd.cFileName) >= sizeof(ent[0].name)) {
+            FindClose(h);
+            return -1;
+        }
+        ent[n].size = ((long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+        if (ent[n].size > NT_SLOT_MAX_BYTES) {
+            FindClose(h);
+            return -1;
+        }
+        snprintf(ent[n].name, sizeof(ent[n].name), "%s", fd.cFileName);
+        ent[n].hex[0] = '\0';
+        n++;
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+
+    for (i = 0; i < n; i++) {
+        if (nt_pathf(full, sizeof(full), "%s%c%s", slot, NT_SEP,
+                     ent[i].name) != 0 ||
+            nt_sha256_file(full, ent[i].hex) != 0) {
+            return -1;
+        }
+    }
+    return n;
+}
+
+/*
+ * Whether this launch owes a build. Every answer but "no" is owed, and the
+ * reason is reported rather than reduced to a flag: --info prints it, and a
+ * slot that keeps rebuilding is a thing somebody has to be able to read.
+ */
+static int nt_slot_owed(const char *slot, const char *slotstamp,
+                        const char *srchex, const char **why)
+{
+    nt_slot_entry ent[NT_SLOT_MAX];
+    char line[512];
+    FILE *f;
+    int n, seen = 0;
+
+    if (!srchex || !*srchex) {
+        *why = "the script has no digest";
+        return 1;
+    }
+    if (!nt_exists(slot)) {
+        *why = "never built";
+        return 1;
+    }
+    f = fopen(slotstamp, "r");
+    if (!f) {
+        *why = "the last launch could not be sealed";
+        return 1;
+    }
+    if (!fgets(line, sizeof(line), f) ||
+        strncmp(line, NT_SLOT_STAMP_MAGIC, strlen(NT_SLOT_STAMP_MAGIC)) != 0) {
+        fclose(f);
+        *why = "the record is not one of ours";
+        return 1;
+    }
+    if (!fgets(line, sizeof(line), f) ||
+        strncmp(line, "src ", 4) != 0 ||
+        strncmp(line + 4, srchex, 64) != 0) {
+        fclose(f);
+        *why = "the script changed";
+        return 1;
+    }
+    n = nt_slot_read(slot, ent);
+    if (n < 0) {
+        fclose(f);
+        *why = "the slot holds more than a record can describe";
+        return 1;
+    }
+    while (fgets(line, sizeof(line), f)) {
+        char hex[65];
+        long long size;
+        char name[128];
+        int i, found = 0;
+
+        if (sscanf(line, "%64s %lld %127[^\n]", hex, &size, name) != 3) {
+            fclose(f);
+            *why = "the record does not parse";
+            return 1;
+        }
+        for (i = 0; i < n; i++) {
+            if (strcmp(ent[i].name, name) != 0) {
+                continue;
+            }
+            found = 1;
+            if (ent[i].size != size || strcmp(ent[i].hex, hex) != 0) {
+                fclose(f);
+                *why = "the slot does not match its record";
+                return 1;
+            }
+            break;
+        }
+        if (!found) {
+            fclose(f);
+            *why = "the slot does not match its record";
+            return 1;
+        }
+        seen++;
+    }
+    fclose(f);
+    /*
+     * Both directions. A record naming every file present is not enough on its
+     * own: a file the record does not name is a file nobody vouched for, and it
+     * is exactly what a plant looks like.
+     */
+    if (seen != n) {
+        *why = "the slot holds something the record does not name";
+        return 1;
+    }
+    *why = "sealed";
+    return 0;
+}
+
+/*
+ * Empties the slot and removes the record, in that order -- the record goes
+ * first, so a launch that dies anywhere in here leaves "owed" rather than a
+ * record vouching for files that are no longer the ones it named.
+ *
+ * A file that will not delete is renamed aside instead. That is not tidiness:
+ * an earlier instance of the app still holds its own exe, windows refuses to
+ * delete a running image, and a wipe that gave up there would be a slot that
+ * can never be rebuilt while a window is open.
+ */
+static void nt_slot_wipe(const char *slot)
+{
+    WIN32_FIND_DATAA fd;
+    char pattern[NT_PATH_MAX];
+    char full[NT_PATH_MAX];
+    char aside[NT_PATH_MAX];
+    HANDLE h;
+
+    if (nt_pathf(pattern, sizeof(pattern), "%s%c*", slot, NT_SEP) != 0) {
+        return;
+    }
+    h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0 ||
+            (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            continue;
+        }
+        if (nt_pathf(full, sizeof(full), "%s%c%s", slot, NT_SEP,
+                     fd.cFileName) != 0) {
+            continue;
+        }
+        nt_unlock(full);
+        if (remove(full) == 0) {
+            continue;
+        }
+        if (nt_pathf(aside, sizeof(aside), "%s%c.old-%ld-%s", slot, NT_SEP,
+                     nt_pid(), fd.cFileName) == 0) {
+            rename(full, aside);
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+}
+
+/*
+ * The record, written only once the label is off. Same order and the same
+ * reason as the fetch phase's revoke-before-digest: while the label is on, any
+ * low integrity process on the machine can rewrite what is in there, so a
+ * record taken first would vouch for content that can still change.
+ */
+static int nt_slot_seal(const char *slot, const char *slotstamp,
+                        const char *srchex)
+{
+    nt_slot_entry ent[NT_SLOT_MAX];
+    FILE *f;
+    int n, i;
+
+    n = nt_slot_read(slot, ent);
+    if (n <= 0) {
+        /*
+         * Nothing there is nothing to vouch for, and it is not a failure: a
+         * payload that compiled nothing is one the next launch grants again.
+         */
+        return n == 0 ? 1 : 0;
+    }
+    f = fopen(slotstamp, "w");
+    if (!f) {
+        return 0;
+    }
+    fprintf(f, "%s\n", NT_SLOT_STAMP_MAGIC);
+    fprintf(f, "src %s\n", srchex);
+    for (i = 0; i < n; i++) {
+        fprintf(f, "%s %lld %s\n", ent[i].hex, ent[i].size, ent[i].name);
+    }
+    if (fclose(f) != 0) {
+        remove(slotstamp);
+        return 0;
+    }
+    return 1;
+}
+#endif
+
 /*
  * The script sits one level above the only writable directory, so an app cannot
  * rewrite the launcher it was verified from. The pin is re-checked on every
@@ -1598,6 +1880,11 @@ static int nt_main(int argc, char **argv)
     char script[NT_PATH_MAX], appdir[NT_PATH_MAX], tmpdir[NT_PATH_MAX];
     char self[NT_PATH_MAX], tmpfile[NT_PATH_MAX], blob[NT_PATH_MAX];
     char shown[NT_PATH_MAX], desc[512], hex[65];
+#ifdef _WIN32
+    char slot[NT_PATH_MAX], slotstamp[NT_PATH_MAX];
+    const char *slotwhy = "never built";
+    int slotowed = 0;
+#endif
     nt_mode mode = NT_RUN;
     nt_spec spec;
     int rest = argc;
@@ -1622,6 +1909,13 @@ static int nt_main(int argc, char **argv)
         return nt_splash_macos_child(atoi(argv[2]), atoi(argv[3]));
     }
 #endif
+
+    /*
+     * Set on both paths below -- the cached one hashes the script, the fetching
+     * one hashes what it downloaded -- but only by tracing them, and the build
+     * slot refuses to seal on an empty one rather than rest on that.
+     */
+    hex[0] = '\0';
 
     if (nt_self_path(self, sizeof(self), argc > 0 ? argv[0] : NULL) != 0) {
         fprintf(stderr, "netinstall: cannot determine own path\n");
@@ -1715,12 +2009,26 @@ static int nt_main(int argc, char **argv)
         return 2;
     }
 #ifdef _WIN32
+    /*
+     * Beside the script, not inside the app dir and not inside the shelf. The
+     * launcher finds it from %~dp0, so the name has to be one a source tree
+     * would not already be using: "<name>.build" and not "build".
+     */
+    if (nt_pathf(slot, sizeof(slot), "%s%c%s.build", approot, NT_SEP,
+                 spec.name) != 0 ||
+        nt_pathf(slotstamp, sizeof(slotstamp), "%s%c%s.build.stamp", approot,
+                 NT_SEP, spec.name) != 0) {
+        fprintf(stderr, "netinstall: cache path too long\n");
+        return 2;
+    }
     nt_win_slashes(home);
     nt_win_slashes(blobs);
     nt_win_slashes(approot);
     nt_win_slashes(script);
     nt_win_slashes(appdir);
     nt_win_slashes(tmpdir);
+    nt_win_slashes(slot);
+    nt_win_slashes(slotstamp);
 #endif
 
     if (mode == NT_INFO) {
@@ -1741,6 +2049,19 @@ static int nt_main(int argc, char **argv)
         } else {
             printf("cached     no\n");
         }
+#ifdef _WIN32
+        /*
+         * The same call the launch makes, on the same filesystem, so this is a
+         * statement about what is there rather than a promise about what would
+         * be. It grants nothing: nt_build_slot only decides what the sentence
+         * below names.
+         */
+        printf("build      %s\n", slot);
+        slotowed = nt_slot_owed(slot, slotstamp, hex, &slotwhy);
+        printf("slot       %s\n",
+               slotowed ? slotwhy : "sealed");
+        nt_build_slot(slot, slotowed);
+#endif
         nt_apply_confine(NT_PHASE_RUN, home, appdir, 0, desc, sizeof(desc));
         printf("confine    %s\n", desc);
         /*
@@ -2003,6 +2324,29 @@ static int nt_main(int argc, char **argv)
     setenv_dir("TMP", appdir, "tmp");
 #endif
 
+#ifdef _WIN32
+    /*
+     * Asked before the confinement and answered from the filesystem: whether
+     * this launch owes the launcher a compile. A launch that does not is one
+     * where nothing here is granted at all, which is every launch after the
+     * first of a pin.
+     *
+     * The wipe removes the record first and the files after, so a launch that
+     * dies anywhere in here leaves "owed" rather than a record vouching for
+     * files that are no longer the ones it named.
+     */
+    slotowed = nt_slot_owed(slot, slotstamp, hex, &slotwhy);
+    nt_build_slot(slot, slotowed);
+    if (slotowed) {
+        remove(slotstamp);
+        nt_slot_wipe(slot);
+        if (nt_mkdir_p(slot) != 0) {
+            slotowed = 0;
+            slotwhy = "the slot could not be created";
+        }
+    }
+#endif
+
     {
         /*
          * -1 is "nothing applied" and -2 is "less than was asked for" -- a
@@ -2031,7 +2375,52 @@ static int nt_main(int argc, char **argv)
         }
     }
 
+#ifdef _WIN32
+    /*
+     * After the confinement, because the token it builds is what nt_build_grant
+     * is widening for, and before the payload, because the payload is what
+     * fills it. A grant that fails is not a refusal -- see sandbox.h -- so this
+     * says so and carries on with a launcher that compiles every launch.
+     */
+    if (slotowed && !nt_build_grant(slot)) {
+        slotowed = 0;
+        slotwhy = "the slot could not be granted";
+        fprintf(stderr, "netinstall: warning: could not open the build slot; "
+                        "the app will compile on every launch\n");
+    }
+
+    {
+        int rc = nt_exec(script, argc, argv, rest);
+
+        /*
+         * The label comes off before anything records what is in there, which
+         * is the fetch phase's rule and its reason: while it is on, any low
+         * integrity process on the machine can still rewrite what the record
+         * would be vouching for.
+         *
+         * A revoke that could not close the slot leaves it wiped and unsealed
+         * rather than sealed, so the next launch builds into a directory this
+         * one could not leave open. No message box: nt_win_launched says the
+         * app is already up, and a modal over a running app is a worse thing
+         * than a line on stderr.
+         */
+        if (slotowed) {
+            if (!nt_build_revoke(slot)) {
+                remove(slotstamp);
+                nt_slot_wipe(slot);
+                fprintf(stderr, "netinstall: warning: could not close the "
+                                "build slot; it was emptied instead\n");
+            } else if (!nt_slot_seal(slot, slotstamp, hex)) {
+                remove(slotstamp);
+                fprintf(stderr, "netinstall: warning: could not record the "
+                                "build slot; the app will compile again\n");
+            }
+        }
+        return rc;
+    }
+#else
     return nt_exec(script, argc, argv, rest);
+#endif
 }
 
 /*

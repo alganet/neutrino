@@ -81,16 +81,18 @@ void nt_sleep_ms(long ms);
 /* Leaves only 0, 1 and 2 open, so nothing the caller had open reaches the app. */
 void nt_close_inherited(void);
 #else
-/* Runs a program to completion and returns its exit code. Replaces _spawnv,
- * which cannot express which handles a child inherits. */
-int nt_win_spawn(const char *exe, char *const *args);
 /*
- * The same, under a token the caller derived. void * rather than HANDLE so this
- * header stays free of windows.h; NULL is exactly nt_win_spawn. The fetch phase
- * is the one caller: a process may never raise its own integrity back, and
- * everything after the download -- the digest, the app directory, the hard link
- * -- is work at the launcher's own level, so the tight tier's confinement has
- * to reach the child alone.
+ * Runs a program to completion under a token the caller derived, and returns
+ * its exit code. Replaces _spawnv, which can express neither which handles a
+ * child inherits nor any kind of token confinement; CreateProcess is the only
+ * door to either. void * rather than HANDLE so this header stays free of
+ * windows.h, and NULL means the caller's own token.
+ *
+ * Both phases pass one. A process may never raise its own integrity back, and
+ * each phase has work left at its own level after the child -- the fetch has
+ * the digest, the app directory and the hard link; the run phase has the build
+ * slot's label to take back off -- so the confinement has to reach the child
+ * alone. See sandbox.h, where that is written down once.
  */
 /*
  * `slow`, when not NULL, is called once from this thread if the child is still

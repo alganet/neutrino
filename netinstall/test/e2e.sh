@@ -83,23 +83,25 @@ if [ "$NT_WINDOWS" = "1" ]; then
     echo "=== Launch through cmd.exe ==="
     "$APP" > "$WORK/app.log" 2>&1 &
     APP_PID=$!
-    # The exe is kept beside the script now, not inside the app dir. That is the
-    # whole of why it can be kept at all: this directory is the one the app
-    # cannot write -- the same reason the launcher above is read-only here --
-    # and the app dir below it is the one it can. The launcher falls back into
-    # the app dir where the script's own directory will not take a stamp, so
-    # both are waited for and the reading says which arrived.
-    #
-    # This loop used to name the app dir alone. When the exe moved it spun its
-    # whole 120 seconds and then failed, and by the time the window was looked
-    # for there was nothing left to look at.
+    # Three placements, and under netinstall the first is the one that should
+    # arrive. The build slot is the directory this program opens for the launch
+    # that owes a compile and closes when the .cmd returns; beside the script is
+    # what a standalone launch does and what this used to get; the app dir is
+    # the fallback for a launcher with nowhere to keep anything. All three are
+    # waited for and the reading says which arrived, because a suite that names
+    # one placement is a suite that spins its whole budget the day it moves --
+    # which is what happened when the exe left the app dir.
+    SLOT="${SCRIPT%.cmd}.build"
+    SLOTEXE="$SLOT/alive.exe"
     KEPT="${SCRIPT%.cmd}.exe"
     FALLBACK="$APPDIR/alive.exe"
     for _ in $(seq 1 120); do
-        if [ -f "$KEPT" ] || [ -f "$FALLBACK" ]; then break; fi
+        if [ -f "$SLOTEXE" ] || [ -f "$KEPT" ] || [ -f "$FALLBACK" ]; then break; fi
         sleep 1
     done
-    if [ -f "$KEPT" ]; then
+    if [ -f "$SLOTEXE" ]; then
+        echo "  PASS: jsc.exe compiled the app into the build slot"
+    elif [ -f "$KEPT" ]; then
         echo "  PASS: jsc.exe compiled the app beside the script it was verified from"
         if [ -f "${SCRIPT%.cmd}.stamp" ]; then
             echo "  PASS: and stamped it with the source it was built from"
@@ -110,11 +112,51 @@ if [ "$NT_WINDOWS" = "1" ]; then
     elif [ -f "$FALLBACK" ]; then
         echo "  PASS: jsc.exe compiled the app into its own dir (stamp refused above it)"
     else
-        nt_fail "compiled exe expected=$KEPT or $FALLBACK actual=missing"
+        nt_fail "compiled exe expected=$SLOTEXE, $KEPT or $FALLBACK actual=missing"
         FAILURES=$((FAILURES + 1))
     fi
     STATE="$(nt_app_probe 120)"
     nt_kill_tree $APP_PID
+
+    # And the half that would have failed before this existed: a second launch
+    # of the same app compiles nothing. The exe is the same file, byte for byte
+    # and by modification time, and the record beside the slot is what says the
+    # launcher was allowed to trust it. Against the commit before this one the
+    # exe is rewritten on every launch, so mtime moves every time.
+    #
+    # The control is the launch itself: an app that did not come up the second
+    # time is not a cache working, and nt_app_probe answers that below.
+    if [ -f "$SLOTEXE" ]; then
+        echo "=== And a second launch through cmd.exe ==="
+        if [ -f "$SLOT.stamp" ]; then
+            echo "  PASS: the slot carries a record netinstall wrote"
+        else
+            nt_fail "slot record expected=$SLOT.stamp actual=missing"
+            FAILURES=$((FAILURES + 1))
+        fi
+        BEFORE="$(nt_sha256 "$SLOTEXE")"
+        BEFORE_MT="$(nt_mtime "$SLOTEXE")"
+        nt_app_gone
+        "$APP" > "$WORK/app2.log" 2>&1 &
+        APP2_PID=$!
+        STATE2="$(nt_app_probe 120)"
+        AFTER="$(nt_sha256 "$SLOTEXE")"
+        AFTER_MT="$(nt_mtime "$SLOTEXE")"
+        nt_kill_tree $APP2_PID
+        nt_note "slot second=$STATE2 same=$([ "$BEFORE" = "$AFTER" ] && echo YES || echo NO) mtime_moved=$([ "$BEFORE_MT" = "$AFTER_MT" ] && echo NO || echo YES)"
+        if [ "$BEFORE" != "$AFTER" ] || [ "$BEFORE_MT" != "$AFTER_MT" ]; then
+            nt_fail "slot expected=the second launch reuses the exe actual=it was rebuilt"
+            FAILURES=$((FAILURES + 1))
+        else
+            echo "  PASS: a second launch runs the kept exe and compiles nothing"
+        fi
+        if [ "$STATE2" != "$STATE" ]; then
+            nt_fail "slot expected=the second launch comes up like the first ($STATE) actual=$STATE2"
+            FAILURES=$((FAILURES + 1))
+        else
+            echo "  PASS: and comes up from it"
+        fi
+    fi
 elif command -v osascript >/dev/null 2>&1 && [ "$(uname -s)" = "Darwin" ]; then
     echo "=== Launch through osascript ==="
     # TMPDIR is deliberately not redirected on macOS, so the launcher and the
