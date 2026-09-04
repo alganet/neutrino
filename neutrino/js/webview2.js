@@ -170,6 +170,47 @@
      * changing one alone fails the build's own suite rather than silently
      * accepting a package nobody looked at.
      */
+    /*
+     * What the browser is started with, and this is a control rather than a
+     * speed-up -- which is not what it was written to be.
+     *
+     * It went in for startup: the controller is around four hundred
+     * milliseconds of an eight hundred millisecond launch, nearly all of it a
+     * browser starting, and WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is the cheap
+     * way to hand that browser switches. Measured on the windows lane, off the
+     * process table rather than off a clock: `browser processes=6 carrying our
+     * arguments=0`. The variable is read by WebView2Loader.dll, and the
+     * Evergreen path does not use the loader -- it calls the runtime's own
+     * entry point. So on the path this build usually takes, these switches
+     * never arrive, and nothing here makes the browser faster.
+     *
+     * What survives is the reason it is written unconditionally. The package
+     * path *does* go through the loader, so there the variable is live -- and
+     * live for anyone who can set it, not only for this file.
+     * `--disable-web-security` and `--remote-debugging-port` are switches on
+     * the browser rendering the app, arriving from the environment.
+     * netinstall's allowlist has no WEBVIEW2_ name and no prefix admitting one,
+     * so it never gets there; standalone on Windows nothing scrubbed it and
+     * nothing overwrote it. Writing it here is what closes that, on the one
+     * path where it can be closed, and writing it on both paths costs a
+     * SetEnvironmentVariable.
+     *
+     * The switches themselves stay chosen for the startup they were meant to
+     * save, because that is what they should be if the options object ever
+     * carries them instead. None touches what the page may do: no sandbox
+     * switch, no SmartScreen switch, nothing about web security. A view
+     * rendering a local document is still a browser and is still treated as
+     * one.
+     *
+     * Making them reach the Evergreen path means ICoreWebView2EnvironmentOptions
+     * -- an emitted class the runtime queries eight methods on, where
+     * everything emitted here today is an interface with no bodies at all.
+     * Worth knowing before writing one: that is what this measurement bought.
+     */
+    NeutrinoWebview.webView2BrowserArguments =
+        "--no-first-run --disable-background-networking " +
+        "--disable-component-update --disable-sync --no-pings";
+
     NeutrinoWebview.webView2PinnedVersion = "1.0.4129.50";
     NeutrinoWebview.webView2PinnedSha256 = "d3934f482d484b89fb4825df720c710664e1143a1e90f7b3a60794ef33f473d2";
 
