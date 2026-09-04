@@ -3,13 +3,14 @@
  * SPDX-License-Identifier: ISC
  */
 
+#include "netinstall.h"
 #include "splash.h"
 
 #if defined(__linux__) || defined(__OpenBSD__) || defined(__FreeBSD__) || \
     defined(__NetBSD__)
 
 /*
- * A Loading... window, drawn by talking to the X server over its own socket.
+ * The splash window, drawn by talking to the X server over its own socket.
  *
  * No libX11, and not for the aesthetics of it: the linux binaries are static
  * musl, where dlopen is a stub that always fails, so a toolkit could only be
@@ -21,20 +22,25 @@
  * user is already looking at.
  *
  * The whole of it is: authenticate with the cookie the session already put in
- * XAUTHORITY, ask the server how wide the string is, make a window that size,
- * map it, draw once. Everything the protocol offers past that -- colours,
- * properties, window manager hints, input -- is skipped, because a splash that
+ * XAUTHORITY, allocate two colours, make a window of the size splash.h names,
+ * map it, and fill twelve rectangles -- again every NT_SPLASH_FRAME_MS, one
+ * cell further along. Everything the protocol offers past that -- properties,
+ * window manager hints, input, text -- is skipped, because a splash that
  * outlives one download does not need any of it.
  *
- * Text is the one place this leans on the server rather than doing the work:
- * ImageText8 with the "fixed" font, which every X server has carried since
- * before this was a reasonable assumption to make. That is the asymmetry with
- * the wayland path, where there is no text in the protocol at all and the
- * glyphs have to be shipped.
+ * Text is the part that used to be here and is not. This file asked the server
+ * to open `fixed` and drew "Loading..." through it with ImageText8, which was
+ * the one place it leaned on the server rather than doing the work -- and it
+ * came with a failure mode of its own, since a bare Xvfb with no font package
+ * answers OpenFont with an error and every draw through a GC naming a font that
+ * failed to open is a BadGC. Rectangles have no such question: there is nothing
+ * to open, nothing to fall back to, and PolyFillRectangle is refused by no
+ * server anywhere. See splash.h for why the words went.
  */
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,22 +49,6 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#define NT_X_TEXT "Loading..."
-
-/* The one font named in the core protocol's own examples, and the one every
- * server still ships. A server that has lost it fails OpenFont, which is an
- * error this reads and declines on, rather than a window with no words in it. */
-#define NT_X_FONT "fixed"
-
-/* Padding around the string, in pixels. The window is the text plus this. */
-#define NT_X_PAD_X 28
-#define NT_X_PAD_Y 18
-
-/* What the server is asked for when it cannot say how wide the string is.
- * 6x13 is what "fixed" resolves to almost everywhere; being wrong here costs a
- * slightly off-centre window and nothing else. */
-#define NT_X_FALLBACK_ADVANCE 6
-
 /*
  * What the child needs in order to redraw, set by nt_splash_x11_up and read by
  * nt_splash_x11_serve on the other side of a fork -- which copies them, so no
@@ -66,10 +56,16 @@
  * alternative is a struct threaded through the platform layer for three
  * integers, and because the two functions are already one mechanism split at
  * the only point a fork can go.
+ *
+ * Two graphics contexts, and not one whose foreground is changed between the
+ * two halves of a frame. A ChangeGC is a request like any other, so the two-GC
+ * form sends two requests a frame where the other sends four -- and, the part
+ * that actually matters, there is no ordering between a colour change and the
+ * fill it was meant for that this file has to keep in its head.
  */
 static unsigned long nt_x_wid = 0;
-static unsigned long nt_x_gc = 0;
-static long nt_x_baseline = 0;
+static unsigned long nt_x_gc_dim = 0;
+static unsigned long nt_x_gc_lit = 0;
 
 static void nt_x_put16(unsigned char *p, unsigned v)
 {
@@ -94,15 +90,6 @@ static unsigned long nt_x_get32(const unsigned char *p)
 {
     return (unsigned long)p[0] | ((unsigned long)p[1] << 8) |
            ((unsigned long)p[2] << 16) | ((unsigned long)p[3] << 24);
-}
-
-/* Signed, for the extents reply, whose widths are i32 and may legitimately be
- * negative for a right-to-left font. */
-static long nt_x_get32s(const unsigned char *p)
-{
-    unsigned long v = nt_x_get32(p);
-
-    return v & 0x80000000UL ? (long)v - 4294967296L : (long)v;
 }
 
 static size_t nt_x_pad4(size_t n)
@@ -323,13 +310,15 @@ static size_t nt_x_cookie(int display, unsigned char *out, size_t outlen)
 }
 
 /*
- * The setup handshake. Fills the four things anything below needs out of the
+ * The setup handshake. Fills the five things anything below needs out of the
  * first screen: a resource id to allocate from, the root window to parent to,
- * its pixel values, and how big the screen is so the window can be centred.
+ * its default colormap, its pixel values, and how big the screen is so the
+ * window can be centred.
  */
 static int nt_x_setup(int fd, int display, unsigned long *id_base,
-                      unsigned long *root, unsigned long *white,
-                      unsigned long *black, unsigned *sw, unsigned *sh)
+                      unsigned long *root, unsigned long *cmap,
+                      unsigned long *white, unsigned long *black,
+                      unsigned *sw, unsigned *sh)
 {
     unsigned char cookie[64];
     unsigned char req[12 + 24 + 64];
@@ -389,6 +378,7 @@ static int nt_x_setup(int fd, int display, unsigned long *id_base,
         return -1;
     }
     *root  = nt_x_get32(rest + off);
+    *cmap  = nt_x_get32(rest + off + 4);
     *white = nt_x_get32(rest + off + 8);
     *black = nt_x_get32(rest + off + 12);
     *sw    = nt_x_get16(rest + off + 20);
@@ -398,30 +388,36 @@ static int nt_x_setup(int fd, int display, unsigned long *id_base,
 }
 
 /*
- * How wide the string is in the opened font. The reply is a fixed 32 bytes,
- * which is the only reason this is worth a round trip -- QueryFont would answer
- * the same question behind a variable-length array of per-character metrics.
+ * A pixel value for one of splash.h's colours, out of the screen's default
+ * colormap.
+ *
+ * AllocColor and not a pixel composed by hand out of the visual's masks. On the
+ * TrueColor visual every machine this runs on actually has, the two agree and
+ * the arithmetic would be free -- but the masks live in the depth and visual
+ * lists this file skips past to reach the screen's fixed part, and reading them
+ * correctly is more protocol than one round trip is worth. AllocColor is one
+ * request with a fixed 32-byte reply, and every visual class there is answers
+ * it.
+ *
+ * The components are 16-bit, so each byte is repeated rather than shifted:
+ * 0xc8 is 0xc8c8 and not 0xc800, which would be a colour half as bright as the
+ * one asked for.
  */
-static int nt_x_extents(int fd, unsigned long font, long *width, long *ascent,
-                        long *descent)
+static int nt_x_alloc(int fd, unsigned long cmap, unsigned long rgb,
+                      unsigned long *pixel)
 {
-    size_t len = strlen(NT_X_TEXT);
-    unsigned char req[12 + 2 * 32];
+    unsigned char req[16];
     unsigned char rep[32];
-    size_t i;
-    size_t body = nt_x_pad4(len * 2);
+    int r = NT_SPLASH_R(rgb), g = NT_SPLASH_G(rgb), b = NT_SPLASH_B(rgb);
 
     memset(req, 0, sizeof(req));
-    req[0] = 48;                                  /* QueryTextExtents */
-    req[1] = (unsigned char)(len & 1);            /* odd-length flag */
-    nt_x_put16(req + 2, (unsigned)(2 + body / 4));
-    nt_x_put32(req + 4, font);
-    /* CHAR2B: the protocol has no 8-bit form of this request. */
-    for (i = 0; i < len; i++) {
-        req[8 + i * 2] = 0;
-        req[8 + i * 2 + 1] = (unsigned char)NT_X_TEXT[i];
-    }
-    if (nt_x_write(fd, req, 8 + body) != 0) {
+    req[0] = 84;                                  /* AllocColor */
+    nt_x_put16(req + 2, 4);
+    nt_x_put32(req + 4, cmap);
+    nt_x_put16(req + 8, (unsigned)((r << 8) | r));
+    nt_x_put16(req + 10, (unsigned)((g << 8) | g));
+    nt_x_put16(req + 12, (unsigned)((b << 8) | b));
+    if (nt_x_write(fd, req, sizeof(req)) != 0) {
         return -1;
     }
     if (nt_x_read(fd, rep, 32) != 0) {
@@ -430,26 +426,98 @@ static int nt_x_extents(int fd, unsigned long font, long *width, long *ascent,
     if (rep[0] != 1) {
         return -1;                                /* an error, not a reply */
     }
-    *ascent  = (long)(short)nt_x_get16(rep + 8);
-    *descent = (long)(short)nt_x_get16(rep + 10);
-    *width   = nt_x_get32s(rep + 16);
+    *pixel = nt_x_get32(rep + 16);
+    return 0;
+}
+
+/*
+ * One frame: every cell filled, in two requests.
+ *
+ * All twelve every time, and not only the three that changed. The diff is four
+ * rectangles rather than twelve, which is a saving of two hundred bytes a
+ * second and would cost this function a memory of what it drew last -- a memory
+ * that then has to be right across a fork, across an Expose from a window that
+ * was covered, and on the first frame after nothing at all. Twelve rectangles
+ * is one code path for all three.
+ *
+ * Nothing here clears anything. The window's background-pixel is the light one,
+ * the server paints it over the exposed area before it sends the Expose, and
+ * every cell is fully repainted by one of the two passes below -- so there is
+ * no third colour on this window and no state a frame could leave behind.
+ */
+static int nt_x_frame(int fd, int phase)
+{
+    unsigned char req[12 + NT_SPLASH_CELLS * 8];
+    int pass;
+
+    for (pass = 0; pass < 2; pass++) {
+        size_t n = 12;
+        int count = 0;
+        int i;
+
+        for (i = 0; i < NT_SPLASH_CELLS; i++) {
+            if (nt_splash_cell_lit(phase, i) != pass) {
+                continue;
+            }
+            nt_x_put16(req + n, (unsigned)NT_SPLASH_CELL_X(i));
+            nt_x_put16(req + n + 2, (unsigned)NT_SPLASH_TRACK_Y);
+            nt_x_put16(req + n + 4, NT_SPLASH_CELL_W);
+            nt_x_put16(req + n + 6, NT_SPLASH_CELL_H);
+            n += 8;
+            count++;
+        }
+        if (count == 0) {
+            continue;
+        }
+        memset(req, 0, 12);
+        req[0] = 70;                              /* PolyFillRectangle */
+        nt_x_put16(req + 2, (unsigned)(n / 4));
+        nt_x_put32(req + 4, nt_x_wid);
+        nt_x_put32(req + 8, pass ? nt_x_gc_lit : nt_x_gc_dim);
+        if (nt_x_write(fd, req, n) != 0) {
+            return -1;
+        }
+    }
+    /*
+     * And the edge, in the same request shape and the darker of the two GCs.
+     * PolyRectangle draws an outline rather than a fill, one pixel wide at the
+     * GC's default line-width, and it draws *on* the rectangle it is given --
+     * so the far edge is at w-1 and not at w, which would be a line outside the
+     * window and no line at all.
+     */
+    {
+        unsigned char edge[20];
+
+        memset(edge, 0, sizeof(edge));
+        edge[0] = 67;                             /* PolyRectangle */
+        nt_x_put16(edge + 2, 5);
+        nt_x_put32(edge + 4, nt_x_wid);
+        nt_x_put32(edge + 8, nt_x_gc_lit);
+        nt_x_put16(edge + 12, 0);
+        nt_x_put16(edge + 14, 0);
+        nt_x_put16(edge + 16, NT_SPLASH_WIDTH - 1);
+        nt_x_put16(edge + 18, NT_SPLASH_HEIGHT - 1);
+        if (nt_x_write(fd, edge, sizeof(edge)) != 0) {
+            return -1;
+        }
+    }
     return 0;
 }
 
 int nt_splash_x11_up(char *desc, size_t desclen)
 {
     const char *disp = getenv("DISPLAY");
-    unsigned long id_base = 0, root = 0, white = 0, black = 0;
-    unsigned long wid, gc, font;
+    unsigned long id_base = 0, root = 0, cmap = 0, white = 0, black = 0;
+    unsigned long dim = 0, lit = 0;
+    unsigned long wid, gcd, gcl;
     unsigned sw = 0, sh = 0;
-    long tw = 0, ascent = 0, descent = 0;
-    int fontok = 1;
-    unsigned w, h;
+    unsigned w = NT_SPLASH_WIDTH, h = NT_SPLASH_HEIGHT;
+    int coloursok = 1;
+    int which;
     int x, y;
     int display;
     int fd;
     unsigned char req[64];
-    size_t tlen = strlen(NT_X_TEXT);
 
     if (!disp || !*disp) {
         snprintf(desc, desclen, "none (no DISPLAY)");
@@ -465,53 +533,31 @@ int nt_splash_x11_up(char *desc, size_t desclen)
         snprintf(desc, desclen, "none (no X server on :%d)", display);
         return -1;
     }
-    if (nt_x_setup(fd, display, &id_base, &root, &white, &black, &sw, &sh) != 0) {
+    if (nt_x_setup(fd, display, &id_base, &root, &cmap, &white, &black,
+                   &sw, &sh) != 0) {
         close(fd);
         snprintf(desc, desclen, "none (X server refused the connection)");
         return -1;
     }
 
-    wid  = id_base;
-    gc   = id_base + 1;
-    font = id_base + 2;
-
-    /* OpenFont. */
-    memset(req, 0, sizeof(req));
-    req[0] = 45;
-    nt_x_put16(req + 2, (unsigned)(3 + nt_x_pad4(strlen(NT_X_FONT)) / 4));
-    nt_x_put32(req + 4, font);
-    nt_x_put16(req + 8, (unsigned)strlen(NT_X_FONT));
-    memcpy(req + 12, NT_X_FONT, strlen(NT_X_FONT));
-    if (nt_x_write(fd, req, 12 + nt_x_pad4(strlen(NT_X_FONT))) != 0) {
-        close(fd);
-        snprintf(desc, desclen, "none (X server closed during OpenFont)");
-        return -1;
-    }
+    wid = id_base;
+    gcd = id_base + 1;
+    gcl = id_base + 2;
 
     /*
-     * The extents query doubles as the question "did OpenFont work". A server
-     * with no "fixed" -- a bare Xvfb with no font package is the one everybody
-     * meets -- answers both requests with an error, and this reads the first of
-     * them here.
-     *
-     * That answer is then used twice: for a fallback width, and to decide
-     * whether the GC below may name a font at all. Naming one that failed to
-     * open makes the GC itself invalid, and every draw through it a BadGC --
-     * which is a mapped window with nothing in it, and a splash that says
-     * nothing is worse than one in the server's default font.
+     * The two colours, or the two the screen came with. A colormap with nothing
+     * free is what the fallback is for -- an 8-bit PseudoColor server with a
+     * full map, which is rare and is not a reason to decline a window. Black on
+     * white still moves; it is only the track that stops being distinguishable
+     * from the background, and the moving run is the half carrying the message.
      */
-    if (nt_x_extents(fd, font, &tw, &ascent, &descent) != 0) {
-        fontok = 0;
-        tw = (long)tlen * NT_X_FALLBACK_ADVANCE;
-        ascent = 10;
-        descent = 3;
-    }
-    if (tw <= 0) {
-        tw = (long)tlen * NT_X_FALLBACK_ADVANCE;
+    if (nt_x_alloc(fd, cmap, NT_SPLASH_RGB_DIM, &dim) != 0 ||
+        nt_x_alloc(fd, cmap, NT_SPLASH_RGB_LIT, &lit) != 0) {
+        coloursok = 0;
+        dim = white;
+        lit = black;
     }
 
-    w = (unsigned)tw + 2 * NT_X_PAD_X;
-    h = (unsigned)(ascent + descent) + 2 * NT_X_PAD_Y;
     x = sw > w ? (int)((sw - w) / 2) : 0;
     y = sh > h ? (int)((sh - h) / 2) : 0;
 
@@ -533,7 +579,7 @@ int nt_splash_x11_up(char *desc, size_t desclen)
     nt_x_put16(req + 14, (unsigned)y);
     nt_x_put16(req + 16, w);
     nt_x_put16(req + 18, h);
-    nt_x_put16(req + 20, 1);                      /* border width */
+    nt_x_put16(req + 20, 0);                      /* border width: see the edge */
     nt_x_put16(req + 22, 1);                      /* class: InputOutput */
     nt_x_put32(req + 24, 0);                      /* visual: CopyFromParent */
     /* background-pixel | border-pixel | override-redirect | event-mask */
@@ -548,22 +594,22 @@ int nt_splash_x11_up(char *desc, size_t desclen)
         return -1;
     }
 
-    /* CreateGC: foreground, background, and the font only if there is one. */
-    memset(req, 0, sizeof(req));
-    req[0] = 55;
-    nt_x_put16(req + 2, (unsigned)(4 + (fontok ? 3 : 2)));
-    nt_x_put32(req + 4, gc);
-    nt_x_put32(req + 8, wid);
-    nt_x_put32(req + 12, 0x04 | 0x08 | (fontok ? 0x4000 : 0));
-    nt_x_put32(req + 16, black);
-    nt_x_put32(req + 20, white);
-    if (fontok) {
-        nt_x_put32(req + 24, font);
-    }
-    if (nt_x_write(fd, req, fontok ? 28 : 24) != 0) {
-        close(fd);
-        snprintf(desc, desclen, "none (X server closed during CreateGC)");
-        return -1;
+    /* One GC per colour, foreground and background both, so that a server asked
+     * to fill through either has nothing left to default. */
+    for (which = 0; which < 2; which++) {
+        memset(req, 0, sizeof(req));
+        req[0] = 55;                              /* CreateGC */
+        nt_x_put16(req + 2, 6);
+        nt_x_put32(req + 4, which ? gcl : gcd);
+        nt_x_put32(req + 8, wid);
+        nt_x_put32(req + 12, 0x04 | 0x08);        /* foreground | background */
+        nt_x_put32(req + 16, which ? lit : dim);
+        nt_x_put32(req + 20, white);
+        if (nt_x_write(fd, req, 24) != 0) {
+            close(fd);
+            snprintf(desc, desclen, "none (X server closed during CreateGC)");
+            return -1;
+        }
     }
 
     /* MapWindow. */
@@ -577,87 +623,110 @@ int nt_splash_x11_up(char *desc, size_t desclen)
         return -1;
     }
 
+    nt_x_wid = wid;
+    nt_x_gc_dim = gcd;
+    nt_x_gc_lit = gcl;
+
     /*
-     * One eager draw, which may well be discarded: a window is not viewable
+     * One eager frame, which may well be discarded: a window is not viewable
      * until the server says so, and a request that arrives first paints
      * nothing. It is sent anyway because on a server that does keep it, it is
-     * the difference between the window appearing with its word already in it
+     * the difference between the window appearing with its track already in it
      * and appearing empty for one round trip. The Expose that follows is what
-     * actually guarantees the text, and servicing that is the child's whole
-     * job.
+     * actually guarantees the pixels; servicing that, and the clock, is the
+     * child's whole job.
      */
-    memset(req, 0, sizeof(req));
-    req[0] = 76;                                  /* ImageText8 */
-    req[1] = (unsigned char)tlen;
-    nt_x_put16(req + 2, (unsigned)(4 + nt_x_pad4(tlen) / 4));
-    nt_x_put32(req + 4, wid);
-    nt_x_put32(req + 8, gc);
-    nt_x_put16(req + 12, (unsigned)NT_X_PAD_X);
-    nt_x_put16(req + 14, (unsigned)(NT_X_PAD_Y + ascent));
-    memcpy(req + 16, NT_X_TEXT, tlen);
-    if (nt_x_write(fd, req, 16 + nt_x_pad4(tlen)) != 0) {
+    if (nt_x_frame(fd, 0) != 0) {
         close(fd);
-        snprintf(desc, desclen, "none (X server closed during ImageText8)");
+        snprintf(desc, desclen, "none (X server closed during the first frame)");
         return -1;
     }
 
-    nt_x_wid = wid;
-    nt_x_gc = gc;
-    nt_x_baseline = NT_X_PAD_Y + ascent;
-
-    /* The font is named because a lane that quietly fell back to the server's
-     * default is a lane whose window looks different for a reason nobody would
-     * otherwise be told. */
-    snprintf(desc, desclen, "x11 (:%d, %ux%u, %s)", display, w, h,
-             fontok ? NT_X_FONT : "default font");
+    /* The colours are named when they are not the ones that were asked for,
+     * because a lane that quietly fell back to black and white is a lane whose
+     * window looks different for a reason nobody would otherwise be told. */
+    snprintf(desc, desclen, "x11 (:%d, %ux%u%s)", display, w, h,
+             coloursok ? "" : ", default colours");
     return fd;
 }
 
 /*
- * The child. Reads events forever and redraws on each Expose, which is the one
- * thing that has to keep happening for the window to stay legible while the
- * parent is blocked in waitpid.
+ * The child. Two things have to keep happening for the window to be what it
+ * claims. A redraw on every Expose, or it goes blank the first time anything
+ * passes over it -- that part was always here. And a step of the animation
+ * every NT_SPLASH_FRAME_MS, or it is a picture of an indicator rather than one.
+ *
+ * poll and not a blocking read, because the frame falls due whether or not the
+ * server has anything to say, and on an ordinary X session it has nothing to
+ * say for the whole of a download. The phase is advanced against the clock and
+ * not against the number of times poll returned: an X connection that does
+ * carry traffic -- a window manager probing, an Expose storm behind a moving
+ * window -- would otherwise run the animation at the speed of the traffic.
  *
  * There is no teardown in here and no exit path that matters. The parent kills
  * this process, which closes the last descriptor on the connection, and the
- * server destroys every resource the connection owned -- the window, the GC and
- * the font -- without being asked. That is why nothing above bothers to keep
- * their ids around.
+ * server destroys every resource the connection owned -- the window and both
+ * GCs -- without being asked. That is why nothing above bothers to keep their
+ * ids around.
  */
 void nt_splash_x11_serve(int fd)
 {
     unsigned char ev[32];
-    unsigned char req[32];
-    size_t tlen = strlen(NT_X_TEXT);
+    int phase = 0;
+    long last = nt_now_ms();
+    long due = NT_SPLASH_FRAME_MS;
 
     for (;;) {
-        if (nt_x_read(fd, ev, 32) != 0) {
+        struct pollfd pfd;
+        long now;
+        int ready;
+
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        ready = poll(&pfd, 1, (int)due);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
             _exit(0);
         }
-        /* 12 is Expose. The high bit marks a SendEvent, which is neither a
-         * thing to trust nor a thing this needs. */
-        if ((ev[0] & 0x7f) != 12) {
+        if (ready > 0) {
+            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                _exit(0);
+            }
+            if (nt_x_read(fd, ev, 32) != 0) {
+                _exit(0);
+            }
+            /*
+             * 12 is Expose. The high bit marks a SendEvent, which is neither a
+             * thing to trust nor a thing this needs, and everything else on
+             * this connection is an error reply to a request one of the two
+             * functions here got wrong -- which is a thing to ignore rather
+             * than to act on.
+             *
+             * The connection owns exactly one window, so an Expose can only be
+             * ours; an event carrying someone else's id would mean the stream
+             * is not where this thinks it is, and drawing into a stranger's
+             * window on that basis is worse than drawing nothing.
+             */
+            if ((ev[0] & 0x7f) == 12 && nt_x_get32(ev + 4) == nt_x_wid &&
+                nt_x_frame(fd, phase) != 0) {
+                _exit(0);
+            }
+        }
+        now = nt_now_ms();
+        if (now - last < NT_SPLASH_FRAME_MS) {
+            /* Woken early by an event. What is left of the frame is what the
+             * next poll waits for, so an uncovered window does not make the
+             * indicator jump. */
+            due = NT_SPLASH_FRAME_MS - (now - last);
             continue;
         }
-        /*
-         * The connection owns exactly one window, so this can only be ours --
-         * but an event carrying someone else's id would mean the stream is not
-         * where this thinks it is, and drawing into a stranger's window on that
-         * basis is worse than drawing nothing.
-         */
-        if (nt_x_get32(ev + 4) != nt_x_wid) {
-            continue;
-        }
-        memset(req, 0, sizeof(req));
-        req[0] = 76;
-        req[1] = (unsigned char)tlen;
-        nt_x_put16(req + 2, (unsigned)(4 + nt_x_pad4(tlen) / 4));
-        nt_x_put32(req + 4, nt_x_wid);
-        nt_x_put32(req + 8, nt_x_gc);
-        nt_x_put16(req + 12, (unsigned)NT_X_PAD_X);
-        nt_x_put16(req + 14, (unsigned)nt_x_baseline);
-        memcpy(req + 16, NT_X_TEXT, tlen);
-        if (nt_x_write(fd, req, 16 + nt_x_pad4(tlen)) != 0) {
+        last = now;
+        due = NT_SPLASH_FRAME_MS;
+        phase = (phase + 1) % NT_SPLASH_CELLS;
+        if (nt_x_frame(fd, phase) != 0) {
             _exit(0);
         }
     }

@@ -74,10 +74,17 @@ subject() {
         std-doc)      echo "document.title, reaching the native window title" ;;
         std-win)      echo "The standard window verbs -- resize, move, fullscreen, close" ;;
         std-geom)     echo "Window geometry" ;;
-        # netinstall's own picture, one per lane, named for what drew it. The
-        # download behind it was stalled on purpose so the window was due, and
-        # NEUTRINO_SPLASH_HOLD_MS kept it up while the shutter fired.
-        splash-*)     echo "netinstall's Loading... window, drawn with ${1#splash-} over a download the host stalled; held open for the shutter by NEUTRINO_SPLASH_HOLD_MS" ;;
+        # netinstall's own pictures, named for what drew the window. The
+        # download behind them was stalled on purpose so the window was due, and
+        # NEUTRINO_SPLASH_HOLD_MS kept it up while the shutters fired.
+        #
+        # The burst frames are matched first, because the portrait's pattern
+        # would otherwise swallow them and caption six frames of an animation as
+        # six portraits. They are not rendered as figures of their own -- see
+        # the animation section below -- and this is here for the case where one
+        # arrives without the others.
+        splash-*-anim-*) echo "One frame of netinstall's splash, drawn with $(printf '%s' "${1#splash-}" | sed 's/-anim-.*//')" ;;
+        splash-*)     echo "netinstall's splash window, drawn with ${1#splash-} over a download the host stalled; held open for the shutter by NEUTRINO_SPLASH_HOLD_MS" ;;
         *)            echo "" ;;
     esac
 }
@@ -131,7 +138,24 @@ for arg in "$@"; do
     fi
 done
 
+# The burst frames come out of the grid and into a section of their own.
+#
+# They are six photographs of one thing, and six figures of them side by side is
+# both the heaviest part of the page and the least informative: what a reader
+# wants from a burst is the motion, which is the one thing a still grid cannot
+# show. Below they become a single figure that cycles, and the grid keeps the
+# portrait.
+#
+# Matched on the name and not on where the file came from, because the lane
+# hands over a directory and not a list. `-anim-NN.png` is what
+# nt_screenshot_burst writes and nothing else in this tree writes.
+ANIMS="$(mktemp)"; STILLS="$(mktemp)"
+trap 'rm -f "$SHOTS" "$LOGS" "$ANIMS" "$STILLS"' EXIT
+grep -aE -- '-anim-[0-9]+\.png$' "$SHOTS" > "$ANIMS" 2>/dev/null || true
+grep -avE -- '-anim-[0-9]+\.png$' "$SHOTS" > "$STILLS" 2>/dev/null || true
+
 NSHOTS="$(wc -l < "$SHOTS" | tr -d ' ')"
+NANIM="$(wc -l < "$ANIMS" | tr -d ' ')"
 NLOGS="$(wc -l < "$LOGS" | tr -d ' ')"
 
 # ------------------------------------------------------------------- the digest
@@ -158,7 +182,7 @@ NLOGS="$(wc -l < "$LOGS" | tr -d ' ')"
 # across lanes and the wrong one for reading a single result, so the raw lines
 # stay in the logs below, whole.
 ASSERTS="$(mktemp)"; PERLOG="$(mktemp)"
-trap 'rm -f "$SHOTS" "$LOGS" "$ASSERTS" "$PERLOG"' EXIT
+trap 'rm -f "$SHOTS" "$LOGS" "$ANIMS" "$STILLS" "$ASSERTS" "$PERLOG"' EXIT
 
 while IFS= read -r log <&3; do
     [ -f "$log" ] || continue
@@ -190,7 +214,7 @@ done 3< "$LOGS"
 N_ASSERT="$(wc -l < "$ASSERTS" | tr -d ' ')"
 N_FAIL="$(awk -F'\t' '{n+=$3} END{print n+0}' "$PERLOG" 2>/dev/null || echo 0)"
 N_DISTINCT="$(sort -u "$ASSERTS" 2>/dev/null | wc -l | tr -d ' ')"
-echo "  sheet: lane=$LANE shots=$NSHOTS logs=$NLOGS -> $OUT"
+echo "  sheet: lane=$LANE shots=$NSHOTS (${NANIM} burst frames) logs=$NLOGS -> $OUT"
 
 mkdir -p "$(dirname "$OUT")"
 {
@@ -251,6 +275,24 @@ table.digest th { text-align:left; font-weight:600; color:var(--muted);
                   padding:3px 14px 3px 0; border-bottom:1px solid var(--line); }
 table.digest td { padding:2px 14px 2px 0; border-bottom:1px solid var(--line); }
 table.digest td.bad { color:#d23; font-weight:700; }
+/* A burst of frames, played back.
+   The frames are laid end to end in a strip N times the width of the window
+   that shows them, and the strip is stepped across by exactly one frame at a
+   time -- so a steps() timing function and a translate of -100% is the whole
+   animation, with no keyframe rule that has to know how many frames there are.
+   (No backticks in this comment: it is inside an unquoted heredoc, where a
+   backtick is a command substitution and not punctuation.) The two numbers
+   that do depend on N are written inline by the generator below, which is why
+   this block is the same for every burst on the page.
+   Held still for a reader who has asked their system for that: the point of
+   these frames is that they differ, and the first one is still a picture of the
+   window. */
+.flip { overflow:hidden; }
+.reel { display:flex; animation-name:reel; animation-iteration-count:infinite;
+        will-change:transform; }
+.reel img { display:block; height:auto; background:#0a0a0a; }
+@keyframes reel { from { transform:translateX(0); } to { transform:translateX(-100%); } }
+@media (prefers-reduced-motion: reduce) { .reel { animation:none; } }
 </style>
 <header>
   <h1>$LANE</h1>
@@ -306,8 +348,64 @@ while IFS="$(printf '\t')" read -r GROUP png <&3; do
         "$IDX" "$IDX" "$(b64 "$png")" "$(printf '%s' "$BASE" | esc)"
     printf '<figcaption><div class="name">%s.png</div><div class="what">%s</div><div class="size">%s bytes</div><a class="close" href="#">back to the grid</a></figcaption>\n</figure>\n' \
         "$(printf '%s' "$BASE" | esc)" "$(subject "$BASE" | esc)" "$BYTES"
-done 3< "$SHOTS"
+done 3< "$STILLS"
 [ "$LAST_GROUP" = "__none__" ] || echo '</div>'
+
+# The bursts, one figure each.
+#
+# A key is the label the lane gave the directory plus the name the frames share,
+# so two lanes' worth in one sheet -- which no lane does today and one might --
+# stay two animations. The frames of a key are contiguous in the list because
+# the collection above sorted by path and the names differ only in their
+# two-digit tail.
+if [ -s "$ANIMS" ]; then
+    KEYS="$(mktemp)"; FRAMES="$(mktemp)"
+    awk -F'\t' '{ n = split($2, p, "/"); f = p[n];
+                  sub(/-anim-[0-9]+\.png$/, "", f); print $1 "\t" f }' \
+        "$ANIMS" | sort -u > "$KEYS"
+    printf '<h2>Animation</h2>\n<div class="grid">\n'
+    while IFS="$(printf '\t')" read -r GROUP PREFIX <&3; do
+        awk -F'\t' -v g="$GROUP" -v pfx="$PREFIX" \
+            '$1 == g && index($2, "/" pfx "-anim-") { print $2 }' \
+            "$ANIMS" | sort > "$FRAMES"
+        # Only the frames that are really PNGs, counted before any are written:
+        # the strip's width and its step count both depend on how many there
+        # are, and a frame dropped after the container was sized would leave the
+        # last step of the loop on nothing.
+        N=0
+        while IFS= read -r png <&4; do
+            is_png "$png" && N=$((N + 1))
+        done 4< "$FRAMES"
+        [ "$N" -gt 1 ] || continue
+        # A fifth of a second a frame, which is slower than they were taken and
+        # about as slow as a thing can be shown and still read as motion.
+        # LC_ALL=C on both, and it is not decoration. awk's printf writes the
+        # decimal separator its locale asks for, so on a machine set to a comma
+        # locale these came out as "1,32s" and "16,6667%" -- which CSS parses as
+        # nothing at all, leaving a strip of six full-width frames that never
+        # moves. Measured on a pt_BR desktop; every CI lane runs under C and
+        # would never have shown it.
+        DUR="$(LC_ALL=C awk -v n="$N" 'BEGIN { printf "%.2f", n * 0.22 }')"
+        WIDTH=$((N * 100))
+        EACH="$(LC_ALL=C awk -v n="$N" 'BEGIN { printf "%.4f", 100 / n }')"
+        printf '<figure>\n<div class="flip"><div class="reel" style="width:%s%%;animation-duration:%ss;animation-timing-function:steps(%s)">\n' \
+            "$WIDTH" "$DUR" "$N"
+        BYTES=0
+        while IFS= read -r png <&4; do
+            is_png "$png" || continue
+            BYTES=$((BYTES + $(wc -c < "$png" | tr -d ' ')))
+            printf '<img style="width:%s%%" src="data:image/png;base64,%s" alt="%s">\n' \
+                "$EACH" "$(b64 "$png")" "$(printf '%s' "$PREFIX" | esc)"
+        done 4< "$FRAMES"
+        printf '</div></div>\n'
+        printf '<figcaption><div class="name">%s-anim-01..%02d.png</div><div class="what">%s</div><div class="size">%s frames, %s bytes</div></figcaption>\n</figure>\n' \
+            "$(printf '%s' "$PREFIX" | esc)" "$N" \
+            "$(printf 'The same window over %s frames about a tenth of a second apart -- what the indicator does, rather than what it looked like once' "$N" | esc)" \
+            "$N" "$BYTES"
+    done 3< "$KEYS"
+    echo '</div>'
+    rm -f "$KEYS" "$FRAMES"
+fi
 
 # Named, never dropped. A file a step meant to be a picture and that is not one
 # is a finding about that step, and silence here would hide it twice.
@@ -367,8 +465,8 @@ echo '</main>'
     printf '<script type="application/json" id="nt-digest">\n{'
     printf '"lane":"%s","sha":"%s","run":"%s",' \
         "$LANE" "${GITHUB_SHA:-}" "${GITHUB_RUN_ID:-}"
-    printf '"shots":%s,"logs":%s,"assertions":%s,"distinct":%s,"failures":%s,' \
-        "$NSHOTS" "$NLOGS" "$N_ASSERT" "$N_DISTINCT" "$N_FAIL"
+    printf '"shots":%s,"frames":%s,"logs":%s,"assertions":%s,"distinct":%s,"failures":%s,' \
+        "$NSHOTS" "$NANIM" "$NLOGS" "$N_ASSERT" "$N_DISTINCT" "$N_FAIL"
     printf '"asserted":['
     sort "$ASSERTS" | uniq -c | sort -rn |
         sed -E -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/</\\u003c/g' \

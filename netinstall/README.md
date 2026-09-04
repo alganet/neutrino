@@ -129,7 +129,7 @@ without enforcing, so it changes nothing and reports what a real launch would do
 
 A cold run downloads before it can launch anything, and until this it did that behind nothing at
 all: `curl -fsSL`, `wget -q`, no output, for up to the 120 second deadline. So a cache miss opens a
-small window that says `Loading...`, and closes it when the download is done.
+small window with a moving indicator in it, and closes it when the download is done.
 
 Only a cache miss. A run that already holds the verified payload has nothing to wait for and goes
 straight to the script, drawing nothing — the window marks a download, not a launch.
@@ -145,10 +145,27 @@ the window. A testing build reads `NEUTRINO_SPLASH_HOLD_MS` to lengthen the hold
 suite keeps the window still for a photograph, and how a person gets to look at it for longer than
 four hundred milliseconds — and it can only lengthen it. A release binary reads nothing.
 
-It says one word and carries nothing else, and that is a limit rather than a taste. What an app
-looks like — its title, its size, its colour — lives inside the payload, and this runs before there
-is a payload to read it from. A launcher that invented an appearance here would be describing
-something it has not downloaded yet.
+It carries no words, and that is a limit rather than a taste. What an app looks like — its title,
+its size, its colour — lives inside the payload, and this runs before there is a payload to read it
+from. A launcher that invented an appearance here would be describing something it has not
+downloaded yet.
+
+It said `Loading...` until recently, and two things were wrong with that at once. **Language**: a
+launcher that has not downloaded anything yet has nothing to read a locale out of, so the word could
+only ever be English, and shipping one language to everybody is a choice nothing else here makes.
+**Font**: five platforms drew that word five ways — the X server's `fixed`, a bitmap table compiled
+into the binary for wayland, `DEFAULT_GUI_FONT` on Windows, whatever `NSTextField` picked on macOS —
+and the CI sheets showed it, four lanes photographing one feature and no two pictures alike.
+
+What replaced it is twelve cells in a row, three of them dark, the dark run moving by one cell every
+90 ms and wrapping, inside a one-pixel edge each platform draws for itself — X11 had a border width
+of 1, Windows had `WS_BORDER` in a colour the system picked, and macOS had nothing, which is three
+answers to a question the window should be answering once. It belongs to no language, and it is rectangles — which is the one thing all
+four mechanisms can be asked for at exactly the same size, so the four lanes now photograph the same
+260×96 window with the same track in the same place. It says nothing about how far along the
+download is and must not: the size of what is being fetched comes from a header this program does
+not require and does not check, so a bar claiming a fraction would be claiming one it cannot know.
+All of the geometry and both colours are in `splash.h`, once, because five files draw them.
 
 | Platform | Drawn by | Notes |
 |---|---|---|
@@ -165,11 +182,20 @@ spoken directly, as a socket and a few dozen bytes of structs. macOS is the exce
 `dlopen` AppKit, because static linking is unsupported there and every binary is already dynamic;
 nothing is linked at build time, so the cross-compile still needs no SDK.
 
-Wayland costs about half as much again as X11, for a reason worth knowing: X11 has server-side
-fonts and draws the string for you, and wayland has no drawing in it at all. The compositor takes
-finished pixels, so that path carries its own glyphs and rasterises them. It also cannot place its
-own window — position is the compositor's to choose — while the X11 path is override-redirect and
-centres itself.
+Wayland costs more than X11, for a reason worth knowing: X11 has `PolyFillRectangle` and fills the
+cells for you, and wayland has no drawing in it at all. The compositor takes finished pixels, so
+that path writes every cell's pixels itself and hands over a whole new buffer per frame — two of
+them, alternated, so that a frame is never written into the buffer the compositor is reading. It
+also cannot place its own window — position is the compositor's to choose — while the X11 path is
+override-redirect and centres itself. That difference in placement is the one thing the four lanes'
+pictures still disagree about, and it is not this program's to settle.
+
+The animation is a clock in whatever loop each platform already had: `poll` with the frame as its
+timeout in the two socket paths, a `WM_TIMER` in the message pump on Windows, and a hand-pumped
+event loop on macOS — where `-[NSApplication run]` had to go, because a timer there needs a target
+object and a target object means building an Objective-C class at runtime. Each of them advances the
+phase against the clock and not against how often it was woken, so a busy display server cannot
+speed the window up.
 
 On every platform but Windows the window is held by a separate process, because between raising it
 and lowering it this program is blocked in `waitpid` on the downloader, and neither display server
@@ -880,9 +906,10 @@ two different ways), `phases.sh` (what confines the downloader on each platform,
 curl's own config file rather than asserted from the source, and that a build refuses to fetch when
 nothing does), `writable.sh` (what a confined app can actually put bytes into, enumerated from
 inside the confinement), `env.sh` (the loader environment, and what the sandbox does *not* do about
-it), `splash.sh` (the Loading... window: raised once for a download that was stalled long enough to
+it), `splash.sh` (the splash window: raised once for a download that was stalled long enough to
 deserve one, not at all for one that was not, held for as long as it must be, torn down on every
-path out, and photographed once for the lane's sheet), and `e2e.sh` (a real neutrino polyglot
+path out, and photographed for the lane's sheet — once for the portrait, then six frames in a row to
+show the indicator moving), and `e2e.sh` (a real neutrino polyglot
 fetched, verified and launched).
 
 **What a launch is asked here, and what it is not.** `e2e.sh` starts a real webview and wants one
@@ -899,12 +926,20 @@ launch and, worse than the time, a regression in neutrino's geometry or palette 
 suites red on four lanes, each reporting a webview defect under a sandbox's name.
 
 The app is `test/alive.js`, which this suite owns. It sets one title and holds the window, so there
-is no eleven-second head start to wait out and no step list to fall out of step with. The suites
-here take one picture between them, and it is not of the webview: `splash.sh` photographs the
-Loading... window, over a download `hostile.py` stalled on purpose so the window was due and with
-`NEUTRINO_SPLASH_HOLD_MS` keeping it up while the shutter fired. It goes to the lane's sheet under
-its own heading, on the four lanes that draw one — X11 under Xvfb, wayland under a headless sway,
-Windows, and macOS — when `NEUTRINO_SPLASH_SHOTS` names a directory, and nowhere otherwise.
+is no eleven-second head start to wait out and no step list to fall out of step with. The pictures
+the suites here take are not of the webview: `splash.sh` photographs the splash window, over a
+download `hostile.py` stalled on purpose so the window was due and with `NEUTRINO_SPLASH_HOLD_MS`
+keeping it up while the shutters fired. They go to the lane's sheet under its own heading, on the
+four lanes that draw one — X11 under Xvfb, wayland under a headless sway, Windows, and macOS — when
+`NEUTRINO_SPLASH_SHOTS` names a directory, and nowhere otherwise.
+
+Two shutters, because the window moves and one photograph cannot show that. The portrait is what a
+reader compares across the four lanes; the burst is six frames about a tenth of a second apart,
+which `sheet.sh` plays back as one figure that cycles. The burst is also the suite's only assertion
+about what is inside the window: six photographs of a moving indicator are not six copies of one
+photograph, and at least three of them have to differ. That is a floor rather than a proof — a
+desktop doing something else behind the window would also make frames differ — which is why the
+count is reported beside the verdict, and why the lanes it runs on have nothing else on screen.
 
 Those four lanes also name the mechanism they expect in `NEUTRINO_SPLASH_EXPECT`, and the suite
 fails when the measured one differs. That is not belt and braces: the splash declines silently

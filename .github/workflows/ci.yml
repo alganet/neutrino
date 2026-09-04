@@ -181,10 +181,12 @@ jobs:
           export DISPLAY=:99
           export GDK_BACKEND=x11
           pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          # The one picture the netinstall suite takes: splash.sh photographs
-          # the Loading... window over a stalled download, for the sheet. Its
-          # own directory, so the sheet can head it separately from the
-          # verifiers' frames; unset, the suite skips the case and says so.
+          # The pictures the netinstall suite takes: splash.sh photographs the
+          # splash window over a stalled download -- one portrait and then six
+          # frames in a row, which the sheet plays back as one figure that
+          # cycles, because the window moves and a still cannot show that. Their
+          # own directory, so the sheet can head them separately from the
+          # verifiers' frames; unset, the suite skips both cases and says so.
           export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
           # What this lane draws with, asserted rather than reported. The
           # splash declines silently where it cannot draw, so a lane that lost
@@ -1376,11 +1378,11 @@ jobs:
   # netinstall speaks two display protocols and this matrix only ever spoke
   # one. Every Linux lane here is Xvfb, macOS is AppKit and Windows is user32,
   # so `splash_wayland.c` -- the longest of the five platform files, and the
-  # only one carrying its own glyph rasteriser, because the protocol has no
-  # drawing in it and the compositor takes finished pixels -- was compiled on
-  # six targets a push and executed on none. Both cases in splash.sh that are
-  # about wayland ended in "no compositor on this machine", on every lane,
-  # every round.
+  # only one that has to compose the window's pixels itself, because the
+  # protocol has no drawing in it and the compositor takes finished buffers --
+  # was compiled on six targets a push and executed on none. Both cases in
+  # splash.sh that are about wayland ended in "no compositor on this machine",
+  # on every lane, every round.
   #
   # Splash and nothing else, which is the whole of what wayland changes here.
   # The rest of the netinstall suite asks what a kernel refuses, and this lane
@@ -1938,8 +1940,9 @@ jobs:
           # PR 20 wrote this lesson down for a probe that piped the launcher.
           # This is the step on this lane that never got it.
           NT_EXIT=0
-          # Where splash.sh puts its one picture of the Loading... window; the
-          # sheet step below heads it as netinstall's own.
+          # Where splash.sh puts its picture of the splash window and the six
+          # frames of it moving; the sheet step below heads them as
+          # netinstall's own.
           export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
           # Measured on run 33750772253. See the gjs lane for why it is an
           # assertion and not a report.
@@ -2779,13 +2782,14 @@ jobs:
   # nothing is the one result no round can act on. A lane that exceeds this has
   # not got slower, it has stopped.
   #
-  # The shotroom step is back, for one picture. The suite stopped photographing
-  # the webview -- what it asks of a launch is whether a webview started and
-  # ran its script, which is a title and not a photograph -- and the step left
-  # with the pictures. splash.sh now takes one frame of the Loading... window
-  # for the sheet, and without the room cleared first that frame carries the
-  # screen recording alert over the window it is a picture of, which is
-  # exactly what the lane's captures looked like before the step existed.
+  # The shotroom step is back, for the splash's pictures. The suite stopped
+  # photographing the webview -- what it asks of a launch is whether a webview
+  # started and ran its script, which is a title and not a photograph -- and the
+  # step left with the pictures. splash.sh now takes a portrait of the splash
+  # window and six frames of it moving, and without the room cleared first every
+  # one of them carries the screen recording alert over the window it is a
+  # picture of, which is exactly what the lane's captures looked like before the
+  # step existed.
   macos-netinstall:
     runs-on: macos-latest
     timeout-minutes: 40
@@ -2800,8 +2804,9 @@ jobs:
       - name: netinstall suite
         timeout-minutes: 30
         run: |
-          # Where splash.sh puts its one picture; the sheet step below heads
-          # it as netinstall's own.
+          # Where splash.sh puts its portrait of the splash window and the six
+          # frames of it moving; the sheet step below heads them as
+          # netinstall's own.
           export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
           # Measured on run 33750772253. See the gjs lane for why it is an
           # assertion and not a report.

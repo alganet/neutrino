@@ -84,6 +84,26 @@ static int nt_splash_tracing(void)
 #define NT_SPLASH_TRACE(...) do { } while (0)
 #endif
 
+/*
+ * The animation, which is one line and belongs to nobody in particular -- so it
+ * lives here rather than in whichever platform file was written first.
+ *
+ * NT_SPLASH_LIT cells starting at `phase` are dark and the rest are dim, and
+ * the run wraps rather than bouncing. Wrapping is the cheaper of the two to get
+ * right and the better of the two to look at: a bounce has two ends where the
+ * motion stops, and a still photograph taken at one of them -- which is what
+ * the sheets are -- is a picture of something that has stalled.
+ */
+int nt_splash_cell_lit(int phase, int cell)
+{
+    int d = cell - phase;
+
+    while (d < 0) {
+        d += NT_SPLASH_CELLS;
+    }
+    return d % NT_SPLASH_CELLS < NT_SPLASH_LIT;
+}
+
 void nt_splash_arm(void)
 {
     if (nt_splash_state != NT_SPLASH_IDLE) {
