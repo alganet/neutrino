@@ -83,6 +83,19 @@ nt_serve "$SERVE" || exit 1
 # the hold -- which is what makes the hold the thing measured, and not the
 # download. It also carries the dribble shape the orphan check needs.
 STALL=300
+
+# The floor the hold has to reach, read out of the header that defines it
+# rather than written here a third time. This file used to say 400 twice, and
+# what a copied constant costs is the round where it disagrees with the program
+# and nobody can tell which of the two is wrong -- so it is lifted, and a header
+# that stops yielding it is a failure rather than a default.
+HOLD="$(sed -n 's/^#define NT_SPLASH_HOLD_MS \([0-9]*\)L*.*/\1/p' \
+    "$(dirname "$0")/../splash.h" | head -1)"
+if [ -z "$HOLD" ]; then
+    echo "  FAIL: could not read NT_SPLASH_HOLD_MS out of netinstall/splash.h"
+    exit 2
+fi
+
 HPORT=$((20000 + RANDOM % 20000))
 "$(nt_python)" "$(dirname "$0")/hostile.py" "$HPORT" "$SERVE" "$STALL" >/dev/null 2>&1 &
 HPID=$!
@@ -241,10 +254,10 @@ if [ "$MECHNAME" = "none" ] || [ -z "$MECHNAME" ]; then
     probe "hold: nothing draws, nothing to hold"
 else
     H="$(held "$WORK/err1")"
-    if [ -n "$H" ] && [ "$H" -ge 400 ]; then
+    if [ -n "$H" ] && [ "$H" -ge "$HOLD" ]; then
         echo "  PASS: $STEP (held ${H}ms)"
     else
-        nt_fail "$STEP: held='${H:-none}', wanted at least 400: err=$(errtail "$WORK/err1")"
+        nt_fail "$STEP: held='${H:-none}', wanted at least $HOLD: err=$(errtail "$WORK/err1")"
         FAILURES=$((FAILURES + 1))
     fi
     probe "hold: held ${H:-none}ms against a ${STALL}ms stall"
@@ -272,10 +285,10 @@ else
         "$APP" >"$WORK/out5" 2>"$WORK/err5"
     RC=$?
     H="$(held "$WORK/err5")"
-    if [ "$RC" = "0" ] && grep -qa PAYLOAD-RAN "$WORK/out5" && [ -n "$H" ] && [ "$H" -ge 400 ]; then
+    if [ "$RC" = "0" ] && grep -qa PAYLOAD-RAN "$WORK/out5" && [ -n "$H" ] && [ "$H" -ge "$HOLD" ]; then
         echo "  PASS: $STEP (held ${H}ms)"
     else
-        nt_fail "$STEP: rc=$RC held='${H:-none}', wanted at least 400: err=$(errtail "$WORK/err5")"
+        nt_fail "$STEP: rc=$RC held='${H:-none}', wanted at least $HOLD: err=$(errtail "$WORK/err5")"
         FAILURES=$((FAILURES + 1))
     fi
 fi
