@@ -60,8 +60,17 @@ PYGIEOF
     done
     exec 8>&-
     if [ -z "$py_fd" ]; then
+        # The reserved status and not 1, for the reason run_qt's copy of this
+        # says at length: nothing has been created that outlives this function,
+        # no interpreter has been started, and that is exactly the condition
+        # dispatch.sh's 69 is defined for. This lane is below osascript so a Mac
+        # does not reach it, but the two lanes share the mechanism -- an
+        # unlinked descriptor reopened through /dev/fd or /proc/self/fd -- and a
+        # kernel whose /dev/fd is a dup rather than a path cannot do it in
+        # either. Returning 1 here ended the walk at the last lane instead of
+        # letting it say what it looked for.
         echo "neutrino: cannot hand the engine a document without a name here" >&2
-        return 1
+        return "$nt_ex_noengine"
     fi
 
     # -I and -B, and neither is decoration. -I makes the interpreter ignore

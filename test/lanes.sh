@@ -31,7 +31,24 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WORK="$(mktemp -d)"
+# Under $HOME on macOS, and mktemp's directory everywhere else.
+#
+# Not a preference. mktemp puts this in /private/var/folders, and the launcher's
+# own seatbelt profile denies process-exec* on that subpath -- w^x, deliberately,
+# with a paragraph beside it. So every stub this suite writes was unexecutable
+# by the one lane that applies that profile:
+#
+#   sandbox-exec: execvp() of 'osascript' failed: Operation not permitted
+#
+# which is why lanes.sh has never run on macOS, and why the osascript
+# assertions below fail there against a launcher that is behaving correctly.
+# A stub standing in for a real engine belongs where a real engine lives, which
+# is not a directory the app may write; $HOME is the nearest thing to that this
+# suite can create.
+case "$(uname -s)" in
+    Darwin) WORK="$(mktemp -d "$HOME/.neutrino-lanes.XXXXXX")" ;;
+    *)      WORK="$(mktemp -d)" ;;
+esac
 trap 'rm -rf "$WORK"' EXIT
 
 FAILURES=0
@@ -83,7 +100,17 @@ for tool in sh bash sed head env dirname basename mkdir rm cat awk; do
     src="$(command -v "$tool" 2>/dev/null)" && ln -sf "$src" "$BIN/$tool"
 done
 
-MARKS="$WORK/marks"
+# In $TMPDIR and not in $WORK, for the other half of the reason $WORK moved.
+#
+# The stubs have to be somewhere the launcher's seatbelt profile permits
+# executing, which is anywhere but the app dir and the Darwin temp dir; the
+# marks file has to be somewhere it permits *writing*, which is the app dir and
+# the Darwin temp dir and nowhere else. One directory cannot be both, so they
+# are two. $TMPDIR satisfies the write side on macOS -- the profile grants it by
+# name and again through /private/var/folders -- and is ordinary everywhere
+# else.
+MARKS="${TMPDIR:-/tmp}/nt-lanes-marks.$$"
+trap 'rm -rf "$WORK"; rm -f "$MARKS"' EXIT
 
 # A stub engine: says it ran, and exits with whatever this suite is asking the
 # walk about.
@@ -185,6 +212,62 @@ status="$(run_lane)"
 eq "and the plain name to the -console one" "$(marks)" "cjs"
 
 echo ""
+echo "=== lanes: Qt sits below osascript too, and for a sharper reason ==="
+# python3 below osascript is a cost argument -- a Mac should not fork an
+# interpreter it will not use. Qt below osascript is a correctness one: a Mac
+# that reached the Qt lane got no window at all, because run_qt hands the engine
+# a document with no name and that hand-off is /proc/self/fd-shaped. Linux
+# reopens the inode; macOS's /dev/fd is a dup of a write-only descriptor and
+# there is nothing to hand over. find_qt_runtime still succeeded on any Mac with
+# Homebrew's qt, so the walk stopped at a lane that cannot run and exited with
+# its status while osascript sat below it.
+clear_lane
+stub qml6 0
+stub osascript 0
+run_lane > /dev/null
+eq "osascript answers before the Qt lane is tried" "$(marks)" "osascript"
+
+
+echo ""
+echo "=== lanes: a lane that cannot hand over its document is unavailable, not fatal ==="
+# The contract at the top of dispatch.sh says 69 means "this lane could not
+# reach its engine -- reported by the lane itself, after looking, and before it
+# has created anything". The nameless-document refusal is exactly that condition
+# and it used to return 1, which took the whole launch down instead of moving
+# the walk on.
+#
+# Only askable where the hand-off actually fails, so it is probed rather than
+# assumed from a uname: open a write-only descriptor, unlink it, and see whether
+# this kernel will reopen it for reading the way run_qt needs.
+handoff_works() {
+    ( d="$WORK/ho"; mkdir -p "$d"; f="$d/probe.$$"
+      exec 8>"$f"; rm -f "$f"; printf x >&8
+      for dir in /dev/fd /proc/self/fd; do
+          [ -r "$dir/8" ] && exec 9<"$dir/8" && exit 0
+      done
+      exit 1 )
+}
+clear_lane
+stub qml6 0
+if handoff_works; then
+    run_lane > /dev/null
+    eq "the Qt lane is reached where osascript does not exist" "$(marks)" "qml6"
+    report "this kernel reopens an unlinked descriptor, so there is no refusal to measure"
+else
+    status="$(run_lane)"
+    # The walk kept looking. Before the reserved status was returned here the
+    # refusal was a `return 1`, dispatch took it for the app's own status and
+    # exited on the spot -- so the summary line, which is the walk saying what
+    # it looked for, was never printed. That line is the assertion.
+    eq "the refusal starts no engine" "$(marks)" ""
+    eq "and the walk keeps looking rather than exiting on it" \
+       "$(grep -c 'no runtime here can open a window' "$WORK/out.log")" "1"
+    eq "and the refusal was said out loud" \
+       "$(grep -c 'cannot hand the engine a document without a name here' "$WORK/out.log")" "1"
+    eq "and an engineless machine still exits non-zero" "$status" "1"
+fi
+
+echo ""
 echo "=== lanes: python3 sits below osascript, so a Mac never pays for it ==="
 clear_lane
 stub osascript 0
@@ -195,7 +278,22 @@ eq "osascript answers first where it exists" "$(marks)" "osascript"
 clear_lane
 stub python3 0
 run_lane > /dev/null
-eq "and python3 is reached where it does not" "$(marks)" "python3"
+# Two readings of the same fact, because "reached" is not "ran" on every
+# kernel. run_pygobject hands its interpreter a nameless document exactly the
+# way run_qt does, so where that hand-off cannot work the lane is entered and
+# refuses before it execs anything -- and the stub, which is how this file
+# usually says a lane ran, is never reached. The refusal is then what says the
+# walk got here. This assertion asked only the first question until it was run
+# on macOS for the first time, where it had never been able to pass.
+if handoff_works; then
+    eq "and python3 is reached where it does not" "$(marks)" "python3"
+else
+    # Two refusals and not one: clear_lane always leaves a qml6 stub in place,
+    # so the Qt lane is entered and refuses on its way past. The second is
+    # python3's, and its presence is the reading.
+    eq "and python3 is reached where it does not (refusing before it execs)" \
+       "$(grep -c 'cannot hand the engine a document without a name here' "$WORK/out.log")" "2"
+fi
 
 echo ""
 echo "=== lanes: every candidate is a builtin lookup until one is chosen ==="

@@ -66,19 +66,43 @@ for nt_engine in gjs gjs-console cjs cjs-console; do
     [ "$nt_status" = "$nt_ex_noengine" ] || [ "$nt_status" = 127 ] || exit "$nt_status"
 done
 
+# Above Qt and python3 both, and that ordering is the whole reason a Mac never
+# pays for either lane after it: osascript is always present there, so the walk
+# stops here; on Linux osascript never exists, so the miss is a builtin lookup
+# and Qt is reached immediately. The rule was already written for python3 and
+# this is the same sentence with one more lane inside it.
+#
+# It moved above Qt because a Mac that reached Qt got no window at all, and not
+# because the lane is merely unlikely there. run_qt hands the engine a document
+# with no name: it creates one, unlinks it, and reopens the descriptor through
+# /dev/fd or /proc/self/fd. Linux's /proc/self/fd/N is a symlink to the file, so
+# reopening it is a fresh open of the inode at offset zero. macOS's /dev/fd/N is
+# a *dup* of the descriptor, and both halves of that break this:
+#
+#   - fd 8 is opened write-only, so /dev/fd/8 is mode --w-------, the `[ -r ]`
+#     test fails and there is nothing to hand over. Measured: the lane prints
+#     "cannot hand the engine a document without a name here" and returns.
+#   - opening 8 read-write instead gets past that and still does not work: a dup
+#     shares the file offset, which is at end-of-file after the document is
+#     written, so the engine reads nothing. `set -C` also does not cover `<>` --
+#     measured, it followed a planted symlink and created its target -- so that
+#     spelling would trade the whole planted-document defence for a lane that
+#     still does not run.
+#
+# So there is no macOS Qt lane to lose, and the Qt lane's own QT_QPA_PLATFORM
+# default of xcb says the same thing more quietly. What was actually happening
+# is that find_qt_runtime succeeded on any Mac with Homebrew's qt installed,
+# run_qt failed, and the walk exited with its status instead of reaching the
+# lane that works. test/lanes.sh asserts the order.
+if command -v osascript >/dev/null 2>&1
+then run_macos
+fi
+
 if qt_runner="$(find_qt_runtime)"
 then
     run_qt "$qt_runner"
     nt_status=$?
     [ "$nt_status" = "$nt_ex_noengine" ] || exit "$nt_status"
-fi
-
-# Above python3 rather than below it, and that ordering is the whole reason a
-# Mac never pays for the lane after it: osascript is always present there, so
-# the walk stops here; on Linux osascript never exists, so the miss is a
-# builtin lookup and Python is reached immediately.
-if command -v osascript >/dev/null 2>&1
-then run_macos
 fi
 
 if command -v python3 >/dev/null 2>&1
