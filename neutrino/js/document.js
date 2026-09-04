@@ -109,6 +109,46 @@
             text.substring(at);
     };
 
+    /*
+     * An app's own script, held back until there is a document to run it
+     * against.
+     *
+     * Four of the five lanes get this from their engine and never call this
+     * function. WebKitGTK takes a DOCUMENT_END user script, WKWebView takes
+     * injection time 1, and Qt runs the page script from
+     * LoadSucceededStatus -- so on all four the app's first statement runs
+     * with the early shell parsed and `document.body` in hand.
+     *
+     * WebView2 has one hook before a navigation and it is
+     * AddScriptToExecuteOnDocumentCreated, which runs before the parser has
+     * produced anything at all. That is where the asymmetry came from, and it
+     * was the worst shape a difference can have: an app that reads its own
+     * markup works on four platforms and silently does nothing on the fifth.
+     * The published sample app was exactly that app --
+     * `getElementById("close").onclick = ...` threw on the one platform where
+     * getElementById answered null, so the button on the demo everybody
+     * downloads did nothing on Windows and everywhere else it worked.
+     *
+     * The preload is not deferred and must not be: `window.neutrino` is in
+     * scope before the app's first statement on every lane, which is a promise
+     * about the API and not about the document. It still goes in at document
+     * creation, ahead of this, so what this changes is when the app runs and
+     * not what it finds when it does.
+     *
+     * A function body and not a bare listener, because the source being
+     * wrapped is this whole file: `var NeutrinoWebview` becomes local to the
+     * wrapper, which nothing page-side reads. The readyState test is there for
+     * the document that is already past parsing by the time the listener would
+     * be registered -- a state this hook cannot reach today, and the branch
+     * costs nothing against the launch that would silently never run.
+     */
+    NeutrinoWebview.deferredPageScript = function (source) {
+        return "(function(){var _r=function(){\n" + String(source) + "\n};" +
+            "if(document.readyState===\"loading\"){" +
+            "document.addEventListener(\"DOMContentLoaded\",function(){_r();});" +
+            "}else{_r();}})();";
+    };
+
     NeutrinoWebview.titledDocument = function (html, title) {
         var text = String(html);
         var name = String(title == null ? "" : title);

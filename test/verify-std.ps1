@@ -192,6 +192,63 @@ function Report-AppAccount() {
     foreach ($o in $titled) { Note "  window up: $($o.ProcessName) [$($o.Id)] '$($o.MainWindowTitle)'" }
 }
 
+<#
+Which of the two Windows engines rendered this launch, and whether it hardened
+what the other one hardens.
+
+Both paths are exercised by this suite already and neither said which it was.
+That is not an academic gap: the Evergreen path is the one almost every real
+machine takes -- the runtime ships with Windows 11 and reached 10 through
+Windows Update -- while the package path is the fallback for a machine without
+one. So the common case was the unlabelled case, and a difference between them
+could only be found by someone reading both implementations.
+
+Two readings. Which view came up, printed either way; and, from the same trace,
+how many of the settings that path closed. The two halves of the driver now say
+that in the same words on purpose, so this compares them rather than asserting
+one of them: nine doors on the package path are nine properties on a managed
+wrapper, and on the Evergreen path they are spread over five interface
+revisions, each a separate QueryInterface. Four of the nine used to be all this
+path could reach.
+
+A build with no trace channel is not a failure here. Only a testing build
+carries one, and every caller of this file builds with --testing -- but the
+netinstall suites reuse the verifier against builds that do not, and an app that
+renders correctly is not less correct for being quiet.
+#>
+function Report-EnginePath() {
+    $path = Join-Path $AppDir "neutrino-trace.log"
+    if (-not (Test-Path -LiteralPath $path)) {
+        Note "engine: no trace in $AppDir, so this build does not say which view rendered"
+        return
+    }
+    $trace = @(Get-Content -LiteralPath $path -ErrorAction SilentlyContinue)
+    $which = ""
+    $closed = -1
+    $wanted = -1
+    foreach ($line in $trace) {
+        if ($line -match 'loop: (\w+) view ready') { $which = $Matches[1] }
+        if ($line -match 'closed (\d+) of (\d+) settings') {
+            $closed = [int]$Matches[1]
+            $wanted = [int]$Matches[2]
+        }
+    }
+    if (-not $which) {
+        Note "engine: the trace never named a view"
+        return
+    }
+    Note "engine: this launch rendered through the $which view"
+    if ($closed -lt 0) {
+        Fail "engine: the $which view never said how much it hardened; both paths report that in one spelling and a launch that says nothing is a launch nobody can compare"
+        return
+    }
+    if ($closed -eq $wanted) {
+        Note "engine: the $which view closed all $wanted settings"
+    } else {
+        Fail "engine: the $which view closed $closed of $wanted settings; the other Windows path closes all of them, and a promise that holds on one of two paths is a support matrix"
+    }
+}
+
 function Wait-ForApp() {
     $deadline = (Get-Date).AddSeconds($FirstTimeout)
     do {
@@ -347,10 +404,22 @@ function Analyse-Win($rows) {
     # flag is its own account and the engine may set it optimistically; what
     # says the window went is the record ending, and both are printed rather
     # than one standing in for the other.
+    #
+    # STILL_UP is a failure and used to be a note. The probe waits 1200 ms after
+    # the call before it writes STD-WIN-END, so a title that arrives is a window
+    # that was still there more than a second after being told to go -- not a
+    # race, and not something a slow lane produces. It was a note while nothing
+    # had ever been seen to survive the call, and what that cost is the reading
+    # nobody took: `close()` is in the README as one of the six verbs an app
+    # drives its window with, and a lane where it does nothing would have passed
+    # this suite green.
     $end = Find-Row $rows "STD-WIN-END"
     if (Find-Row $rows "STD-WIN-CLOSE-PAIR") {
-        if ($end) { Note "pair CLOSE page=[$($end.Title -replace '^STD-WIN-END ','')] native=STILL_UP (a title arrived after the call)" }
-        else { Note "pair CLOSE page=[no title after the call] native=GONE" }
+        if ($end) {
+            Fail "pair CLOSE page=[$($end.Title -replace '^STD-WIN-END ','')] native=STILL_UP; the window was still up 1200ms after close() and reported through itself to say so"
+        } else {
+            Note "pair CLOSE page=[no title after the call] native=GONE"
+        }
     } else { Fail "STD-WIN-CLOSE-PAIR was never observed" }
 
     # Control one, and it moved with the thing it is about. It used to be a
@@ -573,6 +642,25 @@ function Analyse-Doc($rows) {
     Note "doc sequence: $($names -join ' ')"
     if ($rb) { Note "self $($rb.Title -replace '^STD-DOC-RB-SELF ','')" }
 
+    # The early shell, asked for at the app's first statement.
+    #
+    # An app's markup is included into the document by the assembler so that it
+    # is in the first paint, and the whole point of that is an app that can read
+    # it. Four lanes got that from their engine and Windows did not: its one
+    # pre-navigation hook runs before the parser has produced anything, so
+    # `getElementById` answered null on the first line and an app written the way
+    # the other four allow failed silently on this one. It shipped in the sample
+    # app on the download page, where the Close button did nothing on Windows.
+    # So this is an assertion and not a note: `body0=yes` is the promise, and the
+    # lane that cannot keep it is the lane that has to say so.
+    $b0 = ""
+    if ($rb -and $rb.Title -match ' body0=(\S+)') { $b0 = $Matches[1] }
+    if ($b0 -eq "yes") {
+        Note "control the early shell was on the page at the app's first statement (body0=yes)"
+    } else {
+        Fail "control body0=$(if ($b0) { $b0 } else { '<absent>' }); document.body was not there when the app's first statement ran, so an app cannot read its own markup on this lane"
+    }
+
     # The name the window came up wearing, before the app wrote anything. The
     # launcher puts the build's title into the document, so this is also the
     # first title-changed signal of the launch and it has to be a no-op. A note
@@ -659,6 +747,11 @@ switch ($Probe) {
     "theme" { Analyse-Theme $rec.Rows }
     default { Fail "no analysis for probe '$Probe'" }
 }
+
+# Which engine rendered all of that, and how much of the door list it shut.
+# After the analysis, because it reads a file the app wrote rather than the
+# window it wrote it from -- and a replay has no app folder to read.
+if (-not $Replay) { Report-EnginePath }
 
 # After the loop, never inside it -- a full-screen bitmap encode is exactly the
 # slow thing this file's header forbids in the sampling loop.

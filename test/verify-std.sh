@@ -694,6 +694,26 @@ analyse_doc() {
     note "doc sequence: $(titles)"
     [ -n "$rb" ] && note "self ${rb#STD-DOC-RB-SELF }"
 
+    # The early shell, asked for at the app's first statement.
+    #
+    # An app's markup is included into the document by the assembler so that it
+    # is in the first paint, and the whole point of that is an app that can read
+    # it. Four lanes get that from their engine and Windows did not: its one
+    # pre-navigation hook runs before the parser has produced anything, so
+    # getElementById answered null on the first line and an app written the way
+    # the other four allow failed silently there. It shipped in the sample app on
+    # the download page, where the Close button did nothing on Windows. So this
+    # is an assertion on every lane and not a note -- including the four that
+    # have always kept it, because a promise only one verifier checks is a
+    # promise the other lanes can lose quietly.
+    local body0
+    body0="$(printf '%s' "$rb" | sed -n 's/.* body0=\([^ ]*\).*/\1/p')"
+    if [ "$body0" = "yes" ]; then
+        note "control the early shell was on the page at the app's first statement (body0=yes)"
+    else
+        fail "control body0=${body0:-<absent>}; document.body was not there when the app's first statement ran, so an app cannot read its own markup on this lane"
+    fi
+
     # The name the window came up wearing, before the app wrote anything. The
     # launcher puts the build's title into the document, so this is also the
     # first title-changed signal of the launch and it has to be a no-op. A note
@@ -830,10 +850,18 @@ analyse_win() {
     # flag is its own account and the engine may set it optimistically; what
     # says the window went is the record ending, and the two are printed side
     # by side rather than one standing in for the other.
+    #
+    # STILL_UP is a failure and used to be a note. The probe waits 1200 ms after
+    # the call before it writes STD-WIN-END, so a title that arrives is a window
+    # that was still there more than a second after being told to go -- not a
+    # race, and not something a slow lane produces. It was a note while nothing
+    # had ever been seen to survive the call, and what that cost is the reading
+    # nobody took: close() is in the README as one of the six verbs an app drives
+    # its window with, and a lane where it did nothing would have passed green.
     page="$(field 2 '^STD-WIN-END')"
     if [ -n "$(field 2 '^STD-WIN-CLOSE-PAIR')" ]; then
         if [ -n "$page" ]; then
-            note "pair CLOSE page=[${page#STD-WIN-END }] native=STILL_UP (a title arrived after the call)"
+            fail "pair CLOSE page=[${page#STD-WIN-END }] native=STILL_UP; the window was still up 1200ms after close() and reported through itself to say so"
         else
             note "pair CLOSE page=[no title after the call] native=GONE"
         fi

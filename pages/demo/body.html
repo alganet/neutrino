@@ -1,6 +1,44 @@
-<div>
-  <h1>Hello from neutrino</h1>
-  <p>One file, no install. Rendering in <b id="engine">&hellip;</b><br>
-    over the <b id="transport">&hellip;</b> transport.</p>
-  <button id="close">Close</button>
-</div>
+<main>
+  <header>
+    <h1>Hello from neutrino</h1>
+    <p>One file, no install &mdash; a native window around a web page.</p>
+  </header>
+
+  <dl class="facts">
+    <dt>engine</dt><dd id="engine">&hellip;</dd>
+    <dt>transport</dt><dd id="transport">&hellip;</dd>
+    <dt>window</dt><dd id="size">&hellip;</dd>
+    <dt>desktop</dt><dd id="scheme">&hellip;</dd>
+  </dl>
+
+  <!--
+    The palette, and nothing fills it in. Every swatch below takes its colour
+    from one of the seven custom properties the launcher writes into this
+    document before the first paint, so these are the desktop's own colours on
+    the frame the window opens in -- and when the desktop changes, the launcher
+    rewrites the properties and they follow with no script involved at all.
+  -->
+  <div class="palette" id="palette">
+    <i class="sw base" title="Canvas"></i>
+    <i class="sw text" title="CanvasText"></i>
+    <i class="sw face" title="ButtonFace"></i>
+    <i class="sw facetext" title="ButtonText"></i>
+    <i class="sw line" title="ButtonBorder"></i>
+    <i class="sw accent" title="Highlight"></i>
+    <i class="sw accenttext" title="HighlightText"></i>
+  </div>
+
+  <div class="controls">
+    <button id="bigger">Bigger</button>
+    <button id="smaller">Smaller</button>
+    <button id="nudge">Nudge</button>
+    <button id="corner">Corner</button>
+    <button id="rename">Rename</button>
+    <button id="source">Source</button>
+    <button id="close" class="primary">Close</button>
+  </div>
+
+  <p class="hint" id="hint">Every button is a standard call: <code>resizeBy</code>,
+    <code>moveTo</code>, <code>document.title</code>, <code>open</code>,
+    <code>close</code>.</p>
+</main>
