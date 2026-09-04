@@ -141,6 +141,37 @@
      * because null is the caller falling back to the package -- which is the
      * whole reason an unsupported entry point is affordable here.
      */
+    /*
+     * Asking for the controller, which is a separate call from waiting for it
+     * because of what the two cost and what sits between them.
+     *
+     * Measured on a runner, unloaded: the frame is built at 99ms, the window is
+     * on screen at 230ms, and the controller comes up at 649ms. The middle
+     * hundred and thirty is a Form being constructed and painted, and the four
+     * hundred after it is a browser starting -- and the browser needs a window
+     * handle, not a painted window. So the handle is realised, the request goes
+     * in, and the frame is painted while the browser is already coming up
+     * behind it. Nothing here waits; CreateCoreWebView2Controller returns at
+     * once and calls back.
+     *
+     * Idempotent by the flag rather than by the caller remembering, because a
+     * second request would be a second controller and the first one's callback
+     * is what everything downstream reads.
+     */
+    NeutrinoWebview.evergreenAskForController = function (SystemRef, session, win) {
+        if (session.controllerAsked) {
+            return;
+        }
+        session.controllerAsked = true;
+        var handler = NeutrinoEvergreen.MakeSink("NeutrinoCtlSink",
+            this.webView2Handlers.controllerCompleted.iid,
+            this.webView2Handlers.controllerCompleted.args,
+            this.webView2Handlers.controllerCompleted.target);
+        session.types.environment.GetMethod("CreateCoreWebView2Controller")
+            .Invoke(session.environment, [win.Handle, handler]);
+        this.trace("evergreen: controller asked for");
+    };
+
     NeutrinoWebview.evergreenView = function (SystemRef, session, win) {
         var self = this;
         var types = session.types;
@@ -153,13 +184,7 @@
         var lastY = -100000;
         var focused = false;
 
-        var handler = NeutrinoEvergreen.MakeSink("NeutrinoCtlSink",
-            this.webView2Handlers.controllerCompleted.iid,
-            this.webView2Handlers.controllerCompleted.args,
-            this.webView2Handlers.controllerCompleted.target);
-
-        types.environment.GetMethod("CreateCoreWebView2Controller")
-            .Invoke(session.environment, [win.Handle, handler]);
+        this.evergreenAskForController(SystemRef, session, win);
         this.pumpUntil(SystemRef, function () {
             return NeutrinoEvergreen.controllerDone;
         }, 60000);
@@ -168,6 +193,14 @@
             this.trace("evergreen: no controller (" + NeutrinoEvergreen.controllerHr + ")");
             return null;
         }
+        /*
+         * The end of the one phase this timeline could not see. "environment
+         * up" to "view ready after n turns" was a single interval with a window
+         * appearing somewhere inside it and a browser starting, and the CI
+         * readings say that interval is where the launch actually goes: eleven
+         * seconds of it, against a window that is up in one and a half.
+         */
+        this.trace("evergreen  controller up");
         var controller = NeutrinoEvergreen.Wrap(NeutrinoEvergreen.controllerPtr, types.controller);
         if (!controller) {
             return null;
