@@ -163,6 +163,18 @@
      * and this is only the walk: see js/webview2-interfaces.js for where they
      * come from and why a wrong one has no reading of its own.
      *
+     * This emits 230 methods to place the 34 this driver calls, because a
+     * vtable is positions and a slot nothing calls still has to be occupied --
+     * 85% padding, which is the kind of ratio that invites a rewrite. It does
+     * not deserve one. Measured on a runner, unloaded, from the trace either
+     * side of this call: 21 ms, against a launch of 874 ms and a browser that
+     * takes 402 of them to start. The alternative was reading the vtable
+     * directly and dispatching through Marshal.GetDelegateForFunctionPointer,
+     * which needs eight delegate types rather than 230 methods -- and hands
+     * this file the QueryInterface and Release that GetTypedObjectForIUnknown
+     * currently does for it, which is a new class of bug bought with two
+     * percent of a launch. The ratio is not the cost; the cost is the cost.
+     *
      * The three argument interfaces are handed to the callback side afterwards,
      * because a handler has to call back into the object it was given and a
      * JScript.NET class cannot reach a JScript global to find out how.
@@ -200,22 +212,57 @@
      * take the launch down instead of falling back.
      */
     NeutrinoWebview.pumpUntil = function (SystemRef, ready, milliseconds) {
-        var spins = Math.floor(milliseconds / 16);
-        for (var i = 0; i < spins; i++) {
+        /*
+         * Eager first, then the old cadence. Every wait here used to check,
+         * pump and sleep sixteen milliseconds, so an answer that arrived one
+         * millisecond in was noticed fifteen later -- and the two waits on the
+         * startup path, the environment and the controller, each paid that.
+         *
+         * Sleep(0) rather than a shorter sleep, because a shorter one is not
+         * shorter: a .NET Framework process runs at the default timer
+         * resolution and Thread.Sleep(1) is about fifteen milliseconds there,
+         * which is the thing being avoided. Sleep(0) yields the rest of the
+         * timeslice and comes back, so the pump keeps running and the answer is
+         * seen when it lands.
+         *
+         * A hundred turns of it, which is bounded and cheap: each turn is a
+         * real DoEvents, so this is a message pump running hot rather than a
+         * spin doing nothing. After that the sixteens take over and the budget
+         * drains at the rate it always did -- the eager turns are deliberately
+         * not charged to it, because they cost no wall clock to speak of and
+         * charging them would shorten a deadline this is not allowed to change.
+         */
+        var eager = 100;
+        var left = milliseconds;
+        while (left > 0) {
             if (ready()) {
                 return true;
             }
             SystemRef.Windows.Forms.Application.DoEvents();
-            SystemRef.Threading.Thread.Sleep(16);
+            if (eager > 0) {
+                eager--;
+                SystemRef.Threading.Thread.Sleep(0);
+            } else {
+                SystemRef.Threading.Thread.Sleep(16);
+                left -= 16;
+            }
         }
         return ready();
     };
 
     /*
-     * The environment, which is the first thing that can fail for a reason
-     * worth telling apart. Answers null on every one of them, having said which.
+     * Whether this machine has a runtime this build can reach, asked without
+     * starting anything.
+     *
+     * Split out of startEvergreen because the two halves belong at different
+     * moments. This half is three registry opens, a directory walk and a
+     * File.Exists, and its answer is what decides which view the driver builds
+     * -- so it has to happen in init, before boot asks for one. The other half
+     * emits two hundred and thirty methods, loads a library and starts a
+     * browser, and none of that decides anything: it is the work the decision
+     * commits to. That belongs after there is a window to do it behind.
      */
-    NeutrinoWebview.startEvergreen = function (SystemRef, userDataDir) {
+    NeutrinoWebview.evergreenPlan = function (SystemRef) {
         var version = this.evergreenRuntimeVersion(SystemRef);
         var runtimeDir = this.evergreenRuntimeDir(SystemRef, version);
         if (!runtimeDir) {
@@ -229,12 +276,43 @@
         }
         this.trace("evergreen: runtime " + (version ? version : "unversioned") +
             " at " + runtimeDir);
+        return { version: version, runtimeDir: runtimeDir, dll: dll };
+    };
+
+    /*
+     * The environment, which is the first thing that can fail for a reason
+     * worth telling apart. Answers null on every one of them, having said which.
+     *
+     * Takes the plan rather than finding one, so that the caller that already
+     * asked does not ask again. A caller with no plan gets the old behaviour
+     * and pays for the probe here.
+     */
+    NeutrinoWebview.startEvergreen = function (SystemRef, userDataDir, plan) {
+        if (!plan) {
+            plan = this.evergreenPlan(SystemRef);
+        }
+        if (!plan) {
+            return null;
+        }
+        var dll = plan.dll;
 
         if (!NeutrinoEvergreen.Begin()) {
             this.trace("evergreen: the emitter would not start");
             return null;
         }
         var types = this.buildEvergreenTypes();
+        /*
+         * Three lines rather than one, because "evergreen: runtime found" to
+         * "evergreen: environment up" is one interval covering three very
+         * different things and nobody has ever seen them apart. The emitter
+         * writes 230 interface methods to place the 34 this driver calls -- a
+         * vtable is positions, so a slot nothing calls still has to be occupied
+         * -- and whether that is ten milliseconds or a hundred decides whether
+         * it is worth a different mechanism. Free in a release build: trace is
+         * an empty function there, and the testing overlay is what gives it a
+         * channel. See js/trace.js.
+         */
+        this.trace("evergreen: types emitted");
         if (!NeutrinoEvergreen.DefineEntry(
                 SystemRef.IO.Path.GetFileName(dll), this.evergreenEntryExport)) {
             return null;
@@ -246,6 +324,7 @@
             this.trace("evergreen: " + dll + " would not load");
             return null;
         }
+        this.trace("evergreen: entry bound");
 
         var handler = NeutrinoEvergreen.MakeSink("NeutrinoEnvSink",
             this.webView2Handlers.environmentCompleted.iid,

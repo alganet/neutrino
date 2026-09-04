@@ -1785,6 +1785,26 @@ jobs:
           # a warning every green run is noise. A DOWN means the runtime did not
           # warm and the real verify is about to run cold -- worth surfacing.
           if ($state -eq 'DOWN') { Write-Output "::warning title=warm::warm-up window never came up in ${i}s" }
+          # And what the launch spent, phase by phase, which this step is the
+          # only place on the lane that can say.
+          #
+          # It is a --testing build, so the trace channel exists -- the core
+          # launch below is a release build where trace is an empty function --
+          # and it is the one app here that runs with nothing else loading the
+          # machine, so the numbers are the launch's own rather than the
+          # runner's. Reported and not asserted: what a cold WebView2 costs on a
+          # four-cpu runner is not this project's to hold to a number, and a
+          # threshold nobody can defend is a red lane nobody believes. What it
+          # is for is the shape -- how much of a launch is before the window,
+          # and how much is the browser starting behind it.
+          $trace = ".\test\neutrinowarm\neutrino-trace.log"
+          if (Test-Path $trace) {
+            Write-Output "report: the startup path, unloaded:"
+            Get-Content $trace | Select-Object -First 24 |
+              ForEach-Object { Write-Output "report:   $_" }
+          } else {
+            Write-Output "report: the warm-up wrote no trace"
+          }
           Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           Get-Process -Name "neutrinowarm" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           exit 0

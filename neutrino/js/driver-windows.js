@@ -1,7 +1,14 @@
     NeutrinoWebview.createWindowsDriver = function () {
         var SystemRef = eval("System");
         var webViewWinFormsAssembly, webViewType;
-        var appFolder, userDataDir;
+        // Initialised, not merely declared. preparePackage below reads
+        // appFolder and is defined above the line in init that sets it, so
+        // jsc.exe's definite-assignment pass has something to complain about
+        // -- JS1187, "might not be initialized", on a runner and not here.
+        // Both callers set it first; what this buys is a build with nothing in
+        // its output, which is the only state in which a new warning is worth
+        // anything.
+        var appFolder = null, userDataDir = null;
         var self = this;
         var messageCallback = null;
         var lastDocTitle = "";
@@ -19,7 +26,36 @@
         // path, which is what every launch did before this and what every
         // launch still does when anything about the other one does not hold.
         var evergreen = null;
+        // What init decided, and what attachWebView acts on. A plan is "this
+        // machine has a runtime this build can reach"; `evergreen` is the
+        // environment that came up from it, which does not exist until there is
+        // a window to bring it up behind.
+        var evergreenPlan = null;
         var viewClosed = false;
+
+        /*
+         * The package path's preparation, which used to be the tail of init and
+         * is a function because two callers need it now: init, when there is no
+         * runtime on the machine, and attachWebView, when there was one and it
+         * would not start. Answers false having said why; the caller decides
+         * whether that is fatal.
+         */
+        var preparePackage = function () {
+            var webView2LibDir = self.ensureWebView2Package(SystemRef, appFolder);
+            if (!webView2LibDir) {
+                return false;
+            }
+            SystemRef.Environment.SetEnvironmentVariable("NEUTRINO_WEBVIEW2_LIB_DIR", webView2LibDir);
+            self.prependLoaderPaths(SystemRef, webView2LibDir);
+            SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.Core.dll"));
+            webViewWinFormsAssembly = SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.WinForms.dll"));
+            webViewType = webViewWinFormsAssembly.GetType("Microsoft.Web.WebView2.WinForms.WebView2");
+            if (!webViewType) {
+                throw new Error("Could not load Microsoft.Web.WebView2.WinForms.WebView2 type.");
+            }
+            self.trace("init: assemblies loaded from " + webView2LibDir);
+            return true;
+        };
 
         /*
          * The view, shut down before the window that carries it, and at most
@@ -91,30 +127,18 @@
                  * again, not an app that will not start. See
                  * js/webview2-evergreen.js for what is being depended on.
                  */
-                evergreen = self.startEvergreen(SystemRef, userDataDir);
-                if (evergreen) {
-                    self.trace("init: evergreen runtime " + evergreen.version +
-                        ", nothing to download");
+                evergreenPlan = self.evergreenPlan(SystemRef);
+                if (evergreenPlan) {
+                    self.trace("init: evergreen runtime " +
+                        (evergreenPlan.version ? evergreenPlan.version : "unversioned") +
+                        " available, nothing to download");
                     return;
                 }
 
-                var webView2LibDir = self.ensureWebView2Package(SystemRef, appFolder);
-                if (!webView2LibDir) {
+                if (!preparePackage()) {
                     SystemRef.Environment.Exit(1);
                     return;
                 }
-
-                SystemRef.Environment.SetEnvironmentVariable("NEUTRINO_WEBVIEW2_LIB_DIR", webView2LibDir);
-                self.prependLoaderPaths(SystemRef, webView2LibDir);
-
-                SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.Core.dll"));
-                webViewWinFormsAssembly = SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.WinForms.dll"));
-
-                webViewType = webViewWinFormsAssembly.GetType("Microsoft.Web.WebView2.WinForms.WebView2");
-                if (!webViewType) {
-                    throw new Error("Could not load Microsoft.Web.WebView2.WinForms.WebView2 type.");
-                }
-                self.trace("init: assemblies loaded from " + webView2LibDir);
             },
             readFile: function (path) {
                 return SystemRef.IO.File.ReadAllText(path);
@@ -184,6 +208,17 @@
                 view.evaluate(js);
             },
             createWindow: function (config) {
+                /*
+                 * The last dark stretch before the first paint. Measured on a
+                 * runner, unloaded: the theme read lands at 77ms and the window
+                 * is on screen at 227ms, and the hundred and fifty between them
+                 * is two unrelated things -- boot reading the artifact back off
+                 * disk and cutting the document out of it, and a Form being
+                 * built and shown. Which of the two it mostly is decides
+                 * whether that work is worth moving behind the window, and
+                 * nothing here could say.
+                 */
+                self.trace("window  building the frame");
                 var win = new SystemRef.Windows.Forms.Form();
                 win.Text = config.title;
                 /*
@@ -211,8 +246,14 @@
                  * controller is created from the environment against the
                  * window's own handle, and boot hands the window over one call
                  * later -- so the placeholder is what travels between them.
+                 *
+                 * On the plan rather than on the environment, because the
+                 * environment does not exist yet: it is started in
+                 * attachWebView, behind the window. What is decided by now is
+                 * which kind of view this launch is going to build, which is
+                 * all this call has ever needed to know.
                  */
-                if (evergreen) {
+                if (evergreenPlan) {
                     return { evergreen: true };
                 }
                 var wv = SystemRef.Activator.CreateInstance(webViewType);
@@ -255,13 +296,83 @@
                  * controller's own pumpUntil calls DoEvents too, so the window
                  * stays responsive across the wait that follows this line.
                  *
-                 * What is still ahead of the window is the environment, which
-                 * driver.init creates before boot has made a Form to show. That
-                 * one needs init and boot reordered rather than a line moved,
-                 * and it is the larger half.
+                 * And the browser is started before it rather than after,
+                 * which is the one thing here that is not simply "show it
+                 * sooner".
+                 *
+                 * Measured on a runner, unloaded: the frame is built at 99ms,
+                 * the window is on screen at 230ms, and the controller comes up
+                 * at 649ms. The middle hundred and thirty is a Form being
+                 * constructed and painted; the four hundred after it is a
+                 * browser starting. The browser needs a window *handle*, and a
+                 * Form realises one on demand -- CreateCoreWebView2Controller
+                 * reads win.Handle, which creates it there and then without
+                 * putting anything on screen. So the request goes in first and
+                 * returns at once, and the frame is painted while the browser
+                 * is already coming up behind it.
+                 *
+                 * What it costs is the environment's own thirty-odd
+                 * milliseconds, which now land before the first paint instead
+                 * of after it. That is the trade and it is the right way round:
+                 * the far end of the launch loses more than the near end gains,
+                 * and the near end moves by an amount nobody can see.
+                 *
+                 * The fallback stays below the paint. A runtime that will not
+                 * start is a package download, and that is not a thing to do to
+                 * somebody with an empty desktop in front of them.
                  */
+                if (evergreenPlan) {
+                    evergreen = self.startEvergreen(SystemRef, userDataDir, evergreenPlan);
+                    if (evergreen) {
+                        self.evergreenAskForController(SystemRef, evergreen, win);
+                    }
+                }
                 win.Show();
                 SystemRef.Windows.Forms.Application.DoEvents();
+                /*
+                 * The first paint, which is the one number a person launching
+                 * this can see, and the timeline had no mark for it. Everything
+                 * before this line is what they wait at an empty desktop for,
+                 * and everything after it is what they wait at an empty window
+                 * for -- two different complaints that the trace could not tell
+                 * apart.
+                 */
+                self.trace("attach  window on screen");
+                if (evergreenPlan) {
+                    if (!evergreen) {
+                        /*
+                         * The runtime is on the machine and would not start,
+                         * which is the case init used to catch by trying it
+                         * first. Falling back still works and now does it with
+                         * a window up rather than with nothing on screen -- but
+                         * boot is holding the placeholder createWebView
+                         * answered and never looks at it again -- every call
+                         * after this one goes through `view` -- so the control
+                         * made here is the one on the form and boot is none the
+                         * wiser. What does have to be replayed is loadHTML,
+                         * which already ran against the placeholder;
+                         * pendingDocument survived it, so the document is not
+                         * re-read or re-built, only pointed at.
+                         */
+                        evergreenPlan = null;
+                        self.trace("attach: the runtime would not start; " +
+                            "falling back to the package");
+                        if (!preparePackage()) {
+                            throw new Error("neutrino: the installed WebView2 " +
+                                "runtime would not start and the package could " +
+                                "not be fetched");
+                        }
+                        // Same order the ordinary package path is in, where
+                        // loadHTML has already set Source by the time this
+                        // function wraps the control: about:blank, then the
+                        // view, then the form.
+                        var made = this.createWebView();
+                        made.Source = new SystemRef.Uri("about:blank");
+                        view = self.managedView(SystemRef, made);
+                        win.Controls.Add(made);
+                        return;
+                    }
+                }
                 if (evergreen) {
                     // The handle, which is the first moment there is one: a
                     // Form makes it on demand and boot has not shown the window
@@ -374,9 +485,21 @@
                 var spins = 0;
                 var beats = 0;
                 var loopExNoted = false;
+                /*
+                 * Pump, work, *then* sleep. It used to pump, sleep and then
+                 * work, which put a sixteen millisecond wait in front of every
+                 * state this machine advances through -- and on the Evergreen
+                 * path the first of those states is already true when the loop
+                 * starts, so the wait bought nothing at all. Three transitions
+                 * stand between a ready view and the navigation that ends in
+                 * the app's first paint, and each of them was one sleep late.
+                 *
+                 * The pump stays at the top: on the package path view.ready()
+                 * is a control finishing its own startup, and that finishes on
+                 * messages this line delivers.
+                 */
                 while (win.Visible) {
                     SystemRef.Windows.Forms.Application.DoEvents();
-                    SystemRef.Threading.Thread.Sleep(16);
                     try {
                         // On the package path this is the control handing
                         // over its CoreWebView2, which does not exist until the
@@ -661,6 +784,7 @@
                      * cover a 240s wait, bounded so a wedged launch cannot
                      * write an unbounded file.
                      */
+                    SystemRef.Threading.Thread.Sleep(16);
                     spins++;
                     if (!coreReady && beats < 40 && spins % 300 === 0) {
                         beats++;
