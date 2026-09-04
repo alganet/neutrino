@@ -129,7 +129,25 @@ without enforcing, so it changes nothing and reports what a real launch would do
 
 A cold run downloads before it can launch anything, and until this it did that behind nothing at
 all: `curl -fsSL`, `wget -q`, no output, for up to the 120 second deadline. So a cache miss opens a
-small window with a moving indicator in it, and closes it when the download is done.
+small window with a moving indicator in it, and closes it when the wait is over.
+
+**When the wait is over is not always when the download is.** On Windows this program does not
+exec — it spawns `cmd.exe` on the `.cmd` and waits for it — so the window stays up over that too,
+and comes down when the `.cmd` returns. That matters there more than anywhere: what happens after
+the bytes stop is a `certutil` over the whole script and, on every netinstall launch, a full
+`jsc.exe` compile, because the app folder cannot keep a compiled exe the app itself could not
+rewrite. The download is the short half of that wait and it used to be the only half wearing a
+window. It still comes down one `CreateProcess` short of the app's own window, which is as far as
+anything here can see.
+
+Everywhere else the window goes when the bytes stop, and that is the platform rather than a
+choice: `nt_exec` execs `/bin/sh`, so there is no "after" — the process that would hold the window
+has become the app. The last moment this program exists is already too late, because the run
+phase's confinement runs first and after it the kill that removes the forked holder no longer
+reaches it. What is left to cover there is a digest, a rename and a link, which is not a wait.
+`NT_SPLASH_OUTLIVES_HANDOFF` in `splash.h` is the one place that rule is written down, and
+`splash.sh` asserts it by order: the payload's own output and the teardown line go to one stream,
+and which of the two comes first is the whole reading.
 
 Only a cache miss. A run that already holds the verified payload has nothing to wait for and goes
 straight to the script, drawing nothing — the window marks a download, not a launch.

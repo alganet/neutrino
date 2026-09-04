@@ -293,6 +293,58 @@ else
     fi
 fi
 
+# --- which side of the handoff the window comes down on -----------------------
+# The window used to come down when the bytes stopped, and on windows that is
+# nowhere near when anything appears: what happens after the download there is
+# cmd.exe on the .cmd -- a certutil over the whole script and, on every
+# netinstall launch, a full jsc.exe compile -- before an app is even started.
+# nt_exec there does not exec. It spawns and waits, so the window can stay up
+# across that, and splash.h's NT_SPLASH_OUTLIVES_HANDOFF is the platform half of
+# the rule.
+#
+# Asserted by *order* rather than by a duration, which is what makes it cost
+# nothing and depend on no clock. Both streams go to one file, so the payload's
+# own output and this program's teardown line are two entries in one sequence:
+# where the launcher outlives the handoff, PAYLOAD-RAN is written while the
+# window is still up and therefore lands above `splash: down`; everywhere else
+# the process has been replaced by the payload and the teardown is necessarily
+# above it. One reading, two directions, and each is a failure on the other's
+# platform.
+#
+# NT_WINDOWS and not a fresh uname: lib.sh already owns that question for the
+# whole suite. It is the same platform for the same reason -- it is the one
+# whose launcher STARTs a detached exe and returns, which is why there is a
+# spawn to wait for at all.
+STEP="the window covers the launch on the platform that outlives it"
+if [ "$MECHNAME" = "none" ] || [ -z "$MECHNAME" ]; then
+    echo "  SKIP: $STEP (nothing draws here)"
+else
+    NEUTRINO_TEST_ORIGIN="$SLOW" NEUTRINO_HOME="$WORK/home-order" \
+        "$APP" >"$WORK/both" 2>&1
+    RC=$?
+    DOWN_AT="$(grep -an 'splash: down' "$WORK/both" | head -1 | cut -d: -f1)"
+    RAN_AT="$(grep -an PAYLOAD-RAN "$WORK/both" | head -1 | cut -d: -f1)"
+    if [ "$RC" != "0" ] || [ -z "$DOWN_AT" ] || [ -z "$RAN_AT" ]; then
+        nt_fail "$STEP: rc=$RC down='${DOWN_AT:-none}' payload='${RAN_AT:-none}'; one of the two markers never arrived and there is no order to read"
+        FAILURES=$((FAILURES + 1))
+    elif [ "${NT_WINDOWS:-0}" = "1" ]; then
+        if [ "$RAN_AT" -lt "$DOWN_AT" ]; then
+            echo "  PASS: $STEP (the payload ran at line $RAN_AT, the window went at $DOWN_AT)"
+        else
+            nt_fail "$STEP: the window went at line $DOWN_AT and the payload ran at $RAN_AT; this platform waits for the .cmd and the window is supposed to cover that wait"
+            FAILURES=$((FAILURES + 1))
+        fi
+    else
+        if [ "$DOWN_AT" -lt "$RAN_AT" ]; then
+            echo "  PASS: $STEP (the window went at line $DOWN_AT, before the exec at $RAN_AT)"
+        else
+            nt_fail "$STEP: the window went at line $DOWN_AT and the payload ran at $RAN_AT; this platform execs, so nothing here can take a window down afterwards and one still up is one nobody holds"
+            FAILURES=$((FAILURES + 1))
+        fi
+    fi
+    probe "handoff: payload at line ${RAN_AT:-none}, window down at ${DOWN_AT:-none} (outlives=${NT_WINDOWS:-0})"
+fi
+
 # --- a refusal mid-branch still tears down -----------------------------------
 # A pin that does not match what the host serves. The download succeeds, the
 # digest is checked, and main returns from the middle of the branch -- the path
