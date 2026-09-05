@@ -56,6 +56,30 @@ static const char nt_profile[] =
     "  (subpath \"/private/var/folders\")\n"
     "  (regex #\"^/dev/(null|zero|random|urandom|tty|dtracehelper)$\"))\n"
     /*
+     * A hole punched back out of everything above, and the last rule wins in
+     * SBPL, so it has to sit after the allow rather than inside it.
+     *
+     * This is what closes the LaunchServices escape now that the escape's
+     * other half cannot be closed the way it was -- see the mach-lookup rule
+     * below. An app writes an .app bundle into a directory this profile makes
+     * writable and hands it to a daemon in nobody's sandbox; deny it the
+     * ability to *write* the bundle and there is nothing to hand over.
+     * Measured, with LaunchServices fully reachable: mkdir of Eve.app/Contents
+     * fails, so the probe never reaches the open(1) it was built to make.
+     *
+     * It costs an app nothing it was entitled to. A confined app cannot
+     * execute what it writes -- the rule below has always said so -- so a
+     * bundle it writes was never a bundle it could run itself, and the only
+     * thing this takes away is handing one to something that could.
+     *
+     * What it does not claim: that every route through LaunchServices is
+     * closed. It closes the one that was measured open, and confine.sh asserts
+     * that one by name rather than asserting an equivalence nobody has
+     * established.
+     */
+    "(deny file-write*\n"
+    "  (regex #\"\\.app(/|$)\"))\n"
+    /*
      * Write xor execute, and it has to name every writable path or it means
      * nothing. Denying exec on the app dir alone left the carve-outs above --
      * the Library subtrees CFPreferences and WebKit insist on, and the Darwin
@@ -133,8 +157,38 @@ static const char nt_profile[] =
      * confine.sh asserts the outcome, so a macOS that makes either name
      * sufficient -- or neither -- is a failure and not a silence.
      */
+    /*
+     * One name now, where it was two, and the one that went is the one that
+     * cost the window.
+     *
+     * launchservicesd is how AppKit registers a process as an application.
+     * Denying it does close the bundle escape -- that measurement stands, and
+     * was re-run on macOS 26 -- and it also makes
+     * NSApp.setActivationPolicy(Regular) return false, which leaves the process
+     * out of the application list entirely. Measured with NSRunningApplication
+     * from outside the app: a confined launch does not appear in that list at
+     * all, while the same artifact with no profile appears as policy=0. The app
+     * is running the whole time. Its WKWebView renders, its page's own probe
+     * reports back through the window title, and there is nothing on screen and
+     * no icon in the Dock.
+     *
+     * The launcher cannot work around it from inside, and that was measured
+     * too, against a program built to this file's own shape --
+     * sandbox_init_with_parameters in-process, then exec. A process that is
+     * already confined cannot apply a second profile: sandbox_init answers -1,
+     * "Operation not permitted". So an app under the downloader gets whatever
+     * this profile says and has no opportunity to add to it, which means this
+     * denial is not something the app can register around.
+     *
+     * The escape it was closing is closed by the file-write rule above instead,
+     * which does not depend on the app's cooperation either: with
+     * LaunchServices reachable and .app paths unwritable, the bundle cannot be
+     * created, and a bundle that cannot be created cannot be handed to anyone.
+     *
+     * quarantine-resolver stays. It was never the half that registered
+     * anything, and denying it is measured to cost nothing here.
+     */
     "(deny mach-lookup\n"
-    "  (global-name \"com.apple.coreservices.launchservicesd\")\n"
     "  (global-name \"com.apple.coreservices.quarantine-resolver\"))\n"
     "(deny appleevent-send)\n"
     /* The macOS spelling of ptrace: a task port is read and write access to
@@ -198,7 +252,7 @@ static const char nt_fetch_profile[] =
  */
 #define NT_ALSO_WRITABLE ", /private/var/folders, " \
     "~/Library/{Caches,Preferences,WebKit,Saved Application State} " \
-    "and six /dev nodes"
+    "and six /dev nodes, but never an .app bundle"
 
 /* Seatbelt compares resolved paths, and /var and /tmp are both symlinks. */
 static const char *nt_resolve(const char *path, char *buf, size_t len)

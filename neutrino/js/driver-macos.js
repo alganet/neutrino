@@ -1,3 +1,106 @@
+
+    /*
+     * The seatbelt profile, applied by the process it confines.
+     *
+     * macos-confine.sh builds the text and hands it over in the environment
+     * rather than applying it with sandbox-exec, because a process that starts
+     * confined cannot register with LaunchServices and therefore cannot show a
+     * window. The paragraph in init says the rest.
+     *
+     * Cooperative, and it always was. This function is part of the artifact, so
+     * an artifact that did not want to be confined has only ever had to ship
+     * without it -- which was equally true of the sandbox-exec line this
+     * replaces. The layer that does not depend on the artifact's cooperation is
+     * netinstall's, applied by a binary the artifact does not write, and it is
+     * untouched by this.
+     *
+     * sandbox_init_with_parameters is deprecated SPI with no header, so it is
+     * bound by name out of libSystem. Measured: the bind succeeds, rc=0 applies
+     * the profile, a write to $HOME afterwards is refused, and the activation
+     * policy stays 0 -- a confined process that is still a real application.
+     */
+    NeutrinoWebview.confineMac = function (ObjCRef, dollar) {
+        var profile = "";
+        try {
+            profile = String(ObjCRef.unwrap(
+                dollar.NSProcessInfo.processInfo.environment
+                    .objectForKey("NEUTRINO_MACOS_PROFILE")) || "");
+        } catch (_) {}
+        if (!profile) {
+            /*
+             * Nothing to apply. Either the shell said so already -- it prints
+             * "could not build the seatbelt profile" and this is the same
+             * launch -- or this lane was reached by something that is not
+             * run_macos. Quiet rather than alarming, because the sentence that
+             * matters was already said by whoever had the reason.
+             */
+            return false;
+        }
+
+        /*
+         * Asked before it is attempted, and that ordering is the whole reason
+         * this check exists rather than reading sandbox_init's answer.
+         *
+         * A process that is already confined cannot apply a second profile, and
+         * a netinstall launch is exactly that: the downloader confines itself
+         * with the same call and then execs this. sandbox_init answers -1 there
+         * -- measured against a program built to netinstall's shape -- but
+         * before it answers, libSystem writes "sandbox initialization failed:
+         * Operation not permitted" to stderr on its own account. Nothing here
+         * can catch that, so the only way not to print it on every download is
+         * not to make the call.
+         */
+        if (this.macWritesConfined(ObjCRef, dollar)) {
+            return true;
+        }
+
+        var rc = -1;
+        try {
+            ObjCRef.bindFunction("sandbox_init_with_parameters",
+                ["int", ["string", "long long", "pointer", "pointer"]]);
+            rc = dollar.sandbox_init_with_parameters(profile, 0, dollar(), dollar());
+        } catch (e) {
+            this.note("could not reach sandbox_init_with_parameters: " + e);
+            return false;
+        }
+        if (rc === 0) {
+            return true;
+        }
+        this.note("seatbelt refused this process's own profile; running unconfined");
+        return false;
+    };
+
+    /*
+     * Is a write outside this app's directory already refused?
+     *
+     * A measurement and not a marker: anything that can set an environment
+     * variable could plant a marker, and the answer to "am I confined" would
+     * then be forgeable by the one thing a confinement has to survive.
+     *
+     * access(2) through isWritableFileAtPath rather than an actual write,
+     * because this runs on every launch and a launch should not leave a file
+     * behind to answer a question about itself. Measured across all three
+     * cases: true unconfined, false under a profile applied by sandbox-exec,
+     * false under one applied in-process and inherited through exec.
+     *
+     * $HOME rather than a likelier path, because it is the one place this
+     * profile's whole purpose is to keep an app out of -- and a $HOME that
+     * refuses a write for its own reasons is a machine with larger problems
+     * than this line.
+     */
+    NeutrinoWebview.macWritesConfined = function (ObjCRef, dollar) {
+        try {
+            var home = String(ObjCRef.unwrap(
+                dollar.NSProcessInfo.processInfo.environment.objectForKey("HOME")));
+            if (!home) {
+                return false;
+            }
+            return !dollar.NSFileManager.defaultManager.isWritableFileAtPath(home);
+        } catch (_) {
+            return false;
+        }
+    };
+
     NeutrinoWebview.createMacDriver = function () {
         var ObjCRef = eval("ObjC");
         var dollar = eval("$");
@@ -52,6 +155,43 @@
                 ObjCRef["import"]("Cocoa");
                 ObjCRef["import"]("WebKit");
                 app = dollar.NSApplication.sharedApplication;
+
+                /*
+                 * Register as an application, then confine this process, in
+                 * that order and both before anything else in this file runs.
+                 *
+                 * The order is not a preference. AppKit registers a process
+                 * through LaunchServices, and the profile this is about to
+                 * apply denies com.apple.coreservices.launchservicesd -- which
+                 * is half of what closes the write-a-bundle-and-launch-it
+                 * escape, and is not negotiable. Under that denial
+                 * setActivationPolicy(Regular) returns false and the process
+                 * never enters the application list at all: measured from
+                 * outside with NSRunningApplication, a confined launch does not
+                 * appear in it, while the same artifact with no profile appears
+                 * as policy=0. The app runs either way -- the window is
+                 * created, WKWebView renders, the page's own probe reports
+                 * `eng=WebKit ... bound=yes` -- and on screen there is nothing.
+                 *
+                 * So the profile arrives as text and is applied here, after the
+                 * registration and before this driver reads a theme, opens a
+                 * window or loads a line of the document. Everything the app
+                 * itself can reach happens after this line.
+                 *
+                 * setActivationPolicy used to be called in runEventLoop, one
+                 * line above app.run(). It is here now because that is after
+                 * loadHTML, and a registration that happens after the profile
+                 * is a registration that does not happen.
+                 */
+                try {
+                    if (!dollar.NSApp.setActivationPolicy(0)) {
+                        self.note("this process could not register as an " +
+                            "application; its window will not appear");
+                    }
+                } catch (e) {
+                    self.note("could not set the activation policy: " + e);
+                }
+                self.confineMac(ObjCRef, dollar);
                 ObjCRef.registerSubclass({
                     name: "NeutrinoWindowDelegate",
                     superclass: "NSObject",
@@ -984,7 +1124,10 @@
                 } catch (e) {
                     self.note("could not start the clock on this lane: " + e);
                 }
-                dollar.NSApp.setActivationPolicy(0);
+                // setActivationPolicy is not here any more: it moved to init,
+                // which is the only place it can run before the seatbelt
+                // profile does. See the paragraph beside it there.
+                //
                 // Left as a call on purpose. By the same rule, reading
                 // `run` is what enters the event loop, and that does not
                 // return -- so the `()` after it is code that has never run

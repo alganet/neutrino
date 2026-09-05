@@ -202,7 +202,7 @@ else
     fail "the control exec did not run; the w^x probe proves nothing"
 fi
 
-echo "=== A sandbox-exec profile does not nest, which the launcher's message rests on ==="
+echo "=== A profile does not nest, which is why the driver asks before it applies ==="
 
 # run_macos tells "already confined" apart from "profile is bad" by offering
 # seatbelt a profile that cannot be rejected on its merits and seeing it refused
@@ -234,13 +234,21 @@ fi
 # And the launcher's four messages, present in the artifact. A branch renamed
 # without its assertion being renamed is a suite that asserts a string nothing
 # prints, which is the failure mode this whole file exists to end.
+# The profile is applied by the driver now, not by sandbox-exec, so the branches
+# that can still speak are the shell's one and the driver's three. Named here
+# because e2e.sh greps for exactly these, and a branch renamed without its
+# assertion being renamed is a suite asserting a string nothing prints.
 for msg in \
-    "sandbox-exec not found" \
     "could not build the seatbelt profile" \
-    "already inside a seatbelt profile" \
-    "seatbelt rejected the profile"
+    "seatbelt refused this process's own profile" \
+    "could not reach sandbox_init_with_parameters" \
+    "could not register as an "
 do
-    if grep -q "neutrino: $msg" "$TARGET"; then
+    # Without the "neutrino: " prefix, because note() adds that at run time and
+    # the artifact carries only the text. The shell's one line has the prefix
+    # written out; the driver's three do not, and one of them is split across a
+    # source line, so each string here is a substring that survives the wrap.
+    if grep -qF "$msg" "$TARGET"; then
         pass "the artifact can say \"$msg\""
     else
         fail "the artifact has no \"$msg\" branch; e2e.sh greps for these"

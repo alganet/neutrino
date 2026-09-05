@@ -511,6 +511,21 @@ PLIST
     if [ -e "$drop_app" ]; then echo "LSD_APP_ESCAPED"; else echo "LSD_APP_BLOCKED"; fi
     if [ -e "$drop_ws" ]; then echo "LSD_WS_ESCAPED"; else echo "LSD_WS_BLOCKED"; fi
 else echo "LSD_SKIP"; fi
+# Can a confined app still become an application? This is the property the
+# LaunchServices rules were traded for, and the one nothing here measured until
+# it was lost. AppKit registers a process through launchservicesd; under a
+# profile that denied it, NSApp.setActivationPolicy(Regular) returned false and
+# the process stayed out of the application list -- so every macOS launch under
+# the downloader ran, rendered its page and put no window on any screen, and
+# every assertion in this file passed while it did.
+#
+# Asked from inside the confinement, in one line, with no window: the answer is
+# the policy the process ends up at. 0 is Regular and is the only right answer.
+if command -v osascript >/dev/null 2>&1; then
+    echo "POLICY=$(/usr/bin/osascript -l JavaScript -e \
+        "ObjC.import('AppKit'); \$.NSApplication.sharedApplication; \$.NSApp.setActivationPolicy(0); \$.NSApp.activationPolicy" \
+        2>/dev/null | tr -d '\r\n')"
+else echo "POLICY=SKIP"; fi
 if command -v security >/dev/null 2>&1; then
     if [ -n "${NEUTRINO_TEST_KEYCHAIN:-}" ]; then
         if security find-generic-password -a "$NEUTRINO_TEST_KEYCHAIN" \
@@ -859,6 +874,14 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # that has been denied since the profile was written. Asserted so a future
     # change cannot quietly open it while attention is on the other two.
     check "an apple event to Terminal is refused" LSD_COMMAND_BLOCKED
+    # And the other side of the same trade, asserted beside it so the two can
+    # never drift apart again: closing those doors must not cost the window.
+    case "$OUT" in
+        *POLICY=0*)     echo "  PASS: a confined app can still register as an application" ;;
+        *POLICY=SKIP*)  nt_note "activation policy not measured here" ;;
+        *)              nt_fail "activation policy expected=0 actual=$(printf '%s' "$OUT" | sed -n 's/.*POLICY=\([^ ]*\).*/\1/p')  (-1 is Prohibited: the app runs and shows nothing)"
+                        FAILURES=$((FAILURES + 1)) ;;
+    esac
     check "cannot launch a bundle it wrote through open(1)"   LSD_APP_BLOCKED
     check "cannot launch one through NSWorkspace either"      LSD_WS_BLOCKED
 
