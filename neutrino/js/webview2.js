@@ -57,7 +57,41 @@
         if (parent != null && String(parent) !== "") {
             var above = this.windowsScriptIn(SystemRef, parent, name);
             if (above != null) {
-                this.windowsLayoutCache = { script: above, appFolder: exeDir };
+                /*
+                 * Two placements find the script one level above and they do
+                 * not share an app folder.
+                 *
+                 * <dir>\<name>\<name>.exe is the fallback the launcher takes
+                 * when the script's own directory will not keep a stamp, and
+                 * there the directory holding the exe *is* the app folder.
+                 * <dir>\<name>.build\<name>.exe is the build slot netinstall
+                 * opens beside the script, and there it is not: the app folder
+                 * is <dir>\<name>, the one netinstall confines writes to, and
+                 * the slot is sealed the moment the launch returns.
+                 *
+                 * Answering exeDir for both was the whole of why the slot
+                 * shipped without working. The program took the slot for its
+                 * app folder, so the trace and the WebView2 profile were
+                 * written into it -- which breaks the seal's record of every
+                 * file's size and digest, so the next launch rebuilt, which is
+                 * the compile the slot exists to remove. And on a launch where
+                 * the seal had already been applied the slot is read-only to
+                 * the app, so nothing started at all: measured on a Windows 11
+                 * client as no process, no window, and no log in either
+                 * directory. The slot looked like it was working precisely
+                 * because the program it cached never ran.
+                 *
+                 * By the directory's name, because that is what the launcher
+                 * built it from and the two cannot both be right about one
+                 * folder.
+                 */
+                var leaf = String(SystemRef.IO.Path.GetFileName(exeDir));
+                this.windowsLayoutCache = {
+                    script: above,
+                    appFolder: leaf === name + ".build"
+                        ? SystemRef.IO.Path.Combine(parent, name)
+                        : exeDir
+                };
                 return this.windowsLayoutCache;
             }
         }

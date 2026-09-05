@@ -2043,6 +2043,9 @@ static int nt_main(int argc, char **argv)
         printf("script     %s\n", script);
         printf("appdir     %s\n", appdir);
         printf("blobs      %s\n", blobs);
+        /* Cleared, because the branch below leaves it untouched when there is
+         * nothing cached and the slot sentence reads it either way. */
+        hex[0] = '\0';
         if (nt_sha256_file(script, hex) == 0) {
             printf("sha256     %s\n", hex);
             printf("cached     %s\n", nt_pin_ok(spec.token, hex) ? "yes" : "yes (pin mismatch)");
@@ -2058,6 +2061,23 @@ static int nt_main(int argc, char **argv)
          */
         printf("build      %s\n", slot);
         slotowed = nt_slot_owed(slot, slotstamp, hex, &slotwhy);
+        /*
+         * And the pin, which nt_slot_owed cannot see. It compares the script on
+         * disk with the digest the record was built from, and after a repin
+         * those still agree: nothing has been fetched yet, so the cached script
+         * is the old one and the slot is a faithful copy of it. "sealed" is
+         * true of that pair and useless to whoever asked, because the next
+         * launch replaces the script and rebuilds -- the line above this one
+         * has already said `cached yes (pin mismatch)`.
+         *
+         * Only --info needs this. A launch fetches before it asks, so by the
+         * time nt_slot_owed runs there the digest is the new script's and it
+         * reaches the same answer on its own.
+         */
+        if (!slotowed && *hex && !nt_pin_ok(spec.token, hex)) {
+            slotowed = 1;
+            slotwhy = "the script changed";
+        }
         printf("slot       %s\n",
                slotowed ? slotwhy : "sealed");
         nt_build_slot(slot, slotowed);
