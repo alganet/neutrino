@@ -40,3 +40,6 @@
 /test/neutrinodemo.cmd
 /test/neutrinodemo
 /_site
+/test/__pycache__
+/test/neutrinotime.cmd
+/test/neutrinotime
