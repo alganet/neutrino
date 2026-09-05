@@ -301,17 +301,44 @@ if ($up4 -ne "UP") { Fail "slot expected=the app comes up from the slot actual=D
 # and it is the same question either way: the launcher's only signal is whether
 # the write lands. Without this arm a launcher that rebuilt every launch into a
 # writable slot would read exactly like one that keeps what is there.
+#
+# The ACE is built into a variable before icacls is handed it, and then the
+# seal is checked rather than assumed. `& icacls $d /deny "$env:USERNAME:(W)"`
+# does not survive PowerShell 5.1's native argument parsing -- icacls answers
+# `Invalid parameter "(W)"` and exits 87, having changed nothing. Piped to
+# Out-Null that is silent, so the arm went on to launch against a slot that was
+# still writable, which is a *granted* slot, which is one the launcher is
+# supposed to rebuild. It then failed the product for doing exactly the right
+# thing: `sealed rebuilt=YES mtime_moved=YES` on the first Windows runner this
+# suite ever saw, and again on a Windows 11 client.
+#
+# So the write is attempted before the launch is. A seal that did not take is a
+# broken instrument and says so, rather than being reported as a launcher that
+# will not use its cache.
 if (Test-Path $slotExe) {
     Stop-App
     $slotHash1 = (Get-FileHash $slotExe -Algorithm SHA256).Hash
     $slotMt1 = (Get-Item $slotExe).LastWriteTimeUtc
-    & icacls $slot3 /deny "$env:USERNAME:(W)" *>&1 | Out-Null
+    $denyAce = '{0}:(W)' -f $env:USERNAME
+    & icacls $slot3 /deny $denyAce *>&1 | Out-Null
+    $sealRc = $LASTEXITCODE
+    $sealed = $false
+    try {
+        "probe" | Set-Content (Join-Path $slot3 ".sealprobe") -ErrorAction Stop
+        Remove-Item (Join-Path $slot3 ".sealprobe") -Force -ErrorAction SilentlyContinue
+    } catch {
+        $sealed = $true
+    }
+    Report "sealed seal_rc=$sealRc slot_writable=$(-not $sealed)"
+    if (-not $sealed) {
+        Fail "sealed expected=the harness can close the slot actual=it stayed writable (icacls rc=$sealRc)"
+    }
     $p5 = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $lane3 -PassThru -WindowStyle Hidden
     if (-not $p5.WaitForExit(180000)) { $p5.Kill() }
     $up5 = Window-Up 180
     $slotHash2 = (Get-FileHash $slotExe -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
     $slotMt2 = (Get-Item $slotExe -ErrorAction SilentlyContinue).LastWriteTimeUtc
-    & icacls $slot3 /remove:d "$env:USERNAME" *>&1 | Out-Null
+    & icacls $slot3 /remove:d $env:USERNAME *>&1 | Out-Null
     Report ("sealed rebuilt=" + $(if ($slotHash1 -ne $slotHash2) { "YES" } else { "NO" }) +
             " mtime_moved=" + $(if ($slotMt1 -ne $slotMt2) { "YES" } else { "NO" }) +
             " window=$up5")

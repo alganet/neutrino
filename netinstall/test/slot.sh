@@ -107,8 +107,19 @@ nt_launch() {
     tr -d '\r' < "$WORK/out.$1"
 }
 
+# Whole lines, with trailing whitespace taken off first.
+#
+# cmd.exe puts it there and it is not the payload's fault: `... && echo TOKEN
+# || echo OTHER` echoes everything up to the `||`, so the granted branch emits
+# "TOKEN " and the refused branch, which ends the line, emits "OTHER". Against
+# a `grep -qx` that meant every && token could never match and every || token
+# always could -- so this suite could report nothing but refusals, and would
+# have passed a build whose slot was never writable at all. Which is the one
+# thing it exists to prove. Measured on the first Windows runner it ever saw:
+# SLOT_WRITABLE and OWN_DIR_WRITABLE red, SHELF_REFUSED and RECORD_REFUSED
+# green, from one probe that was behaving correctly.
 nt_said() {
-    grep -qx "$2" <<<"$1"
+    grep -qx "$2" <<<"$(sed 's/[[:space:]]*$//' <<<"$1")"
 }
 
 nt_info_slot() {
@@ -142,6 +153,13 @@ RECORD="$APPROOT/slot.build.stamp"
 # sentence: what --info says before anything has been built
 # =====================================================================
 echo "=== Before the first launch ==="
+# The script first, because "before the first launch" is what this arm means
+# and not "before the first fetch". nt_slot_owed answers "the script has no
+# digest" while there is nothing cached to take a digest of, and "never built"
+# -- the sentence below -- only once there is a script and no slot. Asserting
+# the second against the first state failed on the runner and was right to:
+# --info was describing a machine that had not downloaded anything yet.
+"$APP" --fetch >/dev/null 2>&1
 BEFORE_SLOT="$(nt_info_slot)"
 BEFORE_CONFINE="$(nt_info_confine)"
 nt_note "slot before=$BEFORE_SLOT"
