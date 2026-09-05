@@ -226,16 +226,310 @@ knob_clear
 # is one thing the other two cannot see: that a launcher which is already up
 # hands its page a new palette.
 #
-# macOS only, and that is the knob's doing rather than a decision. `gtk` and
-# `qt` reach their theme through GTK_THEME in the environment, which is read
-# when the process starts and cannot be changed underneath one. There is no
-# live flip to perform on those lanes, so there is nothing here to skip.
+# It used to be macOS only, and the reason given was that `gtk` and `qt` reach
+# their theme through GTK_THEME in the environment, which is read when the
+# process starts and cannot be changed underneath one. That is true of
+# GTK_THEME and it was never true of the lane: a desktop's own knob is
+# gsettings, GTK watches it, and the two halves above use the variable only
+# because a launch is all they need to configure.
+#
+# What the GTK half flips is written here rather than chosen from the machine.
+# The change this has to catch is an accent move -- one colour, same canvas,
+# same derived scheme -- because that is the shape `style-updated` does not
+# report, and a runner has no accent picker to borrow. Two throwaway themes
+# whose stylesheets differ in exactly one line give it one, on any machine with
+# GTK and with no installed theme family to depend on. Measured on Mint 22 /
+# Cinnamon: canvas 383838 across both, accent 8fa876 -> b35a57.
+NT_THEME_DIR="$HOME/.themes"
+
+gtk_theme_write() {
+    # $1 name, $2 accent. Seven colours because readGtkTheme reads seven and
+    # refuses a palette missing one; nothing else in a theme is looked at here.
+    local d="$NT_THEME_DIR/$1/gtk-3.0"
+    mkdir -p "$d" || return 1
+    cat > "$d/gtk.css" <<EOF
+@define-color theme_bg_color #383838;
+@define-color theme_fg_color #dadada;
+@define-color theme_base_color #404040;
+@define-color theme_text_color #ffffff;
+@define-color theme_selected_bg_color $2;
+@define-color theme_selected_fg_color #ffffff;
+@define-color borders #292929;
+EOF
+}
+
+# Two knobs, because a desk and a runner do not have the same one and the
+# difference was measured rather than assumed. On a Cinnamon desk the settings
+# write reaches GTK. On the runners it does not, and neither does the other
+# obvious candidate -- one probe round, both GTK lanes:
+#
+#   org.gnome.desktop.interface: wrote NeutrinoProbeB (readback NeutrinoProbeB)
+#   gsettings route fired 0
+#   settings.ini route fired 0
+#   direct set_property ok
+#   direct route fired 1
+#
+# The write lands, reads back, and GTK never hears it -- gtk-theme-name was
+# Yaru there while gsettings said Adwaita, so GTK is reading settings.ini and
+# not GSettings, and settings.ini is loaded at startup rather than watched.
+# Only the route no process outside the app can take worked, which is why this
+# half stood down on the one machine that runs it.
+#
+# XSettings is what GTK actually listens to for this, and a HUP to xsettingsd
+# moved gtk-theme-name in a separate process on both runners. That is the knob
+# here, and it is the same channel Qt's platform theme reads.
+NT_KNOB=""
+NT_XSETTINGSD_MINE=""
+
+gtk_theme_set() {
+    case "$NT_KNOB" in
+        xsettings)
+            printf 'Net/ThemeName "%s"\n' "$1" > "$HOME/.xsettingsd"
+            pkill -HUP -x xsettingsd 2>/dev/null
+            return 0
+            ;;
+        *)
+            local ok=1
+            for schema in org.gnome.desktop.interface org.cinnamon.desktop.interface; do
+                gsettings writable "$schema" gtk-theme >/dev/null 2>&1 || continue
+                gsettings set "$schema" gtk-theme "$1" >/dev/null 2>&1 && ok=0
+            done
+            return "$ok"
+            ;;
+    esac
+}
+
+# Started only where there is no desktop to already have one. Two XSettings
+# managers on one display is one of them losing the selection, which would
+# break the session this is running in rather than the test -- and a desk has
+# a manager already, which is why the settings route works there at all.
+gtk_xsettingsd_start() {
+    # `command -v` and not a `have` helper. This file has no such helper --
+    # the line was borrowed from a probe that did -- so it exited 127, the
+    # `|| return 1` took it, and the XSettings route was never attempted on
+    # any machine. It reported as "no knob on this machine", which is the
+    # message for the case where every route was tried and none worked. A desk
+    # never showed it because the settings route above succeeds there and this
+    # function is not reached.
+    command -v xsettingsd >/dev/null 2>&1 || return 1
+    [ -n "${XDG_CURRENT_DESKTOP:-}" ] && return 1
+    # A manager already up is one to use, not a reason to give up. Something
+    # else in the job may have started it, and declining then is how this half
+    # reported "no knob" on a machine that had one running.
+    if pgrep -x xsettingsd >/dev/null 2>&1; then
+        note "live half: using the xsettingsd already running"
+        return 0
+    fi
+    printf 'Net/ThemeName "NeutrinoFlipA"\n' > "$HOME/.xsettingsd"
+    xsettingsd -c "$HOME/.xsettingsd" >/dev/null 2>&1 &
+    NT_XSETTINGSD_MINE=$!
+    sleep 2
+    note "live half: started xsettingsd pid=$NT_XSETTINGSD_MINE"
+    return 0
+}
+
+# The control, and it is the difference between an apparatus defect and a
+# finding -- the same distinction knob_read draws for the two halves above. It
+# asks a GTK of its own whether *this environment* delivers a theme change at
+# all. If it does not, the live half has nothing to observe and says so; if it
+# does and the app heard nothing, that is the watcher and it is a failure.
+# The watcher half of the control: a GTK that connects the same signal the
+# driver connects and reports whether it fired. It does not flip anything.
+#
+# It used to, and that was the defect that kept this half standing down after
+# the knob was found. The flip was a gsettings write hardcoded inside this
+# script, so selecting the XSettings knob changed what the *app* would be
+# offered and not what the control tested -- the control went on writing a
+# setting the runner's GTK does not read, failed, and reported "no knob"
+# on a machine where the knob beside it had just been measured working.
+# Whatever moves the theme has to be the one thing both of them use.
+gtk_watch_notify() {
+    python3 - <<'EOF' >/dev/null 2>&1
+import sys
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, GLib
+st = Gtk.Settings.get_default()
+if st is None:
+    sys.exit(1)
+seen = {"n": 0}
+st.connect("notify::gtk-theme-name", lambda *a: seen.__setitem__("n", seen["n"] + 1))
+GLib.timeout_add_seconds(8, lambda: (Gtk.main_quit(), False)[1])
+Gtk.main()
+sys.exit(0 if seen["n"] else 1)
+EOF
+}
+
+# And the control itself, which flips through gtk_theme_set -- the same
+# function the live flip below uses, so the knob the control proves is the
+# knob the app is tested with.
+gtk_change_seen() {
+    local pid
+    command -v python3 >/dev/null 2>&1 || return 2
+    gtk_theme_set NeutrinoFlipA >/dev/null 2>&1
+    sleep 1
+    gtk_watch_notify &
+    pid=$!
+    sleep 2
+    gtk_theme_set "$1" >/dev/null 2>&1
+    wait "$pid"
+}
+
+# The GTK live half.
+#
+# The app is started under theme A and the desktop moves to theme B while it
+# holds still, which is the one thing neither launch-and-compare half can see.
+# What separates the two themes is a single colour, so `style-updated` -- the
+# signal both GTK lanes watched and the only one they watched until this was
+# written -- does not fire for it: the window draws itself identically and GTK
+# has no reason to mention the change. Measured, three instruments over five
+# theme changes on Mint 22: notify::gtk-theme-name 5, style-updated 2, polling
+# 5. This half is the guard on the signal that answers 5.
+# The probe's title, by whichever of the two readers this machine has --
+# xdotool where there is one and wmctrl otherwise, which is the fallback
+# verify-attack.sh already keeps so that a suite step is runnable on a desk and
+# not only on a runner. Matched on the prefix the probe writes, because the
+# rest of that title is the reading being taken.
+live_title() {
+    if command -v xdotool >/dev/null 2>&1; then
+        local w
+        w="$(xdotool search --name '^STD-LIVE' 2>/dev/null | head -1)"
+        [ -n "$w" ] && xdotool getwindowname "$w" 2>/dev/null
+        return 0
+    fi
+    wmctrl -l 2>/dev/null |
+        sed -n 's/^[^ ]* *[^ ]* *[^ ]* *\(STD-LIVE .*\)$/\1/p' | tail -1
+}
+
+live_half_gtk() {
+    local before after n rc=0 waited=0 was_gnome="" was_cinnamon=""
+
+    command -v gsettings >/dev/null 2>&1 || {
+        note "live half: no gsettings here; nothing to flip live"
+        return 0
+    }
+    command -v xdotool >/dev/null 2>&1 || command -v wmctrl >/dev/null 2>&1 || {
+        note "live half: neither xdotool nor wmctrl is here, so nothing can read a title"
+        return 0
+    }
+
+    was_gnome="$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null)"
+    was_cinnamon="$(gsettings get org.cinnamon.desktop.interface gtk-theme 2>/dev/null)"
+    gtk_live_restore() {
+        [ -n "$was_gnome" ] && gsettings set org.gnome.desktop.interface gtk-theme "$was_gnome" >/dev/null 2>&1
+        [ -n "$was_cinnamon" ] && gsettings set org.cinnamon.desktop.interface gtk-theme "$was_cinnamon" >/dev/null 2>&1
+        rm -rf "$NT_THEME_DIR/NeutrinoFlipA" "$NT_THEME_DIR/NeutrinoFlipB"
+        [ -n "$NT_XSETTINGSD_MINE" ] && { kill "$NT_XSETTINGSD_MINE" 2>/dev/null; rm -f "$HOME/.xsettingsd"; }
+        [ -n "${LIVE_PID:-}" ] && { pkill -P "$LIVE_PID" 2>/dev/null; kill "$LIVE_PID" 2>/dev/null; }
+        return 0
+    }
+
+    gtk_theme_write NeutrinoFlipA "#8fa876" || {
+        note "live half: could not write a theme under $NT_THEME_DIR"
+        return 0
+    }
+    gtk_theme_write NeutrinoFlipB "#b35a57" || { gtk_live_restore; return 0; }
+
+    # Before anything is launched, because a control that runs after the app
+    # has already missed its chance is not a control. Each knob is offered to
+    # it in turn and the one that moves a GTK of this suite's own is the one
+    # the app is then asked about -- so "no knob here" and "the watcher did
+    # not fire" stay two different readings.
+    NT_KNOB=gsettings
+    gtk_change_seen NeutrinoFlipB
+    case $? in
+        0) note "live control: the gsettings knob moved a GTK of this suite's own" ;;
+        2) note "live half: no python3 with gi to control against; nothing to observe"
+           gtk_live_restore; return 0 ;;
+        *)
+            NT_KNOB=xsettings
+            if gtk_xsettingsd_start && gtk_change_seen NeutrinoFlipB; then
+                note "live control: the xsettings knob moved a GTK of this suite's own"
+            else
+                note "live half: no knob on this machine delivers a theme change to GTK; no live flip to observe"
+                gtk_live_restore; return 0
+            fi
+            ;;
+    esac
+
+    if [ ! -f "$LIVE_ART" ]; then
+        note "live half: building $LIVE_ART"
+        bash "$ROOT/test/mkapp.sh" --testing \
+            "$ROOT/test/neutrinolivetheme.js" "$LIVE_ART" || {
+            echo "FAIL: live half: could not build the live probe"
+            gtk_live_restore; return 1
+        }
+    fi
+
+    knob_clear
+    gtk_theme_set NeutrinoFlipA
+    sleep 2
+    bash "$LIVE_ART" > "$LOGDIR/flip-live-app.log" 2>&1 &
+    LIVE_PID=$!
+
+    # By title and not by pid: the .cmd execs an interpreter, so the process
+    # holding the window is a child whose pid this shell never learns.
+    while [ "$waited" -lt 90 ]; do
+        [ -n "$(live_title)" ] && break
+        sleep 1
+        waited=$((waited + 1))
+    done
+    before="$(live_title)"
+    [ -z "$before" ] && {
+        echo "FAIL: live half: no STD-LIVE window in 90s; the probe never came up"
+        gtk_live_restore; return 1
+    }
+    note "live before: $before"
+    case "$before" in
+        *src=null*)
+            echo "FAIL: live half: the probe read no toolkit, so a flip would prove nothing"
+            gtk_live_restore; return 1 ;;
+    esac
+
+    gtk_theme_set NeutrinoFlipB
+    case "$NT_KNOB" in
+        xsettings) note "live knob after the flip: $(cat "$HOME/.xsettingsd" 2>/dev/null)" ;;
+        *) note "live knob after the flip: $(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null)" ;;
+    esac
+
+    waited=0
+    while [ "$waited" -lt 30 ]; do
+        after="$(live_title)"
+        case "$after" in *"moved=yes"*) break ;; esac
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+    after="$(live_title)"
+    note "live after: ${after:-<nothing>}"
+
+    n="$(printf '%s' " $after" | sed -n 's/.* n=\([0-9]*\).*/\1/p')"
+    case "$after" in
+        *"moved=yes"*)
+            echo "PASS: the running app was handed a new palette when the desktop's accent moved"
+            note "live readings n=${n:-?}" ;;
+        STD-LIVE*)
+            echo "FAIL: the accent moved under a running app and it was handed nothing (n=${n:-?}); the theme watcher did not fire"
+            rc=1 ;;
+        *)
+            echo "FAIL: live half: the probe stopped writing its title after the flip"
+            rc=1 ;;
+    esac
+
+    gtk_live_restore
+    return "$rc"
+}
+
 live_half() {
     local before after n rc=0 waited=0
 
-    if [ "$MODE" != macos ]; then
-        note "live half: the knob on $MODE is an environment variable; nothing to flip live"
+    if [ "$MODE" = qt ]; then
+        note "live half: not written for the qt lane yet"
         return 0
+    fi
+
+    if [ "$MODE" = gtk ]; then
+        live_half_gtk
+        return $?
     fi
 
     # Built here when it was not handed in, so a caller that has not been

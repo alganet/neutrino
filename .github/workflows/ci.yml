@@ -48,10 +48,10 @@ jobs:
       - run: |
           sudo apt update
           sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity \
-            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy xsettingsd \
             gir1.2-webkit2-4.1 \
             || sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity \
-            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy xsettingsd \
             gir1.2-webkit2-4.0
       # Ubuntu refuses unprivileged user namespaces by default, so WebKitGTK's
       # sandbox cannot start and neutrino correctly declines to ask for it.
@@ -472,10 +472,10 @@ jobs:
           sudo apt update
           sudo apt remove -y gjs || true
           sudo apt install -y xvfb cjs imagemagick x11-xserver-utils metacity \
-            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy xsettingsd \
             gir1.2-webkit2-4.1 \
             || sudo apt install -y xvfb cjs imagemagick x11-xserver-utils metacity \
-            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy xsettingsd \
             gir1.2-webkit2-4.0
       # The lane naming what it is, before anything is measured on it. A lane
       # that silently ran the engine it was meant to be standing in for is the
@@ -744,10 +744,10 @@ jobs:
             sudo apt remove -y "$pkg" || true
           done
           sudo apt install -y xvfb imagemagick x11-xserver-utils metacity \
-            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy xsettingsd \
             python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1 gir1.2-javascriptcoregtk-4.1 \
             || sudo apt install -y xvfb imagemagick x11-xserver-utils metacity \
-            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy \
+            xdotool x11-utils xauth dbus bubblewrap xdg-dbus-proxy xsettingsd \
             python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.0 gir1.2-javascriptcoregtk-4.0
       - if: always()
         run: |
@@ -1028,11 +1028,11 @@ jobs:
           sudo apt update
           sudo apt install -y xvfb imagemagick x11-xserver-utils x11-utils mesa-utils libgl1-mesa-dri libegl-mesa0 openbox \
             xdotool xauth dbus \
-            qt6-declarative-dev-tools qml6-module-qtwebengine qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
+            qt6-declarative-dev-tools qml6-module-qtwebengine qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript \
+            qt6-gtk-platformtheme xsettingsd
           if ! command -v qml6 >/dev/null 2>&1 && ! command -v qml >/dev/null 2>&1 && ! command -v qmlscene6 >/dev/null 2>&1 && ! command -v qmlscene-qt6 >/dev/null 2>&1; then
             sudo apt install -y qml6 || sudo apt install -y qml-qt6 || sudo apt install -y qmlscene-qt6 || true
           fi
-      # Before anything runs, so no step can start the machine's browser. See
       # test/nobrowser.sh: `mayOpenExternal` ends at `xdg-open`, and on this
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
@@ -2516,6 +2516,32 @@ jobs:
           bash test/themediff.sh ~/flip-a.log ~/flip-b.log >> ~/themediff.log 2>&1 || TEST_EXIT=$?
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
           exit $TEST_EXIT
+      # And the live half, which is the one thing the two above cannot see.
+      #
+      # They launch under one app theme each and compare, which is right for
+      # "did this value come from the desktop" and wrong for "does the watcher
+      # work": the palette is read once at startup either way, so a watcher
+      # that never fired would leave both of them green. Measured on a Windows
+      # 11 client before this step existed -- an accent moved through
+      # SetSysColors under a running app arrived as four palettes, and a real
+      # contrast theme as one more -- so what this adds is a runner that says
+      # so rather than a person with a VM.
+      - if: always()
+        shell: bash
+        run: |
+          bash test/mkapp.sh --testing test/neutrinolivetheme.js test/neutrinolivetheme.cmd
+          bash test/parse.sh test/neutrinolivetheme.cmd
+      - if: always()
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $testExit = 0
+          & .\test\themelive.ps1 -Artifact .\test\neutrinolivetheme.cmd *>&1 |
+            Tee-Object -FilePath "$HOME\themelive.log"
+          if ($LASTEXITCODE -ne 0) { $testExit = $LASTEXITCODE }
+          Get-Process -Name neutrinolivetheme -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          exit $testExit
       # The app on the download page, and this is the lane it broke on.
       #
       # Everything else here builds a probe written by someone who knew which

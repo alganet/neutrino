@@ -42,21 +42,37 @@ var doc = eval("document");
 var seen = 0;
 var first = "";
 
-// One reading, flat. Two things are named that the scheme alone does not
+// One reading, flat. Three things are named that the scheme alone does not
 // settle: `src`, the toolkit the launcher read the palette off, because a lane
-// that read nothing reports scheme=null and every comparison is void; and
+// that read nothing reports scheme=null and every comparison is void;
 // `canvas`, the background colour itself, because a scheme is derived from a
 // palette and a palette that moved without changing the derived word is still
-// a watcher that fired.
+// a watcher that fired; and `accent`.
+//
+// The accent is here because without it this file could not see the defect it
+// was written to catch. A desktop's accent picker moves one colour: same
+// canvas, same derived scheme, so a reading of those two is byte-identical
+// across the change and `moved=no` is reported by a probe that was handed a
+// new palette and could not tell. Measured on Mint 22 / Cinnamon, where
+// `Mint-L-Dark` to `-Aqua` to `-Red` moves theme_selected_bg_color 8fa876 ->
+// 6aa0bd -> b35a57 and nothing else this file used to print.
+//
+// It is also the reading a Windows contrast theme is clearest in: hcblack
+// arrives as accent 8ee3f0 against a canvas of 202020, and the canvas alone
+// does not separate that from the app-dark surfaces the driver substitutes
+// when Windows will not report real ones.
 function reading() {
     var t = null;
     try { t = win.neutrino && win.neutrino.theme; } catch (_) {}
     if (!t) {
-        return "src=null scheme=null canvas=null";
+        return "src=null scheme=null canvas=null accent=null";
     }
     var canvas = "?";
+    var accent = "?";
     try { canvas = String(t.colors.background).replace("#", ""); } catch (_) {}
-    return "src=" + t.source + " scheme=" + t.scheme + " canvas=" + canvas;
+    try { accent = String(t.colors.accent).replace("#", ""); } catch (_) {}
+    return "src=" + t.source + " scheme=" + t.scheme +
+        " canvas=" + canvas + " accent=" + accent;
 }
 
 function report() {
