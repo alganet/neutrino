@@ -636,8 +636,9 @@ eq "the testing overlay assembles" "$?" "0"
 # in particular asserted that a release build did NOT carry sandbox-exec, which
 # was true and was the defect: the seatbelt profile was the tight overlay's, so
 # a standalone app -- the one case where nothing else confines anything -- was
-# the case that got none. It is in every build now, and the assertion below is
-# the reverse of what this loop used to make.
+# the case that got none. It is in every build now, and the two assertions
+# below the loop are the reverse of what this loop used to make -- asked of the
+# profile itself rather than of the program that used to apply it.
 for nt_text in "neutrino-title.txt" "neutrino-trace.log" \
                "NEUTRINO_WEBVIEW2_LIB_DIR\")" "no-sandbox" \
                "QTWEBENGINE_DISABLE_SANDBOX"; do
@@ -649,8 +650,25 @@ done
 
 # The seatbelt profile is not scaffolding and is asserted the other way: every
 # build carries it, release included.
-eq "the release build carries sandbox-exec" \
-   "$([ "$(grep -cF -- "sandbox-exec" "$T/release.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
+#
+# Two strings and not one, because the mechanism is two halves now and either
+# missing is the confinement gone. This used to grep for `sandbox-exec`, which
+# was the whole of it: the shell built the profile and handed it to
+# `exec sandbox-exec -p`. The launcher does not use sandbox-exec at all any
+# more -- a process that starts confined cannot register with LaunchServices,
+# so it cannot show a window -- and the profile is passed to the driver, which
+# registers first and applies it to itself. So the old proxy went absent while
+# the thing it stood for was still there, and this assertion went red on a
+# build that confines exactly as much as it did before.
+#
+# Named separately so a failure says which half went: nt_macos_profile is the
+# shell building the text, sandbox_init_with_parameters is the driver applying
+# it. A build carrying the first and not the second computes a profile nobody
+# imposes, which is the shape of defect this section exists to catch.
+eq "the release build builds a seatbelt profile" \
+   "$([ "$(grep -cF -- "nt_macos_profile" "$T/release.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
+eq "and applies it" \
+   "$([ "$(grep -cF -- "sandbox_init_with_parameters" "$T/release.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
 
 # And the release build is smaller for the scaffolding it does not carry, which
 # is the same fact said as a number. Not asserted to a size -- the direction is.
