@@ -1,6 +1,15 @@
     NeutrinoWebview.createWindowsDriver = function () {
         var SystemRef = eval("System");
-        var webViewWinFormsAssembly, webViewType;
+        /*
+         * The package's assembly and type live on `self` and not here, and
+         * that is the same jsc.exe closure defect preparePackage's comment
+         * describes: a value assigned inside one closure is not visible to a
+         * sibling closure called during that same execution. preparePackage
+         * assigns these and createWebView reads them, and on the fallback
+         * path both happen inside one attachWebView call -- so the reader saw
+         * nothing. A property on an object is a lookup rather than a captured
+         * local, so it does not have the problem.
+         */
         // Initialised, not merely declared. preparePackage below reads
         // appFolder and is defined above the line in init that sets it, so
         // jsc.exe's definite-assignment pass has something to complain about
@@ -41,18 +50,50 @@
          * whether that is fatal.
          */
         var preparePackage = function () {
-            var webView2LibDir = self.ensureWebView2Package(SystemRef, appFolder);
+            /*
+             * The app folder asked for here rather than read off the closure,
+             * and it is a defect in jsc.exe's closures rather than a
+             * preference.
+             *
+             * `appFolder` is a local of createWindowsDriver, assigned inside
+             * init. A sibling closure called *during* init does not see that
+             * assignment. Measured on a Windows 11 client, two trace lines one
+             * statement apart:
+             *
+             *   PROBE init: appFolder just before prep=[C:\nt\accentpure]
+             *   PROBE prep: appFolder=[null]
+             *
+             * So this function was handed a null every time init called it,
+             * and Path.Combine raises ArgumentNullException on one -- "Value
+             * cannot be null. Parameter name: path1", which is what
+             * neutrino-error.log had been saying.
+             *
+             * The other caller is attachWebView, which runs after init has
+             * returned and does see the value, and that is the whole reason
+             * this went unnoticed: the fallback works, the suite that
+             * exercises the package path reaches it through the fallback, and
+             * the path init takes -- a machine with no WebView2 runtime at
+             * all, which is the machine this code exists for -- was never run
+             * anywhere.
+             *
+             * windowsLayout is the one rule that answers this question, it
+             * caches, and it does not depend on when it is asked. Nothing here
+             * has to know which caller it is under.
+             */
+            var folder = self.windowsLayout(SystemRef).appFolder;
+            var webView2LibDir = self.ensureWebView2Package(SystemRef, folder);
             if (!webView2LibDir) {
                 return false;
             }
             SystemRef.Environment.SetEnvironmentVariable("NEUTRINO_WEBVIEW2_LIB_DIR", webView2LibDir);
             self.prependLoaderPaths(SystemRef, webView2LibDir);
             SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.Core.dll"));
-            webViewWinFormsAssembly = SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.WinForms.dll"));
-            webViewType = webViewWinFormsAssembly.GetType("Microsoft.Web.WebView2.WinForms.WebView2");
-            if (!webViewType) {
+            var winFormsAssembly = SystemRef.Reflection.Assembly.LoadFrom(SystemRef.IO.Path.Combine(webView2LibDir, "Microsoft.Web.WebView2.WinForms.dll"));
+            var winFormsType = winFormsAssembly.GetType("Microsoft.Web.WebView2.WinForms.WebView2");
+            if (!winFormsType) {
                 throw new Error("Could not load Microsoft.Web.WebView2.WinForms.WebView2 type.");
             }
+            self.windowsWebViewPackage = { assembly: winFormsAssembly, type: winFormsType };
             self.trace("init: assemblies loaded from " + webView2LibDir);
             return true;
         };
@@ -265,7 +306,7 @@
                 self.trace("window  frame built");
                 return win;
             },
-            createWebView: function () {
+            createWebView: function (forcePackage) {
                 /*
                  * On the Evergreen path there is no control to make. A
                  * controller is created from the environment against the
@@ -278,15 +319,29 @@
                  * which kind of view this launch is going to build, which is
                  * all this call has ever needed to know.
                  */
-                if (evergreenPlan) {
+                /*
+                 * `forcePackage` said by the caller rather than inferred from
+                 * evergreenPlan, for the reason above: the fallback sets that
+                 * variable to null one statement before calling this, and this
+                 * closure does not see the assignment. It went on answering
+                 * the placeholder, which is a plain JavaScript object, and the
+                 * form was then asked to add one to its Controls -- "Type
+                 * mismatch", which is what neutrino-error.log said and which
+                 * named neither the object nor the reason.
+                 */
+                if (evergreenPlan && !forcePackage) {
                     return { evergreen: true };
                 }
-                var wv = SystemRef.Activator.CreateInstance(webViewType);
+                var pkg = self.windowsWebViewPackage;
+                if (!pkg) {
+                    throw new Error("neutrino: the WebView2 package was not prepared");
+                }
+                var wv = SystemRef.Activator.CreateInstance(pkg.type);
                 self.paintWindowsView(wv,
                     self.makeWindowsColor(SystemRef, self.resolveBackground(self.theme)));
                 if (userDataDir) {
                     try {
-                        var cpType = webViewWinFormsAssembly.GetType("Microsoft.Web.WebView2.WinForms.CoreWebView2CreationProperties");
+                        var cpType = pkg.assembly.GetType("Microsoft.Web.WebView2.WinForms.CoreWebView2CreationProperties");
                         if (cpType) {
                             var cp = SystemRef.Activator.CreateInstance(cpType);
                             try {
@@ -391,7 +446,7 @@
                         // loadHTML has already set Source by the time this
                         // function wraps the control: about:blank, then the
                         // view, then the form.
-                        var made = this.createWebView();
+                        var made = this.createWebView(true);
                         made.Source = new SystemRef.Uri("about:blank");
                         view = self.managedView(SystemRef, made);
                         win.Controls.Add(made);
