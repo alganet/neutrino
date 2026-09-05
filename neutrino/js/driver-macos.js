@@ -191,6 +191,60 @@
                 } catch (e) {
                     self.note("could not set the activation policy: " + e);
                 }
+
+                /*
+                 * Finish the launch here, rather than letting app.run do it.
+                 *
+                 * -run calls finishLaunching itself, and that is the problem:
+                 * run is the last line of runEventLoop, and showWindow --
+                 * makeKeyAndOrderFront and then activateIgnoringOtherApps --
+                 * is the line before runEventLoop in boot. So this process
+                 * made itself frontmost while AppKit had not finished
+                 * launching it and nothing was dequeuing events.
+                 *
+                 * Measured from outside with NSRunningApplication at 20ms,
+                 * twelve launches of the published artifact, every one the
+                 * same shape:
+                 *
+                 *   ~700ms   policy=0 active=false launched=false
+                 *   ~1230ms  policy=0 active=true  launched=false
+                 *   ~1560ms  policy=0 active=true  launched=true
+                 *
+                 * The middle line is three to four hundred milliseconds of a
+                 * window on screen, in front, that no run loop is reading
+                 * clicks for. It is also an activation asserted by a process
+                 * that has not finished launching, which is the case
+                 * activateIgnoringOtherApps: is free to decline under the
+                 * cooperative activation macOS 14 deprecated it for: the
+                 * window is ordered front either way, because ordering is the
+                 * window server's and it always works, and the focus is not
+                 * granted. What that looks like is a window that opens
+                 * unfocused and takes an app switch to become clickable --
+                 * intermittently, because whether the early activate sticks
+                 * and whether anyone clicks inside those milliseconds are
+                 * both timing.
+                 *
+                 * With this line the middle state does not occur: the app
+                 * goes from active=false launched=false straight to
+                 * active=true launched=true. Not the profile's doing, and
+                 * checked that way -- the same three lines come out of the
+                 * artifact run straight through osascript with no netinstall
+                 * and no confinement at all.
+                 *
+                 * Below setActivationPolicy, because finishLaunching is a
+                 * launch and an unregistered process has nothing to finish.
+                 * Above confineMac for the reason the paragraph above gives
+                 * for setActivationPolicy: it is AppKit talking to
+                 * LaunchServices, and the profile denies that.
+                 *
+                 * Read and not called, by this file's rule for a
+                 * zero-argument selector returning void. See the note beside
+                 * app.run.
+                 */
+                try { app.finishLaunching; } catch (e) {
+                    self.note("could not finish launching: " + e);
+                }
+
                 self.confineMac(ObjCRef, dollar);
                 ObjCRef.registerSubclass({
                     name: "NeutrinoWindowDelegate",
