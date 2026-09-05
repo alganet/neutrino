@@ -1676,6 +1676,16 @@ jobs:
         run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
       - shell: bash
         run: bash test/parse.sh test/neutrinotest.cmd
+      # And the suites themselves, which are a sixth language nothing checked.
+      # The argument below is the one that applies: a file that does not parse
+      # is a suite that never runs, found by running it. `$run:` is a scope and
+      # not a variable followed by a colon, launchtime.ps1 shipped one, and the
+      # lane spent eighteen minutes and skipped `core launch` to say so.
+      - timeout-minutes: 5
+        shell: pwsh
+        run: |
+          & .\test\psparse.ps1 *>&1 | Tee-Object -FilePath "$HOME\psparse.log"
+          exit $LASTEXITCODE
       # Before anything is launched, because an artifact that does not compile
       # is an app that never appears -- and every suite that waits for a window
       # then waits out its own timeout before saying so. One reserved word in
@@ -1829,6 +1839,41 @@ jobs:
           }
           Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           Get-Process -Name "neutrinowarm" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          exit 0
+      # A launch end to end, which the step above cannot give and never could.
+      #
+      # Its trace is the driver's, and the driver's clock starts at the driver's
+      # first line -- so `201ms of this process before its first line` is the
+      # newest line in it and the batch region is still missing entirely. That
+      # region is another process, it runs before this one exists, and the only
+      # place it can be read is from outside.
+      #
+      # Five launches of one app, numbered rather than averaged: run 1 compiles
+      # the exe and creates a WebView2 profile and is not the launch anybody
+      # complains about. The runs after it are what opening the app again costs,
+      # split into the batch region, the CLR and the global code, the driver's
+      # own phases, and then the frame and the title as a person sees them.
+      #
+      # Behind the warm-up, so the runtime is up and the numbers are a second
+      # launch's rather than a first one's. Reported and not asserted, for the
+      # reason the warm-up gives: what a launch costs on a four-cpu runner is
+      # not this project's to hold to a number. What it is for is the shape,
+      # and the two readings under it -- what a process start costs here, and
+      # what the stamp's certutil costs -- are the numbers the launcher's own
+      # comment about size and modification time has been waiting for.
+      - shell: bash
+        run: bash test/mkapp.sh --testing test/neutrinoloaders.js test/neutrinotime.cmd
+      - name: launch time
+        timeout-minutes: 10
+        # continue-on-error, for the reason the sheet step gives: this is a
+        # reporting tool. A lane that passed every control it has and goes red
+        # because the thing measuring it would not parse is reporting about
+        # itself -- and it took `core launch` down with it, which is a control.
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & .\test\launchtime.ps1 -Artifact test\neutrinotime.cmd -Runs 5 -Fresh *>&1 |
+            Tee-Object -FilePath "$HOME\launchtime.log"
           exit 0
       # The netinstall step below has had a timeout all along and this one has
       # not, so anything that fails to exit here stops the whole run rather
@@ -2177,6 +2222,13 @@ jobs:
       - uses: actions/checkout@v7
       - shell: bash
         run: bash test/mkapp.sh test/neutrinoattack.js test/neutrinoattack.cmd
+      # The suites this lane is made of, parsed before any of them runs, for
+      # the same reason the compile below happens first -- see psparse.ps1.
+      - timeout-minutes: 5
+        shell: pwsh
+        run: |
+          & .\test\psparse.ps1 *>&1 | Tee-Object -FilePath "$HOME\psparse.log"
+          exit $LASTEXITCODE
       # Before anything is launched, because an artifact that does not compile
       # is an app that never appears -- and every suite that waits for a window
       # then waits out its own timeout before saying so. One reserved word in
