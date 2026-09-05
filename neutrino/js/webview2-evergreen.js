@@ -109,9 +109,29 @@
             if (!SystemRef.IO.Directory.Exists(base)) {
                 continue;
             }
-            var wanted = SystemRef.IO.Path.Combine(base, version);
-            if (version && SystemRef.IO.Directory.Exists(wanted)) {
-                return wanted;
+            /*
+             * Inside the guard and not before it. Path.Combine raises
+             * ArgumentNullException on a null part, so computing `wanted`
+             * first and testing `version` second threw on exactly the
+             * machines this whole path exists for: one with no WebView2
+             * runtime registered under EdgeUpdate has no version to find,
+             * and the throw left evergreenPlan, left init, and took the
+             * launch with it.
+             *
+             * Measured on a Windows 11 client with the EdgeUpdate key made
+             * unreadable, which is the only way to reach that state on a
+             * machine that has the runtime. The trace stopped at `init:
+             * browser arguments set` -- the line before the plan is asked
+             * for -- no window was ever built, nothing reached stderr, and
+             * the process sat for thirty seconds and exited. A launch that
+             * fails is meant to say so; this one could not, because the
+             * throw happened before there was anything to say it with.
+             */
+            if (version) {
+                var wanted = SystemRef.IO.Path.Combine(base, String(version));
+                if (SystemRef.IO.Directory.Exists(wanted)) {
+                    return wanted;
+                }
             }
             var dirs = SystemRef.IO.Directory.GetDirectories(base);
             for (var j = 0; j < dirs.Length; j++) {
@@ -263,6 +283,28 @@
      * commits to. That belongs after there is a window to do it behind.
      */
     NeutrinoWebview.evergreenPlan = function (SystemRef) {
+        /*
+         * And the contract said out loud, because it was not being kept.
+         * init's comment above this call says every failure answers null and
+         * that null falls through to the launch this driver has always done
+         * -- which is what makes depending on an unsupported entry point
+         * affordable at all. That was true of startEvergreen and never of
+         * this function: two registry walks and a directory walk, none of
+         * them wrapped, in front of a launch that has no other path.
+         *
+         * The ArgumentNullException below is fixed where it was raised, and
+         * this is here so that the next one costs a download rather than the
+         * app.
+         */
+        try {
+            return this.evergreenPlanUnguarded(SystemRef);
+        } catch (e) {
+            this.trace("evergreen: could not look for a runtime: " + e);
+            return null;
+        }
+    };
+
+    NeutrinoWebview.evergreenPlanUnguarded = function (SystemRef) {
         var version = this.evergreenRuntimeVersion(SystemRef);
         var runtimeDir = this.evergreenRuntimeDir(SystemRef, version);
         if (!runtimeDir) {
