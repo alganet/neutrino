@@ -253,6 +253,16 @@
                 if (winColor) {
                     try { win.BackColor = winColor; } catch (e) { self.note("could not paint the window: " + e); }
                 }
+                /*
+                 * The other end of the mark above it, because the interval
+                 * between the two was one line and two unrelated things. On a
+                 * client VM it measured 196ms -- a Form being constructed and
+                 * 230 interface methods being emitted -- and which of the two
+                 * it mostly is decides whether the answer is a warmer toolkit
+                 * or a different emitter. Free in a release build: trace is an
+                 * empty function there. See js/trace.js.
+                 */
+                self.trace("window  frame built");
                 return win;
             },
             createWebView: function () {
