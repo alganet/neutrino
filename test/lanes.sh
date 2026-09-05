@@ -31,24 +31,18 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# Under $HOME on macOS, and mktemp's directory everywhere else.
+# An ordinary temporary directory again.
 #
-# Not a preference. mktemp puts this in /private/var/folders, and the launcher's
-# own seatbelt profile denies process-exec* on that subpath -- w^x, deliberately,
-# with a paragraph beside it. So every stub this suite writes was unexecutable
-# by the one lane that applies that profile:
-#
-#   sandbox-exec: execvp() of 'osascript' failed: Operation not permitted
-#
-# which is why lanes.sh has never run on macOS, and why the osascript
-# assertions below fail there against a launcher that is behaving correctly.
-# A stub standing in for a real engine belongs where a real engine lives, which
-# is not a directory the app may write; $HOME is the nearest thing to that this
-# suite can create.
-case "$(uname -s)" in
-    Darwin) WORK="$(mktemp -d "$HOME/.neutrino-lanes.XXXXXX")" ;;
-    *)      WORK="$(mktemp -d)" ;;
-esac
+# It was briefly under $HOME, with the marks file split off into $TMPDIR, and
+# both were working around one thing: the launcher applied its seatbelt profile
+# with sandbox-exec before osascript started, and that profile denies
+# process-exec* on /private/var/folders -- so a stub written where mktemp puts
+# it could not be run at all ("sandbox-exec: execvp() of 'osascript' failed").
+# The profile is applied by the driver now, after the process has registered as
+# an application, so nothing is confining anything at the moment a stub is
+# exec'd and neither workaround has a reason left. Measured: the whole suite
+# passes from here.
+WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 FAILURES=0
@@ -100,17 +94,7 @@ for tool in sh bash sed head env dirname basename mkdir rm cat awk; do
     src="$(command -v "$tool" 2>/dev/null)" && ln -sf "$src" "$BIN/$tool"
 done
 
-# In $TMPDIR and not in $WORK, for the other half of the reason $WORK moved.
-#
-# The stubs have to be somewhere the launcher's seatbelt profile permits
-# executing, which is anywhere but the app dir and the Darwin temp dir; the
-# marks file has to be somewhere it permits *writing*, which is the app dir and
-# the Darwin temp dir and nowhere else. One directory cannot be both, so they
-# are two. $TMPDIR satisfies the write side on macOS -- the profile grants it by
-# name and again through /private/var/folders -- and is ordinary everywhere
-# else.
-MARKS="${TMPDIR:-/tmp}/nt-lanes-marks.$$"
-trap 'rm -rf "$WORK"; rm -f "$MARKS"' EXIT
+MARKS="$WORK/marks"
 
 # A stub engine: says it ran, and exits with whatever this suite is asking the
 # walk about.
