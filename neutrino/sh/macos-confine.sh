@@ -93,88 +93,46 @@ run_macos() {
     app_dir="$script_dir/$script_name"
     mkdir -p "$app_dir" 2>/dev/null
 
-    if [ ! -x /usr/bin/sandbox-exec ]; then
-        echo "neutrino: sandbox-exec not found; running unconfined" >&2
-        NEUTRINO_SCRIPT_PATH="$script_path" exec osascript -l JavaScript "$script_path"
-    fi
-
-    # The profile is a string and never a file, and that is the whole of this
-    # change. It used to be written to neutrino.sb inside app_dir -- the one
-    # directory the profile itself makes writable -- with the write unchecked
-    # and the next line asking only whether the file was non-empty and whether
-    # seatbelt would take it. Neither question is "did this run write it".
+    # The profile is built here and applied by the driver, and the order is the
+    # whole of this change.
     #
-    # Both halves of that were reachable, measured on a runner:
+    # It used to be `exec sandbox-exec -p "$profile" osascript`, so osascript
+    # started already confined. On macOS 26 that costs the window. AppKit
+    # registers a process as an application through LaunchServices, and this
+    # profile denies com.apple.coreservices.launchservicesd -- deliberately,
+    # because that is half of what closes the write-a-bundle-and-launch-it
+    # escape. Under it NSApp.setActivationPolicy(Regular) returns false and the
+    # process never enters the application list: it runs, its WKWebView renders,
+    # its page's own probe reports back, and nothing appears on screen. Measured
+    # against the same artifact with no profile, which registers policy=0 and
+    # shows its window.
     #
-    #   - plant a permissive profile, chmod 0444, and the rewrite fails with
-    #     `Permission denied` on stderr that nothing acts on. The app launched
-    #     under the planted text -- said by the launched process itself, which
-    #     found the planted profile's fingerprint denial in force and could
-    #     write $HOME.
-    #   - plant a *directory* named neutrino.sb and seatbelt refuses it, at
-    #     which point the fallback below runs the app with no profile at all.
+    # There is no way to fix that from out here. So the profile goes to the
+    # driver instead, which registers with LaunchServices first and applies this
+    # to itself immediately afterwards -- before it reads a theme, opens a
+    # window or loads a line of the app's document. See createMacDriver's init.
     #
-    # sandbox-exec -p was measured against -f before being trusted with this:
-    # it accepts the profile verbatim, comments, `#"..."` regex literal and
-    # spaced paths included; the same read, write, exec and LaunchServices
-    # checks come back identical under both; a real WebKit window comes up; and
-    # the profile does not linger in ps, because sandbox-exec execs and the
-    # argv goes with it.
+    # Nothing is given up by moving it. This function is part of the artifact,
+    # so an artifact that did not want to be confined has always been able to
+    # ship without it; the launcher's layer was cooperative before this change
+    # and is cooperative after it. The layer that is not -- netinstall's -- is
+    # applied by a binary the artifact does not write, and it stays exactly
+    # where it was.
+    #
+    # The variable is set on the exec line rather than exported, and it is set
+    # unconditionally, so a value inherited from outside cannot survive to be
+    # read as this launch's profile.
     profile="$(nt_macos_profile "$app_dir")"
 
-    # Two sentences, because they were one and the one was wrong. An empty
-    # profile means this shell could not produce the text -- the here-document
-    # failure above was exactly that -- and seatbelt was never asked. Saying
-    # "seatbelt rejected the profile" for it sent the reading of a shell bug to
-    # the sandbox, which is the one place it was not.
+    # An empty profile means this shell could not produce the text -- the
+    # here-document failure this file's header describes was exactly that. The
+    # driver would have nothing to apply, so say which of the two happened here
+    # rather than leaving it to a note about sandbox_init.
     if [ -z "$profile" ]; then
         echo "neutrino: could not build the seatbelt profile; running unconfined" >&2
         NEUTRINO_SCRIPT_PATH="$script_path" exec osascript -l JavaScript "$script_path"
     fi
 
-    # Proven against a program that does nothing before it is trusted with one
-    # that matters. A rejected profile makes sandbox-exec exit immediately, and
-    # once the app is the thing being launched there is no way to tell that
-    # apart from an app that failed on its own.
-    #
-    # The fallback stays "warn and run unconfined" rather than becoming fatal.
-    # With the file gone there is no longer an input anyone can supply to
-    # trigger it, so it is what it was always meant to be -- a compatibility
-    # answer for a macOS that will not take this profile -- and not a downgrade
-    # a same-uid process can reach for.
-    if ! /usr/bin/sandbox-exec -p "$profile" /usr/bin/true >/dev/null 2>&1; then
-        # Seatbelt sometimes does not nest, and the failure above cannot say
-        # whether that is what happened. A process inside a profile applied by
-        # sandbox-exec cannot apply a second one: sandbox_apply returns EPERM
-        # for *any* profile there, `(version 1)(allow default)` included --
-        # and that one cannot be rejected on its merits, so it separates "this
-        # process may not confine itself at all" from "this profile is bad".
-        #
-        # Which is not netinstall, and that distinction cost a wrong reading
-        # before it was measured. netinstall confines itself with
-        # sandbox_init_with_parameters and then execs the launcher, and a
-        # sandbox-exec after *that* is accepted: the launcher applies this
-        # profile on top of netinstall's, and netinstall/test/e2e.sh asserts
-        # the silence that says so. The two SPIs do not answer the same way.
-        # So this branch is for an outer profile that came from sandbox-exec
-        # -- somebody wrapping the artifact in one of their own -- and under
-        # the downloader it should never be reached.
-        #
-        # The probe is on the failure path alone, so a launch that confines
-        # itself pays nothing for it, and it is a measurement rather than a
-        # marker in the environment. A marker would be the downgrade the
-        # paragraph above refuses: anything that can set a variable could
-        # then tell a standalone artifact it was already confined and get it
-        # to skip its own profile.
-        if ! /usr/bin/sandbox-exec -p '(version 1)(allow default)' \
-                /usr/bin/true >/dev/null 2>&1; then
-            echo "neutrino: already inside a seatbelt profile; not nesting" >&2
-        else
-            echo "neutrino: seatbelt rejected the profile; running unconfined" >&2
-        fi
-        NEUTRINO_SCRIPT_PATH="$script_path" exec osascript -l JavaScript "$script_path"
-    fi
-
-    NEUTRINO_SCRIPT_PATH="$script_path" exec /usr/bin/sandbox-exec -p "$profile" \
-        osascript -l JavaScript "$script_path"
+    NEUTRINO_SCRIPT_PATH="$script_path" NEUTRINO_MACOS_PROFILE="$profile" \
+        exec osascript -l JavaScript "$script_path"
 }

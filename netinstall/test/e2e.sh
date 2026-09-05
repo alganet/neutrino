@@ -129,48 +129,42 @@ elif command -v osascript >/dev/null 2>&1 && [ "$(uname -s)" = "Darwin" ]; then
     STATE="$(nt_app_probe 180)"
     nt_kill_tree $APP_PID
 
-    # What the launcher said about its own confinement, which until now was
-    # written to app.log and read by nobody: the dump at the bottom of this
-    # file is behind `if [ "$FAILURES" -ne 0 ]`, so on a green run these lines
-    # went nowhere. Two defects lived in that gap for as long as this suite has
-    # been green, both on this exact branch. The window came up through both,
-    # so STATE said CONTENT_OK and the suite agreed.
+    # What the launcher said about its own confinement, which until this suite
+    # read it was written to app.log and looked at by nobody: the dump at the
+    # bottom of this file is behind `if [ "$FAILURES" -ne 0 ]`, so on a green run
+    # these lines went nowhere, and two defects lived in that gap.
     #
-    # Silence is the pass, and it means the launcher applied its own seatbelt
-    # profile on top of netinstall's. That it *can* is worth stating, because
-    # the obvious reasoning says otherwise: a process already inside a seatbelt
-    # profile cannot apply a second one, and `sandbox-exec` inside
-    # `sandbox-exec` does fail with `sandbox_apply: Operation not permitted`
-    # for any profile at all. netinstall is not that case. It confines itself
-    # with sandbox_init_with_parameters and then execs, and a sandbox-exec
-    # after *that* is accepted -- measured here, on this branch, by this
-    # assertion going quiet while --info reports the fetch-and-run profile
-    # applied. The two SPIs do not answer the same way and only one of them is
-    # in this path.
+    # Silence is the pass, and on this platform it now means something more
+    # specific than it used to. The launcher no longer applies its profile with
+    # sandbox-exec; it hands the text to the driver, which registers with
+    # LaunchServices and then applies the profile to itself. Under netinstall
+    # there is nothing for it to apply -- a process already inside a profile
+    # cannot take a second one, sandbox_init answers -1 -- so the driver asks
+    # first whether writes outside the app dir are already refused, finds that
+    # they are, and says nothing. That silence is this assertion passing.
     #
-    # So each of the launcher's four messages is a failure here, and they are
-    # told apart because they want different fixes:
+    # Each of the four things it could say instead is a failure, and they want
+    # different fixes:
     #
-    #   could not build   the here-document defect returning. /bin/sh here is
-    #                     bash 3.2, its here-documents go to /tmp whatever
-    #                     $TMPDIR says, and netinstall's profile does not grant
-    #                     /tmp. test/confine-macos.sh asserts the same thing
-    #                     without a window.
-    #   rejected          sandbox-exec refused the profile on its merits: the
-    #                     launcher's own profile has gone bad.
-    #   not nesting       the trivial-profile probe was refused, so this
-    #                     process could not have applied anything. If this ever
-    #                     fires, the SPI difference above has stopped holding
-    #                     and the app is running on netinstall's profile alone.
-    #   not found         no /usr/bin/sandbox-exec on a macos runner.
-    # -oE and not a basic-regex alternation: `\|` is a GNU extension, and this
-    # branch runs on the one platform whose grep is BSD. It happens to accept
-    # it, measured; an extended regex is what is portable and it costs a letter.
-    NT_CONFINE_SAID="$(grep -oE 'neutrino: (sandbox-exec not found|could not build the seatbelt profile|already inside a seatbelt profile|seatbelt rejected the profile)' \
+    #   could not build            the here-document defect returning. /bin/sh
+    #                              here is bash 3.2, its here-documents go to
+    #                              /tmp whatever $TMPDIR says, and no profile in
+    #                              this stack grants /tmp.
+    #   seatbelt refused           sandbox_init was reached, the process was not
+    #                              already confined, and the profile did not
+    #                              take: the launcher's own profile has gone bad.
+    #   could not reach            the bind of sandbox_init_with_parameters
+    #                              failed, so nothing was even attempted.
+    #   could not register         setActivationPolicy returned false, which is
+    #                              the window not appearing -- the whole reason
+    #                              the ordering changed. If this fires, the
+    #                              LaunchServices denial is back in a profile
+    #                              that is applied before AppKit registers.
+    NT_CONFINE_SAID="$(grep -oE 'neutrino: (could not build the seatbelt profile|seatbelt refused this process.s own profile|could not reach sandbox_init_with_parameters|could not register as an application)' \
         "$WORK/app.log" 2>/dev/null | head -1)"
     case "${NT_CONFINE_SAID:-}" in
         "")
-            echo "  PASS: the launcher applied its own seatbelt profile over netinstall's" ;;
+            echo "  PASS: the launcher found netinstall's profile already in force and said nothing" ;;
         *"could not build"*)
             nt_fail "launcher confinement expected=silence actual=could-not-build (a here-document under a profile that denies /tmp)"
             FAILURES=$((FAILURES + 1)) ;;
