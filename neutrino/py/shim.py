@@ -499,6 +499,28 @@ def on_style_updated(_widget):
 window.connect("style-updated", on_style_updated)
 
 
+# And the setting behind it, for the reason createGjsDriver's runEventLoop
+# gives at length: `style-updated` is about this widget's own computed style
+# and not about the theme, so a change that leaves the window drawing itself
+# identically never reaches it. Measured on Mint 22 / Cinnamon / GTK 3.24 over
+# five theme changes, this fired 5 times and `style-updated` fired 2 -- the
+# three it missed being the desktop's accent picker, which moves
+# theme_selected_bg_color and leaves the canvas where it was.
+#
+# The handler is the same one, because the work either signal asks for is
+# identical and take_theme drops whichever of the two arrives second.
+def on_theme_name(_settings, _pspec):
+    on_style_updated(None)
+
+
+try:
+    gtk_settings = Gtk.Settings.get_default()
+    if gtk_settings is not None:
+        gtk_settings.connect("notify::gtk-theme-name", on_theme_name)
+except Exception as exc:
+    sys.stderr.write("neutrino: no settings watcher on this lane: %s\n" % (exc,))
+
+
 def on_load_changed(_view, event):
     # COMMITTED and not FINISHED, and the difference is a hole: the author's
     # script runs at document end, which is after the commit and before the
