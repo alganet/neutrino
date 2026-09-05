@@ -497,9 +497,56 @@ to match at the same time; if you named a colour, they are never repainted.
 | Lane | Palette | Change signal |
 |---|---|---|
 | gjs / cjs / PyGObject | `GtkStyleContext.lookup_color` | `style-updated` on the window |
-| Qt | `SystemPalette` | the binding re-evaluates itself |
+| Qt | `SystemPalette` | `SystemPalette` itself on KDE; **none** under the GTK platform theme — see below |
 | macOS | `NSColor`, resolved under the current `NSAppearance` | `AppleInterfaceThemeChangedNotification` |
 | Windows | `SystemColors`, plus the app-theme registry value | re-read on the event loop |
+
+**On KDE the Qt lane follows a theme change while it runs, and the bindings are
+the whole watcher.** Measured in a Fedora 42 container on Qt 6.10.2 with
+`plasma-integration` 6.6.4, `KDEPlasmaPlatformTheme6.so` confirmed loaded in
+the plugin loader log rather than assumed. One `plasma-apply-colorscheme` under
+a running process moves the window colour from `#eff0f1` to `#202326` and emits
+four times: `SystemPalette`'s per-property notifies, its whole-palette notify,
+and `QStyleHints::colorScheme`. The palette lands first and `colorScheme`
+catches up after it, so a reader that needs the two to agree should read the
+palette and derive — which is what the lane does. The same happens with
+`QT_QPA_PLATFORMTHEME` unset and only `XDG_CURRENT_DESKTOP=KDE` set, which is
+what a KDE user actually has.
+
+The channel is KDE's DBus change notification, not the file. Writing
+`kdeglobals` directly with `kwriteconfig6` and no `--notify` moves the file and
+fires nothing, so a probe that edits `kdeglobals` by hand reports a false
+negative on a KDE that works. System Settings and `plasma-apply-colorscheme`
+both notify.
+
+**Under the GTK platform theme it does not follow one.** Measured on Qt 6.4.2
+with `QGtk3Theme` loaded: a theme set before the process starts is read,
+whether through `GTK_THEME` or through XSettings, and the same theme set under
+a running process changes nothing and emits nothing. Qt is asked for the
+palette it has and that plugin does not rebuild one when the desktop moves, so
+there is nothing for `SystemPalette` to re-evaluate. This is the plugin a bare
+Qt install picks up on a non-KDE desktop, and it is what the suite's own
+`ubuntu-latest` runner has — Ubuntu ships `plasma-integration` built against
+Qt 5, so `QT_QPA_PLATFORMTHEME=kde` there has no Qt 6 plugin to load. An app
+*launched* after a theme change is correct either way.
+
+**On the Qt lane `prefers-color-scheme` is right at load and stale after.**
+It agrees with the palette at startup on KDE — measured on Qt 6.10.2, a
+`BreezeLight` launch reports `light` and a `BreezeDark` launch reports `dark`,
+so the disagreement this lane used to show was QGtk3Theme handing Qt a palette
+Chromium knew nothing about, not the lane. Under a live flip the palette moves,
+`theme` is replaced and `neutrino:themechange` fires, and the media query in
+the already-loaded document stays where it was for the rest of the process.
+
+Chromium does receive the new scheme: after the flip a `reload()` reports
+`dark`, and so does a view created after it. What does not happen is an
+existing document re-evaluating the query. Nothing on the Qt side reaches it
+either — `QStyleHints::colorScheme` follows the flip and setting it back by
+hand moves neither the query nor the page.
+
+So on this lane read `theme.scheme` or the custom properties, both of which are
+rewritten live, rather than the media query. The other lanes have no such split
+and either spelling follows.
 
 **Only the live scheme, not both.** There is no `theme.light` and `theme.dark`:
 of the four toolkits only macOS can resolve a palette under an appearance it is

@@ -24,10 +24,53 @@ Window {
         // loading and the view injecting still hands over the current one.
         nt.themeLiteral(root.ntTheme))
 
-    // The desktop's palette. On this lane the watcher is the binding:
-    // SystemPalette re-evaluates when the system palette changes, so
-    // everything downstream of it -- the window colour, the view colour, the
-    // push below -- follows without a signal being connected anywhere.
+    // The desktop's palette, read once. Everything downstream of it -- the
+    // window colour, the view colour, the push below -- is a binding, so a
+    // palette that moves carries to all three with no signal connected
+    // anywhere.
+    //
+    // On KDE it moves, and the bindings are the whole watcher. Measured in a
+    // Fedora 42 container, Qt 6.10.2, plasma-integration 6.6.4, with
+    // KDEPlasmaPlatformTheme6.so confirmed loaded in the plugin loader log
+    // rather than assumed. `plasma-apply-colorscheme` under a running
+    // process, one launch:
+    //
+    //   start                      window=#eff0f1 text=#232629 scheme=1
+    //   change#1 window            window=#202326 text=#fcfcfc
+    //   change#2 highlight
+    //   change#3 palette
+    //   change#4 colorScheme                                    scheme=2
+    //
+    // Four signals for one flip: SystemPalette's per-property notifies, its
+    // whole-palette notify, and QStyleHints::colorScheme. The palette lands
+    // first and colorScheme catches up after, so a reader that wants the two
+    // to agree should read the palette and derive, which is what this file
+    // already does. Autodetected the same way from XDG_CURRENT_DESKTOP=KDE
+    // with QT_QPA_PLATFORMTHEME unset, which is what a KDE user actually has.
+    //
+    // The channel is the DBus change notification, not the file. Writing
+    // kdeglobals with kwriteconfig6 and no --notify moved the file and fired
+    // nothing -- so a probe that edits kdeglobals by hand reports a false
+    // negative on a KDE that works. System Settings and
+    // plasma-apply-colorscheme both notify; that is the knob to test with.
+    //
+    // Under QGtk3Theme it does not move, and that is a fact about the plugin
+    // rather than about the lane. Qt asks its platform theme for the palette,
+    // and that one does not rebuild one when the desktop moves. On Qt 6.4.2
+    // with QGtk3ThemePlugin loaded, one job, three launches:
+    //
+    //   Net/ThemeName=Adwaita-dark before launch    window=#323232
+    //   GTK_THEME=Adwaita-dark                      window=#323232
+    //   the same flipped under a running process    window=#efefef, 0 changes
+    //
+    // So XSettings is a channel Qt reads at startup and that plugin never
+    // reads again. There is no repair to make there from here: polling
+    // SystemPalette would re-read the same stale value, and QGuiApplication
+    // has no earlier signal to connect that this does not already sit
+    // downstream of. It is the platform theme's to fix, and KDE's has.
+    //
+    // What works on both is every launch: an app started after a theme change
+    // gets the new palette, which is what the suite's two halves assert.
     SystemPalette {
         id: sysPalette
         colorGroup: SystemPalette.Active
