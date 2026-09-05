@@ -296,6 +296,7 @@
         }
         var dll = plan.dll;
 
+        this.trace("evergreen: emitting types");
         if (!NeutrinoEvergreen.Begin()) {
             this.trace("evergreen: the emitter would not start");
             return null;
