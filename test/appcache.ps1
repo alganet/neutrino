@@ -157,6 +157,19 @@ if ($hash1 -ne $hash2) { Fail "cached expected=the second launch reuses the exe 
 if ($mtime1 -ne $mtime2) { Fail "cached expected=the exe is not rewritten actual=its mtime moved" }
 if ($r2.window -ne "UP") { Fail "cached expected=the app comes up from the kept exe actual=DOWN" }
 
+# And the digest was taken, because here it is read. This is the other half of
+# the assertion netinstall/test/e2e.sh makes: there the script sits above the
+# only writable directory, no stamp can be kept, nothing compares a digest with
+# anything, and a launcher.hash left behind would mean a certutil ran for a
+# reader that does not exist. Beside the script a stamp *is* kept and *is*
+# compared, so the file has to be there -- without this arm the other one
+# passes just as well against a launcher that stopped hashing entirely.
+$hashFile = Join-Path $folder "launcher.hash"
+Report "cached digest=$(if (Test-Path $hashFile) { 'taken' } else { 'not taken' })"
+if (-not (Test-Path $hashFile)) {
+    Fail "cached expected=the digest is taken where a stamp is compared actual=no launcher.hash"
+}
+
 # =====================================================================
 # changed: an edited source rebuilds, and the stamp follows
 # =====================================================================

@@ -150,6 +150,21 @@ if [ "$NT_WINDOWS" = "1" ]; then
         else
             echo "  PASS: a second launch runs the kept exe and compiles nothing"
         fi
+        # And no digest was taken for either of them. The launcher hashes the
+        # script only where a stamp can be compared with the answer, and under
+        # netinstall there is nowhere to keep one -- the shelf is above the
+        # writable directory -- so both the granted launch and the sealed one
+        # leave for the compile or for :LAUNCH before any certutil runs.
+        # launcher.hash is where that call would write, so its absence is the
+        # assertion: a launch that starts a process to answer a question
+        # nothing asks would put the file there. test/appcache.ps1 holds the
+        # other half, where the digest *is* read and the file must exist.
+        if [ -f "$APPDIR/launcher.hash" ]; then
+            nt_fail "slot expected=no digest is taken where no stamp can be kept actual=$APPDIR/launcher.hash exists"
+            FAILURES=$((FAILURES + 1))
+        else
+            echo "  PASS: neither launch ran a certutil nothing would have read"
+        fi
         if [ "$STATE2" != "$STATE" ]; then
             nt_fail "slot expected=the second launch comes up like the first ($STATE) actual=$STATE2"
             FAILURES=$((FAILURES + 1))

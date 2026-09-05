@@ -79,6 +79,7 @@ REM that is the mechanism and nothing else produces it. That is the idea below
 REM -- claiming the stamp is also the test of whether the directory can be
 REM written -- used the other way round.
 SET "CERTUTIL=%WINDIR%\System32\certutil.exe"
+SET "HASH_OUT=%APP_FOLDER%\launcher.hash"
 SET "SLOT=%SCRIPT_DIR%%SCRIPT_NAME%.build"
 SET "APP_EXE=%SCRIPT_DIR%%SCRIPT_NAME%.exe"
 SET "APP_STAMP=%SCRIPT_DIR%%SCRIPT_NAME%.stamp"
@@ -130,24 +131,17 @@ IF EXIST "%APP_EXE%" IF NOT EXIST "%APP_STAMP%" (
     SET "MANIFEST=%APP_FOLDER%\%SCRIPT_NAME%.exe.manifest"
 )
 
-REM The digest of the file being run, which is also the file being compiled.
-REM Empty if certutil is not there or would not answer, and an empty one takes
-REM the compile path rather than trusting whatever is cached.
-REM %CERTUTIL% is deliberately unquoted. `FOR /F usebackq` hands the backticked
-REM command to a nested cmd, and one that *begins* with a quote comes back as
-REM "The filename, directory name, or volume label syntax is incorrect" with no
-REM output and no error the loop can see -- measured, and it is how the first
-REM version of this shipped a stamp reading "ECHO is off." while everything else
-REM looked right. %WINDIR%\System32 cannot contain a space, so the quotes bought
-REM nothing there; "%~f0" keeps its own, and a script under a path with spaces
-REM was measured hashing correctly.
-IF EXIST "%CERTUTIL%" (
-    FOR /F "usebackq skip=1 tokens=* delims=" %%H IN (`%CERTUTIL% -hashfile "%~f0" SHA256`) DO (
-        IF NOT DEFINED SRC_HASH SET "SRC_HASH=%%H"
-    )
-)
-IF DEFINED SRC_HASH SET "SRC_HASH=!SRC_HASH: =!"
-
+REM The stamp, and only the stamp. The digest it is compared with is asked for
+REM below, once there is something to compare it against.
+REM
+REM Every launch used to run a certutil here, and on the two paths that matter
+REM most nothing read what it produced. Under netinstall the script sits one
+REM level above the only writable directory, so the stamp cannot be written,
+REM APP_STAMP ends up empty, and `IF NOT DEFINED APP_STAMP GOTO :BUILD` below
+REM is reached before any comparison -- and the slot's sealed branch leaves for
+REM :LAUNCH earlier still. A process and a file write an app launch, for a
+REM value with no reader, which is the shape this file opened with in the
+REM escape-byte probe.
 IF DEFINED APP_STAMP IF EXIST "%APP_STAMP%" (
     FOR /F "usebackq tokens=* delims=" %%S IN ("%APP_STAMP%") DO (
         IF NOT DEFINED CACHED_HASH SET "CACHED_HASH=%%S"
@@ -165,9 +159,10 @@ REM The slot's granted branch arrives here with no stamp and no digests, having
 REM skipped both reads above, and the first line is what sends it to the
 REM compile. Nowhere to keep a digest is nowhere to have read one from.
 IF NOT DEFINED APP_STAMP GOTO :BUILD
-IF NOT DEFINED SRC_HASH GOTO :BUILD
 IF NOT DEFINED CACHED_HASH GOTO :BUILD
 IF NOT EXIST "%APP_EXE%" GOTO :BUILD
+CALL :HASH
+IF NOT DEFINED SRC_HASH GOTO :BUILD
 IF /I NOT "!CACHED_HASH!"=="!SRC_HASH!" GOTO :BUILD
 GOTO :RUN
 
@@ -241,8 +236,12 @@ REM The stamp goes down only once the exe it names is in place, so the window
 REM where a stamp vouches for something that is not there yet does not exist.
 REM Redirect first: `ECHO %SRC_HASH%> file` on a digest ending in a digit is
 REM parsed as a handle redirect, and the stamp loses its last character.
+REM And the digest is asked for here, once the directory has proved it will
+REM take the stamp -- so a build with nowhere to write one, which is every
+REM granted slot, does not pay for a value it is about to drop.
 IF DEFINED APP_STAMP (
-    > "!APP_STAMP!" ECHO !SRC_HASH!
+    CALL :HASH
+    IF DEFINED SRC_HASH > "!APP_STAMP!" ECHO !SRC_HASH!
 )
 
 :RUN
@@ -288,3 +287,26 @@ REM live path on every tier rather than a fallback the testing builds skip.
 START "" /D "%APP_FOLDER%" "%APP_EXE%"
 IF ERRORLEVEL 1 EXIT /B 1
 EXIT /B 0
+
+REM The digest, in one place because there are two callers and they want it at
+REM different moments: the launch that has a stamp to compare against, and the
+REM build that has somewhere to write one. Neither is the slot, which keeps no
+REM stamp and needs no digest.
+REM
+REM Through a file rather than a pipe. `FOR /F usebackq` with a backticked
+REM command hands it to a nested cmd, so asking for one digest created two
+REM processes; over a quoted *path* it opens a file and starts nothing. On the
+REM machine this was measured on -- a Windows 11 client, Defender on -- a
+REM process start is 18 to 59 ms and certutil is 34 to 65.
+REM
+REM Unreachable by falling through: every path above leaves with EXIT /B.
+:HASH
+IF DEFINED SRC_HASH GOTO :EOF
+IF NOT EXIST "%CERTUTIL%" GOTO :EOF
+2>NUL >"%HASH_OUT%" "%CERTUTIL%" -hashfile "%~f0" SHA256
+IF NOT EXIST "%HASH_OUT%" GOTO :EOF
+FOR /F "usebackq skip=1 tokens=* delims=" %%H IN ("%HASH_OUT%") DO (
+    IF NOT DEFINED SRC_HASH SET "SRC_HASH=%%H"
+)
+IF DEFINED SRC_HASH SET "SRC_HASH=!SRC_HASH: =!"
+GOTO :EOF
