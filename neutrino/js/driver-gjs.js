@@ -203,7 +203,22 @@
                 // run_javascript and not evaluate_javascript: this lane
                 // resolves WebKit2 to 4.1 or 4.0 and only the first has the
                 // newer spelling. Deprecated in 4.1, present in both.
-                wv.run_javascript(js, null, null, null);
+                //
+                // Three arguments and not four. The C function takes a
+                // user_data alongside the callback and gjs drops it, so the
+                // fourth was one this binding never had:
+                //
+                //   JS WARNING: Too many arguments to method
+                //   WebKit2.WebView.run_javascript: expected 3, got 4
+                //
+                // It warned on every delivery and never on a launch, which
+                // is why it went unseen for so long -- the only caller is a
+                // theme change, and until the settings watcher below existed
+                // this lane's watcher never fired on the desk it was written
+                // at. The PyGObject shim passes four because PyGObject keeps
+                // the user_data that gjs drops; the two spellings are both
+                // right for their binding.
+                wv.run_javascript(js, null, null);
             },
             createWebView: function () {
                 var ucm = new WebKit2.UserContentManager();
@@ -430,13 +445,35 @@
                 // gets back to repaint and evaluate below.
                 var driver = this;
                 /*
-                 * `style-updated` on the window, which is what GTK emits
-                 * when the style context behind a widget changes for any
-                 * reason -- a new theme name, a dark-preference flip, a
-                 * provider added. It is the signal for the thing being
-                 * reported rather than for one of the settings that can
-                 * cause it, so a desktop that changes its colours some way
-                 * nobody here anticipated still arrives.
+                 * `style-updated` on the window, which GTK emits when the
+                 * style context behind that widget changes -- a new theme
+                 * name, a dark-preference flip, a provider added.
+                 *
+                 * This comment used to say it was the signal for the thing
+                 * being reported rather than for one of the settings that
+                 * can cause it, so that a desktop changing its colours some
+                 * way nobody anticipated still arrived. That was wrong, and
+                 * the word doing the damage is *that widget*: the signal is
+                 * about the widget's own computed style and not about the
+                 * theme. A change that leaves this window drawing itself
+                 * identically is a change GTK has no reason to mention,
+                 * however much of the palette moved underneath it.
+                 *
+                 * Measured on Mint 22 / Cinnamon / GTK 3.24, one window and
+                 * three instruments watching the same five theme changes:
+                 *
+                 *   notify::gtk-theme-name   5 of 5
+                 *   style-updated            2 of 5
+                 *   polling lookup_color     5 of 5
+                 *
+                 * The three it missed are `Mint-L-Dark` to `-Aqua` to
+                 * `-Red` to `-Blue`, which are this desktop's accent
+                 * picker: same canvas, same derived scheme, and
+                 * `theme_selected_bg_color` moving 8fa876 -> 6aa0bd ->
+                 * b35a57 -> 596eb5 the whole time. The window's own
+                 * background is identical across all four, so it restyled
+                 * to the same thing and GTK said nothing. The two it caught
+                 * both crossed theme families, where the canvas does move.
                  *
                  * Which is also why applyTheme's diff is not optional:
                  * repainting the window adds a CssProvider to it, and that
@@ -449,6 +486,37 @@
                     });
                 } catch (e) {
                     self.note("no theme watcher on this lane: " + e);
+                }
+                /*
+                 * And the setting behind it, which is the half the signal
+                 * above cannot see.
+                 *
+                 * `gtk-theme-name` on GtkSettings fired for every one of
+                 * the five, with the new palette already readable off a
+                 * style context by the time it did -- so this needs no
+                 * delay and no second read. It is a *cause* signal, which
+                 * is the thing the comment above wrongly claimed not to
+                 * need: it catches a theme being renamed and nothing else.
+                 * A desktop that recolours within one theme name -- which
+                 * is what libadwaita's accent-color does on GNOME 47 and
+                 * later -- still arrives here only if the window's own
+                 * style moved. The XDG appearance portal is the answer to
+                 * that one and is a larger change than this.
+                 *
+                 * Both are connected because neither is a superset of the
+                 * other, and connecting both costs nothing: applyTheme
+                 * drops an update that changed no colour, so the pair
+                 * firing together is one delivery.
+                 */
+                try {
+                    var settings = Gtk.Settings.get_default();
+                    if (settings) {
+                        settings.connect("notify::gtk-theme-name", function () {
+                            self.applyTheme(driver, win, wv, driver.readTheme());
+                        });
+                    }
+                } catch (eT) {
+                    self.note("no settings watcher on this lane: " + eT);
                 }
                 Gtk.main();
             }
