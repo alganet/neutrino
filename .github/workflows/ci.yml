@@ -1014,6 +1014,58 @@ jobs:
           name: linux-engines-sheet
           path: ~/sheet/linux-engines.html
 
+  # The Qt lane's live theme half, which needs a desktop this runner cannot be.
+  #
+  # Its own job and not a step in `kde`, because the two ask different
+  # questions of different machines. `kde` is ubuntu-latest, where Qt loads
+  # QGtk3Theme and a theme change under a running process delivers nothing --
+  # measured, and that is the honest answer for that desktop. Whether the lane
+  # follows a change on the desktop it is named for could not be asked there
+  # at all: Ubuntu's plasma-integration is built against Qt 5, so there is no
+  # Qt 6 KDE platform theme to install.
+  #
+  # So this job brings one. The image is built and pushed by the `kde image`
+  # workflow when its definition changes; a run here pulls it. If the pull
+  # fails -- a fork with no package published yet -- test/qtkde.sh builds it
+  # locally instead, which is slow but not broken.
+  kde-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+      # Best-effort: a public package needs no login, and a fork without one
+      # falls through to the local build rather than failing here.
+      - run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin || true
+      # A half that could not run says so and does not fail the job -- that is
+      # the same contract the other live halves keep, and the reason it is
+      # checked here rather than left to an exit status: qtkde.sh exits 0 both
+      # when the half passed and when there was no desktop to run it on, and
+      # those are not the same result to a reader.
+      - shell: bash
+        run: |
+          NT_KDE_RUNTIME=docker \
+          NT_KDE_IMAGE="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/neutrino-kde:f42" \
+            bash test/qtkde.sh 2>&1 | tee ~/qtkde.log
+          # FAIL first, and that order is the whole point: a run that reached
+          # the flip and was handed nothing also prints the note saying which
+          # plugin it found, so a skip check asked first would read a real
+          # failure as a machine that could not run the half.
+          if grep -q '^FAIL' ~/qtkde.log; then
+            exit 1
+          fi
+          if grep -q '^PASS' ~/qtkde.log; then
+            exit 0
+          fi
+          if grep -qE '^report: (live half: (no|a scheme|the control)|qtkde: (no|the image|pull))' ~/qtkde.log; then
+            echo "kde-live: the half did not run here; the notes above say why"
+            exit 0
+          fi
+          echo "kde-live: no PASS, no FAIL and no reason given"
+          exit 1
+
   # Measured against a complete run rather than guessed: this lane took 12.6 min measured, and a netinstall step that may take 35.
   # Without a job ceiling the default is six hours, which is what a wedged step
   # spends before anyone finds out -- a run that hangs reports nothing, and

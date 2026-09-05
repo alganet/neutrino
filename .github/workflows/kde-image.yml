@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+# SPDX-License-Identifier: ISC
+#
+# The KDE image ci.yml's kde-live job runs the Qt live theme half in.
+#
+# Built here and not there because it is a full Qt 6 and Plasma 6 stack -- a
+# dnf transaction of some six hundred packages, ten minutes and two gigabytes.
+# Doing that on every run would cost more than the half it enables. Built when
+# its definition changes, and on request.
+name: kde image
+
+on:
+  push:
+    paths:
+      - test/kde.containerfile
+      - .github/workflows/kde-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      # Lowercased because a registry path must be, and a GitHub owner need
+      # not be. A fork owned by someone with a capital in their name would
+      # otherwise push to a name the pull side can never spell.
+      - id: name
+        run: echo "image=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/neutrino-kde:f42" >> "$GITHUB_OUTPUT"
+      - run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+      - run: docker build -t '${{ steps.name.outputs.image }}' -f test/kde.containerfile .
+      - run: docker push '${{ steps.name.outputs.image }}'
