@@ -48,6 +48,30 @@
 # into every Windows exe is four platforms' worth of driver, and carrying them
 # is worth roughly 140ms of every launch on that machine.
 #
+# That 20ms did not survive being measured again, and the reading above should
+# be read as one median against another rather than as an effect. The drivers
+# have since moved into the artifact's @else branch, so jsc.exe does not compile
+# them at all -- 700,416 bytes of assembly down to 460,800, which is a larger
+# cut than the stub experiment made -- and prefix was taken again as ten
+# alternating pairs, the two builds taking turns so drift is shared. The paired
+# difference was a median of +3ms and a mean of +10.5ms with a standard
+# deviation of 105ms; readings for the same artifact ranged 203ms to 453ms, and
+# three pairs of ten went the wrong way, one by 208ms. Separating 20ms from that
+# spread needs about 110 pairs.
+#
+# Which is a fact about this instrument, not only about that change. Two medians
+# taken in sequence on this machine differ by more than the effects being looked
+# for here: the same artifact read 230ms in one session and 303ms in the next.
+# A prefix comparison worth quoting is a paired one.
+#
+# Paired, real effects do show up, so this is a method and not an excuse. The
+# same ten-pair run applied to a 731 KB app compiled in against the same app in
+# the @else branch -- a 5,209,600 byte assembly against 460,800 -- gave a median
+# of +50ms and a mean of +46ms with a standard deviation of 36ms, nine pairs of
+# ten in the same direction. Sequential medians had called that one 95ms. So the
+# naive method overstated the effect that was there and invented the one that
+# was not, which is the argument for alternating in both directions at once.
+#
 # Usage: python3 test/vmfloor.py   (see vmlaunch.py for the guest setup)
 
 import os, sys, time

@@ -173,12 +173,39 @@ An artifact that carries no app at all, measured on a Windows 11 client:
 
 And with a 731 KB `app.js` — large enough to see, not realistic — the compile was
 1.73s and the assembly 5,209,600 bytes before any of this, against 0.89s and
-460,800 after: an app costs the Windows launcher nothing now, because the app is
-not in it.
+460,800 after. That last number is the whole finding and it needs no statistics:
+460,800 is byte for byte what this build produces carrying no app at all, so an
+app is not in the Windows program rather than cheaper in it.
 
-`prefix`, the milliseconds a launch spends before the driver's first line, is the
-half that is paid every time rather than once. Loading and JIT-ing the assembly
-is most of it, and the assembly is a third smaller.
+That one *does* show up in a launch, unlike the driver move below. Ten
+alternating pairs: the paired difference is a median of 50ms and a mean of 46ms
+with a standard deviation of 36ms, nine pairs of ten in the same direction —
+call it 23ms to 68ms off every launch. Sequential medians had said 95ms, which
+is the same overstatement the driver move made in the other direction.
+
+`prefix` — the milliseconds a launch spends before the driver's first line, and
+mostly the cost of loading and JIT-ing that assembly — is the number that would
+say what a third less of it is worth on every launch rather than once. **It does
+not move measurably, and the honest answer is that this machine cannot see it.**
+
+Ten alternating pairs, the two builds taking turns so that drift is shared: the
+paired difference came out at a median of +3ms and a mean of +10.5ms in favour
+of the smaller assembly, with a standard deviation of 105ms across the pairs.
+Seven pairs of ten favoured it and three went the other way, one of them by
+208ms. Individual readings ran from 203ms to 453ms for the same two artifacts.
+That is an interval of roughly −56ms to +77ms around the mean; separating a 20ms
+effect from this spread would take about 110 pairs.
+
+The alternation is why the number is stated this way rather than as a win.
+Measured in sequential blocks the same two builds read 303ms against 291ms,
+which looks like a result until the same artifact is measured twice in different
+sessions and reads 230ms once and 303ms the next. `test/vmfloor.py` records a
+20ms gain for stubbing these same two drivers out, taken as one median against
+another; that is inside this noise, and this is the paired version of that
+experiment.
+
+So the case for moving them is the compile and the size, both of which are
+reproducible, and not a launch that anybody can time.
 
 What it bought the author is the larger half. Every rule this project used to
 hand out about app code — write `eval("window")` and not `window`, do not declare
