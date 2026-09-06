@@ -10,8 +10,11 @@
     /*
      * A refusal that leaves no trace is indistinguishable from a window that
      * simply never came up, and those want opposite fixes. eval, because
-     * JScript.NET resolves globals at compile time and has neither of these
-     * -- the same reason the README gives for eval("window").
+     * JScript.NET resolves globals at compile time and has neither of these.
+     *
+     * This file is the launcher's half and jsc.exe compiles it, so the rule
+     * still holds here. It no longer holds for an app: web/entry.js is the
+     * branch jsc skips, and the README tells an author to write `window`.
      */
     /*
      * Set by a driver that has somewhere durable to write. Null everywhere

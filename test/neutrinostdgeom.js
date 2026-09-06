@@ -33,10 +33,10 @@
 // between the request and each of the two measured sizes is what
 // verify-linux.sh's fifty-pixel tolerance has been hiding.
 //
-// ES5 only, and `eval("window")` rather than the bare global: this same source
-// is compiled by jsc.exe on Windows, where neither exists at compile time.
-var win = eval("window");
-var doc = eval("document");
+// ES5 only, because four web engines have to agree on it. Bare globals:
+// this is the @else branch of the artifact, which jsc.exe never reads.
+var win = window;
+var doc = document;
 
 // Read on the first statement of the app's own script, not later. Whether the
 // API is there before an app's first line is a question step 4 of the plan

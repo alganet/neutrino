@@ -87,7 +87,26 @@ an artifact produces the one you asked for.
 
 Your JS runs in the browser context with access to `document`, `window`, and the `window.neutrino` API.
 
-**Note:** Use `eval("window")` and `eval("document")` instead of bare globals to avoid JScript.NET compile errors (the same file is compiled by `jsc.exe` on Windows where these globals don't exist at compile time).
+**Write it for the four web engines, and nothing else.** `app.js` sits in the
+`@else` branch of the artifact's conditional-compilation block, which is the one
+region `jsc.exe` is told to skip — so the Windows compiler never reads your code
+and none of its rules apply to it. Bare `window` and `document`, `class`, arrow
+functions, template literals, `let`, `var int`: all fine. The floor is whatever
+WebKitGTK, QtWebEngine, WKWebView and WebView2 agree on.
+
+This used to be the opposite of true, and the note here used to say so: the same
+file was compiled by `jsc.exe` on Windows, so an app had to be ES5, avoid a .NET
+compiler's reserved words, and reach its own globals through `eval("window")`.
+It also *paid* for that compile. Measured on a Windows 11 client with a 731 KB
+`app.js`: the launcher's one-time compile fell from 1.73s to 1.10s, the compiled
+assembly from 5,209,600 bytes to 700,416, and the milliseconds every launch
+spends before the driver's first line from 316 to 221 — which is what the same
+build measures carrying no app at all.
+
+There is exactly one spelling left that your app may not contain: `@if` and
+`@end`, the two directives `jsc.exe` keeps scanning for even inside the branch
+it is skipping. A build carrying either is refused by `test/parse.sh`, which
+says why.
 
 ### The early shell
 
@@ -208,14 +227,13 @@ neutrino replaces them, and there is no `startDrag` verb — your app already ha
 the two calls it needs:
 
 ```javascript
-var win = eval("window");
 // a title bar of your own
 bar.onmousedown = function (down) {
     var ox = down.screenX, oy = down.screenY;
-    function moved(e) { win.moveBy(e.screenX - ox, e.screenY - oy); ox = e.screenX; oy = e.screenY; }
-    function up() { win.removeEventListener("mousemove", moved); win.removeEventListener("mouseup", up); }
-    win.addEventListener("mousemove", moved);
-    win.addEventListener("mouseup", up);
+    function moved(e) { window.moveBy(e.screenX - ox, e.screenY - oy); ox = e.screenX; oy = e.screenY; }
+    function up() { window.removeEventListener("mousemove", moved); window.removeEventListener("mouseup", up); }
+    window.addEventListener("mousemove", moved);
+    window.addEventListener("mouseup", up);
 };
 ```
 
@@ -286,13 +304,10 @@ Your app moves and names its window with the spelling it would use in a
 browser.
 
 ```javascript
-var win = eval("window");
-var doc = eval("document");
-
-doc.title = "My App";     // and the window's title bar says so
-win.resizeTo(800, 600);   // and resizeBy(dw, dh)
-win.moveTo(100, 50);      // and moveBy(dx, dy)
-win.close();
+document.title = "My App";     // and the window's title bar says so
+window.resizeTo(800, 600);     // and resizeBy(dw, dh)
+window.moveTo(100, 50);        // and moveBy(dx, dy)
+window.close();
 ```
 
 These are the CSSOM View methods, written over in the webview at document start.

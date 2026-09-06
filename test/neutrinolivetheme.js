@@ -31,9 +31,10 @@
 // that never moved. What flips the desktop underneath it is themeflip.sh's
 // live half; what this file contributes is a window whose title answers.
 //
-// ES5 only, `eval("window")` and `eval("document")`: jsc.exe compiles this.
-var win = eval("window");
-var doc = eval("document");
+// ES5 only, because four web engines have to agree on it. Bare globals:
+// this is the @else branch of the artifact, which jsc.exe never reads.
+var win = window;
+var doc = document;
 
 // How many themes this app has been handed, the first one included. The whole
 // point of the counter: `scheme=dark` in a title is not evidence on its own --

@@ -1,5 +1,5 @@
-var win = eval("window");
-var doc = eval("document");
+var win = window;
+var doc = document;
 
 function startTests() {
     var el = doc.createElement("div");

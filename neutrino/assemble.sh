@@ -570,7 +570,18 @@ if [ "$VERIFY" = "1" ]; then
     nt_tmp="$(mktemp -d)"
     trap 'rm -rf "$nt_tmp"' EXIT
     nt_assemble "$(nt_resolve sh/parts.list)" > "$nt_tmp/region.sh"
-    nt_assemble "$(nt_resolve js/parts.list)" > "$nt_tmp/region.js"
+    # The JavaScript region is three includes in the skeleton rather than one,
+    # and it is checked as the one thing they make: js/parts.list, then the
+    # `@else` branch of the conditional-compilation block, then the call that
+    # starts it. Concatenated in the artifact's own order, so what node reads
+    # here is what an engine reads there.
+    #
+    # It matters that all three are named. The app is web/parts.list now, and
+    # a check that had kept reading js/parts.list alone would have stopped
+    # looking at the app on the day the app moved -- silently, still passing.
+    nt_assemble "$(nt_resolve js/parts.list)"  > "$nt_tmp/region.js"
+    nt_assemble "$(nt_resolve web/parts.list)" >> "$nt_tmp/region.js"
+    nt_assemble "$(nt_resolve js/launch.js)"   >> "$nt_tmp/region.js"
     nt_assemble "$(nt_resolve py/shim.py)"    > "$nt_tmp/region.py"
     if command -v bash >/dev/null 2>&1; then
         bash -n "$nt_tmp/region.sh" || {

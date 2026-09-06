@@ -21,8 +21,8 @@
  * that has nothing to do with the fix -- a pass that proves nothing. A report
  * that says the document finished loading is a broken test, not a result.
  */
-var win = eval("window");
-var doc = eval("document");
+var win = window;
+var doc = document;
 
 // Fixed here and in the workflow that starts test/stall.py. Nothing listening
 // means the requests fail fast, the load completes, and `ready` says so.

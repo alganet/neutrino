@@ -15,11 +15,13 @@
  * are right before this file runs and they follow a theme change with no script
  * involved. What is left is the readings no build can know, and the six calls.
  *
- * ES5 only. This same source runs under JScript.NET, gjs, QtWebEngine and
- * WKWebView, and the oldest of them has neither arrow functions nor template
- * literals. `eval("window")` and `eval("document")` for the same reason: the
- * file is compiled by jsc.exe on Windows, where neither global exists at
- * compile time.
+ * ES5 only, and that is now a choice about web engines rather than a rule.
+ * This source runs under WebKitGTK, QtWebEngine, WKWebView and WebView2, and
+ * ES5 is the floor all four clear without argument. It used to run under
+ * JScript.NET as well -- jsc.exe compiled every app on the Windows lane, which
+ * is why this file reached its own globals through `eval("window")`. An app is
+ * the @else branch of the artifact now and that compiler never sees it, so the
+ * globals are spelled the way a browser spells them.
  *
  * There is no wait at the bottom of this file and there used to be two. The API
  * is in scope before the first statement on every lane, and so is the document
@@ -32,8 +34,8 @@
  * lifts the launcher's object out of a built .cmd with a sed range that ends
  * there, and the app is spliced inside that range.
  */
-var win = eval("window");
-var doc = eval("document");
+var win = window;
+var doc = document;
 
 function el(id) {
     return doc.getElementById(id);

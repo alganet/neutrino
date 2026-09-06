@@ -37,9 +37,10 @@
 // are for is telling "the write was refused by the window" from "the write
 // never happened", which the recorded native sequence alone cannot do.
 //
-// ES5 only, `eval("window")` and `eval("document")`: jsc.exe compiles this.
-var win = eval("window");
-var doc = eval("document");
+// ES5 only, because four web engines have to agree on it. Bare globals:
+// this is the @else branch of the artifact, which jsc.exe never reads.
+var win = window;
+var doc = document;
 
 // Lifted by the verifier, which fails its own control when its slowest turn
 // came within it. Seven states at this dwell is ten and a half seconds after
