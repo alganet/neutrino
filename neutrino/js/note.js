@@ -13,7 +13,7 @@
      * JScript.NET resolves globals at compile time and has neither of these.
      *
      * This file is the launcher's half and jsc.exe compiles it, so the rule
-     * still holds here. It no longer holds for an app: web/entry.js is the
+     * still holds here. It no longer holds for an app: else/entry.js is the
      * branch jsc skips, and the README tells an author to write `window`.
      */
     /*

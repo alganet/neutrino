@@ -26,8 +26,11 @@
 // script ran before the parser, and the first is what it would do if the app
 // were written without the null guards it happens to carry.
 //
-// ES5, `eval` for the globals, and no line reading NeutrinoWebview.run() --
-// the same three rules the app it is appended to keeps.
+// ES5 and no line reading NeutrinoWebview.run(), which are the rules the app
+// this is appended to keeps. It used to say `eval` for the globals as well:
+// this file names none of its own, taking `win` and `doc` from pages/demo/app.js
+// above it, and those are bare now -- an app is the @else branch, jsc.exe does
+// not compile it, and the document's policy forbids eval outright.
 
 // The dwell verify-std.sh's harnesses lift out of a probe. Nothing here holds a
 // state, so this is the one wait: long enough for a slow runner to have painted

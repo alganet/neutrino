@@ -82,14 +82,19 @@ function startTests() {
 // lane reached its toolkit. A lane that silently did not reports null, and null
 // is distinguishable from a genuinely white desktop -- which is exactly why the
 // launcher says null instead of filling the palette in with white.
-// Every verdict is built on one line, and that is a constraint of where this
-// file ends up rather than a style. build.sh splices it into runWeb(), which is
-// inside the NeutrinoWebview object literal, and parse.sh lifts that object out
-// again with a sed range that ends at the first line reading `    };`. A
-// multi-line object literal closed at this indent ends the range early: the
-// lift comes back truncated and node reports "Unexpected end of input" against
-// a line number in a temporary file, which says nothing about the app that
-// caused it. Measured, by writing one.
+// Every verdict is built on one line, and that is a style now rather than the
+// constraint it was written as.
+//
+// parse.sh lifts the launcher's object out of a built artifact with a sed range
+// that the app sits inside, so what an app writes could end that range early.
+// It used to end at the first line reading `    };`, which meant a multi-line
+// object literal closed at this indent truncated the lift -- node then reported
+// "Unexpected end of input" against a line number in a temporary file, saying
+// nothing about the app that caused it. Measured, by writing one.
+//
+// The anchor is `NeutrinoWebview.run();` now, which is not a line anybody writes
+// by accident, so the hazard is gone and one-line verdicts are kept because they
+// read well. What an app still may not carry is that line itself.
 function verdict(ok, detail) {
     return { ok: ok, detail: detail };
 }
