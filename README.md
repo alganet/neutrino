@@ -98,10 +98,20 @@ This used to be the opposite of true, and the note here used to say so: the same
 file was compiled by `jsc.exe` on Windows, so an app had to be ES5, avoid a .NET
 compiler's reserved words, and reach its own globals through `eval("window")`.
 It also *paid* for that compile. Measured on a Windows 11 client with a 731 KB
-`app.js`: the launcher's one-time compile fell from 1.73s to 1.10s, the compiled
-assembly from 5,209,600 bytes to 700,416, and the milliseconds every launch
-spends before the driver's first line from 316 to 221 — which is what the same
-build measures carrying no app at all.
+`app.js` — large enough to see, not a realistic app — the launcher's one-time
+compile fell from 1.73s to 1.10s, and the compiled assembly from 5,209,600 bytes
+to 700,416. That second number is the one that needs no statistics: it is byte
+for byte what the same build produces carrying no app at all, so the app is not
+in the Windows program rather than cheaper in it.
+
+Every launch is about 46ms shorter before the driver's first line, and that
+figure is quoted carefully because the first way it was measured was wrong. Two
+medians taken in sequence said 95ms; measured properly — ten alternating pairs,
+so that both builds share whatever the machine is doing — the paired difference
+is a median of 50ms and a mean of 46ms, nine pairs of ten in the same direction,
+which puts it somewhere around 23ms to 68ms. This machine's readings for one
+artifact wander by more than the effect, so a lone before-and-after on it means
+very little. See `test/vmfloor.py`.
 
 There is exactly one spelling left that your app may not contain: `@if` and
 `@end`, the two directives `jsc.exe` keeps scanning for even inside the branch
