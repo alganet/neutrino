@@ -1015,6 +1015,114 @@ analyse_theme() {
     [ -n "$(field 2 '^STD-THEME-END')" ] || fail "control end was never observed; the app did not finish its sequence"
 }
 
+# The engine half of the fonts delivery.
+#
+# Five controls, mirroring analyse_theme's six one for one: the lane read a
+# toolkit, the two deliveries agree, an unset property reaches its generic, the
+# launcher and the engine read the same desktop the same way, and the probe ran
+# to the end.
+#
+# The keyword and generic readings it prints are reports and stay that way. They
+# are the standing evidence for why the delivery is spelled with a separate
+# `generic` field -- `system-ui` resolves on one WebKit and not the other -- and
+# asserting them would fail a lane for a fact about its engine.
+analyse_font() {
+    local ctl kwa kwb gen unit nta ntb
+    note "font sequence: $(titles)"
+    ctl="$(field 2 '^STD-FONT-CTL')"
+    kwa="$(field 2 '^STD-FONT-KW-A')"
+    kwb="$(field 2 '^STD-FONT-KW-B')"
+    gen="$(field 2 '^STD-FONT-GEN')"
+    unit="$(field 2 '^STD-FONT-UNIT')"
+    nta="$(field 2 '^STD-FONT-NT-A')"
+    ntb="$(field 2 '^STD-FONT-NT-B')"
+
+    [ -n "$ctl" ]  && note "self engine ${ctl#STD-FONT-CTL }"
+    [ -n "$kwa" ]  && note "self keywords-a ${kwa#STD-FONT-KW-A }"
+    [ -n "$kwb" ]  && note "self keywords-b ${kwb#STD-FONT-KW-B }"
+    [ -n "$gen" ]  && note "self generics ${gen#STD-FONT-GEN }"
+    [ -n "$unit" ] && note "self units ${unit#STD-FONT-UNIT }"
+    [ -n "$nta" ]  && note "self delivered ${nta#STD-FONT-NT-A }"
+    [ -n "$ntb" ]  && note "self agreement ${ntb#STD-FONT-NT-B }"
+
+    # The apparatus control every probe here carries: a run that never got as
+    # far as reporting is not a lane with no fonts, and the difference has to
+    # be visible in the log rather than inferred from a line that is missing.
+    case "$ctl" in
+        *eng=*) note "control font: the probe ran and named its engine" ;;
+        *)      fail "control font: STD-FONT-CTL was never observed, so nothing below is a reading" ;;
+    esac
+
+    # Whether the lane read a toolkit at all. Every comparison under this is
+    # void on a lane that did not, so it is asked first and said out loud --
+    # the same shape analyse_theme's `nsrc=null` control has.
+    case "$nta" in
+        *fonts=null*) fail "control fonts: this lane read no toolkit, so every comparison here is void" ;;
+        *source=*)    note "control fonts read=YES" ;;
+        *)            fail "control fonts: STD-FONT-NT-A was never observed" ;;
+    esac
+
+    # The delivery, both ways. `neutrino.fonts` is what the preload handed the
+    # page and the custom properties are what the launcher wrote into this
+    # document's stylesheet: two mechanisms, one measurement, and an app is
+    # entitled to either. A lane where they disagree is a window whose two
+    # accounts of one desktop differ -- which on macOS is exactly what would
+    # happen if the page composed its own family lists.
+    case "$ntb" in
+        *fonts=null*)  note "control delivery not_asked: this lane read no fonts" ;;
+        *match=15/15*) note "control delivery match=15/15 verdict=DELIVERED" ;;
+        *match=*)      fail "control delivery: the custom properties and neutrino.fonts disagree -- $(printf '%s' " $ntb" | sed -n 's/.* \(match=[^ ]*\).*/\1/p') $(printf '%s' " $ntb" | sed -n 's/.* \(first=[^ ]*\).*/\1/p')" ;;
+        *)             fail "control delivery: STD-FONT-NT-B was never observed" ;;
+    esac
+
+    # And the documented idiom on a lane that read nothing: a property the
+    # launcher never sets must reach the generic named beside it. The twin of
+    # the palette's `var(--neutrino-absent, Canvas)` control.
+    local fb
+    fb="$(printf '%s' " $ntb" | sed -n 's/.* fallback=\([^ ]*\).*/\1/p')"
+    case "$fb" in
+        monospace)      note "control fallback var(--neutrino-font-nosuchrole, monospace)=monospace verdict=RESOLVED" ;;
+        notasked|"")    note "control fallback not_asked" ;;
+        *)              fail "control fallback: an unset property reached '$fb' rather than the generic beside it" ;;
+    esac
+
+    # The engine's own reading of the same desktop, where it has one.
+    #
+    # Gated by lane and not skipped quietly, the way analyse_theme exempts `qt`
+    # by name: on WebKitGTK the CSS2 `font: menu` keyword *is* the desktop's
+    # font, so the engine has read independently what the launcher read and the
+    # two numbers can be compared. On QtWebEngine those keywords are Chromium's
+    # constants -- 16px Arial against a toolkit saying 12px -- and on WKWebView
+    # they are per-role, so neither can be asked this question. A unit bug is a
+    # third off; the tolerance is the pixel WebKit truncates and the launcher
+    # does not.
+    local agree delta src
+    src="$(printf '%s' " $nta" | sed -n 's/.* source=\([^ ]*\).*/\1/p')"
+    agree="$(printf '%s' " $ntb" | sed -n 's/.* agree=\([^ ]*\).*/\1/p')"
+    delta="$(printf '%s' "$agree" | sed -n 's/.*delta:\([0-9.]*\).*/\1/p')"
+    if [ "$src" != "gtk" ]; then
+        note "control agree not_asked: this engine's system font keywords are not the desktop's"
+    elif [ -z "$delta" ]; then
+        fail "control agree: no reading on a lane that has one -- got '$agree'"
+    elif awk -v d="$delta" 'BEGIN { exit !(d <= 1) }'; then
+        note "control agree $agree verdict=AGREED"
+    else
+        fail "control agree: the launcher and the engine read different sizes off one desktop -- $agree"
+    fi
+
+    # Whether the six keywords are one font or six is the question that decides
+    # whether CSS has any notion of a role at all, so it is lifted out of the
+    # line rather than left for a reader to find inside it. Reported, never
+    # asserted: it is a fact about an engine.
+    case "$kwb" in
+        *identical=*) note "self roles $(printf '%s' " $kwb" | sed -n 's/.* \(identical=[^ ]*\).*/\1/p')" ;;
+        *)            note "self roles unread" ;;
+    esac
+
+    [ -n "$(field 2 '^STD-FONT-END')" ] ||
+        fail "control font: STD-FONT-END was never observed, so the probe stopped early"
+}
+
 # The picture, and when to take it.
 #
 # `win` is photographed as soon as its window is up and settled; every other
@@ -1143,6 +1251,7 @@ if [ -n "$REPLAY" ]; then
         doc)   analyse_doc ;;
         win)   analyse_win ;;
         theme) analyse_theme ;;
+        font)  analyse_font ;;
         *)     fail "no analysis for probe '$PROBE'" ;;
     esac
     echo "--- recorded transitions (ms / title / inner / pos / outer / tick) ---"
@@ -1183,6 +1292,7 @@ case "$PROBE" in
     doc)   analyse_doc ;;
     win)   analyse_win ;;
     theme) analyse_theme ;;
+    font)  analyse_font ;;
     *)     fail "no analysis for probe '$PROBE'" ;;
 esac
 

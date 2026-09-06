@@ -21,6 +21,16 @@ function startTests() {
             el.textContent = "Step 4: theme -- " + verdict.detail;
             doc.title = verdict.ok ? "THEMEOK" : "THEMEBAD";
         },
+        function () {
+            // Same reasoning, one reading along: this is the only place in
+            // the tree that says whether an ordinary launch on an ordinary
+            // lane reached its font toolkit. Everything else about the
+            // delivery is pure and parse.sh covers it on every push; what a
+            // real launch alone can say is whether `readFonts` answered.
+            var verdict = checkFonts();
+            el.textContent = "Step 5: fonts -- " + verdict.detail;
+            doc.title = verdict.ok ? "FONTOK" : "FONTBAD";
+        },
         function () { el.textContent = "TESTS DONE"; doc.title = "TESTS DONE"; },
         function () { el.textContent = "Closing window..."; win.close(); }
     ];
@@ -123,6 +133,39 @@ function checkTheme() {
         shown.push(keys[i] + "=" + value);
     }
     return verdict(true, theme.source + " " + theme.scheme + " " + shown.join(" "));
+}
+
+function checkFonts() {
+    var roles = ["ui", "document", "monospace", "titlebar", "small"];
+    var generics = ["system-ui", "sans-serif", "serif", "monospace"];
+    var fonts = win.neutrino.fonts;
+    if (!fonts) {
+        return verdict(false, "null -- this lane read no fonts at all");
+    }
+    var shown = [];
+    for (var i = 0; i < roles.length; i++) {
+        var r = fonts[roles[i]];
+        if (!r) {
+            return verdict(false, roles[i] + " is absent");
+        }
+        // A family may legitimately be empty -- that is every macOS role,
+        // where the face has no name a page may use -- but a generic may
+        // not, because it is what the family list ends on.
+        if (generics.join(",").indexOf(String(r.generic)) < 0) {
+            return verdict(false, roles[i] + "'s generic is " + r.generic);
+        }
+        if (!/^[1-9][0-9]{0,2}(\.[0-9]{1,2})?px$/.test(String(r.size))) {
+            return verdict(false, roles[i] + "'s size is " + r.size);
+        }
+        if (!/^([1-9][0-9]{0,2}|1000)$/.test(String(r.weight))) {
+            return verdict(false, roles[i] + "'s weight is " + r.weight);
+        }
+        if (String(r.stack).indexOf(String(r.generic)) < 0) {
+            return verdict(false, roles[i] + "'s stack does not end on its generic");
+        }
+        shown.push(roles[i] + "=" + (r.family || "-") + "/" + r.size + "/" + r.weight);
+    }
+    return verdict(true, fonts.source + " " + shown.join(" "));
 }
 
 /*

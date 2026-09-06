@@ -282,6 +282,13 @@ wait_for_title "THEMEOK" || {
 }
 screenshot "05-theme"
 
+echo "=== Step 5: the desktop's fonts ==="
+# See verify-linux.sh's twin of this for why there is no screenshot slot.
+wait_for_title "FONTOK" || {
+    echo "  FAIL: the fonts were not readable on this lane"
+    FAILURES=$((FAILURES + 1))
+}
+
 echo "=== Waiting for TESTS DONE ==="
 wait_for_title "TESTS DONE" || { echo "FAIL: tests never completed"; exit 1; }
 screenshot "06-done"
