@@ -423,9 +423,10 @@ browser is the page reaching the network in another program.
 **There is no bespoke spelling for any of this.** `document.title`,
 `resizeTo`, `resizeBy`, `moveTo`, `moveBy`, `close` and `open` are the whole of
 what your page drives the window with, and they are the names your editor and
-`lib.dom` already know. What is left on `window.neutrino` is one reading and one
-label — `theme`, the desktop's palette, which no engine offers; and `transport`,
-naming the channel the host is listening on. Both are below.
+`lib.dom` already know. What is left on `window.neutrino` is two readings and one
+label — `theme`, the desktop's palette, which no engine offers; `fonts`, its
+type, which every engine offers differently and two of them get wrong; and
+`transport`, naming the channel the host is listening on. All three are below.
 
 All coordinates use top-left origin on every platform (macOS coordinates are normalized internally).
 
@@ -593,6 +594,140 @@ switch on `theme.scheme`.
 **`theme` is `null` on a lane that could not read its toolkit.** Said out loud
 rather than filled in with white, so you can tell the difference between a light
 desktop and no answer.
+
+### The desktop's fonts
+
+The same delivery, one reading along, and it exists for the opposite reason the
+palette does. Every `<system-color>` keyword turned out to be a constant, which
+is what made a palette worth measuring. The CSS2 system *font* keywords are not
+constants everywhere — and that turns out to be worse rather than better,
+because they are not the same thing on any two engines:
+
+| engine | `caption`, `menu`, `message-box`, … |
+|---|---|
+| WebKitGTK | the desktop's font, one face for all six, **frozen at web-process start** |
+| WKWebView | the desktop's fonts, genuinely per role — 13px, 11px, 10px |
+| QtWebEngine | Chromium's constants — 16px Arial, against a toolkit saying 12px |
+
+Frozen means frozen: a font change moves neither the loaded document nor a
+reloaded one. So on the engine where the keyword is right, it is right only for
+apps launched after the change.
+
+There is also **no `font-family` keyword to fall back to**. `system-ui` resolves
+on WKWebView and is the right face there; on WebKitGTK it does not resolve at
+all, and neither does `ui-monospace`, which is not even monospace; on
+QtWebEngine it resolves to plain `sans-serif`. That asymmetry is why the
+launcher supplies the value and why the variables below are documented with a
+generic in them rather than a keyword.
+
+Five roles, and every one of them is always filled:
+
+```css
+body {
+  font-family: var(--neutrino-font-ui, sans-serif);
+  font-size:   var(--neutrino-font-size-ui, 1rem);
+  font-weight: var(--neutrino-font-weight-ui, 400);
+}
+code    { font-family: var(--neutrino-font-monospace, monospace); }
+article { font-family: var(--neutrino-font-document, sans-serif); }
+```
+
+| role | what it is | where it comes from |
+|---|---|---|
+| `ui` | buttons, labels, the interface | GTK `gtk-font-name`; `Qt.application.font`; `systemFontOfSize:`; `MessageBoxFont` |
+| `document` | text inside a document | GSettings `document-font-name`; `userFontOfSize:` (Helvetica, TextEdit's own default) |
+| `monospace` | code, fixed pitch | GSettings `monospace-font-name`; `userFixedPitchFontOfSize:` (Menlo) |
+| `titlebar` | the window's own name | GSettings `titlebar-font`; `titleBarFontOfSize:`; `CaptionFont` |
+| `small` | secondary text | `smallSystemFontSize`; `SmallCaptionFont` |
+
+Three longhands per role and not a `font` shorthand variable: substituting a
+shorthand resets `line-height`, `font-style`, `font-variant` and `font-stretch`
+at every use, so an app could not have the desktop's family and its own line
+height.
+
+**A role a lane cannot read is filled, but not always from `ui`.** `titlebar`
+and `small` take the UI face, because they *are* user interface. `monospace` and
+`document` keep their own generic and stay nameless — filling `monospace` from
+`ui` would ship Segoe UI under a name that promises fixed pitch on the one
+platform with no monospace setting at all, and filling `document` from `ui`
+would answer a different question than the role's name asks. Sizes and weights
+always come from `ui`, which is not a kind-of-face question.
+
+`document`'s generic is per platform: `serif` on Windows, on the convention
+Times New Roman set, and `sans-serif` elsewhere, because GNOME's own
+`document-font-name` ships as `Sans`.
+
+And in script, at document start:
+
+```javascript
+var fonts = win.neutrino.fonts;   // null if this lane could not read one
+
+fonts.source;              // "gtk" | "qt" | "macos" | "windows"
+fonts.ui.family;           // "Ubuntu"   — "" where a generic stood in
+fonts.ui.generic;          // "sans-serif"
+fonts.ui.stack;            // "'Ubuntu',sans-serif" — what the variable holds
+fonts.ui.size;             // "13.33px"
+fonts.ui.weight;           // "500"
+```
+
+`family` and `generic` are separate so you can tell a desktop that named a face
+from one that did not: `fonts.monospace.family === ""` means this desktop has no
+monospace setting and the engine's own is what you will get. `stack` is the
+composed list, and it is on the object rather than built in your page because
+the launcher's own stylesheet is built from the same value — on macOS the
+composed form is `system-ui,sans-serif`, and a page that joined `family` and
+`generic` itself would disagree with the stylesheet it is sitting in.
+
+Sizes are CSS px, as a length string. `parseFloat` for arithmetic. Points become
+pixels at a flat 4/3 with no DPI term — measured three ways, and on GTK
+specifically because desktop text scaling is absorbed by `devicePixelRatio` and
+leaves CSS px alone, so a launcher that divided by the toolkit's DPI would count
+the same scaling twice. macOS is the exception and needs no multiplier: its
+points already are CSS pixels.
+
+When the desktop changes, the object is **replaced** and an event fires:
+
+```javascript
+win.addEventListener("neutrino:fontchange", function (e) {
+    e.detail.ui.family;
+});
+```
+
+A separate object and a separate event from `theme`, because a lane can have a
+live palette and a frozen font set — see the table below — and one object
+carrying both would have to lie about one of them.
+
+**Liveness is not the same on every lane, and two of them cannot do it at all.**
+
+| Lane | Read from | Change signal |
+|---|---|---|
+| gjs / cjs / PyGObject | `gtk-font-name` + three GSettings keys | `notify::gtk-font-name`, `style-updated`, and `changed::` on each GSettings key |
+| Windows | `System.Drawing.SystemFonts` | re-read on the event loop, ~1 Hz |
+| Qt | `Qt.application.font` | **none** |
+| macOS | `NSFont` | **none** |
+
+On Qt this is measured rather than missing. `Qt.application.font` carries no
+NOTIFY that QML can reach — `Connections { target: Qt.application; function
+onFontChanged() }` is refused in as many words — and the value did not move
+under a `kwriteconfig6 --notify` write of `[General] font` on a real Plasma 6
+with `KDEPlasmaPlatformTheme6` confirmed loaded. That is the desktop where the
+same channel *does* move a colour scheme, so it is the property that is not on
+it. An app launched after a font change is correct either way.
+
+On macOS there is no notification for a UI font change at all, and no scriptable
+setting to test one against — the nearest thing is the per-app accessibility
+text size. Nothing is wired there rather than something that would fire on the
+wrong event.
+
+**On GTK, three of the five roles live in GSettings and one does not.** `ui`
+comes from `gtk-font-name` on GtkSettings, and that is deliberate: on a desktop
+with no settings daemon the two disagree, and the toolkit's answer is the one
+the engine agrees with. Measured on a bare runner, GtkSettings said `Sans 10`
+while GNOME's key said `Cantarell 11`, and the page reported `Sans`.
+
+**`fonts` is `null` on a lane that could not read its toolkit**, said out loud
+the way `theme` is, and the `var()` fallbacks above are what your page gets
+then.
 
 ### Which channel the host is listening on
 
