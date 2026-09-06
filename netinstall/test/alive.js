@@ -31,8 +31,18 @@
 // assert it on every push; making it a precondition here would mean an
 // unrelated regression in it reporting itself as a sandbox that killed the
 // webview. What this file needs is a document and a script that ran.
-var win = eval("window");
-var doc = eval("document");
+//
+// Bare globals, and that is now load-bearing rather than a style. This file is
+// an app, so it sits in the `@else` branch of the artifact -- the half jsc.exe
+// never compiles -- and the document's policy is `script-src 'none'`. Written
+// as `eval("window")`, which is what it said while jsc.exe still compiled every
+// app, the first statement here throws under that policy and the whole file
+// stops. Measured, on the round that tightened the policy: gjs, kde,
+// windows-launch and macos-netinstall all reported the app up with no title.
+// e2e.sh called it "a window but its script never ran", and env.sh, which reads
+// the same title, called it window=DOWN.
+var win = window;
+var doc = document;
 
 // Two titles, and the second one is the whole of what this file learned in CI.
 //

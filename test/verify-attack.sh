@@ -132,6 +132,11 @@ assert "wire (control)" "LIVE" "$(field wire)"
 assert "malformed records refused" "REFUSED" "$(field raw)"
 assert "base-uri pinned"           "REFUSED" "$(field base)"
 assert "inline script refused"     "BLOCKED" "$(field inline)"
+# The other half of script-src, and it has no markup to point at. The document
+# said 'unsafe-eval' for as long as the engine dispatch went through eval; it
+# says 'none' now, and this is what says so on every engine rather than in a
+# comment. RANEVAL, RANFUNCTION and RANBOTH each name which call compiled.
+assert "eval refused"              "BLOCKED" "$(field evl)"
 
 # What a frame reached, measured from the parent. The frame is handed this
 # build's API, so it attempts the same verb every other check here attempts;

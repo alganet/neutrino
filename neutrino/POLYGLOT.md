@@ -48,7 +48,7 @@ program.
 18  @@include jsc/parts.list
 19          @else @*/
 20
-21  @@include web/parts.list
+21  @@include else/parts.list
 22
 23      /*@end @*/
 24
@@ -132,7 +132,7 @@ The same twelve characters doing two different jobs. Read as part of the file,
 starts executing at line 13. Read as part of the document, the browser has just
 opened a script element and `//*/` is the first line of it — a line comment.
 
-### Lines 16 to 23 — the two halves nobody compiles twice
+### Lines 16 to 23 — the branch each engine gets, and the one it does not
 
 ```
     /*@cc_on
@@ -140,55 +140,111 @@ opened a script element and `//*/` is the first line of it — a line comment.
             ...jsc/parts.list...
         @else @*/
 
-    ...web/parts.list...
+    ...else/parts.list...
 
     /*@end @*/
 ```
 
-One conditional with both of its branches used, and each branch is a region one
-reader gets and one reader does not.
+One conditional with both of its branches used, which makes three regions of
+JavaScript in this file rather than one: `js/`, which everybody compiles, and
+these two, which are each the half of the program one reader never sees.
 
 To gjs, QtWebEngine, JavaScriptCore and every browser, everything from `/*@cc_on`
 to the `@*/` on the `@else` line is a block comment: the typed JScript.NET is
-inside it, and the file resumes at `web/`. To `jsc.exe` it is conditional
+inside it, and the file resumes at `else/`. To `jsc.exe` it is conditional
 compilation, the `@if` is true, and the `@else` branch is skipped — so `jsc/` is
-the only part of the file that compiles for it and `web/` is the only part that
+the only part of the file that compiles for it and `else/` is the only part that
 does not.
 
-The `@else` half is younger than the rest of this and it is where an app's own
-code lives. It used to sit below the block with everything else, which meant
-`jsc.exe` compiled it: a Windows launch never calls `runWeb`, and paid for it
-anyway. Measured on a Windows 11 client with a 731 KB `app.js` — an app large
-enough to see, not a realistic one — the compile went from 1.73s to 1.10s, the
-assembly from 5,209,600 bytes to 700,416, and `prefix`, the milliseconds a launch
-spends before the driver's first line, from 316ms to 221ms. The last of those is
-the one that is paid every launch rather than once, and 221ms is what the same
-build measures carrying no app at all. The app is out of the Windows process
-rather than cheaper in it.
+`else/` is named for the branch and not for an audience, because its audience is
+everyone except one compiler. What is in there is what no `jsc.exe`-compiled
+program can reach: the app, the macOS and gjs drivers and their palettes, the
+engine dispatch for every engine that is not the Windows launcher, and the place
+a line of output goes when `printerr` or `console` is the way to write one.
 
-What that buys the author is the larger half. Every rule this project used to
+### What moving it bought
+
+An artifact that carries no app at all, measured on a Windows 11 client:
+
+| | before | after |
+|---|---|---|
+| the compile `cmd/launcher.cmd` does once | 1.10s | 0.89s |
+| the assembly it produces | 700,416 B | 460,800 B |
+
+And with a 731 KB `app.js` — large enough to see, not realistic — the compile was
+1.73s and the assembly 5,209,600 bytes before any of this, against 0.89s and
+460,800 after: an app costs the Windows launcher nothing now, because the app is
+not in it.
+
+`prefix`, the milliseconds a launch spends before the driver's first line, is the
+half that is paid every time rather than once. Loading and JIT-ing the assembly
+is most of it, and the assembly is a third smaller.
+
+What it bought the author is the larger half. Every rule this project used to
 hand out about app code — write `eval("window")` and not `window`, do not declare
 `var int` or `var short`, ES5 only because one of the five engines is a .NET
 compiler from 2005 — was one rule wearing five hats, and it is gone. The engines
-that run `runWeb` are the four web engines, and an app may use whatever they
-have.
+that run `runWeb` are the four web engines, and an app may use whatever they have.
 
-Each branch has exactly one rule left, and each is a shape `test/parse.sh`
-refuses:
+### The dispatch, and the policy that followed it
+
+`run()` used to ask which engine was running, five times, through `eval`:
+`hasGlobalExpr("typeof ObjC !== 'undefined' && typeof $ !== 'undefined'")` and
+four more like it, each a string because the function was compiled by a typed
+compiler that resolves globals and has none of those names.
+
+It is not a question any more. Which engine is running is decided by which branch
+this program was built from, so `jsc/dispatch.jsc` answers it for the Windows
+launcher — `runEngine` is `runWindows`, and a program in which that line compiled
+*is* the Windows launcher — and `else/engine.js` answers it for everyone else, in
+the plain spelling. `js/run.js` calls whichever is there.
+
+That is what let the document's content policy become `script-src 'none'`. It
+said `'unsafe-eval'` for exactly those five calls: the page runs this dispatch on
+load, so the one document in this project that is meant to be unable to execute
+anything had to permit `eval` in order to find out where it was. The same move
+took the three `eval` calls out of `note()`, which is why `else/note.js` exists.
+`test/neutrinoattack.js` reports `evl=BLOCKED` on every engine, beside the
+inline-script check it has always carried.
+
+What it costs an app is real: `eval` and `new Function` no longer run in this
+document. An app that wants them writes its own `html/policy.html`, which is an
+overlay part like any other.
+
+### The one rule each branch still has
+
+Each is a shape `test/parse.sh` refuses:
 
 - **Nothing under `jsc/` may contain `*/`.** JavaScript has no nested block
   comments, so a single one there ends the outer comment early and spills typed
   JScript.NET into three engines at once. `assemble.sh` strips only line comments
   in those files for the same reason.
-- **Nothing under `web/` may contain `@if` or `@end`.** `jsc.exe` skips a branch
-  by scanning it for its own directives rather than by ignoring it, so those two
-  spellings are still read in there and restart the compile in the middle of an
-  app. Measured on the same machine: `"a@end.example"` inside a string ended the
-  skip and the compiler resumed mid-string, reporting an unterminated string
-  constant against a line of the app. Everything else is inert — `@endpoint`,
-  `@else`, `@cc_on`, `@set` and a bare `@` all compiled without a word, as did
-  `class`, arrow functions, template literals, and text that was not JavaScript
-  at all.
+- **Nothing under `else/` may contain `@if` or `@end`,** in code, in a string or
+  in prose. `jsc.exe` skips a branch by scanning it for its own directives rather
+  than by ignoring it, and it does not stop at a comment or a quote — which
+  matters for prose because `--comments` ships it.
+
+  Measured on a Windows 11 client, one spelling per build:
+
+  | in the skipped branch | `jsc.exe` |
+  |---|---|
+  | `@end` alone | JS1104, unmatched `@end` — and the rest of the branch is then compiled as JScript.NET, so `window`, `document` and `imports` are reported undeclared |
+  | `@if` alone | JS1029, expected `@end`; JS1107, unexpected end of source |
+  | `@if` … `@end` on one line | compiles |
+  | `"a@end.example"` in a string | ended the skip; the compiler resumed mid-string and reported an unterminated string constant against a line of the app |
+  | `@endpoint`, `@else`, `@cc_on`, `@set`, a bare `@` | inert |
+
+  The first row is the useful one twice over: it is the failure this rule exists
+  to prevent, and the three undeclared names in it are the proof that the branch
+  is otherwise never compiled.
+
+  A balanced pair compiles, and that is a trap rather than an allowance — the
+  paragraph in `else/entry.js` that explains this rule used to name both
+  directives on one line and passed for that reason alone. `test/parse.sh`
+  refuses either, because balance is not a property a comment can be asked to
+  maintain. Everything else in an app is fine: `class`, arrow functions,
+  template literals, and text that is not JavaScript at all all compiled without
+  a word.
 
 The `jsc/` region is a `parts.list` like `sh/` and `js/` rather than one named
 file. It became one when the Evergreen path arrived and there were two kinds of
@@ -201,10 +257,8 @@ needed put them, and `jsc.exe` reads them there.
 ### Line 25 — `@@include js/launch.js`
 
 `NeutrinoWebview.run();`, and it is in the skeleton rather than at the end of
-`js/parts.list` because it has to be below the `@else` branch. `run()` dispatches
-on which engine is asking, and its last question is whether `web/entry.js` is
-here — a member test rather than the `eval("window")` it used to be, since the
-half that answers is the half `jsc.exe` did not compile.
+`js/parts.list` because it has to be below the `@else` branch — everything it
+starts has to be assigned before it runs.
 
 ### Line 26 — `//</script></body></html>`
 
@@ -234,7 +288,12 @@ also where the page script stops.
 | `body.html` | HTML | the early shell's markup; likewise |
 | `config.json` | JSON | the window, laid into `js/config.js` verbatim |
 | `html/policy.html` | HTML | the document's content policy; the offline overlay replaces it |
-| `web/entry.js` | JavaScript | `runWeb` and the `isWeb` test `run()` ends on — the `@else` branch, which `jsc.exe` never compiles |
+| `jsc/dispatch.jsc` | JavaScript | `runEngine` for the Windows launcher, which is every program this branch compiled |
+| `else/engine.js` | JavaScript | `runEngine` for the other four engines, in the plain spelling, since no compiler resolves these globals |
+| `else/note.js` | JavaScript | where a line goes when `printerr` or `console` is how you write one |
+| `else/entry.js` | JavaScript | `runWeb`, and the `app.js` inside it |
+| `else/driver-gjs.js`, `else/driver-macos.js` | JavaScript | the two lanes no Windows exe can reach, and the WebKit2 version probe with them |
+| `else/theme-gtk.js`, `else/theme-macos.js`, `else/macos-status.js` | JavaScript | their palettes, and the status line the macOS lane writes |
 | `app.js` | JavaScript | the body of `runWeb`, which is where an app's code goes |
 | `js/config.js` | JavaScript | declares `NeutrinoWebview`, and includes `config.json` as its config object |
 | `js/*.js` | JavaScript | one group of members per file, assigned onto the object; the order is in `js/parts.list` |
@@ -256,7 +315,7 @@ the app.
 Some things in here are not whole documents, and they are named rather than
 hidden. `html/document.html` opens tags the skeleton's last line closes, which
 is also the here-document terminator. `app.js` is the body of a function rather
-than a program. `js/config.js` and `web/entry.js` carry an `@@include` and are
+than a program. `js/config.js` and `else/entry.js` carry an `@@include` and are
 therefore templates rather than JavaScript — `test/assemble.sh` works out which
 parts those are by looking for the directive rather than by keeping a list. And
 the include lists are `.list` files rather than `.js` and `.sh` ones,
@@ -288,7 +347,7 @@ the testing scaffolding because the scaffolding is not in it.
 
 The parts that exist to be replaced are worth naming, because each is a file
 whose whole content is one `return`: `js/trace.js`, `js/windows-trace.js`,
-`js/windows-libdir.js`, `js/windows-scriptpath.js`, `js/macos-status.js`,
+`js/windows-libdir.js`, `js/windows-scriptpath.js`, `else/macos-status.js`,
 `js/external-allow.js`, `sh/qt-sandbox.sh`, `sh/macos-confine.sh` and
 `html/policy.html`. A variation point is a file here, and that is the whole
 mechanism.

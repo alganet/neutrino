@@ -349,7 +349,7 @@ echo "=== every part is a document its own language can read ==="
 T="$(tree parts)"
 # js/ and web/ together: they are one language and one region, split by which
 # of the two branches of the skeleton's conditional they are included from.
-PARTS_JS="$(ls "$T"/neutrino/js/*.js "$T"/neutrino/web/*.js 2>/dev/null | wc -l | tr -d ' ')"
+PARTS_JS="$(ls "$T"/neutrino/js/*.js "$T"/neutrino/else/*.js 2>/dev/null | wc -l | tr -d ' ')"
 PARTS_SH="$(ls "$T"/neutrino/sh/*.sh 2>/dev/null | wc -l | tr -d ' ')"
 report "parts js=$PARTS_JS sh=$PARTS_SH"
 if [ "${PARTS_JS:-0}" -lt 10 ] || [ "${PARTS_SH:-0}" -lt 5 ]; then
@@ -366,7 +366,7 @@ else
     printf 'foo: function () {\n    return 1;\n},\n' > "$T/fragment.js"
     NT_DOCS=""
     NT_TEMPLATES=""
-    for nt_part in "$T"/neutrino/js/*.js "$T"/neutrino/web/*.js; do
+    for nt_part in "$T"/neutrino/js/*.js "$T"/neutrino/else/*.js; do
         if grep -q '^@@include ' "$nt_part"; then
             NT_TEMPLATES="$NT_TEMPLATES $(basename "$nt_part")"
         else
@@ -389,6 +389,35 @@ else
     else
         report "node absent: the js/ parts were not parsed"
     fi
+
+    # No part under else/ may name a conditional-compilation directive, and
+    # that includes its prose.
+    #
+    # test/parse.sh refuses an artifact carrying one, which covers an app. It
+    # does not cover the launcher's own comments, because a release build has
+    # none -- but `--comments` keeps them, and that is the build somebody makes
+    # when a lane is failing and the artifact has to be read.
+    #
+    # Measured on a Windows 11 client, one spelling per build: the closing
+    # directive alone in a comment under else/ makes jsc.exe report an
+    # unmatched directive and compile the rest of the branch as JScript.NET,
+    # which fails on `window`, `document` and `imports`; the opening one alone
+    # leaves a conditional that never closes; a balanced pair on one line
+    # compiles. The paragraph in else/entry.js that explains this rule used to
+    # name both, so it passed on balance rather than by being right. This
+    # refuses either, because balance is not something a comment can be asked
+    # to maintain.
+    #
+    # Source-level and not artifact-level, so it costs no build. The rule is
+    # about what is written in these files.
+    NT_DIRECTIVE='@(if|elif|end)([^A-Za-z0-9_]|$)'
+    NT_BAD="$(grep -rnE "$NT_DIRECTIVE" "$T"/neutrino/else/ 2>/dev/null || true)"
+    eq "no part in else/ names a conditional-compilation directive" \
+       "${NT_BAD:-none}" "none"
+    # The control, because a grep that has stopped matching passes forever.
+    printf '\n    // it looks for @end even here\n' >> "$T/neutrino/else/note.js"
+    eq "and the check would see one if it were there" \
+       "$(grep -rlE "$NT_DIRECTIVE" "$T"/neutrino/else/ 2>/dev/null | wc -l | tr -d ' ')" "1"
 
     NT_BAD=""
     for nt_part in "$T"/neutrino/sh/*.sh; do
@@ -434,6 +463,23 @@ else
        "$(grep -c '^    var NeutrinoWebview = {$' "$T/anchors.cmd" | head -1)" "1"
     eq "and starts it on exactly one line" \
        "$(grep -c '^    NeutrinoWebview\.run();$' "$T/anchors.cmd" | head -1)" "1"
+
+    # And the control on the check itself, which is a different question from
+    # whether a region parses.
+    #
+    # The regions are named by path, and a path that resolves to nothing used to
+    # be assembled as the whole polyglot -- command substitution drops
+    # nt_resolve's exit status, an empty argument means "no single part", and
+    # the fallback is skeleton.cmd. Every check downstream then passed, because
+    # the whole polyglot does parse as JavaScript. Measured, by renaming a
+    # region directory and forgetting one line in assemble.sh: `--check` stayed
+    # green while checking the artifact instead of the region.
+    T4="$(tree parts-missing)"
+    rm -f "$T4/neutrino/else/parts.list"
+    bash "$T4/neutrino/assemble.sh" --check > "$WORK/missing.log" 2>&1
+    eq "a region that cannot be found is refused" "$?" "1"
+    eq "and the refusal names the part" \
+       "$(grep -c 'no such part: else/parts.list' "$WORK/missing.log" || true)" "1"
 
     # The control: a part broken in a way no per-file check would see, since the
     # file it breaks is the one that is never stripped and never parsed.
@@ -686,8 +732,13 @@ nt_policy() {
     sed -n '/^<!doctype html><html>/,/^<script type=text\/javascript>/p' "$1" |
         sed -n 's/.*content="\([^"]*\)".*/\1/p' | head -1
 }
-eq "the release document carries the permissive policy" \
-   "$(nt_policy "$T/release.cmd" | grep -c "^script-src 'unsafe-eval'" || true)" "1"
+# 'none' and not 'unsafe-eval'. It was the permissive one for as long as the
+# engine dispatch went through eval and the page ran that dispatch on load;
+# nothing on a page's path evals now, so the document says what it always meant
+# to. A build that quietly went back to 'unsafe-eval' would still pass every
+# behavioural suite in this repository, which is why the spelling is pinned.
+eq "the release document carries the policy that runs no script" \
+   "$(nt_policy "$T/release.cmd" | grep -c "^script-src 'none'" || true)" "1"
 eq "and carries exactly one" \
    "$(grep -c 'Content-Security-Policy' "$T/release.cmd" || true)" "1"
 eq "and nothing rewrites the document at launch" \

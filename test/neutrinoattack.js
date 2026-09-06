@@ -53,6 +53,7 @@ function report(navState) {
         " base=" + results.base +
         " frame=" + results.frame +
         " inline=" + results.inline +
+        " evl=" + results.evl +
         " navdata=" + results.navdata +
         " postnav=" + results.postnav +
         " nav=" + navState +
@@ -148,6 +149,40 @@ function checkInline(next) {
         results.inline = win.__neutrinoInlineRan ? "RAN" : "BLOCKED";
         next();
     }, 800);
+}
+
+/*
+ * eval, which is the half of the policy that has no markup to point at.
+ *
+ * `script-src 'none'` blocks it, and the document said `'unsafe-eval'` until
+ * the engine dispatch stopped needing it -- so this is the check on the claim
+ * that nothing on a page's path evals any more. It is worth its own field
+ * because the inline check above cannot see it: a build that quietly went back
+ * to the permissive policy still reports inline=BLOCKED, and every behavioural
+ * suite in this repository still passes.
+ *
+ * Both spellings, because CSP treats them as one and an engine might not.
+ * BLOCKED is a throw from both; anything else names which one compiled a
+ * string, because "eval is blocked but new Function is not" is a real answer
+ * an engine could give and it is not the same defect.
+ *
+ * Letters only, no digits. Both verifiers read a field with `[A-Za-z]+`, so a
+ * reading spelled RAN1 reaches them as RAN and the failure they print is
+ * missing the half that says which call it was.
+ */
+function checkEval() {
+    var viaEval = false;
+    var viaFunction = false;
+    try {
+        viaEval = win.eval("1+1") === 2;
+    } catch (_) {}
+    try {
+        viaFunction = (new win.Function("return 2"))() === 2;
+    } catch (_) {}
+    results.evl = viaEval && viaFunction ? "RANBOTH"
+        : viaEval ? "RANEVAL"
+        : viaFunction ? "RANFUNCTION"
+        : "BLOCKED";
 }
 
 /*
@@ -294,6 +329,7 @@ function start() {
             checkRaw(function () {
                 checkWire(function () {
                     checkBase();
+                    checkEval();
                     checkInline(function () {
                     checkFrame(function () {
                         checkNavData(function () {

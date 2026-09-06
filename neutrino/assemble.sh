@@ -556,6 +556,26 @@ nt_assemble() {
         "$nt_triples$nt_awk" | tr -d '\r'
 }
 
+# One region, by name, and it is a separate function because of what the
+# spelling below it does with a name it cannot find.
+#
+# `nt_assemble "$(nt_resolve some/part)"` reads as "assemble that part". It is
+# not: command substitution discards nt_resolve's exit status, so a part that
+# does not exist arrives as an empty argument, NT_ONE is empty, and the awk
+# program falls back to assembling skeleton.cmd -- the whole polyglot, document
+# and all. Every check downstream then passes, because the whole polyglot does
+# parse as JavaScript. Measured: renaming web/ to else/ and forgetting this one
+# line left `--check` green while it checked the artifact instead of the region,
+# and the only symptom was a stylesheet turning up in a JavaScript syntax error
+# three suites later.
+nt_region() {
+    nt_part="$(nt_resolve "$1")" || {
+        echo "assemble.sh: cannot check the region: no such part: $1" >&2
+        exit 1
+    }
+    nt_assemble "$nt_part"
+}
+
 if [ "$VERIFY" = "1" ]; then
     # Each region checked by the language it is written in, on the text that is
     # about to ship rather than on the text it was cut from. A strip that took
@@ -569,20 +589,20 @@ if [ "$VERIFY" = "1" ]; then
     # afterwards. The app is part of the assembly now.
     nt_tmp="$(mktemp -d)"
     trap 'rm -rf "$nt_tmp"' EXIT
-    nt_assemble "$(nt_resolve sh/parts.list)" > "$nt_tmp/region.sh"
+    nt_region sh/parts.list                    > "$nt_tmp/region.sh"
     # The JavaScript region is three includes in the skeleton rather than one,
     # and it is checked as the one thing they make: js/parts.list, then the
     # `@else` branch of the conditional-compilation block, then the call that
     # starts it. Concatenated in the artifact's own order, so what node reads
     # here is what an engine reads there.
     #
-    # It matters that all three are named. The app is web/parts.list now, and
+    # It matters that all three are named. The app is else/parts.list now, and
     # a check that had kept reading js/parts.list alone would have stopped
     # looking at the app on the day the app moved -- silently, still passing.
-    nt_assemble "$(nt_resolve js/parts.list)"  > "$nt_tmp/region.js"
-    nt_assemble "$(nt_resolve web/parts.list)" >> "$nt_tmp/region.js"
-    nt_assemble "$(nt_resolve js/launch.js)"   >> "$nt_tmp/region.js"
-    nt_assemble "$(nt_resolve py/shim.py)"    > "$nt_tmp/region.py"
+    nt_region js/parts.list                    > "$nt_tmp/region.js"
+    nt_region else/parts.list                 >> "$nt_tmp/region.js"
+    nt_region js/launch.js                    >> "$nt_tmp/region.js"
+    nt_region py/shim.py                       > "$nt_tmp/region.py"
     if command -v bash >/dev/null 2>&1; then
         bash -n "$nt_tmp/region.sh" || {
             echo "assemble.sh: the shell region does not parse" >&2; exit 1; }
