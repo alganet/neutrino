@@ -233,6 +233,9 @@
             readTheme: function () {
                 return self.readWindowsTheme(SystemRef);
             },
+            readFonts: function () {
+                return self.readWindowsFonts(SystemRef);
+            },
             repaint: function (win, wv, background) {
                 var color = self.makeWindowsColor(SystemRef, background);
                 if (!color) {
@@ -617,7 +620,8 @@
                                 // while the window it is sitting in was
                                 // painted from a palette that was read
                                 // perfectly well.
-                                self.themeLiteral(self.theme)
+                                self.themeLiteral(self.theme),
+                            self.fontsLiteral(self.fonts)
                             );
                         }
                         if (coreReady && pendingPreload && !preloadInjected) {
@@ -693,6 +697,28 @@
                          */
                         if (spins % 60 === 0) {
                             self.applyTheme(driver, win, wv, driver.readTheme());
+                        }
+                        /*
+                         * And the fonts, on the same clock and half a turn
+                         * off it.
+                         *
+                         * Unlike SystemColors, SystemFonts *are* live here
+                         * -- they come from SPI_GETNONCLIENTMETRICS and
+                         * follow the user's text size -- so a re-read is
+                         * the whole watcher, and fontsDiffer is what makes
+                         * that safe on a clock exactly as themesDiffer does
+                         * above.
+                         *
+                         * Measured: reading two SystemFonts costs 0.94ms,
+                         * so three is about 1.4ms once a second against a
+                         * loop already spending 16ms turns -- under a tenth
+                         * of one per cent. Offset by thirty spins so the
+                         * two reads never land in the same turn as each
+                         * other, which costs nothing and keeps the slowest
+                         * turn of this loop where it was.
+                         */
+                        if (spins % 60 === 30) {
+                            self.applyFonts(driver, wv, driver.readFonts());
                         }
                         if (coreReady && messageCallback && webMessagesWired) {
                             var arrived = view.takeMessages();

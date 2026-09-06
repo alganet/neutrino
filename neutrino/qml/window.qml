@@ -22,7 +22,10 @@ Window {
         // palette at document start. This is a binding like everything else
         // here, so a desktop that changes its colours between this document
         // loading and the view injecting still hands over the current one.
-        nt.themeLiteral(root.ntTheme))
+        nt.themeLiteral(root.ntTheme),
+        // And the fonts, which unlike the palette will never be replaced on
+        // this lane -- see ntFonts.
+        nt.fontsLiteral(root.ntFonts))
 
     // The desktop's palette, read once. Everything downstream of it -- the
     // window colour, the view colour, the push below -- is a binding, so a
@@ -91,6 +94,97 @@ Window {
     readonly property var ntTheme: root.ntReadTheme(
         sysPalette.window, sysPalette.windowText, sysPalette.base, sysPalette.text,
         sysPalette.highlight, sysPalette.highlightedText, sysPalette.mid)
+
+    /*
+     * The desktop's fonts, read once, and read once is all this lane gets.
+     *
+     * `Qt.application.font` is the only font QML exposes.
+     * QPlatformTheme::font carries a dozen more -- menu, title bar, fixed --
+     * and none of them is reachable from here, so four of the five roles
+     * take the fill rule in normalizeFonts.
+     *
+     * The read is at the binding site, as ntTheme's is, and here that buys
+     * nothing -- which is the point worth writing down rather than leaving
+     * to look like an oversight.
+     *
+     * **This lane is launch-only for fonts, and it is measured rather than
+     * assumed.** `Connections { target: Qt.application; function
+     * onFontChanged() }` is the spelling the property implies, and Qt
+     * refused it in as many words on the runner: "no signal of the target
+     * matches the name". So there is no NOTIFY QML can reach and a binding
+     * on it would never re-evaluate. Polling settled the other half: the
+     * value did not move in eight seconds across a `kwriteconfig6 --notify`
+     * write of [General] font, on real Plasma 6, with
+     * KDEPlasmaPlatformTheme6 confirmed loaded in the plugin loader log
+     * rather than assumed. That is the strongest form the negative takes on
+     * this lane -- the palette round established that the same channel does
+     * move a colour scheme, so it is this property that is not on it.
+     *
+     * There is therefore no `onNtFontsChanged` below, and an empty one
+     * would be worse than none: it would compile, read correctly, and never
+     * run -- code that looks like a guarantee and is not, which is the
+     * shape the macOS observer's NSNull defect had for a whole round. If Qt
+     * ever gains the notify, ntFonts is already a binding and the handler
+     * is three lines.
+     */
+    readonly property var ntFonts: root.ntReadFonts(
+        Qt.application.font.family,
+        Qt.application.font.pointSize,
+        Qt.application.font.pixelSize,
+        Qt.application.font.weight)
+
+    /*
+     * pixelSize where Qt gives one, and it usually does.
+     *
+     * A QFont answers -1 for whichever of the two sizes it was not set
+     * with, which is the hazard a reader has to expect -- but what QML
+     * hands out carries both: measured "Noto Sans" pointSize=10
+     * pixelSize=13 on real Plasma, and "Sans Serif" 9/12 under QGtk3Theme.
+     * pixelSize is what Qt will actually render at and is CSS px directly,
+     * so it is preferred and the point size is the fallback.
+     */
+    function ntReadFonts(family, pointSize, pixelSize, weight) {
+        var raw = { source: "qt" }
+        if (pixelSize > 0) {
+            raw.unit = "px"
+            raw.uiSize = pixelSize
+        } else if (pointSize > 0) {
+            raw.unit = "pt"
+            raw.uiSize = pointSize
+        } else {
+            return null
+        }
+        // Qt 6's QFont::Weight is already the CSS 1..1000 scale --
+        // Normal is 400 and Bold is 700 -- and this document is Qt 6 by
+        // construction, since it imports QtQuick unversioned beside
+        // QtWebEngine.
+        raw.uiWeight = weight
+
+        /*
+         * Qt's own generic names, which it hands back as families exactly
+         * the way Pango hands back "Sans".
+         *
+         * Measured on both Qt runners this suite has: `Sans Serif` under
+         * QGtk3Theme, where it is Qt's default rather than anything the
+         * desktop said. `font-family: "Sans Serif"` matches nothing in any
+         * engine here, so shipping it as a name would deliver a family the
+         * engine ignores and fall through to the tail -- which works, and
+         * is a name in the API that means nothing. Saying "no family, this
+         * generic" is the honest reading and it is what the alias meant.
+         *
+         * Real Plasma reports "Noto Sans" through the same property and is
+         * unaffected.
+         */
+        var name = String(family || "")
+        var alias = root.nt.fontLookup(root.nt.qtFontAliases, name)
+        if (alias !== "") {
+            raw.uiFamily = ""
+            raw.uiGeneric = alias
+        } else {
+            raw.uiFamily = name
+        }
+        return root.nt.normalizeFonts(raw)
+    }
 
     // The parameters are named for the palette entries they carry rather than
     // for the SystemPalette properties they came from -- window is a name
@@ -454,11 +548,11 @@ Window {
             try { ntConnectNewWindow() } catch (e) {
                 console.warn("neutrino: could not connect the new-window signal: " + e)
             }
-            view.loadHtml(root.nt.themedDocument(
+            view.loadHtml(root.nt.dressedDocument(
                 root.nt.titledDocument(
                     root.nt.extractHtmlDocument(root.ntSource),
                     cfg.title),
-                root.ntTheme))
+                root.ntTheme, root.ntFonts))
         }
     }
 }

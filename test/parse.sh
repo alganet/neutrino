@@ -696,8 +696,9 @@ eq("the standard spelling is the same record", sent[0], "resize" + S + "500" + S
 eq("neutrino.window is gone", typeof sandbox.window.neutrino.window, "undefined");
 eq("neutrino.shell is gone", typeof sandbox.window.neutrino.shell, "undefined");
 eq("neutrino.send is gone", typeof sandbox.window.neutrino.send, "undefined");
-eq("and what is left is the palette and the channel's name",
-   Object.keys(sandbox.window.neutrino).sort().join(","), "_theme,theme,transport");
+eq("and what is left is the two readings and the channel's name",
+   Object.keys(sandbox.window.neutrino).sort().join(","),
+   "_fonts,_theme,fonts,theme,transport");
 
 console.log("");
 console.log("window.open routes on the url, not on the target");
@@ -1213,6 +1214,206 @@ eq("having nothing yet is a change", N.themesDiffer(null, theme), true);
 eq("and having nothing twice is not", N.themesDiffer(null, null), false);
 
 console.log("");
+console.log("a font set is taken whole or not at all");
+// The GTK reading measured on a Mint desktop, which is the one with something
+// to say in every role: a real UI family, a Pango alias for the document face,
+// a real monospace name, and a title bar that differs from the UI font only in
+// its weight.
+function rawFonts(overrides) {
+    var raw = {
+        source: "gtk", unit: "pt",
+        uiFamily: "Ubuntu", uiSize: 10, uiWeight: 400,
+        documentFamily: "", documentGeneric: "sans-serif",
+        documentSize: 10, documentWeight: 400,
+        monospaceFamily: "DejaVu Sans Mono", monospaceSize: 10, monospaceWeight: 400,
+        titlebarFamily: "Ubuntu", titlebarSize: 10, titlebarWeight: 500
+    };
+    for (var k in overrides) { raw[k] = overrides[k]; }
+    return raw;
+}
+
+var fonts = N.normalizeFonts(rawFonts());
+eq("points become CSS pixels", fonts.ui.size, "13.33px");
+eq("and the multiplier has no DPI term in it",
+   N.normalizeFonts(rawFonts({ uiSize: 17 })).ui.size, "22.67px");
+// macOS is the asymmetry: its points are already CSS pixels.
+eq("a lane that says px is left alone",
+   N.normalizeFonts({ source: "macos", unit: "px", uiFamily: "Helvetica", uiSize: 13 }).ui.size,
+   "13px");
+eq("Pango's weight survives", fonts.titlebar.weight, "500");
+eq("a real family is quoted and given a tail", fonts.ui.stack, "'Ubuntu',sans-serif");
+eq("an alias delivers no name at all", fonts.document.family, "");
+eq("and lands on its generic", fonts.document.stack, "sans-serif");
+
+console.log("");
+console.log("every role is filled, and not all of them from ui");
+// The rule the delivery rests on: `fonts` is null or every variable has a
+// value. What differs is where the value comes from.
+var sparse = N.normalizeFonts({
+    source: "windows", unit: "pt",
+    uiFamily: "Segoe UI", uiSize: 9, uiWeight: 400
+});
+eq("titlebar takes the ui face, because it is user interface",
+   sparse.titlebar.stack, "'Segoe UI',sans-serif");
+eq("and so does small", sparse.small.stack, "'Segoe UI',sans-serif");
+// The two that do not, and this is the assertion that stops the delivery being
+// worse than none: filling monospace from ui ships a proportional face under a
+// name that promises fixed pitch, on the one platform with no monospace
+// setting at all.
+eq("monospace keeps its own generic and stays nameless",
+   sparse.monospace.stack, "monospace");
+eq("document too", sparse.document.family, "");
+// And which generic that is is a fact about the platform rather than this
+// file's choice -- Windows' document convention is a serif one.
+eq("document's generic is per lane on windows", sparse.document.stack, "serif");
+eq("and sans-serif everywhere else",
+   N.normalizeFonts({ source: "gtk", unit: "pt", uiFamily: "Ubuntu", uiSize: 10 })
+       .document.stack, "sans-serif");
+eq("sizes and weights always come from ui", sparse.monospace.size, "12px");
+
+console.log("");
+console.log("the hidden family, and the token that stands in for it");
+// Eleven of macOS's thirteen roles report `.AppleSystemUIFont`, which WebKit
+// refuses by name silently. The reader translates it; this asserts the tail
+// that makes the token safe on the two engines that do not resolve it.
+var mac = N.normalizeFonts({
+    source: "macos", unit: "px",
+    uiFamily: "", uiGeneric: "system-ui", uiSize: 13, uiWeight: 400
+});
+eq("system-ui is delivered with a generic behind it",
+   mac.ui.stack, "system-ui,sans-serif");
+eq("and the token survives on the object", mac.ui.generic, "system-ui");
+
+console.log("");
+console.log("what a font set refuses, whole");
+// Same rule the palette has and the same reason: a set with a hole in it is
+// worse than none, because an app would style itself from it and have no way
+// to tell. Each of these is a value that reaches both a stylesheet and a
+// JavaScript object literal, and there is no escaping scheme in either.
+var forgeries = [
+    ["the hidden family, by name", { uiFamily: ".AppleSystemUIFont" }],
+    ["a name that closes the style element", { uiFamily: "x</style><script>" }],
+    ["a name that closes the rule", { uiFamily: "a}b" }],
+    ["a name that ends the declaration", { uiFamily: "a;b" }],
+    ["a name that opens a url()", { uiFamily: "a(b" }],
+    ["a name that starts an at-rule", { uiFamily: "@font-face" }],
+    ["a name carrying a comma", { uiFamily: "Sans,serif" }],
+    ["a name carrying a quote", { uiFamily: "Ubuntu'" }],
+    ["a name carrying a double quote", { uiFamily: "Ubuntu\"" }],
+    ["a name carrying a backslash", { uiFamily: "Ubuntu\\" }],
+    ["a size of zero", { uiSize: 0 }],
+    ["a negative size", { uiSize: -3 }],
+    ["a size no desktop has", { uiSize: 4000 }],
+    ["a weight past the scale", { uiWeight: 1001 }],
+    ["a weight of zero", { uiWeight: 0 }],
+    ["a lane nobody ships", { source: "elsewhere" }],
+    ["a unit nothing measures in", { unit: "dpi" }],
+    ["a generic that is not one", { uiGeneric: "handwriting" }]
+];
+for (var fg = 0; fg < forgeries.length; fg++) {
+    eq(forgeries[fg][0] + " is refused whole",
+       N.normalizeFonts(rawFonts(forgeries[fg][1])), null);
+}
+// And the one field nothing can stand in for.
+eq("a lane that read no ui size has read no fonts",
+   N.normalizeFonts({ source: "gtk", unit: "pt", uiFamily: "Ubuntu" }), null);
+eq("nothing at all is nothing", N.normalizeFonts(null), null);
+
+console.log("");
+console.log("the two deliveries agree, value for value");
+// The launch half is a stylesheet this launcher writes and the update half is
+// a setProperty the page runs. They are built from one list here so they
+// cannot drift -- which they would have, on macOS, if the page composed the
+// family itself: `system-ui` against the stylesheet's `system-ui,sans-serif`.
+var names = N.fontCssNameList();
+var values = N.fontValueList(fonts);
+eq("fifteen properties", names.length, 15);
+eq("and fifteen values", values.length, 15);
+var roles = N.fontRoleList(), agreed = 0;
+for (var fr = 0; fr < roles.length; fr++) {
+    var role = fonts[roles[fr]];
+    var pushed = [role.stack, role.size, role.weight];
+    for (var fv = 0; fv < 3; fv++) {
+        if (pushed[fv] === values[fr * 3 + fv]) { agreed++; }
+    }
+}
+eq("the object the page gets says what the stylesheet says", agreed, 15);
+eq("the rule carries every role", N.fontsCssText(fonts),
+   ":root{--neutrino-font-ui:'Ubuntu',sans-serif;--neutrino-font-size-ui:13.33px;" +
+   "--neutrino-font-weight-ui:400;--neutrino-font-document:sans-serif;" +
+   "--neutrino-font-size-document:13.33px;--neutrino-font-weight-document:400;" +
+   "--neutrino-font-monospace:'DejaVu Sans Mono',monospace;" +
+   "--neutrino-font-size-monospace:13.33px;--neutrino-font-weight-monospace:400;" +
+   "--neutrino-font-titlebar:'Ubuntu',sans-serif;--neutrino-font-size-titlebar:13.33px;" +
+   "--neutrino-font-weight-titlebar:500;--neutrino-font-small:'Ubuntu',sans-serif;" +
+   "--neutrino-font-size-small:13.33px;--neutrino-font-weight-small:400}");
+eq("a lane that read no fonts writes no rule", N.fontsCssText(null), null);
+
+console.log("");
+console.log("an update that changes nothing is not an update");
+// The same gate themesDiffer is, and it does more work here: the GTK watcher
+// is style-updated, which fires twice for one font change with the toolkit
+// still holding the old value the first time.
+eq("the same set twice is not a change",
+   N.fontsDiffer(fonts, N.normalizeFonts(rawFonts())), false);
+eq("a different family is",
+   N.fontsDiffer(fonts, N.normalizeFonts(rawFonts({ uiFamily: "Cantarell" }))), true);
+eq("a different size is",
+   N.fontsDiffer(fonts, N.normalizeFonts(rawFonts({ uiSize: 11 }))), true);
+eq("a different weight is",
+   N.fontsDiffer(fonts, N.normalizeFonts(rawFonts({ titlebarWeight: 700 }))), true);
+eq("a role that moved to a generic is",
+   N.fontsDiffer(fonts, N.normalizeFonts(rawFonts({ monospaceFamily: "" }))), true);
+eq("having nothing yet is a change", N.fontsDiffer(null, fonts), true);
+eq("and having nothing twice is not", N.fontsDiffer(null, null), false);
+
+console.log("");
+console.log("what the GTK lanes decide, once, for both of them");
+// else/font-gtk.js is where every judgement about a GTK font lives, because
+// two lanes read one desktop and a rule written twice can disagree.
+eq("Pango's aliases are not families",
+   N.gtkRoleFields("document", { family: "Sans", size: 10, weight: 400 }).generic,
+   "sans-serif");
+eq("and deliver no name", 
+   N.gtkRoleFields("document", { family: "Sans", size: 10, weight: 400 }).family, "");
+eq("a real name is kept",
+   N.gtkRoleFields("ui", { family: "Ubuntu", size: 10, weight: 500 }).family, "Ubuntu");
+// The schema the desktop is actually following is the one whose font-name
+// matches what GTK is drawing with. Measured on a runner with no settings
+// daemon: GtkSettings said "Sans 10" while GNOME's key said "Cantarell 11",
+// and the page agreed with GtkSettings.
+eq("the schema that matches the toolkit wins",
+   N.gtkFontSchemaChoice("Cantarell 11", {
+       "org.gnome.desktop.interface": "Cantarell 11",
+       "org.mate.interface": "Sans 10"
+   }), "org.gnome.desktop.interface");
+eq("and when none matches, the first present one is named in a note",
+   N.gtkFontSchemaChoice("Sans 10", { "org.mate.interface": "Cantarell 11" }),
+   "org.mate.interface");
+eq("with no schema at all there is nothing to choose",
+   N.gtkFontSchemaChoice("Sans 10", {}), "");
+// titlebar-uses-system-font true means the desktop draws its title bars in the
+// UI font and titlebar-font is a value nothing is reading.
+eq("a titlebar that uses the system font names none",
+   N.gtkChooseFontStrings({ gtkFontName: "Ubuntu 10", interface: {},
+       titlebar: "Cantarell Bold 11", titlebarSystem: true }).titlebar, "");
+eq("and one that does not, does",
+   N.gtkChooseFontStrings({ gtkFontName: "Ubuntu 10", interface: {},
+       titlebar: "Cantarell Bold 11", titlebarSystem: false }).titlebar,
+   "Cantarell Bold 11");
+// ui is the toolkit's answer and never a GSettings one.
+eq("ui comes from GtkSettings",
+   N.gtkChooseFontStrings({ gtkFontName: "Sans 10",
+       interface: { "font-name": "Cantarell 11" } }).ui, "Sans 10");
+// And Qt has the same habit under a different spelling: `Sans Serif` is what
+// it reports under QGtk3Theme, and it is Qt's own default rather than
+// anything the desktop said.
+eq("Qt's generic names are not families either",
+   N.fontLookup(N.qtFontAliases, "Sans Serif"), "sans-serif");
+eq("and a real one is left alone",
+   N.fontLookup(N.qtFontAliases, "Noto Sans"), "");
+
+console.log("");
 console.log("the flag the two GTK lanes raise, and the one they never lower");
 // The engine's `prefers-color-scheme` on WebKitGTK follows the theme's *name*
 // -- the prefer-dark flag, or a name carrying the dark variant -- and not the
@@ -1378,7 +1579,7 @@ console.log("and the launch palette rides in the document, not in a script");
 var CSSDOC = '<!doctype html><html><head>' +
              '<meta http-equiv="Content-Security-Policy" content="script-src \'unsafe-eval\'">' +
              '<style>p{color:red}</style></head><body><p>x</p></body></html>';
-var themed = N.themedDocument(CSSDOC, theme);
+var themed = N.dressedDocument(CSSDOC, theme, null);
 eq("the rule carries every key", N.themeCssText(theme),
    ":root{--neutrino-ButtonFace:#383838;--neutrino-ButtonText:#dadada;" +
    "--neutrino-Canvas:#404040;--neutrino-CanvasText:#dadada;" +
@@ -1394,14 +1595,14 @@ eq("it lands after the content policy",
 eq("and before the author's stylesheet",
    themed.indexOf("--neutrino-Canvas") < themed.indexOf("p{color:red}"), true);
 eq("a lane that read no palette writes no rule", N.themeCssText(null), null);
-eq("and its document comes back untouched", N.themedDocument(CSSDOC, null), CSSDOC);
+eq("and its document comes back untouched", N.dressedDocument(CSSDOC, null, null), CSSDOC);
 // No stylesheet of its own is no author declarations to lose to, so the end of
 // the head is enough.
 var bare = '<!doctype html><html><head><meta charset="utf-8"></head><body>x</body></html>';
 eq("a document with no stylesheet gets it at the end of the head",
-   N.themedDocument(bare, theme).indexOf("</style></head>") > 0, true);
+   N.dressedDocument(bare, theme, null).indexOf("</style></head>") > 0, true);
 eq("a document with no head keeps what it has",
-   N.themedDocument("<body>x</body>", theme), "<body>x</body>");
+   N.dressedDocument("<body>x</body>", theme, null), "<body>x</body>");
 
 // The shapes this launcher refuses, and the reason they are assertions rather
 // than a probe: both functions are pure, so what an engine would do with a

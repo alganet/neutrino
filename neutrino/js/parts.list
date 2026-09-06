@@ -1,7 +1,9 @@
 @@include js/config.js
 @@include js/color.js
 @@include js/theme.js
+@@include js/fonts.js
 @@include js/theme-windows.js
+@@include js/font-windows.js
 @@include js/source.js
 @@include js/run.js
 @@include js/external-allow.js

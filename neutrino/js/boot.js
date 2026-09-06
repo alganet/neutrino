@@ -22,6 +22,29 @@
         }
 
         /*
+         * And the fonts, after the palette and with none of its urgency.
+         *
+         * Nothing native is painted from these -- a font change has no
+         * surface, which is what makes applyFonts shorter than applyTheme
+         * -- so there is no "before the window" requirement here at all.
+         * They are read at this point because they have to be in hand
+         * before the document is dressed and before the preload is built,
+         * and because the two readings of one desktop belong next to each
+         * other.
+         *
+         * Gated on the driver carrying a reader, so a lane that has not
+         * grown one yet delivers `fonts === null` rather than failing to
+         * launch -- the same shape `readTheme` has above.
+         */
+        if (driver.readFonts) {
+            this.fonts = this.normalizeFonts(driver.readFonts());
+            if (!this.fonts) {
+                this.note("could not read the desktop fonts; the page falls " +
+                    "back to the engine's own");
+            }
+        }
+
+        /*
          * And here for the same reason the read is here: before the window,
          * because `prefers-color-scheme` is a value the page's first paint
          * is already styled by. A media query corrected after the document
@@ -44,11 +67,11 @@
 
         var scriptPath = driver.getScriptPath();
         var source = driver.readFile(scriptPath);
-        var html = this.themedDocument(
+        var html = this.dressedDocument(
             this.titledDocument(
                 this.extractHtmlDocument(source),
                 config.title),
-            this.theme);
+            this.theme, this.fonts);
         var pageScript = this.extractPageScript(source);
 
         var win = driver.createWindow(config);
@@ -106,7 +129,8 @@
         if (driver.webMessageTransport) {
             driver.injectPreload(null, this.buildPreloadScript(
                 driver.webMessageTransport, driver.transportName,
-                this.themeLiteral(this.theme)));
+                this.themeLiteral(this.theme),
+                this.fontsLiteral(this.fonts)));
         }
 
         if (driver.injectPageScript) {
