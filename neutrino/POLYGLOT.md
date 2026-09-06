@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
 SPDX-License-Identifier: ISC
 -->
 
-# The polyglot, and the twenty-one lines it lives in
+# The polyglot, and the twenty-six lines it lives in
 
 `skeleton.cmd` is the whole of neutrino that is more than one language at once.
 Everything else in this directory is ordinary source in exactly one language,
@@ -41,14 +41,19 @@ program.
 11  @@include html/document.html
 12  <script type=text/javascript>//*/
 13
-14      /*@cc_on
-15          @if (@_jscript_version >= 7)
-16  @@include jsc/parts.list
-17          @end
-18      @*/
-19
-20  @@include js/parts.list
-21  //</script></body></html>
+14  @@include js/parts.list
+15
+16      /*@cc_on
+17          @if (@_jscript_version >= 7)
+18  @@include jsc/parts.list
+19          @else @*/
+20
+21  @@include web/parts.list
+22
+23      /*@end @*/
+24
+25  @@include js/launch.js
+26  //</script></body></html>
 ```
 
 Five readers, and none of them is told which one it is.
@@ -127,32 +132,81 @@ The same twelve characters doing two different jobs. Read as part of the file,
 starts executing at line 13. Read as part of the document, the browser has just
 opened a script element and `//*/` is the first line of it — a line comment.
 
-### Lines 14 to 18 — the JScript.NET region
+### Lines 16 to 23 — the two halves nobody compiles twice
 
 ```
     /*@cc_on
         @if (@_jscript_version >= 7)
-            ...
-        @end
-    @*/
+            ...jsc/parts.list...
+        @else @*/
+
+    ...web/parts.list...
+
+    /*@end @*/
 ```
 
-To gjs, QtWebEngine, JavaScriptCore and every browser this is a block comment.
-To `jsc.exe` it is conditional compilation, and the typed JScript.NET inside it
-is the only part of the file that compiles.
+One conditional with both of its branches used, and each branch is a region one
+reader gets and one reader does not.
 
-JavaScript has no nested block comments, so nothing under `jsc/` may contain
-`*/` — a single one there ends the outer comment early and spills typed
-JScript.NET into three engines at once. `test/parse.sh` checks for it, and
-`assemble.sh` strips only line comments in those files for the same reason.
+To gjs, QtWebEngine, JavaScriptCore and every browser, everything from `/*@cc_on`
+to the `@*/` on the `@else` line is a block comment: the typed JScript.NET is
+inside it, and the file resumes at `web/`. To `jsc.exe` it is conditional
+compilation, the `@if` is true, and the `@else` branch is skipped — so `jsc/` is
+the only part of the file that compiles for it and `web/` is the only part that
+does not.
 
-The region is a `parts.list` like `sh/` and `js/` rather than one named file.
-It became one when the Evergreen path arrived and there were two kinds of thing
-that have to be typed .NET — a delegate the runtime hands a type for, and a set
-of types this file builds itself — and `import` is the region's, not any one
-part's, so the imports are a part of their own at the top.
+The `@else` half is younger than the rest of this and it is where an app's own
+code lives. It used to sit below the block with everything else, which meant
+`jsc.exe` compiled it: a Windows launch never calls `runWeb`, and paid for it
+anyway. Measured on a Windows 11 client with a 731 KB `app.js` — an app large
+enough to see, not a realistic one — the compile went from 1.73s to 1.10s, the
+assembly from 5,209,600 bytes to 700,416, and `prefix`, the milliseconds a launch
+spends before the driver's first line, from 316ms to 221ms. The last of those is
+the one that is paid every launch rather than once, and 221ms is what the same
+build measures carrying no app at all. The app is out of the Windows process
+rather than cheaper in it.
 
-### Line 21 — `//</script></body></html>`
+What that buys the author is the larger half. Every rule this project used to
+hand out about app code — write `eval("window")` and not `window`, do not declare
+`var int` or `var short`, ES5 only because one of the five engines is a .NET
+compiler from 2005 — was one rule wearing five hats, and it is gone. The engines
+that run `runWeb` are the four web engines, and an app may use whatever they
+have.
+
+Each branch has exactly one rule left, and each is a shape `test/parse.sh`
+refuses:
+
+- **Nothing under `jsc/` may contain `*/`.** JavaScript has no nested block
+  comments, so a single one there ends the outer comment early and spills typed
+  JScript.NET into three engines at once. `assemble.sh` strips only line comments
+  in those files for the same reason.
+- **Nothing under `web/` may contain `@if` or `@end`.** `jsc.exe` skips a branch
+  by scanning it for its own directives rather than by ignoring it, so those two
+  spellings are still read in there and restart the compile in the middle of an
+  app. Measured on the same machine: `"a@end.example"` inside a string ended the
+  skip and the compiler resumed mid-string, reporting an unterminated string
+  constant against a line of the app. Everything else is inert — `@endpoint`,
+  `@else`, `@cc_on`, `@set` and a bare `@` all compiled without a word, as did
+  `class`, arrow functions, template literals, and text that was not JavaScript
+  at all.
+
+The `jsc/` region is a `parts.list` like `sh/` and `js/` rather than one named
+file. It became one when the Evergreen path arrived and there were two kinds of
+thing that have to be typed .NET — a delegate the runtime hands a type for, and a
+set of types this file builds itself — and `import` is the region's, not any one
+part's, so the imports are a part of their own at the top. Those imports now sit
+below every line of `js/`, which is where moving the block to the seam the app
+needed put them, and `jsc.exe` reads them there.
+
+### Line 25 — `@@include js/launch.js`
+
+`NeutrinoWebview.run();`, and it is in the skeleton rather than at the end of
+`js/parts.list` because it has to be below the `@else` branch. `run()` dispatches
+on which engine is asking, and its last question is whether `web/entry.js` is
+here — a member test rather than the `eval("window")` it used to be, since the
+half that answers is the half `jsc.exe` did not compile.
+
+### Line 26 — `//</script></body></html>`
 
 The here-document terminator from line 10, a JavaScript line comment, and the
 end of the document. `extractPageScript` finds it with `lastIndexOf`, so it is
@@ -180,10 +234,11 @@ also where the page script stops.
 | `body.html` | HTML | the early shell's markup; likewise |
 | `config.json` | JSON | the window, laid into `js/config.js` verbatim |
 | `html/policy.html` | HTML | the document's content policy; the offline overlay replaces it |
+| `web/entry.js` | JavaScript | `runWeb` and the `isWeb` test `run()` ends on — the `@else` branch, which `jsc.exe` never compiles |
 | `app.js` | JavaScript | the body of `runWeb`, which is where an app's code goes |
 | `js/config.js` | JavaScript | declares `NeutrinoWebview`, and includes `config.json` as its config object |
 | `js/*.js` | JavaScript | one group of members per file, assigned onto the object; the order is in `js/parts.list` |
-| `js/launch.js` | JavaScript | `NeutrinoWebview.run();`, and it goes last |
+| `js/launch.js` | JavaScript | `NeutrinoWebview.run();`, and it goes last — named by the skeleton, below the `@else` branch |
 
 Every part is a document its own language can read on its own. `node --check`
 passes on each `js/` file, `bash -n` on each `sh/` file, `python3` compiles the
@@ -194,16 +249,17 @@ assignments rather than `parseColor: ...` entries inside one literal, because a
 run of entries out of the middle of a literal is not a document and no editor,
 linter or checker can read one. `this` still means the object inside them, since
 they are called as `this.parseColor(...)` from each other, and the order is free
-except that `js/config.js` declares the object first and `js/launch.js` starts
-it last.
+except at the two ends: `js/config.js` declares the object first, and
+`js/launch.js` starts it last, from the skeleton, below the branch that carries
+the app.
 
 Some things in here are not whole documents, and they are named rather than
 hidden. `html/document.html` opens tags the skeleton's last line closes, which
 is also the here-document terminator. `app.js` is the body of a function rather
-than a program. `js/config.js` and `js/run.js` carry an `@@include` and are
+than a program. `js/config.js` and `web/entry.js` carry an `@@include` and are
 therefore templates rather than JavaScript — `test/assemble.sh` works out which
 parts those are by looking for the directive rather than by keeping a list. And
-the two include lists are `.list` files rather than `.js` and `.sh` ones,
+the include lists are `.list` files rather than `.js` and `.sh` ones,
 because a list of `@@include` lines is a manifest and not a program — giving it
 a language's extension would make it the only lying file in the tree.
 

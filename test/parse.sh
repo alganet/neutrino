@@ -143,24 +143,112 @@ NT_JSC_RESERVED="$NT_JSC_RESERVED|import|int|interface|internal|long|native|pack
 NT_JSC_RESERVED="$NT_JSC_RESERVED|private|protected|public|sbyte|short|static|super"
 NT_JSC_RESERVED="$NT_JSC_RESERVED|synchronized|throws|transient|uint|ulong|ushort|volatile"
 
-# The whole JavaScript region, and not the app's part of it.
+# The JavaScript region, cut into the half jsc.exe compiles and the half it
+# skips, because the reserved-word hazard belongs to the first half only.
 #
-# This used to cut the app out from between a pair of `//#` markers, because the
-# app was spliced in and the markers were where it landed. Nothing is spliced
-# and there are no markers, and it turns out the narrower question was the wrong
-# one anyway: jsc.exe compiles this whole region, so a declaration the launcher
-# grew would fail exactly the same way and this would not have seen it. The
-# launcher declares none today, which is what makes widening it free.
-sed -n '/^<script type=text\/javascript>/,$p' "$TARGET" > "$WORK/app.js"
-NT_BAD="$(grep -nE "\b(var|function)[[:space:]]+($NT_JSC_RESERVED)\b" "$WORK/app.js" || true)"
+# The region used to be one thing and this check read all of it: jsc.exe
+# compiled every line between the script tag and the end of the file, the app's
+# own included. It does not any more. web/parts.list sits in the `@else` branch
+# of the conditional-compilation block, and measured on the guest's own
+# jsc.exe, a branch it is skipping is skipped completely -- `var short`, `var
+# int`, a `class`, arrow functions, template literals and text that is not
+# JavaScript at all each compiled without a word. So an app may use those, and
+# refusing them here would be this file inventing a rule the compiler dropped.
+#
+# The launcher's own half is checked exactly as before. It declares none of
+# these names today, which is what makes the check free to keep.
+# The seam is found by line number and with `grep -F`, which is a rule about
+# runners rather than a style. The first spelling of this passed the two markers
+# to awk as regexes through `-v`, and `-v` processes escape sequences in the
+# value: the `\*` written here to mean a literal asterisk reached the program as
+# a plain `*`, so `@else @*/` became "@else ", any number of "@", "/" -- which
+# matches nothing in this file. It cut an empty region and refused every
+# artifact. mawk kept the backslash and gawk did not, so it passed here and
+# failed on all six lanes at once, with `awk: warning: escape sequence \* treated
+# as plain *` as the only clue. A fixed string cannot be read two ways.
+NT_ELSE='@else @*/'
+NT_END='/*@end @*/'
+# The last `/*@end @*/` and not the first. An app carrying that line would
+# otherwise end the region early and the directive check below would read a
+# truncated app -- missing the very line that put it there. The skeleton's is
+# always last, so an app's copy stays inside the region and is caught.
+NT_ELSE_LN="$(grep -Fn "$NT_ELSE" "$TARGET" | head -1 | cut -d: -f1)"
+NT_END_LN="$(grep -Fn "$NT_END" "$TARGET" | tail -1 | cut -d: -f1)"
+
+# The seam has to have been found and has to be the right way round, or every
+# assertion below passes by reading an empty file -- the same way a probe passes
+# forever once the verb it attacked is deleted.
+if [ -z "$NT_ELSE_LN" ] || [ -z "$NT_END_LN" ] ||
+   [ "$NT_ELSE_LN" -le "$DOC_TAG" ] || [ "$NT_END_LN" -le "$((NT_ELSE_LN + 1))" ]; then
+    echo "parse.sh: the conditional-compilation seam was not found" >&2
+    echo "          looked for a line holding '$NT_ELSE' and a later one holding '$NT_END'," >&2
+    echo "          both below the script tag at line ${DOC_TAG:-none};" >&2
+    echo "          found ${NT_ELSE_LN:-none} and ${NT_END_LN:-none}" >&2
+    echo "          they are skeleton.cmd's, and the app is the region between them" >&2
+    exit 1
+fi
+
+sed -n "$((NT_ELSE_LN + 1)),$((NT_END_LN - 1))p" "$TARGET" > "$WORK/skipped.js"
+{ sed -n "${DOC_TAG},${NT_ELSE_LN}p" "$TARGET"
+  sed -n "${NT_END_LN},\$p" "$TARGET"; } > "$WORK/compiled.js"
+
+if [ ! -s "$WORK/compiled.js" ] || [ ! -s "$WORK/skipped.js" ]; then
+    echo "parse.sh: the seam was found but one of the two halves is empty" >&2
+    echo "          compiled=$(wc -l < "$WORK/compiled.js") skipped=$(wc -l < "$WORK/skipped.js") lines" >&2
+    exit 1
+fi
+
+# And a control on the cut, both ways round, because the failure that matters
+# here is not an empty file. A seam found in the wrong place still produces two
+# non-empty halves, and what goes quiet is the reserved-word check below: it
+# would be reading the app and reporting PASS about the launcher. So each half
+# is asked for the one line only it can hold. `run` is js/run.js and is
+# compiled; `runWeb` is web/entry.js and is not.
+if ! grep -q '^    NeutrinoWebview\.run = function ()' "$WORK/compiled.js" ||
+   ! grep -q '^    NeutrinoWebview\.runWeb = function ()' "$WORK/skipped.js"; then
+    echo "parse.sh: the seam is in the wrong place" >&2
+    echo "          the half jsc.exe compiles has to hold NeutrinoWebview.run" >&2
+    echo "          and the half it skips NeutrinoWebview.runWeb; this cut has" >&2
+    echo "          run=$(grep -c '^    NeutrinoWebview\.run = function ()' "$WORK/compiled.js")" \
+         "runWeb=$(grep -c '^    NeutrinoWebview\.runWeb = function ()' "$WORK/skipped.js")" >&2
+    exit 1
+fi
+echo "  PASS: the seam cuts the launcher's javascript from the app's"
+
+NT_BAD="$(grep -nE "\b(var|function)[[:space:]]+($NT_JSC_RESERVED)\b" "$WORK/compiled.js" || true)"
 if [ -n "$NT_BAD" ]; then
-    echo "parse.sh: the javascript declares a name jsc.exe reserves" >&2
+    echo "parse.sh: the launcher's javascript declares a name jsc.exe reserves" >&2
     printf '%s\n' "$NT_BAD" | sed 's/^/          /' >&2
     echo "          valid JavaScript everywhere else; on Windows it will not compile" >&2
     echo "          and the lane reports only that no window ever appeared" >&2
     exit 1
 fi
-echo "  PASS: nothing in the javascript declares a name jsc.exe reserves"
+echo "  PASS: nothing jsc.exe compiles declares a name it reserves"
+
+# And the one thing the skipped half may still not carry.
+#
+# jsc.exe skips that branch by scanning it for its own directives rather than by
+# ignoring it, so `@if` and `@end` are read in there and nothing else is.
+# Measured on the guest: `"a@end.example"` in a string ended the skip and the
+# compiler resumed mid-string -- JS1195 and an unterminated string constant,
+# pointing at a line of the app. `@endpoint` is fine, because the directive is a
+# token and that is a longer identifier; `@else`, `@cc_on`, `@set` and a bare
+# `@` are all inert, because the branch is already the else of an @if.
+#
+# This is the app's half of the rule the jsc half lives under, and it is worth
+# as much: the failure it catches names the app's line but not the reason, and
+# an author who has never heard of conditional compilation has no way to guess
+# it from the message.
+NT_CC="$(grep -nE '@(if|elif|end)([^A-Za-z0-9_]|$)' "$WORK/skipped.js" || true)"
+if [ -n "$NT_CC" ]; then
+    echo "parse.sh: the app names a jsc.exe conditional-compilation directive" >&2
+    printf '%s\n' "$NT_CC" | sed 's/^/          /' >&2
+    echo "          jsc.exe reads @if and @end even in the branch it is skipping," >&2
+    echo "          so either one restarts the compile in the middle of the app" >&2
+    echo "          and Windows fails on a line that is not the one at fault" >&2
+    exit 1
+fi
+echo "  PASS: nothing in the app restarts the compile jsc.exe is skipping"
 
 # The same hazard, everywhere else in the file, caught by its consequence
 # rather than by its shape. Everything from the first line to the <script> tag

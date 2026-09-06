@@ -33,9 +33,10 @@
 // one is unsupported rather than measured. Without it this file would report
 // thirteen confident values on an engine that implements none of them.
 //
-// ES5 only, `eval("window")` and `eval("document")`: jsc.exe compiles this.
-var win = eval("window");
-var doc = eval("document");
+// ES5 only, because four web engines have to agree on it. Bare globals:
+// this is the @else branch of the artifact, which jsc.exe never reads.
+var win = window;
+var doc = document;
 
 var DWELL = 1500;
 

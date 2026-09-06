@@ -6,9 +6,9 @@
 // Results ride in the window title because that is what all three verifiers can
 // already read. The final title is set once and then left alone, so a verifier
 // that arrives late still sees it.
-var win = eval("window");
-var doc = eval("document");
-var log = eval("console");
+var win = window;
+var doc = document;
+var log = console;
 
 var SEP = String.fromCharCode(31);
 var results = {};

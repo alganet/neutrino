@@ -25,15 +25,21 @@
         if (this.hasGlobalExpr("typeof NeutrinoPy !== 'undefined'")) {
             return;
         }
-        if (this.hasGlobalExpr("typeof window !== 'undefined'")) {
+        /*
+         * Last, and the only branch that asks a member rather than a global.
+         * `isWeb` and `runWeb` are web/entry.js, which is the `@else` half of
+         * the conditional-compilation block -- the half jsc.exe skips -- so
+         * on the Windows lane neither member exists and this falls through to
+         * the throw, which is where a Windows launch that got this far was
+         * always going. Everywhere the pair does exist, the engine compiled
+         * it, and the question can be asked in the plain spelling rather than
+         * through eval.
+         */
+        if (this.isWeb && this.isWeb()) {
             this.runWeb();
             return;
         }
         throw new Error("Unsupported JS runtime for webview.js");
-    };
-
-    NeutrinoWebview.runWeb = function () {
-@@include app.js
     };
 
     /*

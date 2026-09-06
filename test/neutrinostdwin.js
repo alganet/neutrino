@@ -33,26 +33,28 @@
 // because it destroys the window every reading is reported through -- if it
 // works there is nothing left to report from, which is itself the answer.
 //
-// ES5 only, `eval("window")` and `eval("document")`: jsc.exe compiles this.
-var win = eval("window");
-var doc = eval("document");
+// ES5 only, because four web engines have to agree on it. Bare globals:
+// this is the @else branch of the artifact, which jsc.exe never reads.
+var win = window;
+var doc = document;
 /*
- * And Object, through eval for the same reason the other two are.
+ * And Object, which is the reading this file was carrying all along.
  *
- * README.md says to reach window and document this way because jsc.exe
- * compiles this file and neither exists at compile time. The rule is wider than
- * the two names it gives: JScript.NET is ES3-era and typed, so `Object` is a
- * type it knows, and `Object.getOwnPropertyDescriptor` is a member of it that
- * does not exist -- which a typed compiler resolves and refuses rather than
- * leaving to fail at run time inside the try that is waiting for it.
+ * It used to be `eval("Object")`, and the reason was the widest statement of
+ * the old rule anywhere in the tree: jsc.exe compiled this file, JScript.NET is
+ * ES3-era and typed, so `Object` was a type it knew and
+ * `Object.getOwnPropertyDescriptor` a member of that type which does not exist
+ * -- resolved and refused at compile time rather than left to fail at run time
+ * inside the try waiting for it. Measured as an absence: this was the only
+ * probe reaching ES5 statics and the only one whose window never appeared on
+ * Windows, with the build green and nothing written to any log.
  *
- * Measured as an absence: this is the only probe in this branch that reaches
- * ES5 statics, and it is the only one whose window never appeared on Windows,
- * with the build green, no app folder made and nothing written to any log. The
- * fix is reasoned from that and from the file's own rule; the round after this
- * is what says whether it was right.
+ * An app is the @else branch now and jsc.exe does not compile it, so the name
+ * is just a name. This line is the check on that claim: if the branch is ever
+ * compiled again, this is the file that says so first, and it says it the same
+ * way it did the first time.
  */
-var OBJ = eval("Object");
+var OBJ = Object;
 
 var DWELL = 1500;
 // A frame for the toolkit to act before the page is asked what it thinks

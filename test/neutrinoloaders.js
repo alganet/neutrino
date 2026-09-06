@@ -9,8 +9,8 @@
 // seconds in, and a probe that read the environment after that would be
 // reading a process that had already gone -- which looks exactly like a name
 // that never arrived.
-var win = eval("window");
-var doc = eval("document");
+var win = window;
+var doc = document;
 
 function ready() {
     if (doc.body && win.neutrino) {

@@ -30,8 +30,8 @@
 // page navigates to, which is half of what is being measured. The other half is
 // what that document can then do, and test/nav-target.html reports it through
 // the server's request log rather than through the window.
-var win = eval("window");
-var doc = eval("document");
+var win = window;
+var doc = document;
 
 // Set here, in the page script, on whatever document this happens to be
 // running in. test/nav-target.html reads it: if it is defined over there, the

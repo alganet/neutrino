@@ -11,11 +11,16 @@ exit $?;:<<'//</script></body></html>' #-->
 @@include html/document.html
 <script type=text/javascript>//*/
 
+@@include js/parts.list
+
     /*@cc_on
         @if (@_jscript_version >= 7)
 @@include jsc/parts.list
-        @end
-    @*/
+        @else @*/
 
-@@include js/parts.list
+@@include web/parts.list
+
+        /*@end @*/
+
+@@include js/launch.js
 //</script></body></html>

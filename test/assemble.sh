@@ -347,7 +347,9 @@ eq "and the stylesheet keeps its own lines" \
 report "section: parts"
 echo "=== every part is a document its own language can read ==="
 T="$(tree parts)"
-PARTS_JS="$(ls "$T"/neutrino/js/*.js 2>/dev/null | wc -l | tr -d ' ')"
+# js/ and web/ together: they are one language and one region, split by which
+# of the two branches of the skeleton's conditional they are included from.
+PARTS_JS="$(ls "$T"/neutrino/js/*.js "$T"/neutrino/web/*.js 2>/dev/null | wc -l | tr -d ' ')"
 PARTS_SH="$(ls "$T"/neutrino/sh/*.sh 2>/dev/null | wc -l | tr -d ' ')"
 report "parts js=$PARTS_JS sh=$PARTS_SH"
 if [ "${PARTS_JS:-0}" -lt 10 ] || [ "${PARTS_SH:-0}" -lt 5 ]; then
@@ -364,14 +366,14 @@ else
     printf 'foo: function () {\n    return 1;\n},\n' > "$T/fragment.js"
     NT_DOCS=""
     NT_TEMPLATES=""
-    for nt_part in "$T"/neutrino/js/*.js; do
+    for nt_part in "$T"/neutrino/js/*.js "$T"/neutrino/web/*.js; do
         if grep -q '^@@include ' "$nt_part"; then
             NT_TEMPLATES="$NT_TEMPLATES $(basename "$nt_part")"
         else
             NT_DOCS="$NT_DOCS $nt_part"
         fi
     done
-    report "js parts carrying an include:${NT_TEMPLATES:- none}"
+    report "javascript parts carrying an include:${NT_TEMPLATES:- none}"
     if command -v node >/dev/null 2>&1; then
         NT_BAD="$(node -e '
             var fs = require("fs"), vm = require("vm"), path = require("path");
@@ -382,7 +384,7 @@ else
             });
             process.stdout.write(bad.join(" "));
         ' $NT_DOCS "$T/fragment.js")"
-        eq "the only js/ file that does not parse is the fragment control" \
+        eq "the only javascript part that does not parse is the fragment control" \
            "${NT_BAD:-none}" "fragment.js"
     else
         report "node absent: the js/ parts were not parsed"

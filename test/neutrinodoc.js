@@ -24,8 +24,8 @@
 // the right one arrives is half of what is being measured.
 var BUILD = "X";
 
-var win = eval("window");
-var doc = eval("document");
+var win = window;
+var doc = document;
 
 // getElementsByTagName and not querySelector: this file is an app on the three
 // engines that never run this probe, and the older spelling is the one all four
