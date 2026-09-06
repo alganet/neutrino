@@ -1,0 +1,18 @@
+            // Which engine is running, answered by the fact that this line
+            // exists.
+            //
+            // The dispatch used to ask, five times, through eval: `typeof
+            // System !== 'undefined' && System.Windows.Forms.Application` and
+            // four more like it, each spelled as a string because jsc.exe
+            // resolves globals at compile time and would refuse the bare
+            // names of engines it is not. That was a run-time test of a
+            // compile-time fact. Only jsc.exe compiles this branch, so a
+            // program in which this assignment happened *is* the Windows
+            // launcher, and nothing has to be detected to know it.
+            //
+            // Plain JavaScript rather than typed JScript.NET, which the rest
+            // of this directory is. It is here because of who compiles it,
+            // not because of what it needs to say.
+            NeutrinoWebview.runEngine = function () {
+                this.runWindows();
+            };

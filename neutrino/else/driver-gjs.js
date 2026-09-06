@@ -523,3 +523,25 @@
         };
     };
 
+    /*
+     * Moved here from js/run.js with the rest of the lane. It reached the
+     * runtime's own `imports` through eval because the file it lived in was
+     * compiled by jsc.exe, which has no such global; this branch is not, so
+     * the name is written down.
+     */
+    NeutrinoWebview.resolveLinuxWebKitVersion = function () {
+        var GIRepository = imports.gi.GIRepository;
+        var Repository = GIRepository["Repository"];
+        var repository = Repository["dup_default"]
+            ? Repository["dup_default"]()
+            : Repository["get_default"]();
+        var versions = repository.enumerate_versions("WebKit2");
+
+        if (versions.indexOf("4.1") !== -1) {
+            return "4.1";
+        }
+        if (versions.indexOf("4.0") !== -1) {
+            return "4.0";
+        }
+        throw this.engineUnavailable("WebKit2 introspection typelibs not found");
+    };

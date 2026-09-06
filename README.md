@@ -108,6 +108,15 @@ There is exactly one spelling left that your app may not contain: `@if` and
 it is skipping. A build carrying either is refused by `test/parse.sh`, which
 says why.
 
+**What your app may not do is `eval`.** The document's content policy is
+`script-src 'none'`, so `eval` and `new Function` do not run in it on any lane.
+That policy used to say `'unsafe-eval'`, for one reason: the launcher's own
+engine dispatch was five `eval` calls, and the page ran it on load. The dispatch
+does not ask any more — which branch of the file a program was built from
+already says which engine it is — so the document can say what it always meant
+to. An app that genuinely needs `eval` replaces `html/policy.html`, which is an
+overlay part like any other.
+
 ### The early shell
 
 What your app looks like *before* a line of its JavaScript has run.
@@ -170,8 +179,10 @@ security tier: it is the trace channel, the macOS status file, the two Windows e
 overrides and Qt's `--no-sandbox`, none of which a release build carries.
 
 An overlay is still how you replace a part. An app that wants a denying content policy replaces
-`html/policy.html`; one that wants `window.open` to stop handing urls to the browser replaces
-`js/external-allow.js`. `test/nav-hermetic/` is a two-file example of the second.
+`html/policy.html` — the default is `script-src 'none'`, so tightening it means denying the
+network rather than script, and loosening it is how an app gets `eval` back; one that wants
+`window.open` to stop handing urls to the browser replaces `js/external-allow.js`.
+`test/nav-hermetic/` is a two-file example of the second.
 
 ```bash
 ./neutrino/assemble.sh --overlay myapp myapp.cmd

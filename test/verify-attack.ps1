@@ -102,6 +102,11 @@ Assert-Field "wire (control)" "LIVE" (Get-Field "wire")
 Assert-Field "malformed records refused" "REFUSED" (Get-Field "raw")
 Assert-Field "base-uri pinned"           "REFUSED" (Get-Field "base")
 Assert-Field "inline script refused"     "BLOCKED" (Get-Field "inline")
+# The other half of script-src, and it has no markup to point at. The document
+# said 'unsafe-eval' for as long as the engine dispatch went through eval; it
+# says 'none' now, and this is what says so on every engine rather than in a
+# comment. RANEVAL, RANFUNCTION and RANBOTH each name which call compiled.
+Assert-Field "eval refused"              "BLOCKED" (Get-Field "evl")
 
 # What a frame reached, measured from the parent. The frame is handed this
 # build's API, so it attempts the same verb every other check here attempts;

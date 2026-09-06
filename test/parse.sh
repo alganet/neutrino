@@ -148,7 +148,7 @@ NT_JSC_RESERVED="$NT_JSC_RESERVED|synchronized|throws|transient|uint|ulong|ushor
 #
 # The region used to be one thing and this check read all of it: jsc.exe
 # compiled every line between the script tag and the end of the file, the app's
-# own included. It does not any more. web/parts.list sits in the `@else` branch
+# own included. It does not any more. else/parts.list sits in the `@else` branch
 # of the conditional-compilation block, and measured on the guest's own
 # jsc.exe, a branch it is skipping is skipped completely -- `var short`, `var
 # int`, a `class`, arrow functions, template literals and text that is not
@@ -203,7 +203,7 @@ fi
 # non-empty halves, and what goes quiet is the reserved-word check below: it
 # would be reading the app and reporting PASS about the launcher. So each half
 # is asked for the one line only it can hold. `run` is js/run.js and is
-# compiled; `runWeb` is web/entry.js and is not.
+# compiled; `runWeb` is else/entry.js and is not.
 if ! grep -q '^    NeutrinoWebview\.run = function ()' "$WORK/compiled.js" ||
    ! grep -q '^    NeutrinoWebview\.runWeb = function ()' "$WORK/skipped.js"; then
     echo "parse.sh: the seam is in the wrong place" >&2
@@ -228,12 +228,23 @@ echo "  PASS: nothing jsc.exe compiles declares a name it reserves"
 # And the one thing the skipped half may still not carry.
 #
 # jsc.exe skips that branch by scanning it for its own directives rather than by
-# ignoring it, so `@if` and `@end` are read in there and nothing else is.
-# Measured on the guest: `"a@end.example"` in a string ended the skip and the
-# compiler resumed mid-string -- JS1195 and an unterminated string constant,
-# pointing at a line of the app. `@endpoint` is fine, because the directive is a
+# ignoring it, so `@if` and `@end` are read in there and nothing else is -- in
+# code, in a string, and in a comment, which matters because --comments ships
+# prose into the artifact.
+#
+# Measured on the guest, one spelling per build. `@end` alone: JS1104, unmatched
+# directive, and then the whole rest of the branch compiled as JScript.NET,
+# reporting `window`, `document` and `imports` undeclared. `@if` alone: JS1029,
+# expected `@end`. `"a@end.example"` inside a string: the skip ended and the
+# compiler resumed mid-string, JS1195 and an unterminated string constant
+# against a line of the app. `@endpoint` is fine, because the directive is a
 # token and that is a longer identifier; `@else`, `@cc_on`, `@set` and a bare
-# `@` are all inert, because the branch is already the else of an @if.
+# `@` are inert, because the branch is already the else of an @if.
+#
+# A balanced `@if ... @end` compiles, and this refuses it anyway. Relying on
+# balance is relying on two spellings staying together across every future edit
+# of somebody else'"'"'s app, and the failure when they separate is the first row
+# above: a Windows lane reporting undeclared browser globals.
 #
 # This is the app's half of the rule the jsc half lives under, and it is worth
 # as much: the failure it catches names the app's line but not the reason, and
@@ -249,6 +260,48 @@ if [ -n "$NT_CC" ]; then
     exit 1
 fi
 echo "  PASS: nothing in the app restarts the compile jsc.exe is skipping"
+
+# And what the document's policy will not let the app do.
+#
+# `script-src 'none'` means eval and new Function do not run in this document,
+# and an app that calls one fails in a way that names neither: the page script
+# throws on that line, so the window comes up with nothing in it. Measured, on
+# the round that tightened the policy -- netinstall/test/alive.js opened with
+# `var win = eval("window")`, and gjs, kde, windows-launch and macos-netinstall
+# all went red saying "a window but its script never ran" and "window=DOWN".
+# Four lanes, twenty minutes, and not one of them said eval.
+#
+# Only the app's half. The launcher's own else/ parts do call eval -- the macOS
+# and gjs drivers reach ObjC, $ and imports that way -- and they are right to:
+# those run under JXA and gjs, which have no content policy, and never in a
+# browser. An app's code always runs in the browser.
+#
+# The range runs from runWeb's opening line to the end of the region rather than
+# to a closing `};`, which an app could write at that indent and end the search
+# early. else/entry.js is last in else/parts.list, so there is nothing after the
+# app to miss.
+#
+# Comment lines are dropped first. A release build has none, but --comments
+# keeps them and pages/demo/app.js explains this very rule in prose.
+NT_APP="$(sed -n '/^    NeutrinoWebview\.runWeb = function () {$/,$p' "$WORK/skipped.js" |
+    grep -vE '^[[:space:]]*(//|/?\*)')"
+NT_ALLOWS_EVAL="$(sed -n "${DOC_LINE},${DOC_TAG}p" "$TARGET" | grep -c "unsafe-eval" || true)"
+if [ "$NT_ALLOWS_EVAL" = "0" ]; then
+    NT_EV="$(printf '%s\n' "$NT_APP" |
+        grep -nE '(^|[^A-Za-z0-9_.$])(eval|Function)[[:space:]]*\(' || true)"
+    if [ -n "$NT_EV" ]; then
+        echo "parse.sh: the app calls eval, and this build's policy forbids it" >&2
+        printf '%s\n' "$NT_EV" | sed 's/^/          /' >&2
+        echo "          the document carries script-src 'none', so eval and new" >&2
+        echo "          Function throw and the page script stops on that line --" >&2
+        echo "          a window with nothing in it, and no message naming why" >&2
+        echo "          an app that needs them overlays html/policy.html" >&2
+        exit 1
+    fi
+    echo "  PASS: the app calls nothing this build's policy forbids"
+else
+    echo "  PASS: this build's policy allows eval, so the app is not asked about it"
+fi
 
 # The same hazard, everywhere else in the file, caught by its consequence
 # rather than by its shape. Everything from the first line to the <script> tag

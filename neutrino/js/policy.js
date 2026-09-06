@@ -1,17 +1,27 @@
     /*
-     * No script may load or run from this document. Nothing in it is a
-     * script any more -- this file's code and the author's both arrive
-     * through the engine's own injection, which measurement says is exempt
-     * from the policy the document carries.
+     * No script may load or run from this document, and that is now the whole
+     * of what it says. Nothing in it is a script -- this file's code and the
+     * author's both arrive through the engine's own injection, which
+     * measurement says is exempt from the policy the document carries.
      *
-     * 'unsafe-eval' is there because eval is not exempt, and this file is
-     * built on it: every runtime detection here goes through eval, which is
-     * the documented way to keep jsc.exe from failing at compile time on
-     * globals that do not exist on Windows. With script-src 'none' the
-     * injected script ran and then could not identify the runtime it was
-     * running in. It reads worse than it is -- eval is reachable only to
-     * script that is already executing, and no script in this document can
-     * begin executing: not an inline one, not a src, not a rewritten base.
+     * It used to be `script-src 'unsafe-eval'`, and the reason was a single
+     * function. eval is not exempt, and the dispatch that decides which engine
+     * is running was five eval calls -- the documented way to keep jsc.exe
+     * from failing at compile time on globals no Windows machine has. The page
+     * ran that dispatch on load, so with 'none' the injected script started
+     * and could not work out where it was.
+     *
+     * There is nothing left to ask. Which engine is running is decided by
+     * which branch of the conditional-compilation block the program was built
+     * from, so jsc/dispatch.jsc answers it for the Windows launcher and
+     * else/engine.js for everyone else, in the plain spelling, with no eval on
+     * any path a page reaches. The same move took the three eval calls out of
+     * note(). See js/run.js.
+     *
+     * What this costs an app is real and is worth saying: `eval` and `new
+     * Function` no longer run in this document, on any lane. An app that wants
+     * them writes its own html/policy.html, which is an overlay part like any
+     * other.
      *
      * Denying the page the network is a real change to what an app can do,
      * so it is the offline overlay's business and not this file's. An app

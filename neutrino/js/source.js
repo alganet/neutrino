@@ -1,25 +1,22 @@
-    NeutrinoWebview.hasGlobalExpr = function (expression) {
-        try {
-            return eval(expression);
-        } catch (_) {
-            return false;
-        }
-    };
-
     /*
      * Where this file's document begins and where it ends -- decided once,
      * so that the two halves cut out of it below cannot come from different
      * places.
      *
-     * This file's JavaScript, including whatever an author spliced into
-     * runWeb, used to be an inline script inside the document it loads,
-     * which meant the document's content policy had to permit inline script
-     * and could never say script-src 'none'. Every driver injects the
-     * preload through its engine, so the page's own code goes the same way
-     * and the document carries no executable content at all. What that buys
-     * is worth the trouble: an injection bug in someone's app cannot run
-     * script in this document, because nothing in the document is allowed
-     * to.
+     * This file's JavaScript, including whatever an author put into runWeb,
+     * used to be an inline script inside the document it loads, which meant
+     * the document's content policy had to permit inline script and could
+     * never say script-src 'none'. Every driver injects the preload through
+     * its engine, so the page's own code goes the same way and the document
+     * carries no executable content at all. What that buys is worth the
+     * trouble: an injection bug in someone's app cannot run script in this
+     * document, because nothing in the document is allowed to.
+     *
+     * The policy says `script-src 'none'` now, which is the sentence this
+     * paragraph was written towards. It could not until the engine dispatch
+     * stopped going through eval -- see js/policy.js and js/run.js -- because
+     * eval is the one thing an injected script does that the document's policy
+     * still governs.
      *
      * All of which rests on the cut being in the right place, and the two
      * cuts used to be taken independently -- the document from the first

@@ -1,14 +1,9 @@
 @@include js/config.js
 @@include js/color.js
 @@include js/theme.js
-@@include js/theme-gtk.js
-@@include js/theme-macos.js
 @@include js/theme-windows.js
 @@include js/source.js
 @@include js/run.js
-@@include js/macos-status.js
-@@include js/driver-macos.js
-@@include js/driver-gjs.js
 @@include js/external-allow.js
 @@include js/protocol.js
 @@include js/note.js

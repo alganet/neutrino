@@ -18,7 +18,7 @@ exit $?;:<<'//</script></body></html>' #-->
 @@include jsc/parts.list
         @else @*/
 
-@@include web/parts.list
+@@include else/parts.list
 
         /*@end @*/
 

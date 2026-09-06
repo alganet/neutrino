@@ -40,16 +40,16 @@
         try {
             if (this.noteSink) { this.noteSink("neutrino: " + message); }
         } catch (_) {}
+        /*
+         * And the engine's own channel, which is else/note.js because naming
+         * `printerr` or `console` is naming a global, and the compiler that
+         * reads this file has neither. It used to be three eval calls here
+         * for that reason. On the Windows lane there is now nothing to call:
+         * that is not a channel lost, because the paragraph above is about
+         * every one of those three reaching NullStream there.
+         */
         try {
-            eval("printerr")("neutrino: " + message);
-            return;
-        } catch (_) {}
-        try {
-            eval("console").warn("neutrino: " + message);
-            return;
-        } catch (_) {}
-        try {
-            eval("console").log("neutrino: " + message);
+            if (this.noteOut) { this.noteOut("neutrino: " + message); }
         } catch (_) {}
     };
 
