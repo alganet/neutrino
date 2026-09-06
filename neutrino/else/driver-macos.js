@@ -102,8 +102,12 @@
     };
 
     NeutrinoWebview.createMacDriver = function () {
-        var ObjCRef = eval("ObjC");
-        var dollar = eval("$");
+        // JXA's two globals, named rather than eval'd -- see createGjsDriver
+        // for the whole of why they used to be strings. Nothing else changes:
+        // an engine that is not osascript parses these two lines and never
+        // reaches them, exactly as before.
+        var ObjCRef = ObjC;
+        var dollar = $;
         var app;
         var self = this;
         var messageCallback = null;

@@ -1,5 +1,11 @@
     NeutrinoWebview.createGjsDriver = function () {
-        var importsRef = eval("imports");
+        // `imports` is gjs's own global and it is named rather than eval'd.
+        // The eval was here because jsc.exe compiled this file and resolves
+        // globals at compile time, so a bare `imports` was a compile error on
+        // the one platform that has none. This file is else/ now and jsc.exe
+        // does not read it. Every other engine that does read it parses this
+        // line and never runs it, which is what it did with the eval too.
+        var importsRef = imports;
         var Gtk, WebKit2, GLib, ByteArray, Gdk;
         var self = this;
         var messageCallback = null;
