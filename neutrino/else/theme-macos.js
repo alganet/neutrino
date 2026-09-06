@@ -145,7 +145,8 @@
      * white this was opened to close, and never a lane that will not start.
      */
     NeutrinoWebview.paintMacWindow = function (win, background) {
-        var dollar = eval("$");
+        // JXA's global, named rather than eval'd; see createMacDriver.
+        var dollar = $;
         var rgb = this.parseColor(background);
         if (!rgb) {
             return false;
@@ -161,7 +162,7 @@
     };
 
     NeutrinoWebview.paintMacView = function (wv, background) {
-        var dollar = eval("$");
+        var dollar = $;
         var rgb = this.parseColor(background);
         if (!rgb) {
             return false;
