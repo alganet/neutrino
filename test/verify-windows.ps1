@@ -870,6 +870,10 @@ $step3 = Assert-Reached $record "STEP3"
 # itself THEMEBAD, which this does not find -- and the sample log above carries
 # the reading either way.
 $null = Assert-Reached $record "THEMEOK"
+# And the fonts, which this lane reads from SystemFonts rather than from a
+# registry value -- the one thing only a real launch can say about that
+# delivery is whether the read answered at all.
+$null = Assert-Reached $record "FONTOK"
 $null = Assert-Reached $record "TESTS DONE"
 
 Write-Host "=== Step 2: resize ==="

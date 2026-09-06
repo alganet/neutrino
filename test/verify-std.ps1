@@ -469,6 +469,91 @@ function Analyse-Win($rows) {
     }
 }
 
+# The engine half of the fonts delivery, and the twin of analyse_font in
+# verify-std.sh. Five controls, mirroring Analyse-Theme's one for one.
+#
+# This lane has been building neutrinostdfont.cmd and never running it, because
+# there was no `font` arm here to run it under. That is the gap this closes: the
+# Windows reader is the one that reads SystemFonts on a clock, and until now
+# nothing on this platform had ever looked at what it delivered.
+function Analyse-Font($rows) {
+    $names = @()
+    foreach ($r in $rows) { $names += ($r.Title -split ' ')[0] }
+    Note "font sequence: $($names -join ' ')"
+
+    $map = @{ "CTL" = "engine"; "KW-A" = "keywords-a"; "KW-B" = "keywords-b";
+              "GEN" = "generics"; "UNIT" = "units";
+              "NT-A" = "delivered"; "NT-B" = "agreement" }
+    foreach ($k in @("CTL", "KW-A", "KW-B", "GEN", "UNIT", "NT-A", "NT-B")) {
+        $r = Find-Row $rows "STD-FONT-$k"
+        if ($r) { Note "self $($map[$k]) $($r.Title -replace "^STD-FONT-$k ",'')" }
+    }
+
+    $ctl = Find-Row $rows "STD-FONT-CTL"
+    if (-not $ctl -or $ctl.Title -notmatch 'eng=') {
+        Fail "control font: STD-FONT-CTL was never observed, so nothing below is a reading"
+    } else { Note "control font: the probe ran and named its engine" }
+
+    # Whether the lane read a toolkit at all. Every comparison under this is
+    # void on a lane that did not.
+    $nta = Find-Row $rows "STD-FONT-NT-A"
+    $src = ""
+    if (-not $nta) { Fail "control fonts: STD-FONT-NT-A was never observed" }
+    elseif ($nta.Title -match 'fonts=null') {
+        Fail "control fonts: this lane read no toolkit, so every comparison here is void"
+    } else {
+        Note "control fonts read=YES"
+        if ($nta.Title -match ' source=(\S+)') { $src = $Matches[1] }
+    }
+
+    # The two deliveries: the object the preload handed the page against the
+    # custom properties the launcher wrote into the document's stylesheet.
+    $ntb = Find-Row $rows "STD-FONT-NT-B"
+    if (-not $ntb) { Fail "control delivery: STD-FONT-NT-B was never observed" }
+    elseif ($ntb.Title -match 'fonts=null') { Note "control delivery not_asked: this lane read no fonts" }
+    elseif ($ntb.Title -match 'match=15/15') { Note "control delivery match=15/15 verdict=DELIVERED" }
+    else {
+        $m = ""
+        if ($ntb.Title -match ' (match=\S+)') { $m = $Matches[1] }
+        Fail "control delivery: the custom properties and neutrino.fonts disagree -- $m"
+    }
+
+    # And the documented idiom on a lane that read nothing: a property the
+    # launcher never sets must reach the generic named beside it.
+    if ($ntb -and $ntb.Title -match ' fallback=(\S+)') {
+        $fb = $Matches[1]
+        if ($fb -eq "monospace") {
+            Note "control fallback var(--neutrino-font-nosuchrole, monospace)=monospace verdict=RESOLVED"
+        } elseif ($fb -eq "notasked") {
+            Note "control fallback not_asked"
+        } else {
+            Fail "control fallback: an unset property reached '$fb' rather than the generic beside it"
+        }
+    }
+
+    # The engine's own reading of the same desktop, where it has one. WebView2
+    # is not such an engine -- Chromium's system font keywords are constants,
+    # measured 16px Arial against a toolkit saying 12px -- so this lane is
+    # exempt by name with the reason printed, the way Analyse-Theme exempts qt.
+    if ($src -ne "gtk") {
+        Note "control agree not_asked: this engine's system font keywords are not the desktop's"
+    } elseif ($ntb -and $ntb.Title -match 'delta:([0-9.]+)') {
+        $d = [double]$Matches[1]
+        if ($d -le 1) { Note "control agree delta:$d verdict=AGREED" }
+        else { Fail "control agree: the launcher and the engine read different sizes off one desktop -- delta:$d" }
+    } else {
+        Fail "control agree: no reading on a lane that has one"
+    }
+
+    $kwb = Find-Row $rows "STD-FONT-KW-B"
+    if ($kwb -and $kwb.Title -match ' (identical=\S+)') { Note "self roles $($Matches[1])" }
+    else { Note "self roles unread" }
+
+    if (-not (Find-Row $rows "STD-FONT-END")) {
+        Fail "control font: STD-FONT-END was never observed, so the probe stopped early"
+    }
+}
+
 function Analyse-Theme($rows) {
     $names = @()
     foreach ($r in $rows) { $names += ($r.Title -split ' ')[0] }
@@ -785,6 +870,7 @@ switch ($Probe) {
     "doc"   { Analyse-Doc $rec.Rows }
     "win"   { Analyse-Win $rec.Rows }
     "theme" { Analyse-Theme $rec.Rows }
+    "font"  { Analyse-Font $rec.Rows }
     default { Fail "no analysis for probe '$Probe'" }
 }
 

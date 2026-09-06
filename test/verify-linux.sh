@@ -274,6 +274,20 @@ WID=$(wait_for_title "THEMEOK") || {
 }
 screenshot "05-theme"
 
+echo "=== Step 5: the desktop's fonts ==="
+# The same bargain one reading along, and the only place in the tree that says
+# whether an ordinary launch reached its *font* toolkit. Everything else about
+# that delivery is pure and parse.sh covers it; a readFonts that quietly
+# answered null would otherwise show up nowhere but the probe suite.
+#
+# No screenshot of its own. The reading is in the app's own text, std-font has
+# a picture of the delivery already, and adding a slot here renumbers 06-done
+# across every lane and every artifact this suite has ever published.
+wait_for_title "FONTOK" || {
+    echo "  FAIL: the fonts were not readable on this lane"
+    FAILURES=$((FAILURES + 1))
+}
+
 echo "=== Waiting for TESTS DONE ==="
 WID=$(wait_for_title "TESTS DONE") || { echo "FAIL: tests never completed"; exit 1; }
 screenshot "06-done"
