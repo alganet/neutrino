@@ -71,6 +71,8 @@ subject() {
         theme-dark)       echo "Desktop flipped dark; the page should follow" ;;
         theme-misnamed-dark) echo "A dark palette under a light-sounding theme name -- the case prefers-color-scheme gets wrong" ;;
         std-theme)    echo "The palette, on the desktop this runner came with" ;;
+        std-font)     echo "The desktop's fonts, as the app read them and as the launcher delivered them" ;;
+        live-font)    echo "A running app after the desktop's fonts moved underneath it" ;;
         std-doc)      echo "document.title, reaching the native window title" ;;
         std-win)      echo "The standard window verbs -- resize, move, fullscreen, close" ;;
         std-geom)     echo "Window geometry" ;;

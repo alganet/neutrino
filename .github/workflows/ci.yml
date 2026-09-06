@@ -413,6 +413,69 @@ jobs:
       # every control it has and goes red because the page builder tripped is
       # reporting about itself, and the thing it was built to report on is the
       # one nobody would then read.
+      # The desktop's fonts, on this lane.
+      #
+      # Two steps, because they are two different kinds of thing. The probe
+      # asks the *toolkit* what roles it can name and which signals move when
+      # the desktop's font moves, and stays continue-on-error: it answers
+      # questions rather than asserting them, and a runner image that changed
+      # its schemas should not turn a lane red for it.
+      #
+      # The step under it asserts. verify-std.sh's font mode fails a lane where
+      # `neutrino.fonts` and the custom properties disagree, where an unset
+      # property does not reach the generic beside it, or -- on this engine,
+      # which reads the same desktop independently through the CSS2 keywords --
+      # where the two sizes differ by more than the pixel WebKit truncates.
+      - name: font probe
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 8
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash test/fontflip.sh gtk 8 > ~/fontflip.log 2>&1 || true
+          cat ~/fontflip.log
+      - name: fonts
+        if: always()
+        timeout-minutes: 8
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
+          bash test/parse.sh test/neutrinostdfont.cmd
+          bash test/neutrinostdfont.cmd > ~/stdfont-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh font ~/screenshots > ~/stdfont.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdfont.log
+          exit $TEST_EXIT
+      # And a running app, with the desktop's fonts moved underneath it.
+      #
+      # The step above launches once and reads once, so a watcher that never
+      # fires passes it. This is the twin of the lane's live theme step and it
+      # closes the same gap: the palette lane has already paid once for an
+      # observer that registered, raised nothing, and never fired.
+      #
+      # Two flips, because the two roles move by different knobs -- `ui`
+      # through GtkSettings and `monospace` through GSettings alone.
+      - name: fonts live
+        if: always()
+        timeout-minutes: 10
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash test/mkapp.sh --testing test/neutrinolivefont.js test/neutrinolivefont.cmd
+          bash test/parse.sh test/neutrinolivefont.cmd
+          TEST_EXIT=0
+          NT_FONTFLIP_LIVE_ONLY=1 bash test/fontflip.sh gtk 8 test/neutrinolivefont.cmd \
+            > ~/fontlive.log 2>&1 || TEST_EXIT=$?
+          cat ~/fontlive.log
+          exit $TEST_EXIT
       - name: sheet
         if: always()
         continue-on-error: true
@@ -993,6 +1056,69 @@ jobs:
       # every control it has and goes red because the page builder tripped is
       # reporting about itself, and the thing it was built to report on is the
       # one nobody would then read.
+      # The desktop's fonts, on this lane.
+      #
+      # Two steps, because they are two different kinds of thing. The probe
+      # asks the *toolkit* what roles it can name and which signals move when
+      # the desktop's font moves, and stays continue-on-error: it answers
+      # questions rather than asserting them, and a runner image that changed
+      # its schemas should not turn a lane red for it.
+      #
+      # The step under it asserts. verify-std.sh's font mode fails a lane where
+      # `neutrino.fonts` and the custom properties disagree, where an unset
+      # property does not reach the generic beside it, or -- on this engine,
+      # which reads the same desktop independently through the CSS2 keywords --
+      # where the two sizes differ by more than the pixel WebKit truncates.
+      - name: font probe
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 8
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash test/fontflip.sh gtk 8 > ~/fontflip.log 2>&1 || true
+          cat ~/fontflip.log
+      - name: fonts
+        if: always()
+        timeout-minutes: 8
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
+          bash test/parse.sh test/neutrinostdfont.cmd
+          bash test/neutrinostdfont.cmd > ~/stdfont-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh font ~/screenshots > ~/stdfont.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdfont.log
+          exit $TEST_EXIT
+      # And a running app, with the desktop's fonts moved underneath it.
+      #
+      # The step above launches once and reads once, so a watcher that never
+      # fires passes it. This is the twin of the lane's live theme step and it
+      # closes the same gap: the palette lane has already paid once for an
+      # observer that registered, raised nothing, and never fired.
+      #
+      # Two flips, because the two roles move by different knobs -- `ui`
+      # through GtkSettings and `monospace` through GSettings alone.
+      - name: fonts live
+        if: always()
+        timeout-minutes: 10
+        run: |
+          export DISPLAY=:99
+          export GDK_BACKEND=x11
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
+          bash test/mkapp.sh --testing test/neutrinolivefont.js test/neutrinolivefont.cmd
+          bash test/parse.sh test/neutrinolivefont.cmd
+          TEST_EXIT=0
+          NT_FONTFLIP_LIVE_ONLY=1 bash test/fontflip.sh gtk 8 test/neutrinolivefont.cmd \
+            > ~/fontlive.log 2>&1 || TEST_EXIT=$?
+          cat ~/fontlive.log
+          exit $TEST_EXIT
       - name: sheet
         if: always()
         continue-on-error: true
@@ -1435,6 +1561,38 @@ jobs:
       # every control it has and goes red because the page builder tripped is
       # reporting about itself, and the thing it was built to report on is the
       # one nobody would then read.
+      # The desktop's fonts, on the Qt lane.
+      #
+      # No toolkit probe here any more: fontprobe.qml's three questions are
+      # answered and none of them can change. Qt exposes one role and no
+      # others, both size fields are present with no -1 hazard, and the
+      # no-NOTIFY refusal was measured verbatim on real Plasma 6 with
+      # KDEPlasmaPlatformTheme6 loaded. What is left is the engine half.
+      #
+      # The environment is the one this lane's theme step sets, repeated rather
+      # than assumed -- the first draft of this step set none of it, and
+      # verify-std.sh spent its full 180s budget failing to find a window.
+      - name: fonts
+        if: always()
+        timeout-minutes: 8
+        run: |
+          export DISPLAY=:99
+          export QT_QPA_PLATFORM=xcb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
+          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
+          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
+          bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
+          bash test/parse.sh test/neutrinostdfont.cmd
+          bash test/neutrinostdfont.cmd > ~/stdfont-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh font ~/screenshots > ~/stdfont.log 2>&1 || TEST_EXIT=$?
+          pkill -P "$APP_PID" 2>/dev/null || true
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdfont.log
+          exit $TEST_EXIT
       - name: sheet
         if: always()
         continue-on-error: true
@@ -2633,6 +2791,60 @@ jobs:
       # every control it has and goes red because the page builder tripped is
       # reporting about itself, and the thing it was built to report on is the
       # one nobody would then read.
+      # The desktop's fonts, on the Windows lane.
+      #
+      # The toolkit probe stays continue-on-error and keeps its watch half,
+      # which is the instrument that re-measures avgReadMs -- the number the
+      # decision to ride the event loop's own tick rests on.
+      #
+      # And the step under it *runs* the app, which this lane has never done:
+      # verify-std.ps1 had no font arm, so the artifact was built, parsed and
+      # discarded on the one platform whose reader polls SystemFonts on a clock.
+      - name: font probe
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File test/fontprobe-windows.ps1 8 2>&1 | Tee-Object -FilePath ~/fontprobe.log
+      - name: fonts
+        if: always()
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
+          bash test/parse.sh test/neutrinostdfont.cmd
+          & .\test\verify-std.ps1 -Probe font -ScreenshotDir $env:USERPROFILE `
+            -Launch -Artifact .\test\neutrinostdfont.cmd *>&1 |
+            Tee-Object -FilePath "$HOME\stdfont.log"
+          $e = $LASTEXITCODE
+          Get-Process -Name neutrinostdfont -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          # The app's own stderr, in the step that ran it.
+          #
+          # The first round this step failed it said `fonts=null` and nothing
+          # else, while the reason -- the reader naming the property it could
+          # not read and quoting the exception -- sat in a different job's log
+          # entirely. A step that can fail should carry the line that says why.
+          $err = Join-Path $env:USERPROFILE "launch-neutrinostdfont-err.log"
+          if (Test-Path $err) { Write-Host "--- the app's own stderr"; Get-Content $err }
+          exit $e
+      # And a running app, with the desktop's text size moved underneath it.
+      #
+      # fontlive.ps1 carries a control themelive.ps1 does not need: this lane's
+      # knob is not the value the driver reads, so the script asks SystemFonts
+      # itself whether anything moved before it blames the app. A knob that
+      # writes and changes no metric is reported as a skip, because there was
+      # nothing an app could have been told about.
+      - name: fonts live
+        if: always()
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          bash test/mkapp.sh --testing test/neutrinolivefont.js test/neutrinolivefont.cmd
+          bash test/parse.sh test/neutrinolivefont.cmd
+          & .\test\fontlive.ps1 *>&1 | Tee-Object -FilePath "$HOME\fontlive.log"
+          exit $LASTEXITCODE
       - name: sheet
         if: always()
         continue-on-error: true
@@ -3006,6 +3218,34 @@ jobs:
       # every control it has and goes red because the page builder tripped is
       # reporting about itself, and the thing it was built to report on is the
       # one nobody would then read.
+      # The desktop's fonts, on the macOS lane.
+      #
+      # The toolkit probe stays and stays continue-on-error, and on this lane it
+      # is not redundant: there is no live test here, because macOS publishes no
+      # notification for a UI font change and no scriptable knob to test one
+      # against. So it is the only standing instrument that would notice a macOS
+      # release moving a family, a size, or what weightOfFont: answers.
+      - name: font probe
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 8
+        run: |
+          bash test/fontflip.sh macos 0 > ~/fontflip.log 2>&1 || true
+          cat ~/fontflip.log
+      - name: fonts
+        if: always()
+        timeout-minutes: 8
+        run: |
+          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+          bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
+          bash test/parse.sh test/neutrinostdfont.cmd
+          bash test/neutrinostdfont.cmd > ~/stdfont-app.log 2>&1 &
+          APP_PID=$!
+          TEST_EXIT=0
+          bash test/verify-std.sh font ~/screenshots > ~/stdfont.log 2>&1 || TEST_EXIT=$?
+          kill "$APP_PID" 2>/dev/null || true
+          cat ~/stdfont.log
+          exit $TEST_EXIT
       - name: sheet
         if: always()
         continue-on-error: true

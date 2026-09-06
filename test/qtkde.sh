@@ -69,6 +69,20 @@ fi
 
 # The repo goes in read-only and everything written goes to the probe user's
 # home, so a run cannot leave a built artifact or a log in the working tree.
+# The font phase this file briefly carried is gone, and so is fontprobe.qml.
+#
+# It was added to ask the one question only a real Plasma could answer: whether
+# KDEPlasmaPlatformTheme6 moves a font under a running process where QGtk3Theme
+# does not. It answered no. `Qt.application.font` carries no NOTIFY that QML can
+# reach -- Qt refused the Connections spelling in as many words -- and polling
+# saw the value hold still through a `kwriteconfig6 --notify` write of
+# [General] font, on this image, with the plugin confirmed loaded in the loader
+# log rather than assumed.
+#
+# That is not a question a later Qt makes interesting again by accident: if the
+# property ever gains a notify, window.qml's ntFonts is already a binding and
+# git has the probe.
+
 exec "$RT" run --rm \
     -v "$ROOT:/src:ro" \
     -e NT_FLIP_LIVE_ONLY=1 \
