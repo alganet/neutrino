@@ -45,7 +45,10 @@ try:
     # writes a PyGIWarning to stderr on the way past, and this lane's stderr is
     # the app's.
     gi.require_version("Gdk", "3.0")
-    from gi.repository import GLib, Gdk, Gio, Gtk, JavaScriptCore, WebKit2
+    # And Pango, for the same reason and with the same pin. It parses the
+    # desktop's font descriptions; see read_fonts.
+    gi.require_version("Pango", "1.0")
+    from gi.repository import GLib, Gdk, Gio, Gtk, JavaScriptCore, Pango, WebKit2
 except Exception as exc:
     unavailable("%s" % (exc,))
 
@@ -365,6 +368,148 @@ if not take_theme():
         call("resolveBackground", theme_state["value"]).to_string(),))
 
 
+# The desktop's fonts, and the second thing this lane reimplements -- but less
+# of it than the palette.
+#
+# A font is a string, and strings cross into JavaScriptCore fine, so nothing
+# here has to hold a GTK object the way read_theme holds a style context. What
+# cannot cross is Pango.FontDescription, which lives in this interpreter. So the
+# split is by what needs a runtime and not by lane: the GSettings walk and the
+# Pango parse are written twice, once here and once in createGjsDriver, and
+# every decision -- which schema wins, the titlebar rule, the alias map, the
+# fallbacks -- is in else/font-gtk.js and is called from both. Two loops cannot
+# disagree about a font; two copies of a rule can.
+#
+# The schema lookups go through Gio.SettingsSchemaSource first, and that is not
+# defensiveness: Gio.Settings on a schema this machine does not carry calls
+# g_error(), which aborts the process outright. No exception, nothing to catch,
+# no line after it.
+font_settings = []
+
+
+def open_settings(schema_id):
+    try:
+        source = Gio.SettingsSchemaSource.get_default()
+        if source is None or source.lookup(schema_id, True) is None:
+            return None
+        settings = Gio.Settings.new(schema_id)
+    except Exception as exc:
+        sys.stderr.write("neutrino: could not open %s: %s\n" % (schema_id, exc))
+        return None
+    # Held for the life of the process. A Gio.Settings that is collected stops
+    # emitting, so a watcher without a reference works until the collector
+    # notices and then silently does not.
+    font_settings.append(settings)
+    return settings
+
+
+# A schema being present does not mean the key is: Cinnamon's interface schema
+# was measured carrying font-name and neither document-font-name nor
+# monospace-font-name.
+def setting_string(settings, key):
+    if settings is None or key not in settings.list_keys():
+        return ""
+    return settings.get_string(key) or ""
+
+
+# get_boolean and not get_string. Asking a boolean key for a string prints a
+# GLib CRITICAL and hands back None, which the probe found the loud way.
+def setting_bool(settings, key):
+    if settings is None or key not in settings.list_keys():
+        return False
+    return bool(settings.get_boolean(key))
+
+
+def gather_font_strings():
+    gathered = {"gtkFontName": "", "names": {}, "interface": {},
+                "titlebar": "", "titlebarSystem": False}
+    settings = Gtk.Settings.get_default()
+    if settings is not None:
+        gathered["gtkFontName"] = settings.get_property("gtk-font-name") or ""
+    ids = nt.object_get_property("gtkFontSchemas").to_string().split(",")
+    opened = {}
+    for schema_id in ids:
+        opened[schema_id] = open_settings(schema_id)
+        name = setting_string(opened[schema_id], "font-name")
+        if name != "":
+            gathered["names"][schema_id] = name
+    chose = call("gtkFontSchemaChoice",
+                 js_string(gathered["gtkFontName"]),
+                 js_json(gathered["names"])).to_string()
+    if chose != "" and opened.get(chose) is not None:
+        for key in nt.object_get_property("gtkFontKeys").to_string().split(","):
+            gathered["interface"][key] = setting_string(opened[chose], key)
+    for schema_id in nt.object_get_property("gtkFontWmSchemas").to_string().split(","):
+        wm = open_settings(schema_id)
+        if wm is None:
+            continue
+        titlebar = setting_string(wm, "titlebar-font")
+        if titlebar == "":
+            continue
+        gathered["titlebar"] = titlebar
+        gathered["titlebarSystem"] = setting_bool(wm, "titlebar-uses-system-font")
+        break
+    return gathered
+
+
+# Pango, on the strings gtkChooseFontStrings picked. An absolute size is device
+# units rather than points and is converted here, so what leaves this lane is
+# points throughout and the raw object carries one unit rather than one a role.
+def parse_font_strings(chosen):
+    out = {}
+    for role in nt.object_get_property("fontRoles").to_string().split(","):
+        text = chosen.get(role, "")
+        if not text:
+            continue
+        desc = Pango.FontDescription.from_string(text)
+        size = desc.get_size() / Pango.SCALE
+        if desc.get_size_is_absolute():
+            size = size * 72.0 / 96.0
+        fields = call("gtkRoleFields", js_string(role), js_json({
+            "family": desc.get_family() or "",
+            "size": size,
+            "weight": int(desc.get_weight()),
+        }))
+        out[role] = json.loads(fields.to_json(0))
+    return out
+
+
+def read_fonts():
+    try:
+        gathered = gather_font_strings()
+        chosen = json.loads(
+            call("gtkChooseFontStrings", js_json(gathered)).to_json(0))
+        return json.loads(
+            call("gtkFontsFromParsed", js_json(parse_font_strings(chosen))).to_json(0))
+    except Exception as exc:
+        sys.stderr.write("neutrino: could not read the desktop fonts: %s\n" % (exc,))
+        return None
+
+
+# Held the same way theme_state is, and for the same reason: fontsDiffer has to
+# be comparing what the launcher built to what the launcher built.
+fonts_state = {"value": js_null()}
+
+
+def take_fonts():
+    raw = read_fonts()
+    if raw is None:
+        return False
+    taken = call("normalizeFonts", js_json(raw))
+    if taken.is_null() or taken.is_undefined():
+        return False
+    if not call("fontsDiffer", fonts_state["value"], taken).to_boolean():
+        return False
+    fonts_state["value"] = taken
+    nt.object_set_property("fonts", taken)
+    return True
+
+
+if not take_fonts():
+    sys.stderr.write("neutrino: could not read the desktop fonts; "
+                     "the page falls back to the engine's own\n")
+
+
 # The scheme, and this lane asks the launcher whether to raise the flag rather
 # than looking at the palette itself -- gtkPreferDark says why it is raised and
 # never lowered, and a second copy of that reasoning here is a second thing that
@@ -424,13 +569,14 @@ def paint(widget_window, web_view, background):
         sys.stderr.write("neutrino: could not paint the window: %s\n" % (exc,))
 
 html = call(
-    "themedDocument",
+    "dressedDocument",
     call(
         "titledDocument",
         call("extractHtmlDocument", js_string(source)),
         js_string(title),
     ),
     theme_state["value"],
+    fonts_state["value"],
 ).to_string()
 page_script = call("extractPageScript", js_string(source)).to_string()
 preload = call(
@@ -440,6 +586,7 @@ preload = call(
     # In the preload rather than pushed after it, so the page has the palette
     # at document start and never paints once in the wrong colours first.
     call("themeLiteral", theme_state["value"]),
+    call("fontsLiteral", fonts_state["value"]),
 ).to_string()
 
 # Asked for before a WebView exists, and taken back if it does not arrive.
@@ -496,7 +643,33 @@ def on_style_updated(_widget):
         sys.stderr.write("neutrino: could not deliver the theme: %s\n" % (exc,))
 
 
-window.connect("style-updated", on_style_updated)
+# The fonts, delivered the way on_style_updated delivers a palette and with the
+# repaint left out -- a font change has no native surface, which is what makes
+# applyFonts shorter than applyTheme on every other lane.
+def deliver_fonts():
+    if not take_fonts():
+        return
+    if not committed["done"]:
+        return
+    js = call("buildFontScript", fonts_state["value"])
+    if js.is_null() or js.is_undefined():
+        return
+    try:
+        view.run_javascript(js.to_string(), None, None, None)
+    except Exception as exc:
+        sys.stderr.write("neutrino: could not deliver the fonts: %s\n" % (exc,))
+
+
+def on_style_updated_all(widget):
+    on_style_updated(widget)
+    # `style-updated` fires for a font change too, twice, and the first time
+    # GtkSettings still holds the old value -- measured, six firings for one
+    # `font-name` write. take_fonts' diff drops the stale first as a duplicate
+    # and the second carries the new one.
+    deliver_fonts()
+
+
+window.connect("style-updated", on_style_updated_all)
 
 
 # And the setting behind it, for the reason createGjsDriver's runEventLoop
@@ -513,12 +686,49 @@ def on_theme_name(_settings, _pspec):
     on_style_updated(None)
 
 
+# The font's own cause signal, which of the six firings measured for one change
+# is the only one carrying the new value at the moment it fires.
+def on_font_name(_settings, _pspec):
+    deliver_fonts()
+
+
 try:
     gtk_settings = Gtk.Settings.get_default()
     if gtk_settings is not None:
         gtk_settings.connect("notify::gtk-theme-name", on_theme_name)
+        gtk_settings.connect("notify::gtk-font-name", on_font_name)
 except Exception as exc:
     sys.stderr.write("neutrino: no settings watcher on this lane: %s\n" % (exc,))
+
+
+# And the three roles GtkSettings has no key for.
+#
+# Redundant on a desktop with a settings daemon and not redundant everywhere,
+# which is why they stay; createGjsDriver's twin of this carries the measurement
+# that settles it. In short: the daemon that writes a GSettings key also touches
+# something a window's style notices, so `style-updated` carries the change
+# there -- and on a machine with no daemon, which is this suite's own runner,
+# nothing else can. Neither signal is a superset of the other.
+#
+# font_settings holds the objects read_fonts already opened -- and holding them
+# is what keeps them emitting at all.
+def on_font_key(_settings, _key):
+    deliver_fonts()
+
+
+try:
+    watched = (nt.object_get_property("gtkFontKeys").to_string().split(",") +
+               nt.object_get_property("gtkFontWmKeys").to_string().split(","))
+    for settings in font_settings:
+        keys = settings.list_keys()
+        for key in watched:
+            # font-name is skipped: notify::gtk-font-name above is the same
+            # change seen from the side that is not stale.
+            if key == "font-name" or key not in keys:
+                continue
+            settings.connect("changed::" + key, on_font_key)
+except Exception as exc:
+    sys.stderr.write("neutrino: no font-settings watcher on this lane: %s\n" % (exc,))
 
 
 def on_load_changed(_view, event):

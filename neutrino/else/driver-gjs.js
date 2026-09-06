@@ -6,7 +6,13 @@
         // does not read it. Every other engine that does read it parses this
         // line and never runs it, which is what it did with the eval too.
         var importsRef = imports;
-        var Gtk, WebKit2, GLib, ByteArray, Gdk;
+        var Gtk, WebKit2, GLib, ByteArray, Gdk, Gio, Pango;
+        // The GSettings objects this lane watches, held for the life of
+        // the process. A Gio.Settings that is collected stops emitting,
+        // so a watcher that did not keep a reference would connect, work
+        // for as long as the collector left it alone, and then quietly
+        // stop -- which is the shape of defect no suite here would catch.
+        var fontSettings = [];
         var self = this;
         var messageCallback = null;
         var pendingPreload = null;
@@ -23,6 +29,133 @@
         // under its own use is what jsc reports as "might not be initialized",
         // and the ordering is worth stating rather than leaving to hoisting.
         var wv = null;
+
+        /*
+         * A schema this machine actually carries, or null.
+         *
+         * Through the schema source first, and this is not defensiveness:
+         * `Gio.Settings.new()` on a schema that is not installed calls
+         * `g_error()`, which **aborts the process**. Not an exception,
+         * nothing to catch, no line after it. A launcher that read
+         * GSettings without this check would take a working desktop's app
+         * down for the crime of running XFCE.
+         *
+         * The opened object is kept in `fontSettings` because the watcher
+         * connects to it and because a collected Gio.Settings stops
+         * emitting.
+         */
+        var openSettings = function (id) {
+            try {
+                var source = Gio.SettingsSchemaSource.get_default();
+                if (!source || !source.lookup(id, true)) {
+                    return null;
+                }
+                var settings = new Gio.Settings({ schema_id: id });
+                fontSettings[fontSettings.length] = settings;
+                return settings;
+            } catch (e) {
+                self.noteOnce("could not open " + id + ": " + e);
+                return null;
+            }
+        };
+
+        /*
+         * One key, or "" -- and a schema being present does not mean the
+         * key is. Measured: Cinnamon's org.cinnamon.desktop.interface
+         * carries `font-name` and neither `document-font-name` nor
+         * `monospace-font-name`, so `list_keys` is the difference between
+         * reading a Mint desktop and throwing on one.
+         */
+        var settingString = function (settings, key) {
+            if (!settings || settings.list_keys().indexOf(key) < 0) {
+                return "";
+            }
+            return String(settings.get_string(key) || "");
+        };
+
+        /*
+         * `get_boolean` and not `get_string`, and the probe learned this
+         * the loud way: asking a boolean key for a string prints a GLib
+         * CRITICAL and returns null.
+         */
+        var settingBool = function (settings, key) {
+            if (!settings || settings.list_keys().indexOf(key) < 0) {
+                return false;
+            }
+            return !!settings.get_boolean(key);
+        };
+
+        var gatherFontStrings = function () {
+            var gathered = { gtkFontName: "", names: {}, interface: {},
+                             titlebar: "", titlebarSystem: false };
+            var settings = Gtk.Settings.get_default();
+            if (settings) {
+                gathered.gtkFontName = String(settings.gtk_font_name || "");
+            }
+            var ids = String(self.gtkFontSchemas).split(",");
+            var opened = {};
+            var i;
+            for (i = 0; i < ids.length; i++) {
+                opened[ids[i]] = openSettings(ids[i]);
+                var name = settingString(opened[ids[i]], "font-name");
+                if (name !== "") {
+                    gathered.names[ids[i]] = name;
+                }
+            }
+            var chose = self.gtkFontSchemaChoice(gathered.gtkFontName, gathered.names);
+            if (chose !== "" && opened[chose]) {
+                var keys = String(self.gtkFontKeys).split(",");
+                for (i = 0; i < keys.length; i++) {
+                    gathered.interface[keys[i]] = settingString(opened[chose], keys[i]);
+                }
+            }
+            var wmIds = String(self.gtkFontWmSchemas).split(",");
+            for (i = 0; i < wmIds.length; i++) {
+                var wm = openSettings(wmIds[i]);
+                if (!wm) {
+                    continue;
+                }
+                var titlebar = settingString(wm, "titlebar-font");
+                if (titlebar === "") {
+                    continue;
+                }
+                gathered.titlebar = titlebar;
+                gathered.titlebarSystem = settingBool(wm, "titlebar-uses-system-font");
+                break;
+            }
+            return gathered;
+        };
+
+        /*
+         * Pango, on the five strings gtkChooseFontStrings picked. The
+         * parse is the toolkit's own -- see gtkRoleFields for the three
+         * measured cases a hand-written one gets wrong.
+         *
+         * An absolute size is in device units and is converted to points
+         * here, so that what leaves this lane is points throughout and the
+         * raw object carries one unit rather than one per role.
+         */
+        var parseFontStrings = function (chosen) {
+            var roles = self.fontRoleList();
+            var out = {};
+            for (var i = 0; i < roles.length; i++) {
+                var text = chosen[roles[i]];
+                if (!text) {
+                    continue;
+                }
+                var desc = Pango.FontDescription.from_string(String(text));
+                var size = desc.get_size() / Pango.SCALE;
+                if (desc.get_size_is_absolute()) {
+                    size = size * 72 / 96;
+                }
+                out[roles[i]] = self.gtkRoleFields(roles[i], {
+                    family: desc.get_family(),
+                    size: size,
+                    weight: desc.get_weight()
+                });
+            }
+            return out;
+        };
 
         return {
             webMessageTransport: "window.webkit.messageHandlers.neutrino.postMessage",
@@ -51,6 +184,14 @@
                     // warning on stderr when it does not.
                     importsRef["gi"]["versions"]["Gdk"] = "3.0";
                     Gdk = importsRef["gi"]["Gdk"];
+                    // Pinned for the same reason Gdk is. Both come with
+                    // GTK 3 on every desktop this runs on, so neither is a
+                    // new dependency -- but an unpinned version is a
+                    // loader's guess, and this lane has paid for one of
+                    // those before.
+                    importsRef["gi"]["versions"]["Pango"] = "1.0";
+                    Gio = importsRef["gi"]["Gio"];
+                    Pango = importsRef["gi"]["Pango"];
                 } catch (e) {
                     if (e && e.neutrinoEngineUnavailable) {
                         throw e;
@@ -131,6 +272,23 @@
                     return self.readGtkTheme(new Gtk.Box().get_style_context());
                 } catch (e) {
                     self.noteOnce("could not read the desktop theme: " + e);
+                    return null;
+                }
+            },
+            /*
+             * The desktop's fonts. Every decision is in else/font-gtk.js;
+             * what is here is the two halves that need a runtime -- the
+             * GSettings walk and the Pango parse -- and the PyGObject lane
+             * writes the same two in Python against the same shared
+             * functions.
+             */
+            readFonts: function () {
+                try {
+                    var gathered = gatherFontStrings();
+                    var chosen = self.gtkChooseFontStrings(gathered);
+                    return self.gtkFontsFromParsed(parseFontStrings(chosen));
+                } catch (e) {
+                    self.noteOnce("could not read the desktop fonts: " + e);
                     return null;
                 }
             },
@@ -489,6 +647,29 @@
                 try {
                     win.connect("style-updated", function () {
                         self.applyTheme(driver, win, wv, driver.readTheme());
+                        /*
+                         * The fonts ride this signal, because it fires for
+                         * a font change too and is already connected.
+                         *
+                         * Measured, one `font-name` write, six firings in
+                         * this order:
+                         *
+                         *   style-updated               gtk-font-name OLD
+                         *   changed::font-name  gnome   gtk-font-name OLD
+                         *   changed::font-name  cinn    gtk-font-name OLD
+                         *   notify::gtk-font-name       gtk-font-name NEW
+                         *   style-updated               gtk-font-name NEW
+                         *   changed::font-name  mate    gtk-font-name NEW
+                         *
+                         * So this handler runs twice and the first time
+                         * GtkSettings still holds the old value. That is
+                         * harmless rather than lucky: fontsDiffer drops the
+                         * first as a duplicate and the second carries the
+                         * new one -- the same gate that stops the palette's
+                         * repaint feeding itself, doing a second job it was
+                         * not built for.
+                         */
+                        self.applyFonts(driver, wv, driver.readFonts());
                     });
                 } catch (e) {
                     self.note("no theme watcher on this lane: " + e);
@@ -520,9 +701,77 @@
                         settings.connect("notify::gtk-theme-name", function () {
                             self.applyTheme(driver, win, wv, driver.readTheme());
                         });
+                        /*
+                         * And the font's own cause signal, which is the one
+                         * of the six above that carries the new value at
+                         * the moment it fires.
+                         *
+                         * `applyFonts` and not `applyTheme` beside it: a
+                         * font change is not a palette change, and pairing
+                         * them would buy a style-context read on every one
+                         * for no measured reason.
+                         */
+                        settings.connect("notify::gtk-font-name", function () {
+                            self.applyFonts(driver, wv, driver.readFonts());
+                        });
                     }
                 } catch (eT) {
                     self.note("no settings watcher on this lane: " + eT);
+                }
+                /*
+                 * And the three roles GtkSettings has no key for.
+                 *
+                 * Measured on a desk with a settings daemon running, one
+                 * flip per row, each with the other paths silenced:
+                 *
+                 *   only changed::        ui did not arrive, monospace did
+                 *   changed:: silenced    both arrived
+                 *
+                 * So `style-updated` carries a GSettings-only font change
+                 * *here*, because the daemon that writes the key also
+                 * touches something this window's style notices, and
+                 * readFonts re-reads GSettings from scratch every time.
+                 * These connections are redundant on such a desktop.
+                 *
+                 * They are not redundant everywhere, and that is why they
+                 * stay. A machine with no settings daemon -- this suite's
+                 * own runner -- never propagates a GSettings write to GTK
+                 * at all: `gtk-font-name` was measured holding "Sans 10"
+                 * through a `font-name` write that GNOME's key took. On
+                 * such a desktop nothing but these callbacks can see the
+                 * three roles GtkSettings has no key for.
+                 *
+                 * Neither signal is a superset of the other, which is the
+                 * same reason the palette watcher above connects two, and
+                 * connecting both costs nothing: fontsDiffer drops whichever
+                 * arrives second.
+                 *
+                 * The stale-read hazard the order above records does not
+                 * apply to them. It is `gtk-font-name` that is behind its
+                 * own GSettings key, and readFonts takes that from
+                 * GtkSettings; each of these keys is authoritative for
+                 * itself and is current in its own callback.
+                 *
+                 * `fontSettings` is walked rather than reopened, because
+                 * these are the objects readFonts already holds -- and
+                 * holding them is what keeps them emitting at all.
+                 */
+                try {
+                    var watched = String(self.gtkFontKeys).split(",")
+                        .concat(String(self.gtkFontWmKeys).split(","));
+                    for (var fi = 0; fi < fontSettings.length; fi++) {
+                        for (var ki = 0; ki < watched.length; ki++) {
+                            if (watched[ki] === "font-name" ||
+                                fontSettings[fi].list_keys().indexOf(watched[ki]) < 0) {
+                                continue;
+                            }
+                            fontSettings[fi].connect("changed::" + watched[ki], function () {
+                                self.applyFonts(driver, wv, driver.readFonts());
+                            });
+                        }
+                    }
+                } catch (eF) {
+                    self.note("no font-settings watcher on this lane: " + eF);
                 }
                 Gtk.main();
             }

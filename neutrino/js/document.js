@@ -46,19 +46,45 @@
     };
 
     /*
-     * The launch palette, delivered as markup rather than as a script that
-     * runs at document start.
+     * The fonts as a stylesheet, or null where there is no set to write.
+     * The same shape themeCssText has, one declaration per role per
+     * property in the fixed order fontCssNameList emits.
+     *
+     * Nothing here can escape the element it lands in: every value matched
+     * an anchored check in fontValueList -- a family that passed
+     * fontFamilyPattern and was quoted here, a size that matched a px
+     * pattern, a weight that matched a digit one -- and every property name
+     * came out of fontCssNameList, which is built from two constants in
+     * fonts.js. There is no path from a toolkit's answer to markup.
+     */
+    NeutrinoWebview.fontsCssText = function (fonts) {
+        var values = this.fontValueList(fonts);
+        if (!values) {
+            return null;
+        }
+        var names = this.fontCssNameList();
+        var parts = [];
+        for (var i = 0; i < names.length; i++) {
+            parts[parts.length] = names[i] + ":" + values[i];
+        }
+        return ":root{" + parts.join(";") + "}";
+    };
+
+    /*
+     * What this launch read off the desktop, delivered as markup rather
+     * than as a script that runs at document start.
      *
      * The measured mechanism for an *update* is
      * `documentElement.style.setProperty`, which works and reads back on
-     * all four engines, and that is what `_theme` uses. The launch is a
-     * different question and it is the one the flash exists in: the values
-     * have to be there before the first paint, and a document-start script
-     * has an element to set them on only if the parser has produced one.
-     * `document.title` taught this file that lesson at the cost of a round
-     * -- on WebView2 the page script's first statement runs at `loading`,
-     * with no `<head>` yet -- and a stylesheet in the markup has no such
-     * moment. It is parsed with the document that carries it.
+     * all four engines, and that is what `_theme` and `_fonts` use. The
+     * launch is a different question and it is the one the flash exists in:
+     * the values have to be there before the first paint, and a
+     * document-start script has an element to set them on only if the
+     * parser has produced one. `document.title` taught this file that
+     * lesson at the cost of a round -- on WebView2 the page script's first
+     * statement runs at `loading`, with no `<head>` yet -- and a stylesheet
+     * in the markup has no such moment. It is parsed with the document that
+     * carries it.
      *
      * Permitted by the policy this file writes, which restricts no styles
      * at all. An app that replaces `html/policy.html` with a stricter one
@@ -85,20 +111,28 @@
      * the author-wins property and keeps the policy one; a document with no
      * stylesheet has no author declarations to lose to.
      *
-     * A lane that read no palette gets no rule, which is the whole point of
-     * naming the properties after the keywords: `var(--neutrino-Canvas,
-     * Canvas)` then falls through to the engine's own system colour.
+     * One insertion point for both rules and not two, because the argument
+     * above is an argument about *one* point and does not get better by
+     * being made twice.
+     *
+     * A lane that read no palette gets no palette rule, which is the whole
+     * point of naming those properties after the `<system-color>` keywords:
+     * `var(--neutrino-Canvas, Canvas)` then falls through to the engine's
+     * own. The fonts have no such keyword to fall through to -- measured,
+     * on all four engines -- so a lane that read no fonts writes no font
+     * rule and `var(--neutrino-font-ui, sans-serif)` lands on the second
+     * argument, which is why every one of those variables is documented
+     * with a generic in it.
      */
-    NeutrinoWebview.themedDocument = function (html, theme) {
+    NeutrinoWebview.styledDocument = function (html, css) {
         var text = String(html);
-        var css = this.themeCssText(theme);
         if (!css) {
             return text;
         }
         var head = text.indexOf("</head>");
         if (head < 0) {
-            this.noteOnce("this document has no <head>, so the palette is " +
-                "on window.neutrino.theme and not in its stylesheet");
+            this.noteOnce("this document has no <head>, so what the launcher " +
+                "read is on window.neutrino and not in its stylesheet");
             return text;
         }
         var at = text.substring(0, head).indexOf("<style");
@@ -107,6 +141,21 @@
         }
         return text.substring(0, at) + "<style>" + css + "</style>" +
             text.substring(at);
+    };
+
+    /*
+     * The document, wearing what this launch read off the desktop.
+     *
+     * Two `:root` rules in one element, and not one merged rule, so a lane
+     * that read a palette and no fonts -- or the reverse -- emits exactly
+     * the rule it has and neither producer has to know about the other's
+     * absence. The two touch disjoint property names, so there is no
+     * cascade between them and their order does not matter.
+     */
+    NeutrinoWebview.dressedDocument = function (html, theme, fonts) {
+        var css = String(this.themeCssText(theme) || "") +
+            String(this.fontsCssText(fonts) || "");
+        return this.styledDocument(html, css === "" ? null : css);
     };
 
     /*

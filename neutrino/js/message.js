@@ -208,7 +208,7 @@
         return null;
     };
 
-    NeutrinoWebview.buildPreloadScript = function (transport, name, themeLiteral) {
+    NeutrinoWebview.buildPreloadScript = function (transport, name, themeLiteral, fontsLiteral) {
         return '(function(){' +
             'var S=String.fromCharCode(31);' +
             'var _send=function(m){try{(' + transport + ')(m);}catch(_){}};' +
@@ -239,6 +239,42 @@
             'for(var i=0;i<_K.length;i++){' +
             'try{e.style.setProperty("--neutrino-"+_P[i],t.colors[_K[i]]);}catch(_){}' +
             '}' +
+            '};' +
+            /*
+             * And the same for the fonts, which is the same mechanism with
+             * one more level to walk: three lists, all written from this
+             * file's own constants -- the roles, the fields the object
+             * carries, and the middles of the property names. _FF and _FP
+             * are parallel and read positionally, the arrangement _K and _P
+             * already have above.
+             *
+             * Nothing is formatted here. The object's own field values are
+             * the CSS values -- `'Ubuntu',sans-serif`, `13.33px`, `500` --
+             * composed once host-side by fontValueList and checked there
+             * against three anchored patterns. A second spelling of that
+             * formatting, page-side, is a second spelling that can drift
+             * from the stylesheet the same launch wrote.
+             *
+             * `r.stack` is copied and never rebuilt. The object carries
+             * `family` and `generic` beside it so a page can tell a desktop
+             * that named a face from one that did not, but composing those
+             * two here would be a second spelling of a rule the stylesheet
+             * this launch already wrote follows -- and on macOS the two
+             * would disagree, because that lane's tail is what makes
+             * `system-ui` land somewhere on the engines that do not
+             * resolve it.
+             */
+            'var _FR=["' + this.fontRoleList().join('","') + '"];' +
+            'var _FP=["' + String(this.fontCssPrefixes).split(",").join('","') + '"];' +
+            'var _fontcss=function(f){' +
+            'var e=document.documentElement;' +
+            'if(!e||!f){return;}' +
+            'for(var i=0;i<_FR.length;i++){' +
+            'var r=f[_FR[i]];if(!r){continue;}' +
+            'var v=[r.stack,r.size,r.weight];' +
+            'for(var j=0;j<_FP.length;j++){' +
+            'try{e.style.setProperty("--neutrino-"+_FP[j]+"-"+_FR[i],v[j]);}catch(_){}' +
+            '}}' +
             '};' +
             /*
              * The wire, and it is a closure rather than a member.
@@ -285,6 +321,23 @@
              */
             'theme:' + (themeLiteral || "null") + ',' +
             /*
+             * The desktop's fonts, in the preload for the same reason the
+             * palette is: an app that had to wait for an event to learn
+             * what it launched into would lay out once in the wrong type
+             * first, which is the flash this whole thing exists to close.
+             *
+             * A separate object and not a member of `theme`, because they
+             * are separately available. Qt reads a font at launch and has
+             * no signal to follow one with -- measured on real Plasma 6,
+             * where its palette *is* live -- so a lane can have a live
+             * palette and a frozen font set, and one object carrying both
+             * would have to lie about one of them.
+             *
+             * `null` on a lane whose toolkit could not be read, said out
+             * loud, exactly as `theme` is.
+             */
+            'fonts:' + (fontsLiteral || "null") + ',' +
+            /*
              * Where an update lands. Replaced and not mutated: an app that
              * captured the object keeps a stable snapshot of the palette it
              * had, and one that reads window.neutrino.theme gets the
@@ -298,6 +351,19 @@
             'window.neutrino.theme=t;' +
             '_css(t);' +
             'try{window.dispatchEvent(new CustomEvent("neutrino:themechange",{detail:t}));}catch(_){}' +
+            '},' +
+            /*
+             * The same, one event along. Replaced and not mutated, and the
+             * property is current before the event fires, so a handler may
+             * read either.
+             *
+             * Reached only through a driver's evaluate, and nothing reaches
+             * here that fontsLiteral did not build.
+             */
+            '_fonts:function(f){' +
+            'window.neutrino.fonts=f;' +
+            '_fontcss(f);' +
+            'try{window.dispatchEvent(new CustomEvent("neutrino:fontchange",{detail:f}));}catch(_){}' +
             '}' +
             '};' +
             /*

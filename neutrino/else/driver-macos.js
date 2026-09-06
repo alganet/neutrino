@@ -612,6 +612,30 @@
             readTheme: function () {
                 return self.readMacTheme(ObjCRef, dollar);
             },
+            /*
+             * The desktop's fonts, read once, because once is all this lane
+             * gets.
+             *
+             * **There is no watcher for this and none is wired below.**
+             * macOS publishes no notification for a change of UI font --
+             * the appearance notifications this driver already observes are
+             * about colour, and delivering a `neutrino:fontchange` on one
+             * would be a lie about what happened. The nearest setting that
+             * moves type is the accessibility text size, which is per-app
+             * and has no scripting interface a probe can reach, so there is
+             * nothing to test a watcher against either.
+             *
+             * What the code must therefore not do is register an observer
+             * on a notification that is not this one, or add a font poll to
+             * the status ticker. This lane has already paid once for a
+             * watcher that never fired and looked entirely correct in
+             * review -- the NSNull object argument, silent for a whole
+             * round -- and a watcher with no signal behind it is the same
+             * defect written on purpose.
+             */
+            readFonts: function () {
+                return self.readMacFonts(ObjCRef, dollar);
+            },
             repaint: function (win, wv, background) {
                 self.paintMacWindow(win, background);
                 if (wv) {
