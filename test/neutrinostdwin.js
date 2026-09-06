@@ -76,9 +76,11 @@ var SHORT = ["ow", "oh", "iw", "ih", "sx", "sy", "rt", "rz", "mt", "mv", "cl", "
 // the question -- performing one is what the fix will do and what its own
 // suite will assert.
 var OVERRIDABLE = ["outerWidth", "screenX", "resizeTo", "moveTo", "open"];
-// Carried beside it rather than looked up. Array.prototype.indexOf is ES5 and
-// this file is also compiled by jsc.exe, and a second array costs one line
-// against a guard nobody can check from here.
+// Carried beside it rather than looked up. A second array costs one line
+// against a guard nobody can check from here. The reason used to be that
+// jsc.exe compiled this file and Array.prototype.indexOf is ES5; it does not
+// compile it any more, and the line is kept because it is still the clearer of
+// the two spellings.
 var OVERRIDABLE_SHORT = ["ow", "sx", "rt", "mt", "op"];
 
 function put(s) {

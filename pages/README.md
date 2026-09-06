@@ -72,11 +72,19 @@ script at all. `config.json` says `"background": "auto"` for the other half of
 that: the native window and the view are painted from the same palette before
 the document exists.
 
-`app.js` is ES5 only — the same source runs under JScript.NET, gjs, QtWebEngine
-and WKWebView. One constraint worth knowing: no line may read
-`NeutrinoWebview.run();`, because [`test/parse.sh`](../test/parse.sh) lifts the
-launcher's object out of a built `.cmd` with a `sed` range that ends there and
-the app is spliced inside that range.
+`app.js` is ES5 only, and that is now a choice rather than a rule. It used to be
+compiled by `jsc.exe` on Windows along with the launcher, which is what made ES5
+and `eval("window")` compulsory; an app is the artifact's `@else` branch now and
+that compiler never reads it, so the floor is whatever WebKitGTK, QtWebEngine,
+WKWebView and WebView2 agree on. This file stays on ES5 because all four clear it
+without argument.
+
+Two constraints do remain. No line may read `NeutrinoWebview.run();`, because
+[`test/parse.sh`](../test/parse.sh) lifts the launcher's object out of a built
+`.cmd` with a `sed` range that ends there and the app sits inside that range. And
+no line may call `eval` or `new Function`: the document carries
+`script-src 'none'`, so both throw and the page script stops where it stood. An
+app that needs either overlays `html/policy.html`.
 
 ### What broke here once
 
