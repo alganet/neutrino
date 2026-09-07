@@ -1,0 +1,7 @@
+8	STD-THEME-CTL eng=WebKit	900x600	62,84	900x617	1	62,118
+1443	STD-THEME-A-SELF mq=dark nsrc=gtk nscheme=dark n:background=24242a n:foreground=eeeeee n:base=1c1c21 n:text=eeeeee n:accent=3584e4 n:accentText=ffffff n:border=131317	900x600	62,84	900x617	25	62,118
+2941	STD-THEME-B-SELF control=UNSUP Canvas=ffffff CanvasText=000000 ButtonFace=c0c0c0 ButtonText=000000 ButtonBorder=ffffff AccentColor=007aff AccentColorText=000000 Highlight=3484e4 HighlightText=ffffff SelectedItem=c0c0c0 SelectedItemText=000000 Field=ffffff FieldText=000000 GrayText=000000 LinkText=0000ee	900x600	62,84	900x617	50	62,118
+4444	STD-THEME-V-SELF v:ButtonFace=24242a v:ButtonText=eeeeee v:Canvas=1c1c21 v:CanvasText=eeeeee v:Highlight=3584e4 v:HighlightText=ffffff v:ButtonBorder=131317 pal=gtk match=7/7 miss= fallback=ffffff canvas=ffffff	900x600	62,84	900x617	75	62,118
+5946	STD-THEME-P-SELF setprop=ok readback=123456 pol=DEFAULT	900x600	62,84	900x617	100	62,118
+7447	STD-THEME-F-SELF sysui=348 sans=348 absent=348	900x600	62,84	900x617	125	62,118
+8950	STD-THEME-END	900x600	62,84	900x617	150	62,118

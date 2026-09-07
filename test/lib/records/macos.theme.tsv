@@ -1,0 +1,7 @@
+0	STD-THEME-CTL eng=WebKit	900x600	62,42	900x632	17	62,42
+0	STD-THEME-A-SELF mq=light nsrc=macos nscheme=light n:background=ffffff n:foreground=272727 n:base=ffffff n:text=000000 n:accent=007aff n:accentText=ffffff n:border=e6e6e6	900x600	62,42	900x632	26	62,42
+0	STD-THEME-B-SELF control=UNSUP Canvas=ffffff CanvasText=000000 ButtonFace=c0c0c0 ButtonText=000000 ButtonBorder=ffffff AccentColor=007aff AccentColorText=000000 Highlight=80bcfe HighlightText=000000 SelectedItem=c0c0c0 SelectedItemText=000000 Field=ffffff FieldText=000000 GrayText=000000 LinkText=0000ee	900x600	62,42	900x632	34	62,42
+0	STD-THEME-V-SELF v:ButtonFace=ffffff v:ButtonText=272727 v:Canvas=ffffff v:CanvasText=000000 v:Highlight=007aff v:HighlightText=ffffff v:ButtonBorder=e6e6e6 pal=macos match=7/7 miss= fallback=ffffff canvas=ffffff	900x600	62,42	900x632	42	62,42
+0	STD-THEME-P-SELF setprop=ok readback=123456 pol=DEFAULT	900x600	62,42	900x632	51	62,42
+0	STD-THEME-F-SELF sysui=301 sans=311 absent=281	900x600	62,42	900x632	61	62,42
+0	STD-THEME-END	900x600	62,42	900x632	68	62,42

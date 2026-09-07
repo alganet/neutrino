@@ -1,0 +1,5 @@
+0	STD-GEOM-A-PAIR ow=0 oh=0 iw=900 ih=600 sx=0 sy=768 sw=1024 sh=768 aw=1024 ah=677 dpr=1 vvw=900 vvh=600	900x600	62,50	900x600	18	62,50
+0	STD-GEOM-B-PAIR req=640x480 ow=0 oh=0 iw=640 ih=480 sx=0 sy=768 sw=1024 sh=768 aw=1024 ah=677 dpr=1 vvw=640 vvh=480	640x480	62,50	640x480	28	62,50
+0	STD-GEOM-C-PAIR req=120,90 ow=0 oh=0 iw=640 ih=480 sx=0 sy=768 sw=1024 sh=768 aw=1024 ah=677 dpr=1 vvw=640 vvh=480	640x480	120,90	640x480	38	120,90
+0	STD-GEOM-R-SELF eng=WebKit nt0=yes rs0=interactive tx=wkscriptmessage dwell=1500	640x480	120,90	640x480	48	120,90
+0	STD-GEOM-END	640x480	120,90	640x480	57	120,90

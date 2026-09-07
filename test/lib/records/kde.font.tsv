@@ -1,0 +1,8 @@
+7	STD-FONT-CTL eng=QtWebEngine	900x600	61,64	902x625	1	63,104
+1359	STD-FONT-KW-A caption=16px|Arial|400 icon=16px|Arial|400 menu=16px|Arial|400	900x600	61,64	902x625	24	63,104
+2829	STD-FONT-KW-B message-box=16px|Arial|400 small-caption=16px|Arial|400 status-bar=16px|Arial|400 identical=6/6	900x600	61,64	902x625	49	63,104
+4361	STD-FONT-GEN absent=423.8 system-ui=408.48 ui-sans-serif~423.8 ui-serif~423.8 ui-monospace~423.8 ui-rounded~423.8 sans-serif=408.48 serif~423.8 monospace=481.64 cursive=304.2 -apple-system~423.8	900x600	61,64	902x625	75	63,104
+5832	STD-FONT-UNIT 1in=96 10pt=13.3333px medium=16px dpr=1 rootsize=32px rootfamily=DejaVu Serif	900x600	61,64	902x625	100	63,104
+7365	STD-FONT-NT-A source=qt ui=-/sans-serif/12px/400 document=-/sans-serif/12px/400 monospace=-/monospace/12px/400 titlebar=-/sans-serif/12px/400 small=-/sans-serif/12px/400	900x600	61,64	902x625	126	63,104
+8837	STD-FONT-NT-B match=15/15 fallback=monospace agree=kw:16|nt:12|delta:4	900x600	61,64	902x625	151	63,104
+10368	STD-FONT-END	900x600	61,64	902x625	177	63,104

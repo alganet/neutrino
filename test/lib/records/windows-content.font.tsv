@@ -1,0 +1,9 @@
+7	neutrino	900x600	54,40	916x639	1
+712	STD-FONT-CTL eng=WebView2	900x600	54,40	916x639	10
+1917	STD-FONT-KW-A caption=16px|Arial|400 icon=16px|Arial|400 menu=12px|Segoe UI|400	900x600	54,40	916x639	29
+3441	STD-FONT-KW-B message-box=16px|Arial|400 small-caption=12px|Segoe UI|400 status-bar=12px|Segoe UI|400 identical=3/6	900x600	54,40	916x639	53
+5071	STD-FONT-GEN absent=339.95 system-ui=357.5 ui-sans-serif~339.95 ui-serif~339.95 ui-monospace~339.95 ui-rounded~339.95 sans-serif=362.47 serif~339.95 monospace=439.84 cursive=390.47 -apple-system~339.95	900x600	54,40	916x639	79
+6571	STD-FONT-UNIT 1in=96 10pt=13.3333px medium=16px dpr=1 rootsize=32px rootfamily=Times New Roman	900x600	54,40	916x639	103
+8074	STD-FONT-NT-A source=windows ui=SegoeUI/sans-serif/12px/400 document=-/serif/12px/400 monospace=-/monospace/12px/400 titlebar=SegoeUI/sans-serif/12px/400 small=SegoeUI/sans-serif/12px/400	900x600	54,40	916x639	127
+9537	STD-FONT-NT-B match=15/15 fallback=monospace agree=kw:12|nt:12|delta:0	900x600	54,40	916x639	150
+11114	STD-FONT-END	900x600	54,40	916x639	175

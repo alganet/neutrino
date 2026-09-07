@@ -1,0 +1,15 @@
+1	neutrino	900x600	54,40	916x639	1
+285	STD-WIN-EXIST-SELF eng=WebView2 ow=number oh=number iw=number ih=number sx=number sy=number rt=function rz=function mt=function mv=function cl=function op=function rfs=function xfs=function	900x600	54,40	916x639	5
+1547	STD-WIN-DESC-SELF ow=w1c1g1oS oh=w1c1g1oS iw=w1c1g1oS ih=w1c1g1oS sx=w1c1g1oS sy=w1c1g1oS rt=w1c1g0oS rz=w1c1g0oS mt=w1c1g0oS mv=w1c1g0oS cl=w1c1g0oS op=w1c1g0oS CTLown=w1c1g0oS CTLforged=w0c0g1oS	900x600	54,40	916x639	25
+3375	STD-WIN-RT-PAIR req=640x480 call=ok ow=640 oh=480 iw=640 ih=480 sx=62 sy=71	640x480	54,40	656x519	54
+5067	STD-WIN-RZ-PAIR req=+40+40 call=ok ow=680 oh=520 iw=680 ih=520 sx=62 sy=71	680x520	54,40	696x559	81
+6844	STD-WIN-MT-PAIR req=120,90 call=ok ow=680 oh=520 iw=680 ih=520 sx=128 sy=121	680x520	120,90	696x559	109
+8599	STD-WIN-MV-PAIR req=+30+30 call=ok ow=680 oh=520 iw=680 ih=520 sx=158 sy=151	680x520	150,120	696x559	137
+10125	STD-WIN-GONE-SELF nw=undefined	680x520	150,120	696x559	161
+11703	STD-WIN-OPEN-SELF noargs=null/same blank=null/same self=object/same	680x520	150,120	696x559	186
+13132	STD-WIN-APPREGION-SELF computed=drag	680x520	150,120	696x559	209
+15594	STD-WIN-FS1-PAIR nogesture call=ok settled=rejected:TypeError fsel=none activation=false ow=680 oh=520 iw=680 ih=520 sx=158 sy=151	680x520	150,120	696x559	248
+17062	STD-WIN-OVR-SELF ow=ok/yes sx=ok/yes rt=ok/yes mt=ok/yes op=ok/yes	680x520	150,120	696x559	271
+18578	STD-WIN-CLOSE-PAIR about-to-call	680x520	150,120	696x559	295
+20155	<none>	0x0	0,0	0x0	320
+20218	<gone>	0x0	0,0	0x0	321
