@@ -60,25 +60,33 @@ LIMIT=$((16 * 1024 * 1024))
 
 # What each lane measured before anything was written. Windows curl 8.16.0
 # reads every location asked about; the two older curls read CURL_HOME and
-# ~/.curlrc but not XDG; OpenBSD reads none of them through netinstall because
-# unveil is an allowlist and the fetch list does not include any -- README.md
-# has said so since PR 11 and this is the measurement behind the sentence.
+# ~/.curlrc but not XDG.
+#
+# OpenBSD had an arm of its own reading `CURL_HOME=no XDG=no HOME_dot=no`, and
+# it was right when it was written: unveil is an allowlist for reads and the
+# fetch list granted none of those paths. It stopped being right on 2026-09-03,
+# when both phases were widened to `unveil("/", "r")` -- deliberately, and for
+# exactly this reason, since a user's ~/.curlrc is part of the trust model on
+# linux and macOS and was silently not read on one platform. sandbox_bsd.c says
+# so at length; the commit is "reads are not confined, on any platform", and it
+# updated env.sh and not this file.
+#
+# So OpenBSD reads what the other BSDs read, and joins them here rather than
+# keeping an arm that says the same thing twice. What is left of its
+# confinement is writes, which is what the `refused` below and phases.sh both
+# still assert.
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         WANT_LOCS=" CURL_HOME=READ XDG=READ HOME_dot=READ HOME_us=READ APPDATA=READ USERPROFILE=READ INBLOBS=READ"
         WANT_OUT=landed ;;
-    OpenBSD)
-        WANT_LOCS=" CURL_HOME=no XDG=no HOME_dot=no INBLOBS=READ"
-        WANT_OUT=refused ;;
-    # Not OpenBSD's answer. Those three `no`s are unveil refusing a read, and
-    # these two platforms have no unveil to refuse with -- so every location is
-    # readable and the fetch child reads all of them. Measured on the freebsd
-    # lane, curl 8.21.0: CURL_HOME=READ XDG=READ HOME_dot=READ INBLOBS=READ.
+    # Every location readable, and the fetch child reads all of them. Measured
+    # on the freebsd lane at curl 8.21.0 and on the openbsd lane at the same
+    # version: CURL_HOME=READ XDG=READ HOME_dot=READ INBLOBS=READ.
     # XDG is the one that moves with the curl version rather than with the
     # confinement -- the linux arm below reads XDG=no on two older curls -- so
     # if the netbsd lane disagrees here it is saying something about its curl
     # and gets a line of its own.
-    FreeBSD|NetBSD|DragonFly)
+    OpenBSD|FreeBSD|NetBSD|DragonFly)
         WANT_LOCS=" CURL_HOME=READ XDG=READ HOME_dot=READ INBLOBS=READ"
         WANT_OUT=refused ;;
     *)
@@ -202,17 +210,12 @@ echo "  config     ${CLINE:-<none>}"
 
 # The half of this PR that is about --info telling the truth. Before it there
 # was no config line at all, and the downloader line was a claim a file can add
-# to. Asserted per platform, because the honest sentence differs: on OpenBSD
-# the fetch phase cannot read any of these, which README.md has said since
-# PR 11 and which the locations below measure.
-case "$(uname -s)" in
-    OpenBSD) WANT_CFG="unveil" ;;
-    # And the same correction: the honest sentence on a platform that confines
-    # the fetch phase with nothing is the ordinary one -- the config is read and
-    # is not suppressed -- which is what --info prints there. Measured on the
-    # freebsd lane.
-    *)       WANT_CFG="not suppressed" ;;
-esac
+# to. It was asserted per platform while OpenBSD's answer differed; the
+# locations above are the measurement that says it no longer does.
+# One sentence on every unix now. OpenBSD's used to be "reads none of its own
+# config here", which was true of the old unveil set and false of this one --
+# the arm in fetch.c that printed it is gone for the same reason this one is.
+WANT_CFG="not suppressed"
 case "$CLINE" in
     *"$WANT_CFG"*) ok "--info names what the downloader reads besides its argv" ;;
     *) bad "--info config expected=*${WANT_CFG}* actual='${CLINE:-<none>}'" ;;
@@ -251,12 +254,37 @@ write_proxy_rc() {
 # native) and answers READ if it failed the way a dead proxy fails. The _keep
 # form leaves the cache alone, for the one location that lives inside it.
 try_location_keep() {
-    local label="$1"; shift
-    if env "$@" "$GOODBIN" --fetch >/dev/null 2>&1 && [ -f "$(cached_path "$GOOD")" ]; then
+    local label="$1" out rc; shift
+    out="$(env "$@" "$GOODBIN" --fetch 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ] && [ -f "$(cached_path "$GOOD")" ]; then
         echo "  $label: no (the fetch succeeded; the file was not read)"
         return 1
     fi
+    # Why it failed, beside the verdict.
+    #
+    # This answers READ from the fetch not succeeding, which is one-sided: any
+    # other reason the fetch could fail reads the same way. The three levels
+    # above -- the -K control, then direct+env, then this -- were built to make
+    # a *negative* readable, and nothing was making a positive readable.
+    #
+    # It cost four days to find out that it mattered. The openbsd lane read
+    # READ on three locations its arm expected `no`, and the arm was simply
+    # stale -- but working that out meant reasoning from a comment in
+    # sandbox_bsd.c, because the line here said only that something had gone
+    # wrong. A dead proxy fails with curl's own connect error and it is one
+    # line; carrying it turns the next such round into a reading.
+    #
+    # The verdict is untouched. Making it two-sided means deciding which
+    # failures count as the proxy on five platforms and two downloaders, and
+    # that is a measurement, not an edit.
     echo "  $label: READ (the fetch was refused, which is the proxy answering)"
+    # Filtered the way `said` filters, and for its reason: the testing build
+    # narrates its own confinement on stderr and that line is never the answer.
+    # Left in, it is the first eighty characters of every one of these and the
+    # downloader's complaint falls off the end.
+    printf '    why: %s\n' "$(printf '%s\n' "$out" | tr -d '\r' \
+        | grep -av 'fetch confine:' | grep -av '^[[:space:]]*$' \
+        | tail -2 | tr '\n' ' ' | tr -s ' ' | cut -c1-140)"
     return 0
 }
 
@@ -346,26 +374,28 @@ else
             && LOCS="$LOCS USERPROFILE=READ" || LOCS="$LOCS USERPROFILE=no"
     fi
 
-    # The reading round 1 was missing, and the one that decides what OpenBSD's
-    # three noes mean. Every location above lives under a temporary directory,
-    # and the fetch phase there unveils /usr, /bin, /etc/ssl, /etc/resolv.conf,
-    # /dev/urandom, the hints file and <home>/blobs -- and nothing else. So a
-    # "no" on that lane could be either of two very different things: the
-    # location is not honoured, or it is honoured and the confinement refused
-    # the read. The `direct` control says curl honours it; this says what the
-    # confinement does when the file is somewhere it may look. <home>/blobs is
-    # the one directory granted in every fetch profile on every platform.
+    # The reading round 1 was missing, and the one that told OpenBSD's three
+    # noes apart from a curl that never looked. There are no noes on that lane
+    # any more -- reads are unconfined there now -- but the control keeps its
+    # job everywhere else: a `no` above can be either the location not being
+    # honoured or the confinement refusing the read, and only one of those is
+    # about netinstall. The `direct` control says curl honours it; this says
+    # what the confinement does when the file is somewhere it may look.
+    # <home>/blobs is the one directory granted in every fetch profile on
+    # every platform.
     clean_home
     mkdir -p "$BLOBS"
     write_proxy_rc "$BLOBS/.curlrc"
     if try_location_keep "netinstall CURL_HOME=<blobs>" "CURL_HOME=$(nt_native "$BLOBS")"; then
         LOCS="$LOCS INBLOBS=READ"
         # Preferred over the temporary directory above, and the preference is
-        # the point. The tight tiers allowlist reads, and OpenBSD's unveil is an
-        # allowlist by construction, so a config anywhere else is a file those
-        # phases cannot open -- and a steal that does not land then says nothing
-        # about the write, which is the question. blobs is granted in every
-        # fetch profile on every platform at every tier.
+        # the point. Where a phase allowlists reads, a config anywhere else is
+        # a file it cannot open -- and a steal that does not land then says
+        # nothing about the write, which is the question. blobs is granted in
+        # every fetch profile on every platform, which is what makes it the one
+        # location this probe can rely on. OpenBSD used to be the case in
+        # point and is not one any more; the reasoning is why the choice
+        # stands rather than why it was made.
         CFGDIR="$BLOBS"
         CFGENV="CURL_HOME=$(nt_native "$BLOBS")"
         CFGWHERE=blobs

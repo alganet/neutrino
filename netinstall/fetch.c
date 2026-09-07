@@ -259,14 +259,24 @@ static const char *nt_build(const char *url, const char *dest, char *maxsize,
  * each location on every lane, so a curl that grows or drops one fails here
  * instead of quietly making this sentence wrong.
  */
-#if defined(__OpenBSD__)
-/* unveil is an allowlist for reads and the fetch list does not include any of
- * them, so on this platform the sentence is that nothing is read at all. */
-#define NT_CURL_CONFIG "curl reads none of its own config here: the fetch " \
-                       "phase's unveil set does not include it"
-#define NT_WGET_CONFIG "wget reads none of its own config here: the fetch " \
-                       "phase's unveil set does not include it"
-#elif defined(_WIN32)
+/*
+ * OpenBSD had an arm of its own here and does not need one any more.
+ *
+ * It said "reads none of its own config here: the fetch phase's unveil set
+ * does not include it", which was true while the fetch unveil was a short
+ * allowlist. It stopped being true when reads were widened to `unveil("/",
+ * "r")` on both phases -- deliberately, to close exactly this divergence, since
+ * a user's ~/.curlrc is part of the trust model on linux and macOS and was
+ * silently not read on one platform. See sandbox_bsd.c, which says so at
+ * length.
+ *
+ * The sentence went on saying the opposite for four days. fetchconf.sh measures
+ * every location on every lane and did catch it -- CURL_HOME, XDG and
+ * HOME/.curlrc all read where the arm promised none would -- but the openbsd
+ * lane could not go red, so nothing carried the reading out. That is fixed in
+ * the workflow; this is the thing it was hiding.
+ */
+#if defined(_WIN32)
 #define NT_CURL_CONFIG "curl also reads its own config, and it is not " \
                        "suppressed: %CURL_HOME%, %XDG_CONFIG_HOME%, %HOME%, " \
                        "%APPDATA%, %USERPROFILE%"

@@ -515,7 +515,7 @@ was never on the table.
 | Platform | What is applied |
 |---|---|
 | **Linux** | Landlock. Writes confined to the app dir, `/dev`, `/dev/shm` and `/proc/self` — this process's own entry and no peer's. Reads unrestricted. A seccomp filter on top. The session bus stays reachable; see [what is still open](#what-is-still-open). |
-| **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. Writes confined to the app dir and `/dev`, plus files that already exist under `/tmp`, and **write xor execute** on the app dir — the one directory the app can write to is one it cannot run anything from, at every tier. Reads are an allowlist too, because `unveil` is one. See the caveat below. |
+| **OpenBSD** | `unveil` + `pledge` execpromises, inherited by the child. Writes confined to the app dir and `/dev`, plus files that already exist under `/tmp`, and **write xor execute** on the app dir — the one directory the app can write to is one it cannot run anything from, at every tier. Reads are not confined: `unveil` is an allowlist and could have restricted them, and both phases open it back up with `unveil("/", "r")` on purpose — the list at the top of [Confinement](#confinement) says so for every platform. |
 | **macOS** | Seatbelt profile: `deny file-write*` outside the app dir, the Darwin per-user temp directory, four `~/Library` subtrees and six `/dev` nodes — the carve-outs are what CFPreferences and WebKit need and are listed in [write xor execute on macOS](#write-xor-execute-on-macos). Read denials on `~/.ssh`, Keychains, Mail, Safari and browser profiles, and denials on securityd, tccd, Apple Events and task ports. |
 | **Windows** | Low integrity: writes outside the app dir fail, except the two places the label leaves open by design, `AppData\LocalLow` and `HKCU\Software\AppDataLow`. Plus a job object and every token privilege but `SeChangeNotify` removed. Measured: `%USERPROFILE%`, the user temp directory, `C:\Windows\Temp` and `HKCU\Software` all refuse. On a launch that owes a build, and only then, the [build slot](#the-build-slot-and-the-launch-that-owes-a-build) is writable too, and `--info` says so. |
 
@@ -743,12 +743,6 @@ while these stand:
   rule against; narrowing it blind would be the kind of change this file exists to avoid. So it is
   in the sentence: `--info` says `writes confined to <app dir> and /dev, plus files that already
   exist under /tmp`.
-- **OpenBSD's fetch phase cannot read a user's curl config.** `unveil` is an allowlist for reads,
-  and the fetch list grants the blobs directory, `/usr`, `/bin`, the TLS trust store,
-  `resolv.conf`, `/dev/urandom` and `ld.so`'s hints file — nothing else. On Linux and macOS the
-  default tier restricts writes and leaves reads alone, so `~/.curlrc` is read there and is part
-  of the trust model [above](#trust-model). On OpenBSD it is not read at all. Narrower, and
-  different; said here rather than discovered by someone whose proxy settings stopped applying.
 - **FreeBSD and NetBSD get no confinement**, and that is unlikely to change while Capsicum needs the
   target's cooperation, and jail, chroot and ugidfw all need root. They do get the environment
   allowlist and no core dumps, and FreeBSD gets `PROC_NO_NEW_PRIVS_CTL` on top; none of that is a
