@@ -43,8 +43,31 @@ jobs:
   gjs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    # Which lane this is. Set on the job rather than on the steps because every
+    # suite files rows under it and none of them should have to be told twice.
+    # The directory those rows go in cannot be set here -- see the step below.
+    env:
+      NT_LANE: gjs
     steps:
       - uses: actions/checkout@v7
+      # Where the harness files its rows. Written to $GITHUB_ENV rather than
+      # set on the job, because a job-level `env` may not read the `runner`
+      # context and $RUNNER_TEMP is the only writable path outside the checkout
+      # that every runner agrees on.
+      - shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nt-results"
+          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
+      # The harness, and the verifiers on top of it, with no display and no app.
+      # Five seconds, and it runs before anything that needs a desktop: a broken
+      # reporter makes every reading behind it unreadable, so it is worth
+      # finding out first.
+      #
+      # On this lane, macos and windows-launch, which is where assemble.sh runs
+      # and for the same reason -- three userlands, and the awk, sed and base64
+      # this leans on are not the same programs on them.
+      - timeout-minutes: 5
+        run: bash test/lib/selftest.sh
       - run: |
           sudo apt update
           sudo apt install -y xvfb gjs imagemagick x11-xserver-utils metacity \
@@ -245,19 +268,10 @@ jobs:
       - if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
-          bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh doc ~/screenshots > ~/stddoc.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stddoc.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stddoc --app test/neutrinostddoc.cmd -- \
+            bash test/verify-std.sh doc ~/screenshots
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -277,35 +291,17 @@ jobs:
       - if: always()
         timeout-minutes: 10
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh win ~/screenshots > ~/stdwin.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdwin.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stdwin --app test/neutrinostdwin.cmd -- \
+            bash test/verify-std.sh win ~/screenshots
       - if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
-          bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh theme ~/screenshots > ~/stdtheme.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdtheme.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stdtheme --app test/neutrinostdtheme.cmd -- \
+            bash test/verify-std.sh theme ~/screenshots
       # Round 3b: a desktop built so the media query is wrong about it.
       #
       # The two steps above ask what this runner's desktop looks like, and both
@@ -389,19 +385,10 @@ jobs:
         name: the app on the download page
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/demoapp.sh test/neutrinodemo.cmd
           bash test/parse.sh test/neutrinodemo.cmd
-          bash test/neutrinodemo.cmd > ~/demo-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/demo.sh ~/screenshots > ~/demo.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/demo.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log demo --app test/neutrinodemo.cmd -- \
+            bash test/demo.sh ~/screenshots
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which
       # made comparing the decorated frame against the chromeless one a matter
@@ -440,19 +427,10 @@ jobs:
         if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
           bash test/parse.sh test/neutrinostdfont.cmd
-          bash test/neutrinostdfont.cmd > ~/stdfont-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh font ~/screenshots > ~/stdfont.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdfont.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stdfont --app test/neutrinostdfont.cmd -- \
+            bash test/verify-std.sh font ~/screenshots
       # And a running app, with the desktop's fonts moved underneath it.
       #
       # The step above launches once and reads once, so a watcher that never
@@ -487,6 +465,7 @@ jobs:
           # asserted cannot be read for what the lane asserted twice.
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh gjs ~/sheet/gjs.html \
             "The suites=$HOME/screenshots" \
             "netinstall=$HOME/netinstall-screenshots" \
@@ -529,8 +508,18 @@ jobs:
   linux-engines:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      NT_LANE: linux-engines
     steps:
       - uses: actions/checkout@v7
+      # Where the harness files its rows. Written to $GITHUB_ENV rather than set
+      # on the job, because a job-level `env` may not read the `runner` context
+      # and $RUNNER_TEMP is the only writable path outside the checkout that
+      # every runner agrees on.
+      - shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nt-results"
+          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       - run: |
           sudo apt update
           sudo apt remove -y gjs || true
@@ -648,19 +637,10 @@ jobs:
       - if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
-          bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh doc ~/screenshots > ~/stddoc.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stddoc.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stddoc --app test/neutrinostddoc.cmd -- \
+            bash test/verify-std.sh doc ~/screenshots
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -680,35 +660,17 @@ jobs:
       - if: always()
         timeout-minutes: 10
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh win ~/screenshots > ~/stdwin.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdwin.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stdwin --app test/neutrinostdwin.cmd -- \
+            bash test/verify-std.sh win ~/screenshots
       - if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
-          bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh theme ~/screenshots > ~/stdtheme.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdtheme.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stdtheme --app test/neutrinostdtheme.cmd -- \
+            bash test/verify-std.sh theme ~/screenshots
       # Round 3b: a desktop built so the media query is wrong about it.
       #
       # The two steps above ask what this runner's desktop looks like, and both
@@ -918,19 +880,10 @@ jobs:
       - if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
-          bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh doc ~/screenshots > ~/stddoc.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stddoc.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stddoc --app test/neutrinostddoc.cmd -- \
+            bash test/verify-std.sh doc ~/screenshots
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -950,35 +903,17 @@ jobs:
       - if: always()
         timeout-minutes: 10
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh win ~/screenshots > ~/stdwin.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdwin.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stdwin --app test/neutrinostdwin.cmd -- \
+            bash test/verify-std.sh win ~/screenshots
       - if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
-          bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh theme ~/screenshots > ~/stdtheme.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdtheme.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stdtheme --app test/neutrinostdtheme.cmd -- \
+            bash test/verify-std.sh theme ~/screenshots
       # Round 3b: a desktop built so the media query is wrong about it.
       #
       # The two steps above ask what this runner's desktop looks like, and both
@@ -1083,19 +1018,10 @@ jobs:
         if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
           bash test/parse.sh test/neutrinostdfont.cmd
-          bash test/neutrinostdfont.cmd > ~/stdfont-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh font ~/screenshots > ~/stdfont.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdfont.log
-          exit $TEST_EXIT
+          bash test/step.sh --display metacity --gtk --log stdfont --app test/neutrinostdfont.cmd -- \
+            bash test/verify-std.sh font ~/screenshots
       # And a running app, with the desktop's fonts moved underneath it.
       #
       # The step above launches once and reads once, so a watcher that never
@@ -1130,6 +1056,7 @@ jobs:
           # asserted cannot be read for what the lane asserted twice.
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh linux-engines ~/sheet/linux-engines.html \
             "cjs=$HOME/shots-cjs" \
             "PyGObject=$HOME/screenshots" \
@@ -1160,6 +1087,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+    env:
+      NT_LANE: kde-live
     steps:
       - uses: actions/checkout@v7
       # Best-effort: a public package needs no login, and a fork without one
@@ -1197,11 +1126,34 @@ jobs:
   # spends before anyone finds out -- a run that hangs reports nothing, and
   # nothing is the one result no round can act on. A lane that exceeds this has
   # not got slower, it has stopped.
+      # Same as bsd: one log, and until now no way to read it but the job page.
+      - name: sheet
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p ~/sheetsrc ~/sheet
+          cp ~/qtkde.log ~/sheetsrc/ 2>/dev/null || true
+          bash test/sheet.sh kde-live ~/sheet/kde-live.html "Logs=$HOME/sheetsrc"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: kde-live-sheet
+          path: ~/sheet/kde-live.html
   kde:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      NT_LANE: kde
     steps:
       - uses: actions/checkout@v7
+      # Where the harness files its rows. Written to $GITHUB_ENV rather than set
+      # on the job, because a job-level `env` may not read the `runner` context
+      # and $RUNNER_TEMP is the only writable path outside the checkout that
+      # every runner agrees on.
+      - shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nt-results"
+          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       - run: |
           sudo apt update
           sudo apt install -y xvfb imagemagick x11-xserver-utils x11-utils mesa-utils libgl1-mesa-dri libegl-mesa0 openbox \
@@ -1438,23 +1390,10 @@ jobs:
       - if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export QT_QPA_PLATFORM=xcb
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
-          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
-          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
-          bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh doc ~/screenshots > ~/stddoc.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stddoc.log
-          exit $TEST_EXIT
+          bash test/step.sh --display openbox --qt --log stddoc --app test/neutrinostddoc.cmd -- \
+            bash test/verify-std.sh doc ~/screenshots
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -1474,43 +1413,17 @@ jobs:
       - if: always()
         timeout-minutes: 10
         run: |
-          export DISPLAY=:99
-          export QT_QPA_PLATFORM=xcb
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
-          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
-          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh win ~/screenshots > ~/stdwin.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdwin.log
-          exit $TEST_EXIT
+          bash test/step.sh --display openbox --qt --log stdwin --app test/neutrinostdwin.cmd -- \
+            bash test/verify-std.sh win ~/screenshots
       - if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export QT_QPA_PLATFORM=xcb
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
-          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
-          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
-          bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh theme ~/screenshots > ~/stdtheme.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdtheme.log
-          exit $TEST_EXIT
+          bash test/step.sh --display openbox --qt --log stdtheme --app test/neutrinostdtheme.cmd -- \
+            bash test/verify-std.sh theme ~/screenshots
       # Round 3: where each colour came from.
       #
       # The single-launch theme step above says what an engine reports and
@@ -1576,23 +1489,10 @@ jobs:
         if: always()
         timeout-minutes: 8
         run: |
-          export DISPLAY=:99
-          export QT_QPA_PLATFORM=xcb
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
-          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
-          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
           bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
           bash test/parse.sh test/neutrinostdfont.cmd
-          bash test/neutrinostdfont.cmd > ~/stdfont-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh font ~/screenshots > ~/stdfont.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdfont.log
-          exit $TEST_EXIT
+          bash test/step.sh --display openbox --qt --log stdfont --app test/neutrinostdfont.cmd -- \
+            bash test/verify-std.sh font ~/screenshots
       - name: sheet
         if: always()
         continue-on-error: true
@@ -1604,6 +1504,7 @@ jobs:
           # asserted cannot be read for what the lane asserted twice.
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh kde ~/sheet/kde.html \
             "The suites=$HOME/screenshots" \
             "Logs=$HOME/sheetsrc"
@@ -1646,6 +1547,8 @@ jobs:
   wayland:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      NT_LANE: wayland
     steps:
       - uses: actions/checkout@v7
       # sway rather than weston, which is also in the archive and is the
@@ -1701,6 +1604,7 @@ jobs:
         run: |
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh wayland ~/sheet/wayland.html \
             "netinstall=$HOME/netinstall-screenshots" \
             "Logs=$HOME/sheetsrc"
@@ -1733,6 +1637,8 @@ jobs:
   bsd:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      NT_LANE: bsd
     steps:
       - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
@@ -1836,6 +1742,31 @@ jobs:
       - name: suite log
         if: always()
         run: cat openbsd-suite.log
+      # The step the comment on the guest run has promised since that run was
+      # written, and which was never actually here.
+      #
+      # `run.sh` exits its failure count inside the guest, and the guest step
+      # swallows that on purpose: vmactions runs the script behind `set -eu` and
+      # skips copyback when the ssh command returns non-zero, so a red suite
+      # that failed honestly would take its own log down with it. The status is
+      # written to a file instead and carried out with the log -- and until now
+      # nothing read the file. With `continue-on-error` on the guest step as
+      # well, an OpenBSD suite could fail every assertion it has and the lane
+      # stayed green.
+      #
+      # An absent rc file is a failure and not a pass. It means the guest never
+      # reached the end of the run, or copyback did not happen, and neither is a
+      # state this lane may report as success -- that was the whole defect.
+      - name: outcome
+        if: always()
+        run: |
+          if [ ! -f openbsd-suite.rc ]; then
+            echo "FAIL: no rc came back from the guest; the suite's result is unknown"
+            exit 1
+          fi
+          rc="$(cat openbsd-suite.rc)"
+          echo "report: openbsd suite rc=$rc"
+          [ "$rc" = "0" ] || { echo "FAIL: the openbsd suite reported $rc failure(s)"; exit 1; }
       # Three steps over the suite log, because the cap is per step and round 2
       # dropped four chunks from the middle of the failures alone. Anchored to
       # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
@@ -1846,6 +1777,21 @@ jobs:
       # assertion that did not hold. Those two are different problems and the
       # results step above cannot see the first one.
 
+      # This lane published nothing. Its whole reading is a log written inside a
+      # guest and copied back, so a reader who wanted it had to open the job.
+      # One artifact, like every other lane.
+      - name: sheet
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p ~/sheetsrc ~/sheet
+          cp openbsd-suite.log ~/sheetsrc/ 2>/dev/null || true
+          bash test/sheet.sh bsd ~/sheet/bsd.html "Logs=$HOME/sheetsrc"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bsd-sheet
+          path: ~/sheet/bsd.html
       # Last, and unconditional: setup-zig's post step saves whatever is at
       # ZIG_GLOBAL_CACHE_DIR, and that path is still the workspace one.
       - if: always()
@@ -1880,8 +1826,22 @@ jobs:
   windows-launch:
     runs-on: windows-latest
     timeout-minutes: 40
+    env:
+      NT_LANE: windows-launch
     steps:
       - uses: actions/checkout@v7
+      # Where the harness files its rows. Written to $GITHUB_ENV rather than
+      # set on the job, because a job-level `env` may not read the `runner`
+      # context and $RUNNER_TEMP is the only writable path outside the checkout
+      # that every runner agrees on.
+      - shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nt-results"
+          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
+      # MSYS's turn at the harness. See the gjs lane for why this runs on three.
+      - timeout-minutes: 5
+        shell: bash
+        run: bash test/lib/selftest.sh
       - shell: bash
         run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
       - shell: bash
@@ -2399,6 +2359,7 @@ jobs:
           # sweep all of it.
           mkdir -p ~/sheetsrc
           cp ~/*.png ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh windows-launch ~/sheet/windows-launch.html \
             "The suites=$HOME/sheetsrc" \
             "netinstall=$HOME/netinstall-screenshots" \
@@ -2428,8 +2389,18 @@ jobs:
   windows-content:
     runs-on: windows-latest
     timeout-minutes: 40
+    env:
+      NT_LANE: windows-content
     steps:
       - uses: actions/checkout@v7
+      # Where the harness files its rows. Written to $GITHUB_ENV rather than set
+      # on the job, because a job-level `env` may not read the `runner` context
+      # and $RUNNER_TEMP is the only writable path outside the checkout that
+      # every runner agrees on.
+      - shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nt-results"
+          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       - shell: bash
         run: bash test/mkapp.sh test/neutrinoattack.js test/neutrinoattack.cmd
       # The suites this lane is made of, parsed before any of them runs, for
@@ -2852,10 +2823,11 @@ jobs:
         run: |
           mkdir -p ~/sheetsrc
           cp ~/*.png ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh windows-content ~/sheet/windows-content.html \
             "The suites=$HOME/sheetsrc" \
             "docswap=$HOME/docswaplogs" \
-            "nav=$HOME/navlogs" \
+            "nav=$HOME/navlogs"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -2880,8 +2852,22 @@ jobs:
   macos:
     runs-on: macos-latest
     timeout-minutes: 30
+    env:
+      NT_LANE: macos
     steps:
       - uses: actions/checkout@v7
+      # Where the harness files its rows. Written to $GITHUB_ENV rather than
+      # set on the job, because a job-level `env` may not read the `runner`
+      # context and $RUNNER_TEMP is the only writable path outside the checkout
+      # that every runner agrees on.
+      - shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nt-results"
+          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
+      # The BSD userland's turn at the harness. See the gjs lane for why this
+      # runs on three.
+      - timeout-minutes: 5
+        run: bash test/lib/selftest.sh
       - run: bash test/mkapp.sh --testing test/neutrinotest.js test/neutrinotest.cmd
       - run: bash test/parse.sh test/neutrinotest.cmd
       # The launcher's own seatbelt profile, asserted as a value: that it can be
@@ -3114,14 +3100,8 @@ jobs:
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
           bash test/parse.sh test/neutrinostddoc.cmd
-          bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh doc ~/screenshots > ~/stddoc.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stddoc.log
-          exit $TEST_EXIT
+          bash test/step.sh --log stddoc --app test/neutrinostddoc.cmd -- \
+            bash test/verify-std.sh doc ~/screenshots
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -3144,28 +3124,16 @@ jobs:
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
           bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/neutrinostdwin.cmd > ~/stdwin-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh win ~/screenshots > ~/stdwin.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdwin.log
-          exit $TEST_EXIT
+          bash test/step.sh --log stdwin --app test/neutrinostdwin.cmd -- \
+            bash test/verify-std.sh win ~/screenshots
       - if: always()
         timeout-minutes: 8
         run: |
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
-          bash test/neutrinostdtheme.cmd > ~/stdtheme-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh theme ~/screenshots > ~/stdtheme.log 2>&1 || TEST_EXIT=$?
-          pkill -P "$APP_PID" 2>/dev/null || true
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdtheme.log
-          exit $TEST_EXIT
+          bash test/step.sh --log stdtheme --app test/neutrinostdtheme.cmd -- \
+            bash test/verify-std.sh theme ~/screenshots
       # Round 3: where each colour came from.
       #
       # The single-launch theme step above says what an engine reports and
@@ -3239,13 +3207,8 @@ jobs:
           rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
           bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
           bash test/parse.sh test/neutrinostdfont.cmd
-          bash test/neutrinostdfont.cmd > ~/stdfont-app.log 2>&1 &
-          APP_PID=$!
-          TEST_EXIT=0
-          bash test/verify-std.sh font ~/screenshots > ~/stdfont.log 2>&1 || TEST_EXIT=$?
-          kill "$APP_PID" 2>/dev/null || true
-          cat ~/stdfont.log
-          exit $TEST_EXIT
+          bash test/step.sh --log stdfont --app test/neutrinostdfont.cmd -- \
+            bash test/verify-std.sh font ~/screenshots
       - name: sheet
         if: always()
         continue-on-error: true
@@ -3257,6 +3220,7 @@ jobs:
           # asserted cannot be read for what the lane asserted twice.
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh macos ~/sheet/macos.html \
             "The suites=$HOME/screenshots" \
             "Logs=$HOME/sheetsrc"
@@ -3291,6 +3255,8 @@ jobs:
   macos-netinstall:
     runs-on: macos-latest
     timeout-minutes: 40
+    env:
+      NT_LANE: macos-netinstall
     steps:
       - uses: actions/checkout@v7
       - name: the room the picture is taken in
@@ -3329,6 +3295,7 @@ jobs:
           # read for what the lane asserted.
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
+          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
           # The suite's picture and its logs. `The suites=$HOME/screenshots`
           # used to be named here and was never written on this lane -- that
           # directory belongs to the `macos` job -- so the directory named is
@@ -3341,3 +3308,58 @@ jobs:
         with:
           name: macos-netinstall-sheet
           path: ~/sheet/macos-netinstall.html
+
+  # Every case, on every lane, in one grid.
+  #
+  # Until this job existed the redundancy question was answerable only by hand:
+  # download the run's artifacts and run sheetdiff.py over them, which the
+  # README documents and which therefore happened when somebody remembered. And
+  # it could only ever approximate the answer, because an assertion's identity
+  # was its sentence -- folded at every run of digits, and requiring two
+  # languages to write the same words. The rows carry a case id now, so the grid
+  # is exact and it costs a job that runs in under a minute.
+  #
+  # `if: always()` and `needs:` every lane that publishes a sheet: the run this
+  # grid is most worth reading is the one where a lane went red, and a summary
+  # gated on success is a summary that is absent exactly then. A lane that
+  # failed simply contributes no sheet and shows as `-`.
+  #
+  # It never fails the run. Every verdict in it has already been counted by the
+  # lane that produced it, and a reporting job that can redden a run is one that
+  # eventually reddens it for a reason that is about the report.
+  matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: always()
+    needs: [gjs, linux-engines, kde-live, kde, wayland, bsd, windows-launch,
+            windows-content, macos, macos-netinstall]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: "*-sheet"
+          path: sheets
+      - name: the grid
+        run: |
+          shopt -s nullglob
+          set -- sheets/*/*.html
+          if [ "$#" -eq 0 ]; then
+            echo "no lane published a sheet; nothing to compare"
+            echo "No sheets were published by this run." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # The step summary renders on the run page and has no cap, which is
+          # the whole reason it is used here and nowhere else in this file: the
+          # grid is the one output of this suite that is about the run rather
+          # than about a lane, so it wants the one surface that is not per-job.
+          {
+            echo "## Cases by lane"
+            echo
+            python3 test/matrix.py --markdown "$@"
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 test/matrix.py "$@" | tee matrix.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: matrix
+          path: matrix.txt

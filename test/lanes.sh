@@ -59,7 +59,7 @@ eq() {
 APP_IN="${1:-}"
 if [ -z "$APP_IN" ]; then
     APP_IN="$WORK/built.cmd"
-    bash "$ROOT/build.sh" "$ROOT/test/neutrinotest.js" "$APP_IN" > /dev/null 2>&1 ||
+    bash "$ROOT/test/mkapp.sh" "$ROOT/test/neutrinotest.js" "$APP_IN" > /dev/null 2>&1 ||
         { echo "lanes.sh: could not build an artifact to test"; exit 1; }
 fi
 [ -r "$APP_IN" ] || { echo "lanes.sh: no such artifact: $APP_IN"; exit 1; }
