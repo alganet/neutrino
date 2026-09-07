@@ -336,307 +336,18 @@ function Record($proc, $seconds) {
     return [pscustomobject]@{ Rows = $rows; MaxGap = $maxGap; Turns = $turns }
 }
 
-function Find-Row($rows, $prefix) {
-    foreach ($r in $rows) { if ($r.Title -like "$prefix*") { return $r } }
-    return $null
-}
-
-# The row immediately before a named one. Every native-call verdict is a
-# comparison against the state the previous call left, not against the window's
-# opening geometry -- four calls in a row each need their own before-picture.
-function Prev-Row($rows, $prefix) {
-    $prev = $null
-    foreach ($r in $rows) {
-        if ($r.Title -like "$prefix*") { return $prev }
-        $prev = $r
-    }
-    return $null
-}
-
-# What one native call did, said in the two words that matter. "The call
-# returned without throwing" is the page's half and is already in the title.
-function Verdict($before, $after) {
-    if (-not $after) { return "UNOBSERVED" }
-    if ($before -eq $after) { return "NOOP" }
-    return "EFFECTIVE"
-}
-
-function Analyse-Win($rows) {
-    $names = @()
-    foreach ($r in $rows) { $names += ($r.Title -split ' ')[0] }
-    Note "win sequence: $($names -join ' ')"
-
-    foreach ($st in @("EXIST", "DESC", "OVR", "OPEN", "APPREGION", "GONE")) {
-        $r = Find-Row $rows "STD-WIN-$st-SELF"
-        if ($r) { Note "self $st $($r.Title -replace "^STD-WIN-$st-SELF ",'')" }
-    }
-
-    # window.open, and the one shape of it the page can answer for. What an
-    # external url does is not askable from inside the document -- parse.sh
-    # asserts that half against the built preload with no engine. The
-    # no-argument call is the launcher's own no-op, and every shape must leave
-    # the document where it was. verify-std.sh carries the same two branches;
-    # one spelling changed in two verifiers is one change.
-    $op = Find-Row $rows "STD-WIN-OPEN-SELF"
-    if (-not $op) {
-        Fail "control open: STD-WIN-OPEN-SELF was never observed"
-    } else {
-        $on = ""
-        if ($op.Title -match ' noargs=(\S+)') { $on = $Matches[1] }
-        if ($on -eq "null/same") {
-            Note "control open noargs=$on verdict=NOOP"
-        } elseif ($on -eq "") {
-            Fail "control open: STD-WIN-OPEN-SELF carried no noargs reading"
-        } else {
-            Fail "control open noargs=$on, wanted null/same; window.open() is not the launcher's on this lane"
-        }
-        foreach ($v in @("blank", "self")) {
-            $ov = ""
-            if ($op.Title -match " $v=(\S+)") { $ov = $Matches[1] }
-            if ($ov -like "*/CHANGED") {
-                Fail "control open $v=$ov; a call meant to open a window took this document somewhere"
-            } elseif ($ov -ne "") {
-                Note "control open $v=$ov (the engine's own, left alone)"
-            }
-        }
-    }
-
-    # The four. Before the launcher wrote over these, all four read NOOP on all
-    # four engines. They are the shipped API now, so a NOOP here is a regression
-    # and the control below says so.
-    $movedAny = 0
-    foreach ($st in @("RT", "RZ", "MT", "MV")) {
-        $r = Find-Row $rows "STD-WIN-$st-PAIR"
-        if (-not $r) { Fail "STD-WIN-$st-PAIR was never observed"; continue }
-        $p = Prev-Row $rows "STD-WIN-$st-PAIR"
-        if ($st -eq "RT" -or $st -eq "RZ") { $v = Verdict $p.Inner $r.Inner }
-        else { $v = Verdict $p.Pos $r.Pos }
-        if ($v -eq "EFFECTIVE") { $movedAny++ }
-        Note "pair $st page=[$($r.Title -replace "^STD-WIN-$st-PAIR ",'')] native $($p.Inner)@$($p.Pos) -> $($r.Inner)@$($r.Pos) verdict=$v"
-    }
-
-    $fs = Find-Row $rows "STD-WIN-FS1-PAIR"
-    if ($fs) {
-        $p = Prev-Row $rows "STD-WIN-FS1-PAIR"
-        Note "pair FS1 page=[$($fs.Title -replace '^STD-WIN-FS1-PAIR ','')] native $($p.Inner) -> $($fs.Inner) verdict=$(Verdict $p.Inner $fs.Inner)"
-    } else { Fail "STD-WIN-FS1-PAIR was never observed" }
-
-    # close is the one phase whose answer is an absence. The page's `closed`
-    # flag is its own account and the engine may set it optimistically; what
-    # says the window went is the record ending, and both are printed rather
-    # than one standing in for the other.
-    #
-    # STILL_UP is a failure and used to be a note. The probe waits 1200 ms after
-    # the call before it writes STD-WIN-END, so a title that arrives is a window
-    # that was still there more than a second after being told to go -- not a
-    # race, and not something a slow lane produces. It was a note while nothing
-    # had ever been seen to survive the call, and what that cost is the reading
-    # nobody took: `close()` is in the README as one of the six verbs an app
-    # drives its window with, and a lane where it does nothing would have passed
-    # this suite green.
-    $end = Find-Row $rows "STD-WIN-END"
-    if (Find-Row $rows "STD-WIN-CLOSE-PAIR") {
-        if ($end) {
-            Fail "pair CLOSE page=[$($end.Title -replace '^STD-WIN-END ','')] native=STILL_UP; the window was still up 1200ms after close() and reported through itself to say so"
-        } else {
-            Note "pair CLOSE page=[no title after the call] native=GONE"
-        }
-    } else { Fail "STD-WIN-CLOSE-PAIR was never observed" }
-
-    # Control one, and it moved with the thing it is about. It used to be a
-    # separate call known to work -- `neutrino.window.resize`, which no longer
-    # exists -- there to tell "the engine refused" from "the window is dead".
-    # Those are now one call, so the question is asked of it directly: a run in
-    # which none of the four moved the window is a dead window or an override
-    # that did not take, and both are regressions rather than readings.
-    if ($movedAny -gt 0) {
-        Note "control the standard spellings move the window: $movedAny/4 EFFECTIVE"
-    } else {
-        Fail "control none of resizeTo/resizeBy/moveTo/moveBy moved the window; either the override did not take or the window is dead, and this run measured neither"
-    }
-
-    # Control two: the descriptors mean something. A reader that answers the
-    # same for a property this file defined and for one the spec makes
-    # unforgeable is a reader whose every other answer is void.
-    $d = Find-Row $rows "STD-WIN-DESC-SELF"
-    $own = ""; $forged = ""
-    if ($d -and $d.Title -match 'CTLown=(\S+)') { $own = $Matches[1] }
-    if ($d -and $d.Title -match 'CTLforged=(\S+)') { $forged = $Matches[1] }
-    if ($own -and $forged -and $own -ne $forged) {
-        Note "control descriptors own=$own forged=$forged verdict=DISTINGUISHED"
-    } else {
-        Fail "control descriptors own=$own forged=$forged; the reader cannot tell them apart"
-    }
-}
-
-# The engine half of the fonts delivery, and the twin of analyse_font in
-# verify-std.sh. Five controls, mirroring Analyse-Theme's one for one.
+# Find-Row, Prev-Row, Verdict and the five Analyse-* functions are gone.
+# They were a second implementation of test/lib/analyse.sh -- the same
+# controls over a record with the same columns, and the two files
+# cross-referenced each other six times asking a reader to keep them in step.
+# One of them carried a check it described as a no-op kept only so the pair
+# could not drift, which is the arrangement stating its own price.
 #
-# This lane has been building neutrinostdfont.cmd and never running it, because
-# there was no `font` arm here to run it under. That is the gap this closes: the
-# Windows reader is the one that reads SystemFonts on a clock, and until now
-# nothing on this platform had ever looked at what it delivered.
-function Analyse-Font($rows) {
-    $names = @()
-    foreach ($r in $rows) { $names += ($r.Title -split ' ')[0] }
-    Note "font sequence: $($names -join ' ')"
+# The sampler stays here, because GetWindowRect is not xdotool and never will
+# be. What crosses is the reading of the record it produced, which is the same
+# question on every lane. decoflip.ps1 has ended with `bash test/decodiff.sh`
+# for as long as it has existed; this is that, for the larger half.
 
-    $map = @{ "CTL" = "engine"; "KW-A" = "keywords-a"; "KW-B" = "keywords-b";
-              "GEN" = "generics"; "UNIT" = "units";
-              "NT-A" = "delivered"; "NT-B" = "agreement" }
-    foreach ($k in @("CTL", "KW-A", "KW-B", "GEN", "UNIT", "NT-A", "NT-B")) {
-        $r = Find-Row $rows "STD-FONT-$k"
-        if ($r) { Note "self $($map[$k]) $($r.Title -replace "^STD-FONT-$k ",'')" }
-    }
-
-    $ctl = Find-Row $rows "STD-FONT-CTL"
-    if (-not $ctl -or $ctl.Title -notmatch 'eng=') {
-        Fail "control font: STD-FONT-CTL was never observed, so nothing below is a reading"
-    } else { Note "control font: the probe ran and named its engine" }
-
-    # Whether the lane read a toolkit at all. Every comparison under this is
-    # void on a lane that did not.
-    $nta = Find-Row $rows "STD-FONT-NT-A"
-    $src = ""
-    if (-not $nta) { Fail "control fonts: STD-FONT-NT-A was never observed" }
-    elseif ($nta.Title -match 'fonts=null') {
-        Fail "control fonts: this lane read no toolkit, so every comparison here is void"
-    } else {
-        Note "control fonts read=YES"
-        if ($nta.Title -match ' source=(\S+)') { $src = $Matches[1] }
-    }
-
-    # The two deliveries: the object the preload handed the page against the
-    # custom properties the launcher wrote into the document's stylesheet.
-    $ntb = Find-Row $rows "STD-FONT-NT-B"
-    if (-not $ntb) { Fail "control delivery: STD-FONT-NT-B was never observed" }
-    elseif ($ntb.Title -match 'fonts=null') { Note "control delivery not_asked: this lane read no fonts" }
-    elseif ($ntb.Title -match 'match=15/15') { Note "control delivery match=15/15 verdict=DELIVERED" }
-    else {
-        $m = ""
-        if ($ntb.Title -match ' (match=\S+)') { $m = $Matches[1] }
-        Fail "control delivery: the custom properties and neutrino.fonts disagree -- $m"
-    }
-
-    # And the documented idiom on a lane that read nothing: a property the
-    # launcher never sets must reach the generic named beside it.
-    if ($ntb -and $ntb.Title -match ' fallback=(\S+)') {
-        $fb = $Matches[1]
-        if ($fb -eq "monospace") {
-            Note "control fallback var(--neutrino-font-nosuchrole, monospace)=monospace verdict=RESOLVED"
-        } elseif ($fb -eq "notasked") {
-            Note "control fallback not_asked"
-        } else {
-            Fail "control fallback: an unset property reached '$fb' rather than the generic beside it"
-        }
-    }
-
-    # The engine's own reading of the same desktop, where it has one. WebView2
-    # is not such an engine -- Chromium's system font keywords are constants,
-    # measured 16px Arial against a toolkit saying 12px -- so this lane is
-    # exempt by name with the reason printed, the way Analyse-Theme exempts qt.
-    if ($src -ne "gtk") {
-        Note "control agree not_asked: this engine's system font keywords are not the desktop's"
-    } elseif ($ntb -and $ntb.Title -match 'delta:([0-9.]+)') {
-        $d = [double]$Matches[1]
-        if ($d -le 1) { Note "control agree delta:$d verdict=AGREED" }
-        else { Fail "control agree: the launcher and the engine read different sizes off one desktop -- delta:$d" }
-    } else {
-        Fail "control agree: no reading on a lane that has one"
-    }
-
-    $kwb = Find-Row $rows "STD-FONT-KW-B"
-    if ($kwb -and $kwb.Title -match ' (identical=\S+)') { Note "self roles $($Matches[1])" }
-    else { Note "self roles unread" }
-
-    if (-not (Find-Row $rows "STD-FONT-END")) {
-        Fail "control font: STD-FONT-END was never observed, so the probe stopped early"
-    }
-}
-
-function Analyse-Theme($rows) {
-    $names = @()
-    foreach ($r in $rows) { $names += ($r.Title -split ' ')[0] }
-    Note "theme sequence: $($names -join ' ')"
-
-    $map = @{ "A" = "palette"; "B" = "cssnames"; "V" = "delivery"; "P" = "customprops"; "F" = "fonts" }
-    foreach ($k in @("A", "B", "V", "P", "F")) {
-        $r = Find-Row $rows "STD-THEME-$k-SELF"
-        if ($r) { Note "self $($map[$k]) $($r.Title -replace "^STD-THEME-$k-SELF ",'')" }
-    }
-
-    # Everything here is the document's own account: no window property carries
-    # a computed colour, so there is no outside half and none is pretended.
-    # What keeps it honest is the two controls, and the palette flip in the
-    # round after this -- a value that moves with the desktop is the desktop's.
-    $a = Find-Row $rows "STD-THEME-A-SELF"
-    if (-not $a) { Fail "control palette: STD-THEME-A-SELF was never observed" }
-    elseif ($a.Title -match 'nsrc=null') { Fail "control palette: this lane read no toolkit, so every comparison here is void" }
-    else { Note "control palette read=YES" }
-
-    # The scheme, read twice on one launch: `prefers-color-scheme` is the
-    # engine's answer and `neutrino.theme.scheme` is the launcher's, taken from
-    # the luminance of the palette the toolkit handed over. An app may branch on
-    # either, and a desktop where they disagree hands it a dark palette under a
-    # light media query. Neither side is a constant, so one launch settles it.
-    if ($a -and $a.Title -match ' mq=(\S+)' ) {
-        $mq = $Matches[1]
-        $sc = ""
-        if ($a.Title -match ' nscheme=(\S+)') { $sc = $Matches[1] }
-        $sr = ""
-        if ($a.Title -match ' nsrc=(\S+)') { $sr = $Matches[1] }
-        # `qt` is exempt by name; verify-std.sh's analyse_theme carries the
-        # reason and the condition that retires it. This file never runs that
-        # lane -- Windows has no QtWebEngine here -- and the branch is kept
-        # anyway, because one spelling changed in two verifiers is one change,
-        # and a verifier that has quietly stopped matching its twin is how step
-        # 1 lost the only lane where everything worked.
-        if ($sc -eq "null" -or $sc -eq "") {
-            # The palette control above has already failed this run.
-        } elseif ($mq -eq "unsupported" -or $mq -eq "threw" -or $mq -eq "none") {
-            Note "control scheme not_asked mq=$mq; this engine states no preference"
-        } elseif ($mq -eq $sc) {
-            Note "control scheme mq=$mq neutrino=$sc verdict=AGREED"
-        } elseif ($sr -eq "qt") {
-            Note "control scheme KNOWN qt mq=$mq against neutrino=$sc; QtWebEngine does not follow the toolkit palette and QStyleHints::colorScheme is Qt 6.8+, so this lane has no knob -- delete this exemption when a runner has one"
-        } else {
-            Fail "control scheme mq=$mq against neutrino=$sc; the page's media query and the palette it was handed disagree about this desktop"
-        }
-    }
-
-    $b = Find-Row $rows "STD-THEME-B-SELF"
-    if (-not $b) { Fail "control unknown-keyword: STD-THEME-B-SELF was never observed" }
-    elseif ($b.Title -match 'control=UNSUP') { Note "control unknown-keyword=UNSUP verdict=DISTINGUISHED" }
-    else { Fail "control unknown-keyword resolved to a colour; every UNSUP below it is the instrument, not the engine" }
-
-    # The delivery. Two page readings, and the assertion is that they agree:
-    # the palette an app gets from `neutrino.theme` came through the preload,
-    # and the palette it gets from `var(--neutrino-Canvas)` came through a
-    # stylesheet the launcher put in the document. Different mechanisms, one
-    # measurement, and an app is entitled to either.
-    $v = Find-Row $rows "STD-THEME-V-SELF"
-    if (-not $v) { Fail "control delivery: STD-THEME-V-SELF was never observed" }
-    elseif ($v.Title -match ' pal=null ') { Note "control delivery not_asked: this lane read no toolkit" }
-    elseif ($v.Title -match ' match=7/7 ') { Note "control delivery match=7/7 verdict=DELIVERED" }
-    else { Fail "control delivery $($v.Title -replace '^.* match=','match=') -- the properties and neutrino.theme disagree" }
-
-    # And the reason the properties are named for the keywords. A name the
-    # launcher never sets has to fall through to the engine's own system
-    # colour; a keyword the engine cannot resolve would leave the declaration
-    # alone instead, and the page would style itself from what it inherited.
-    if ($v -and $v.Title -match ' fallback=(\S+) canvas=(\S+)') {
-        $fb = $Matches[1]
-        $ca = $Matches[2]
-        if ($fb -eq $ca -and $fb -ne "UNSUP" -and $fb -ne "threw") {
-            Note "control fallback var(--neutrino-absent, Canvas)=$fb Canvas=$ca verdict=RESOLVED"
-        } else {
-            Fail "control fallback var(--neutrino-absent, Canvas)=$fb against Canvas=$ca; an absent property does not reach the engine's own colour on this lane"
-        }
-    }
-
-    if (-not (Find-Row $rows "STD-THEME-CTL")) { Fail "control ctl was never observed; the instrument read no window" }
-    if (-not (Find-Row $rows "STD-THEME-END")) { Fail "control end was never observed; the app did not finish its sequence" }
-}
 
 function Check-Apparatus($rec, $dwell) {
     Note "sampler platform=windows turns=$($rec.Turns) transitions=$($rec.Rows.Count) dwell_ms=$dwell max_turn_gap_ms=$($rec.MaxGap)"
@@ -687,131 +398,6 @@ function Check-Apparatus($rec, $dwell) {
     }
 }
 
-function Analyse-Geom($rows) {
-    $a = Find-Row $rows "STD-GEOM-A-PAIR"
-    $b = Find-Row $rows "STD-GEOM-B-PAIR"
-    $c = Find-Row $rows "STD-GEOM-C-PAIR"
-    $r = Find-Row $rows "STD-GEOM-R-SELF"
-
-    if (-not $a) { Fail "STD-GEOM-A-PAIR was never observed" }
-    if (-not $b) { Fail "STD-GEOM-B-PAIR was never observed" }
-    if (-not $c) { Fail "STD-GEOM-C-PAIR was never observed" }
-
-    if ($a) { Note "pair A page=[$($a.Title -replace '^STD-GEOM-A-PAIR ','')] native inner=$($a.Inner) outer=$($a.Outer) pos=$($a.Pos)" }
-    if ($b) { Note "pair B page=[$($b.Title -replace '^STD-GEOM-B-PAIR ','')] native inner=$($b.Inner) outer=$($b.Outer) pos=$($b.Pos)" }
-    if ($c) { Note "pair C page=[$($c.Title -replace '^STD-GEOM-C-PAIR ','')] native inner=$($c.Inner) outer=$($c.Outer) pos=$($c.Pos)" }
-    if ($r) { Note "self $($r.Title -replace '^STD-GEOM-R-SELF ','')" }
-
-    # The one -SELF reading this file asserts; the shell verifier carries the
-    # reasoning. In short: whether the API was in scope at the app's own first
-    # statement is the one question no instrument outside the document can be
-    # pointed at, and pages/demo.js stopped polling for the API on the strength
-    # of the answer.
-    if (-not $r) {
-        Fail "control STD-GEOM-R-SELF was never observed; readiness went unmeasured this run"
-    } elseif ($r.Title -match 'nt0=yes') {
-        Note "control the API was in scope at the app's first statement (nt0=yes)"
-    } else {
-        $seen = if ($r.Title -match 'nt0=(\S+)') { $Matches[1] } else { '<absent>' }
-        Fail "control nt0=$seen; window.neutrino was not in scope at the app's first statement, and pages/demo.js no longer waits for it"
-    }
-
-    # This driver sets ClientSize where macOS sets the outer frame and the two
-    # GTK lanes set the toplevel. The pair of numbers here is the half of that
-    # disagreement this platform contributes.
-    if ($b) { Note "sizing req=640x480 native_inner=$($b.Inner) native_outer=$($b.Outer)" }
-    if ($c) { Note "moving req=120,90 native_pos=$($c.Pos)" }
-
-    # The positive control. Without it every "the page's number is wrong"
-    # reading above is equally explained by a window that never moved.
-    if ($a -and $b -and $a.Inner -ne $b.Inner) {
-        Note "control resize A->B inner $($a.Inner) -> $($b.Inner) verdict=MOVED"
-    } else {
-        Fail "control resize A->B inner $($a.Inner) -> $($b.Inner); the instrument saw no size change"
-    }
-    if ($b -and $c -and $b.Pos -ne $c.Pos) {
-        Note "control move B->C pos $($b.Pos) -> $($c.Pos) verdict=MOVED"
-    } else {
-        Fail "control move B->C pos $($b.Pos) -> $($c.Pos); the instrument saw no position change"
-    }
-}
-
-function Analyse-Doc($rows) {
-    $ctl = Find-Row $rows "STD-DOC-CTL"
-    $end = Find-Row $rows "STD-DOC-END"
-    $rb = Find-Row $rows "STD-DOC-RB-SELF"
-    $d1 = Find-Row $rows "STD-DOC-DOM1"
-    $d2 = Find-Row $rows "STD-DOC-DOM2"
-
-    $names = @()
-    foreach ($r in $rows) { $names += ($r.Title -split ' ')[0] }
-    Note "doc sequence: $($names -join ' ')"
-    if ($rb) { Note "self $($rb.Title -replace '^STD-DOC-RB-SELF ','')" }
-
-    # The early shell, asked for at the app's first statement.
-    #
-    # An app's markup is included into the document by the assembler so that it
-    # is in the first paint, and the whole point of that is an app that can read
-    # it. Four lanes got that from their engine and Windows did not: its one
-    # pre-navigation hook runs before the parser has produced anything, so
-    # `getElementById` answered null on the first line and an app written the way
-    # the other four allow failed silently on this one. It shipped in the sample
-    # app on the download page, where the Close button did nothing on Windows.
-    # So this is an assertion and not a note: `body0=yes` is the promise, and the
-    # lane that cannot keep it is the lane that has to say so.
-    $b0 = ""
-    if ($rb -and $rb.Title -match ' body0=(\S+)') { $b0 = $Matches[1] }
-    if ($b0 -eq "yes") {
-        Note "control the early shell was on the page at the app's first statement (body0=yes)"
-    } else {
-        Fail "control body0=$(if ($b0) { $b0 } else { '<absent>' }); document.body was not there when the app's first statement ran, so an app cannot read its own markup on this lane"
-    }
-
-    # The name the window came up wearing, before the app wrote anything. The
-    # launcher puts the build's title into the document, so this is also the
-    # first title-changed signal of the launch and it has to be a no-op. A note
-    # and not an assertion: this loop starts when the window appears, and a lane
-    # slow to hand the recorder its first read would be reporting its own
-    # scheduling.
-    $opened = if ($rows.Count -gt 0) { $rows[0].Title } else { $null }
-    Note "opened native=[$(if ($opened) { $opened } else { '<nothing recorded>' })]"
-
-    # The change this suite exists for. Both writes are plain assignments to
-    # document.title and both have to reach the native window; a lane where they
-    # do not is a lane whose title hook is not connected.
-    #
-    # On this lane there is a second reading behind the first. Where the
-    # WebMessageReceived subscription does not take, the host polls
-    # DocumentTitle and the title *is* the wire -- the marker is what separates
-    # a record from a name there, and the transport on the self line above says
-    # which case this run is.
-    if ($d1) { Note "pair dom1 native=seen" } else { Fail "pair dom1 native=absent; an assignment to document.title did not reach the window" }
-    if ($d2) { Note "pair dom2 native=seen" } else { Fail "pair dom2 native=absent; an assignment to document.title did not reach the window" }
-
-    # And the two the gate refuses, asked as one question: what the window was
-    # showing after them. DOM2 is the last title that may reach it, so the next
-    # recorded state has to be the report at the end of the sequence.
-    if ($d2) {
-        $after = $null
-        $seen = $false
-        foreach ($r in $rows) {
-            if ($seen) { $after = $r.Title; break }
-            if ($r.Title -like "STD-DOC-DOM2*") { $seen = $true }
-        }
-        if (-not $after) {
-            Fail "pair refused after_dom2_native=[nothing recorded]; the sequence stopped at DOM2"
-        } elseif ($after -like "STD-DOC-RB-SELF*") {
-            Note "pair refused after_dom2_native=[held DOM2 through both]"
-        } else {
-            Fail "pair refused after_dom2_native=[$after]; the window took a title the gate refuses"
-        }
-    } else {
-        Note "pair refused not_asked: no DOM write reached the window to hold"
-    }
-
-    if ($ctl) { Note "control ctl observed=YES" } else { Fail "control ctl was never observed; the instrument read no window" }
-    if ($end) { Note "control end observed=YES" } else { Fail "control end was never observed; the app did not finish its sequence" }
-}
 
 # ------------------------------------------------------------------------ main
 
@@ -865,13 +451,45 @@ if ($Replay) {
 }
 
 Check-Apparatus $rec $dwell
-switch ($Probe) {
-    "geom"  { Analyse-Geom $rec.Rows }
-    "doc"   { Analyse-Doc $rec.Rows }
-    "win"   { Analyse-Win $rec.Rows }
-    "theme" { Analyse-Theme $rec.Rows }
-    "font"  { Analyse-Font $rec.Rows }
-    default { Fail "no analysis for probe '$Probe'" }
+
+# The analysis, in the copy every lane runs.
+#
+# The record goes to a file and bash reads it, which is the same shape
+# decoflip.ps1 has used to reach decodiff.sh since it was written: the exit
+# status is the failure count and it adds into this script's.
+#
+# WriteAllText and not Set-Content, for two reasons that both showed up as
+# corrupted columns before they showed up as reasoning. PowerShell writes CRLF,
+# and a \r riding on the last field is a sixth column awk cannot parse as a
+# tick; and -Encoding utf8 on Windows PowerShell prepends a BOM, which lands in
+# the first field of the first row and makes its milliseconds unreadable. An
+# explicit UTF8Encoding($false) and an explicit "`n" settle both. UTF-8 and not
+# ASCII because a font family name is not necessarily either.
+$recPath = Join-Path $ScreenshotDir "std-$Probe-record.tsv"
+if (-not (Test-Path -LiteralPath $ScreenshotDir)) {
+    New-Item -ItemType Directory -Force -Path $ScreenshotDir | Out-Null
+}
+$recLines = foreach ($r in $rec.Rows) {
+    "$($r.At)`t$($r.Title)`t$($r.Inner)`t$($r.Pos)`t$($r.Outer)`t$($r.Tick)"
+}
+[System.IO.File]::WriteAllText(
+    $recPath,
+    (($recLines -join "`n") + "`n"),
+    (New-Object System.Text.UTF8Encoding($false)))
+
+# Named, so the rows land under the suite a reader knows rather than under
+# `analyse` -- harness.sh takes the suite from $0, and $0 there is analyse.sh.
+$env:NT_SUITE = "verify-std"
+& bash (Join-Path $PSScriptRoot "lib/analyse.sh") $Probe $recPath
+$analysed = $LASTEXITCODE
+if ($null -eq $analysed) { $analysed = 0 }
+# A bash that could not start is not an analysis that found nothing. 127 is the
+# shell's own "command not found" and it would otherwise read as 127 failures,
+# which is at least loud; anything below that is counted as what it says.
+if ($analysed -eq 127) {
+    Fail "could not run test/lib/analyse.sh; bash is not on PATH for this step"
+} else {
+    $script:Failures += $analysed
 }
 
 # Which engine rendered all of that, and how much of the door list it shut.
