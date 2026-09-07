@@ -6,10 +6,14 @@
 
 set -euo pipefail
 
-TIMEOUT=60
-POLL_INTERVAL=0.5
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+
+# Overridable so a run against stub instruments does not wait out a real
+# minute per state; every lane leaves it alone and gets the sixty seconds a
+# cold runner needs.
+TIMEOUT="${NT_WAIT_TIMEOUT:-60}"
+POLL_INTERVAL="${NT_WAIT_POLL:-0.5}"
 SCREENSHOT_DIR="${1:-.}"
-FAILURES=0
 
 mkdir -p "$SCREENSHOT_DIR"
 
@@ -85,14 +89,13 @@ wait_for_title() {
 }
 
 assert_title() {
-    local wid="$1" expected="$2"
+    local case="$1" wid="$2" expected="$3"
     local actual
     actual=$(xdotool getwindowname "$wid" 2>/dev/null) || true
     if [ "$actual" = "$expected" ]; then
-        echo "  PASS: title = '$expected'"
+        nt_pass "$case" "title = '$expected'"
     else
-        echo "  FAIL: title expected='$expected' actual='$actual'"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$case" "title expected='$expected' actual='$actual'"
     fi
 }
 
@@ -110,7 +113,7 @@ assert_title() {
 # other sized the content. Zero is what turns a drift in either direction into
 # a failure instead of a shrug.
 assert_geometry() {
-    local wid="$1" expected_w="$2" expected_h="$3" tolerance="${4:-0}"
+    local case="$1" wid="$2" expected_w="$3" expected_h="$4" tolerance="${5:-0}"
     local info size actual_w actual_h
     info=$(xdotool getwindowgeometry "$wid" 2>/dev/null) || true
     size=$(echo "$info" | grep -oP 'Geometry: \K[0-9]+x[0-9]+') || true
@@ -118,10 +121,9 @@ assert_geometry() {
     local dw=$(( actual_w - expected_w )); dw=${dw#-}
     local dh=$(( actual_h - expected_h )); dh=${dh#-}
     if [ "$dw" -le "$tolerance" ] && [ "$dh" -le "$tolerance" ]; then
-        echo "  PASS: content = ${actual_w}x${actual_h} (asked ${expected_w}x${expected_h}, tolerance ${tolerance})"
+        nt_pass "$case" "content = ${actual_w}x${actual_h} (asked ${expected_w}x${expected_h}, tolerance ${tolerance})"
     else
-        echo "  FAIL: content expected ${expected_w}x${expected_h} actual=${actual_w}x${actual_h}, off by ${dw}x${dh} (tolerance ${tolerance})"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$case" "content expected ${expected_w}x${expected_h} actual=${actual_w}x${actual_h}, off by ${dw}x${dh} (tolerance ${tolerance})"
     fi
 }
 
@@ -188,7 +190,7 @@ framed() {
 # hint, and the frame is the first minus the second. Both routes are printed,
 # because the next round deserves the numbers and not the conclusion.
 assert_position() {
-    local wid="$1" expected_x="$2" expected_y="$3"
+    local case="$1" wid="$2" expected_x="$3" expected_y="$4"
     local info pos raw="?" xw ax ay rx ry ext ext_src l t frame="?" wm fr
     info=$(xdotool getwindowgeometry "$wid" 2>/dev/null) || true
     pos=$(echo "$info" | grep -oP 'Position: \K-?[0-9]+,-?[0-9]+') || true
@@ -219,48 +221,47 @@ assert_position() {
     esac
 
     wm="$(wm_name)"
-    echo "report: position frame=${frame} client=${ax:-?},${ay:-?} extents=${ext:-none} via=${ext_src} rel=${rx:-?},${ry:-?} xdotool=${raw} wm=${wm} wid_src=$(wid_src)"
+    nt_report "position frame=${frame} client=${ax:-?},${ay:-?} extents=${ext:-none} via=${ext_src} rel=${rx:-?},${ry:-?} xdotool=${raw} wm=${wm} wid_src=$(wid_src)"
 
     if [ "$frame" = "?" ]; then
-        echo "  FAIL: the frame's corner cannot be derived on this lane -- client=${ax:-?},${ay:-?} extents=${ext:-none} via=${ext_src}; every number below would be about a window nothing measured"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$case" "the frame's corner cannot be derived on this lane -- client=${ax:-?},${ay:-?} extents=${ext:-none} via=${ext_src}; every number below would be about a window nothing measured"
         return
     fi
 
     local want="${expected_x},${expected_y}"
     if [ "$frame" = "$want" ]; then
-        echo "  PASS: frame origin = ${frame} (asked ${expected_x},${expected_y}; ${wm}, decoration ${l} left and ${t} above the content at ${ax},${ay})"
+        nt_pass "$case" "frame origin = ${frame} (asked ${expected_x},${expected_y}; ${wm}, decoration ${l} left and ${t} above the content at ${ax},${ay})"
     else
-        echo "  FAIL: frame origin expected ${want} actual=${frame} under ${wm} (asked ${expected_x},${expected_y}); the content is at ${ax},${ay} with ${l} of decoration to its left and ${t} above it, so this move placed the content and not the window"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$case" "frame origin expected ${want} actual=${frame} under ${wm} (asked ${expected_x},${expected_y}); the content is at ${ax},${ay} with ${l} of decoration to its left and ${t} above it, so this move placed the content and not the window"
     fi
 }
 
 # --- Test steps ---
 
 echo "=== Waiting for window ==="
-WID=$(wait_for_title "neutrino") || { echo "FAIL: window never appeared"; exit 1; }
+WID=$(wait_for_title "neutrino") || { nt_fail walk.window.appeared "window never appeared"; exit 1; }
+nt_pass walk.window.appeared "the app opened a window"
 echo "Window found: $WID"
 screenshot "00-initial"
 
 echo "=== Step 0: Ready ==="
-WID=$(wait_for_title "STEP0") || { echo "FAIL: STEP0 never reached"; exit 1; }
-assert_title "$WID" "STEP0"
+WID=$(wait_for_title "STEP0") || { nt_fail walk.step0.reached "STEP0 never reached"; exit 1; }
+assert_title walk.step0.reached "$WID" "STEP0"
 screenshot "01-step0"
 
 echo "=== Step 1: title ==="
-WID=$(wait_for_title "STEP1-Test Title") || { echo "FAIL: STEP1 never reached"; exit 1; }
-assert_title "$WID" "STEP1-Test Title"
+WID=$(wait_for_title "STEP1-Test Title") || { nt_fail walk.title "STEP1 never reached"; exit 1; }
+assert_title walk.title "$WID" "STEP1-Test Title"
 screenshot "02-step1"
 
 echo "=== Step 2: resize ==="
-WID=$(wait_for_title "STEP2") || { echo "FAIL: STEP2 never reached"; exit 1; }
-assert_geometry "$WID" 500 400
+WID=$(wait_for_title "STEP2") || { nt_fail walk.resize "STEP2 never reached"; exit 1; }
+assert_geometry walk.resize "$WID" 500 400
 screenshot "03-step2"
 
 echo "=== Step 3: move ==="
-WID=$(wait_for_title "STEP3") || { echo "FAIL: STEP3 never reached"; exit 1; }
-assert_position "$WID" 0 0
+WID=$(wait_for_title "STEP3") || { nt_fail walk.move "STEP3 never reached"; exit 1; }
+assert_position walk.move "$WID" 0 0
 screenshot "04-step3"
 
 echo "=== Step 4: the desktop's palette ==="
@@ -268,10 +269,11 @@ echo "=== Step 4: the desktop's palette ==="
 # and this waits on its verdict. A lane that reached no toolkit reports null and
 # never sets THEMEOK, so the timeout here is the failure rather than a pass with
 # nothing behind it. The reading itself is on screen in the shot below.
-WID=$(wait_for_title "THEMEOK") || {
-    echo "  FAIL: the palette was not readable on this lane (see 05-theme.png)"
-    FAILURES=$((FAILURES + 1))
-}
+if WID=$(wait_for_title "THEMEOK"); then
+    nt_pass walk.theme.readable "the lane read the desktop palette"
+else
+    nt_fail walk.theme.readable "the palette was not readable on this lane (see 05-theme.png)"
+fi
 screenshot "05-theme"
 
 echo "=== Step 5: the desktop's fonts ==="
@@ -283,15 +285,17 @@ echo "=== Step 5: the desktop's fonts ==="
 # No screenshot of its own. The reading is in the app's own text, std-font has
 # a picture of the delivery already, and adding a slot here renumbers 06-done
 # across every lane and every artifact this suite has ever published.
-wait_for_title "FONTOK" || {
-    echo "  FAIL: the fonts were not readable on this lane"
-    FAILURES=$((FAILURES + 1))
-}
+if wait_for_title "FONTOK" >/dev/null; then
+    nt_pass walk.fonts.readable "the lane read the desktop fonts"
+else
+    nt_fail walk.fonts.readable "the fonts were not readable on this lane"
+fi
 
 echo "=== Waiting for TESTS DONE ==="
-WID=$(wait_for_title "TESTS DONE") || { echo "FAIL: tests never completed"; exit 1; }
+WID=$(wait_for_title "TESTS DONE") || { nt_fail walk.done "tests never completed"; exit 1; }
 screenshot "06-done"
 
+nt_pass walk.done "the walk ran to the end"
+
 echo ""
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+nt_finish
