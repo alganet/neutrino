@@ -839,11 +839,72 @@ The test suite verifies IPC works end-to-end on all platforms:
 bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
 
 # Run with verification (Linux, requires xdotool)
-bash test/neutrinotest.cmd &
-bash test/verify-linux.sh screenshots/
+bash test/step.sh --display metacity --gtk --log walk \
+  --app test/neutrinotest.cmd -- bash test/verify-linux.sh screenshots/
 ```
 
 Tests exercise `document.title`, `window.resizeTo` and `window.moveTo` with external scripts that poll window state and assert expected values. CI runs these automatically on all four platforms.
+
+`test/step.sh` is what a lane runs a suite through. It brings up an X server and
+a window manager if the suite needs one and there is not one already, launches
+the artifact under test and reaps its process tree afterwards, keeps the log
+where the sheet step will find it, and still exits with the suite's own status.
+Every flag is optional: with none of them it runs the command and gets out of
+the way.
+
+### Writing a check
+
+A suite sources `test/lib/harness.sh` and speaks six words:
+
+```bash
+. "$(dirname "$0")/lib/harness.sh"
+
+nt_pass   walk.resize "content = 500x400 (asked 500x400, tolerance 0)"
+nt_fail   walk.resize "content expected 500x400 actual=640x480"
+nt_skip   walk.resize "this lane has no window manager to resize against"
+nt_report "position frame=0,0 client=0,37 extents=0,0,37,0"
+nt_eq     walk.title "title" "$actual" "STEP0"
+nt_finish   # totals, and exit the failure count
+```
+
+The first argument is a **case id**, and it is the point. Before it, an
+assertion's identity was the sentence it printed: `test/sheet.sh` folded every
+run of digits to `#` and intersected the results, so two lanes counted as
+asserting the same thing only when two languages emitted the same words to the
+byte. Nobody can hold that by hand, and it had already come apart — the Windows
+verifier shared no sentence with the Linux one for the geometry and position
+facts both assert. An id says two lanes asserted one thing whatever either of
+them printed.
+
+Every id belongs in [`test/cases.tsv`](test/cases.tsv), which is also what makes
+a case that *no* lane reported readable as a hole rather than as silence.
+
+`nt_skip` is for a lane where the question does not apply — an engine whose
+system-font keywords are not the desktop's cannot be asked whether the two
+agree. That is a different fact from the question going unanswered, and until
+there was a word for it the two looked identical.
+
+Each call writes twice: the line it always wrote, so job logs and everything
+reading them are unchanged, and a row to `$NT_RESULTS` carrying the id.
+
+### What runs where
+
+The instrument is per-platform and the analysis is not. `xdotool` on X11, a
+status file on macOS and `GetWindowRect` on Win32 each sample a window into the
+same record — one row per transition, `ms / title / inner / pos / outer / tick`
+— and [`test/lib/analyse.sh`](test/lib/analyse.sh) reads that record on every
+lane, including Windows, where `verify-std.ps1` hands it over the same way
+`decoflip.ps1` has always handed its differential to `decodiff.sh`.
+
+`test/lib/records/` holds real records from a green run, five probes on each of
+five lanes. `bash test/lib/selftest.sh` replays all of them, drives
+`verify-linux.sh` against stub instruments, and checks every case id against the
+registry — in about six seconds, with no display and no app.
+
+```bash
+bash test/lib/selftest.sh                          # the harness, offline
+bash test/verify-std.sh win shots/ test/lib/records/gjs.win.tsv   # replay one
+```
 
 ### Reading a CI run
 
@@ -851,14 +912,40 @@ Every job publishes one artifact holding one file: `<lane>.html`, a self-contain
 
 The screenshots are the human verification step. Each is captioned with what it is a picture of, and the pairs the suite exists to compare — a decorated window against a chromeless one, a light desktop against a dark one — sit beside each other rather than in two different downloads.
 
-Each sheet also lists what its lane asserted, normalised and counted, and carries the same list as JSON. To ask which assertions are being made on more than one lane:
+Each sheet also lists the cases that lane reported — by id, with the verdict and
+the detail — and carries the same list as JSON.
+
+The run page carries the grid. A `matrix` job waits for every lane, reads their
+sheets and writes one table to the job summary: every case, every lane, and
+which of them held.
+
+```
+case                       gjs    kde    linux-engines  macos  windows-content
+----                       -----  -----  -------------  -----  ---------------
+std.font.agree             ok     skip   ok             skip   skip
+std.theme.delivery         ok     ok     ok             ok     ok
+```
+
+Rows that disagree sort to the top, and a lane that reported nothing for a case
+other lanes reported counts as a disagreement — that is the same shape of
+question as a lane failing where the others pass, and sorting it with the quiet
+rows is how it stays unnoticed. `skip` above is real: WebKitGTK's `font: menu`
+*is* the desktop's font, so the launcher's reading and the engine's can be
+compared; on QtWebEngine those keywords are Chromium's constants and on
+WKWebView they are per-role, so neither lane can be asked.
+
+The same grid locally, and the older sentence-keyed reading beside it:
 
 ```bash
 gh run download <run-id> -D /tmp/sheets
-python3 test/sheetdiff.py /tmp/sheets/*/*.html
+python3 test/matrix.py /tmp/sheets/*/*.html     # every case, every lane
+python3 test/sheetdiff.py /tmp/sheets/*/*.html  # what more than one lane asserts
 ```
 
-That prints candidates, not a verdict: some repetition is the point. The engine walk asserts what an exit status means on four lanes deliberately, and `test/assemble.sh` runs on three because the three `sed`s are not the same program.
+`sheetdiff.py` prints candidates, not a verdict: some repetition is the point.
+The engine walk asserts what an exit status means on four lanes deliberately,
+and `test/assemble.sh` runs on three because the three `sed`s are not the same
+program.
 
 ---
 
@@ -878,7 +965,10 @@ netinstall to run one.
 
 - `neutrino/`: the launcher, split by language under a polyglot skeleton -- see `neutrino/POLYGLOT.md`
 - `neutrino/assemble.sh`: the assembler (neutrino/ + your overlay -> .cmd)
-- `test/`: test harness and platform verification scripts
+- `test/`: the suites, and `test/lib/` the harness they share -- `harness.sh`
+  (the vocabulary), `analyse.sh` (the standards assertions, one copy for every
+  lane), `display.sh`, `selftest.sh` and the recorded runs it replays.
+  `test/cases.tsv` is the case registry and `test/step.sh` is how a lane runs one
 - `netinstall/`: the name-addressed launcher, and its own suite
 - `pages/`: the demo site published at alganet.github.io/neutrino/
 - `LICENSE`: ISC license
