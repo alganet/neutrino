@@ -66,20 +66,48 @@ def main(argv):
 
     lanes = []
     where = {}
+    # Case ids when the sheets carry them, sentences when they do not.
+    #
+    # The sentence-keyed answer is an approximation and always was: it folds
+    # every run of digits to `#`, so two assertions differing only in a number
+    # are one row, and it requires two languages to emit the same words, which
+    # is an obligation verify-windows.ps1 has never met for the geometry and
+    # position facts it shares with verify-linux.sh. Where a case id exists the
+    # question stops needing a guess. Where one does not -- an artifact from
+    # before the harness, or a suite not yet converted -- the old reading is
+    # still the only one available and is still worth having.
+    keyed = 0
     for path in argv:
         d = load(path)
         if not d:
             continue
         lane = d.get("lane") or path
         lanes.append(lane)
-        for a in d.get("asserted", []):
-            where.setdefault(a["t"], set()).add(lane)
+        cases = d.get("cases", [])
+        if cases:
+            keyed += 1
+            for c in cases:
+                where.setdefault(c["id"], set()).add(lane)
+        else:
+            for a in d.get("asserted", []):
+                where.setdefault(a["t"], set()).add(lane)
 
     if not lanes:
         print("no sheet carried a digest; nothing to compare", file=sys.stderr)
         return 1
 
     print("lanes compared (%d): %s" % (len(lanes), " ".join(sorted(lanes))))
+    if keyed and keyed < len(lanes):
+        # Said out loud, because the two keys are not comparable. A converted
+        # lane contributes case ids and an unconverted one contributes
+        # sentences, so nothing below can intersect across that line and a
+        # reader who does not know that will read the result as a finding.
+        print("  %d of %d lanes carry case ids; the rest are compared by "
+              "sentence, and the two do not intersect" % (keyed, len(lanes)))
+    elif keyed:
+        print("  compared by case id")
+    else:
+        print("  compared by sentence; no lane carried case ids")
     print()
 
     rows = sorted(where.items(), key=lambda kv: (-len(kv[1]), kv[0]))
