@@ -9,6 +9,8 @@
 
 set -euo pipefail
 
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+
 # Two budgets, because the first window is not like the ones after it. This is
 # the app's first launch on the runner: osascript starting, the bridge coming
 # up, WKWebView creating its content process, all of it before the first title
@@ -20,7 +22,6 @@ FIRST_TIMEOUT=180
 TIMEOUT=60
 POLL_INTERVAL=0.2
 SCREENSHOT_DIR="${1:-.}"
-FAILURES=0
 STATUS_FILE="${TMPDIR:-/tmp}/neutrino-title.txt"
 
 mkdir -p "$SCREENSHOT_DIR"
@@ -134,34 +135,31 @@ wait_for_title() {
 }
 
 assert_title() {
-    local expected="$1"
+    local case="$1" expected="$2"
     local actual
     actual=$(read_status_title)
     if [ "$actual" = "$expected" ]; then
-        echo "  PASS: title = '$expected'"
+        nt_pass "$case" "title = '$expected'"
     else
-        echo "  FAIL: title expected='$expected' actual='$actual'"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$case" "title expected='$expected' actual='$actual'"
     fi
 }
 
 assert_geometry() {
-    local expected_w="$1" expected_h="$2" tolerance="${3:-0}"
+    local case="$1" expected_w="$2" expected_h="$3" tolerance="${4:-0}"
     local geom actual_w actual_h
     geom=$(read_status_geometry)
     actual_w="${geom%x*}"; actual_h="${geom#*x}"
     if [ -z "$actual_w" ] || [ -z "$actual_h" ]; then
-        echo "  FAIL: could not read geometry"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$case" "could not read geometry"
         return
     fi
     local dw=$(( actual_w - expected_w )); dw=${dw#-}
     local dh=$(( actual_h - expected_h )); dh=${dh#-}
     if [ "$dw" -le "$tolerance" ] && [ "$dh" -le "$tolerance" ]; then
-        echo "  PASS: content = ${actual_w}x${actual_h} (asked ${expected_w}x${expected_h}, tolerance ${tolerance})"
+        nt_pass "$case" "content = ${actual_w}x${actual_h} (asked ${expected_w}x${expected_h}, tolerance ${tolerance})"
     else
-        echo "  FAIL: content expected ${expected_w}x${expected_h} actual=${actual_w}x${actual_h}, off by ${dw}x${dh} (tolerance ${tolerance})"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$case" "content expected ${expected_w}x${expected_h} actual=${actual_w}x${actual_h}, off by ${dw}x${dh} (tolerance ${tolerance})"
     fi
 }
 
@@ -182,13 +180,12 @@ assert_geometry() {
 # Where the work area cannot be read the tolerance comes back, and the reason is
 # printed. A clamp that cannot be computed is not a clamp of zero.
 assert_position() {
-    local expected_x="$1" expected_y="$2" tolerance="${3:-}"
+    local case="$1" expected_x="$2" expected_y="$3" tolerance="${4:-}"
     local pos actual_x actual_y work wx wy
     pos=$(read_status_position)
     actual_x="${pos%,*}"; actual_y="${pos#*,}"
     if [ -z "$actual_x" ] || [ -z "$actual_y" ]; then
-        echo "  FAIL: could not read position"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$case" "could not read position"
         return
     fi
     work=$(read_status_workarea)
@@ -211,10 +208,9 @@ assert_position() {
     local dx=$(( actual_x - expected_x )); dx=${dx#-}
     local dy=$(( actual_y - expected_y )); dy=${dy#-}
     if [ "$dx" -le "$tolerance" ] && [ "$dy" -le "$tolerance" ]; then
-        echo "  PASS: position = ${expected_x},${expected_y} (actual: ${actual_x},${actual_y}, tolerance ${tolerance})"
+        nt_pass "$case" "position = ${expected_x},${expected_y} (actual: ${actual_x},${actual_y}, tolerance ${tolerance})"
     else
-        echo "  FAIL: position expected ${expected_x},${expected_y} actual=${actual_x},${actual_y} (tolerance ${tolerance}); if the work area above is right, this is what moveTo means on this lane and the definition is what needs writing down"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$case" "position expected ${expected_x},${expected_y} actual=${actual_x},${actual_y} (tolerance ${tolerance}); if the work area above is right, this is what moveTo means on this lane and the definition is what needs writing down"
     fi
 }
 
@@ -236,15 +232,16 @@ if [ -z "$(read_status_title)" ]; then
     # started, so say which of the two this is rather than making the next
     # person find out from a stack of green assertions and one red one.
     if [ ! -e "$STATUS_FILE" ]; then
-        echo "FAIL: no status file at $STATUS_FILE"
+        nt_fail walk.window.appeared "no status file at $STATUS_FILE"
         echo "      the app writes one only when built with --testing;"
         echo "      a release build is silent here and looks identical to a crash"
     else
-        echo "FAIL: window never appeared"
+        nt_fail walk.window.appeared "window never appeared"
     fi
     report_launcher
     exit 1
 fi
+nt_pass walk.window.appeared "the app opened a window"
 echo "Window found"
 screenshot "00-initial"
 
@@ -252,23 +249,23 @@ echo "=== Step 0: Ready ==="
 # The long budget once more. The window exists from the wait above, but the
 # document and the page script behind it may not, and that stretch is the one
 # that has been slow.
-wait_for_title "STEP0" "$FIRST_TIMEOUT" || { echo "FAIL: STEP0 never reached"; exit 1; }
-assert_title "STEP0"
+wait_for_title "STEP0" "$FIRST_TIMEOUT" || { nt_fail walk.step0.reached "STEP0 never reached"; exit 1; }
+assert_title walk.step0.reached "STEP0"
 screenshot "01-step0"
 
 echo "=== Step 1: title ==="
-wait_for_title "STEP1-Test Title" || { echo "FAIL: STEP1 never reached"; exit 1; }
-assert_title "STEP1-Test Title"
+wait_for_title "STEP1-Test Title" || { nt_fail walk.title "STEP1 never reached"; exit 1; }
+assert_title walk.title "STEP1-Test Title"
 screenshot "02-step1"
 
 echo "=== Step 2: resize ==="
-wait_for_title "STEP2" || { echo "FAIL: STEP2 never reached"; exit 1; }
-assert_geometry 500 400
+wait_for_title "STEP2" || { nt_fail walk.resize "STEP2 never reached"; exit 1; }
+assert_geometry walk.resize 500 400
 screenshot "03-step2"
 
 echo "=== Step 3: move ==="
-wait_for_title "STEP3" || { echo "FAIL: STEP3 never reached"; exit 1; }
-assert_position 0 0
+wait_for_title "STEP3" || { nt_fail walk.move "STEP3 never reached"; exit 1; }
+assert_position walk.move 0 0
 screenshot "04-step3"
 
 echo "=== Step 4: the desktop's palette ==="
@@ -276,21 +273,24 @@ echo "=== Step 4: the desktop's palette ==="
 # and this waits on its verdict. A lane that reached no toolkit reports null and
 # never sets THEMEOK, so the timeout here is the failure rather than a pass with
 # nothing behind it. The reading itself is on screen in the shot below.
-wait_for_title "THEMEOK" || {
-    echo "  FAIL: the palette was not readable on this lane (see 05-theme.png)"
-    FAILURES=$((FAILURES + 1))
-}
+if wait_for_title "THEMEOK"; then
+    nt_pass walk.theme.readable "the lane read the desktop palette"
+else
+    nt_fail walk.theme.readable "the palette was not readable on this lane (see 05-theme.png)"
+fi
 screenshot "05-theme"
 
 echo "=== Step 5: the desktop's fonts ==="
 # See verify-linux.sh's twin of this for why there is no screenshot slot.
-wait_for_title "FONTOK" || {
-    echo "  FAIL: the fonts were not readable on this lane"
-    FAILURES=$((FAILURES + 1))
-}
+if wait_for_title "FONTOK"; then
+    nt_pass walk.fonts.readable "the lane read the desktop fonts"
+else
+    nt_fail walk.fonts.readable "the fonts were not readable on this lane"
+fi
 
 echo "=== Waiting for TESTS DONE ==="
-wait_for_title "TESTS DONE" || { echo "FAIL: tests never completed"; exit 1; }
+wait_for_title "TESTS DONE" || { nt_fail walk.done "tests never completed"; exit 1; }
+nt_pass walk.done "the walk ran to the end"
 screenshot "06-done"
 
 echo "=== Step 4: close fires window delegate, terminates osascript ==="
@@ -301,15 +301,13 @@ if [ -n "${APP_PID:-}" ]; then
         sleep $POLL_INTERVAL
     done
     if kill -0 "$APP_PID" 2>/dev/null; then
-        echo "  FAIL: process $APP_PID still running 10s after window.close()"
-        FAILURES=$((FAILURES + 1))
+        nt_fail walk.close.process-exits "process $APP_PID still running 10s after window.close()"
     else
-        echo "  PASS: process $APP_PID exited after window.close()"
+        nt_pass walk.close.process-exits "process $APP_PID exited after window.close()"
     fi
 else
-    echo "  SKIP: APP_PID not provided"
+    nt_skip walk.close.process-exits "APP_PID not provided, so nothing here can watch the process"
 fi
 
 echo ""
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+nt_finish

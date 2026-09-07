@@ -1,0 +1,70 @@
+# cases.tsv - the assertions this suite makes, and what each one is called.
+#
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+# SPDX-License-Identifier: ISC
+#
+# id <TAB> title <TAB> applies-to
+#
+# `applies-to` is a space separated list of lanes, or `*` for every lane. It is
+# what turns a missing row into a reading: a case that applies to a lane and was
+# never reported there is a hole, and until this file existed there was no way to
+# tell that from a case nobody had written yet.
+#
+# Named lanes and not `*`, because four of the ten run no harness suite at all --
+# bsd, kde-live, wayland and macos-netinstall each run one thing, and none of it
+# is this. With `*` the grid put a `-` in thirty-three cells for each of them,
+# which is noise in the column that is supposed to carry the signal: `-` has to
+# mean a lane that was expected to report and did not.
+#
+# windows-launch is absent from the walk for a reason that is still open:
+# verify-windows.ps1 asserts the same facts and has not been brought onto these
+# ids yet, so it reports none of them.
+#
+# The ids are dotted and start with the probe family, so a sheet sorts into the
+# order somebody reads it in. They are stable across lanes on purpose -- three
+# verifiers assert that a window reached 500x400 and until now spelled it three
+# different ways, which made one fact look like three to sheetdiff.py.
+#
+# The launcher's own walk: neutrinotest.js drives it and verify-linux.sh,
+# verify-macos.sh and verify-windows.ps1 each watch it on their own platform.
+walk.window.appeared	the app opened a window	gjs kde linux-engines macos
+walk.step0.reached	the app started and reported in	gjs kde linux-engines macos
+walk.title	document.title reached the native window title	gjs kde linux-engines macos
+walk.resize	resizeTo sized the content	gjs kde linux-engines macos
+walk.move	moveTo placed the frame	gjs kde linux-engines macos
+walk.theme.readable	the lane read the desktop palette	gjs kde linux-engines macos
+walk.fonts.readable	the lane read the desktop fonts	gjs kde linux-engines macos
+walk.done	the walk ran to the end	gjs kde linux-engines macos
+# macOS alone can watch the launcher process after the window closes: it is
+# the lane whose driver holds the process open, and the one where a window
+# that shut without the process following would go unnoticed.
+walk.close.process-exits	the process exited after window.close()	macos
+
+# The web-standards probes. Each neutrinostd<probe>.js drives a sequence and
+# records it; test/lib/analyse.sh reads the record on every lane, which is why
+# these ids are the same on all of them and why a `skip` here is a lane saying
+# the question does not apply rather than a lane going quiet.
+std.geom.api-in-scope	window.neutrino was in scope at the app's first statement	gjs kde linux-engines macos windows-content
+std.geom.resize	the instrument saw the window change size	gjs kde linux-engines macos windows-content
+std.geom.move	the instrument saw the window change position	gjs kde linux-engines macos windows-content
+std.doc.early-shell	document.body was on the page at the app's first statement	gjs kde linux-engines macos windows-content
+std.doc.ctl-observed	the document probe's control state was reached	gjs kde linux-engines macos windows-content
+std.doc.end-observed	the document probe ran to the end	gjs kde linux-engines macos windows-content
+std.win.open-noargs	window.open() with no arguments is the launcher's and does nothing	gjs kde linux-engines macos windows-content
+std.win.open-target.blank	window.open(_blank) is left to the engine	gjs kde linux-engines macos windows-content
+std.win.open-target.self	window.open(_self) is left to the engine	gjs kde linux-engines macos windows-content
+std.win.verbs-move	the standard resize and move spellings move the window	gjs kde linux-engines macos windows-content
+std.win.descriptors	an own property is distinguishable from a forged one	gjs kde linux-engines macos windows-content
+std.theme.palette-read	the lane read a palette off its toolkit	gjs kde linux-engines macos windows-content
+std.theme.scheme	the page's media query and the palette it was handed agree	gjs kde linux-engines macos windows-content
+std.theme.unknown-keyword	an unknown colour keyword stays unsupported	gjs kde linux-engines macos windows-content
+std.theme.delivery	the custom properties and neutrino.theme carry the same palette	gjs kde linux-engines macos windows-content
+std.theme.fallback	an absent custom property reaches its fallback	gjs kde linux-engines macos windows-content
+std.theme.ctl-observed	the theme probe's control state was reached	gjs kde linux-engines macos windows-content
+std.theme.end-observed	the theme probe ran to the end	gjs kde linux-engines macos windows-content
+std.font.probe-ran	the font probe ran and named its engine	gjs kde linux-engines macos windows-content
+std.font.fonts-read	the lane read fonts off its toolkit	gjs kde linux-engines macos windows-content
+std.font.delivery	the custom properties and neutrino.fonts carry the same fonts	gjs kde linux-engines macos windows-content
+std.font.fallback	an unset font property reaches the generic beside it	gjs kde linux-engines macos windows-content
+std.font.agree	the launcher and the engine read one desktop the same way	gjs kde linux-engines macos windows-content
+std.font.end-observed	the font probe ran to the end	gjs kde linux-engines macos windows-content

@@ -1,0 +1,148 @@
+# harness.sh - the vocabulary every suite in test/ speaks.
+#
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+# SPDX-License-Identifier: ISC
+#
+# Sourced, never run. `. "$(dirname "$0")/lib/harness.sh"` at the top of a suite.
+#
+# Until this file existed, every suite declared its own `pass`/`fail`/`report`
+# -- fifteen bash files, thirty-one definitions, and seventeen PowerShell files
+# in four different dialects. They did not agree: some printed `  FAIL:` and
+# some `FAIL:`, and two spelled a reading `report: PASS:`, which is why
+# sheet.sh strips the prefix twice and matches on `(^|[[:space:]])FAIL:`.
+#
+# ---------------------------------------------------------------- two channels
+#
+# Every call here writes twice, and the reason is the whole migration strategy.
+#
+# The first channel is stdout, in the spelling the suites already use. Job logs,
+# sheet.sh's grep, and anybody reading a run keep working unchanged -- so a
+# converted suite is a no-op on every existing reader, and the conversion can go
+# one file at a time instead of as a flag day.
+#
+# The second is $NT_RESULTS, a TSV of one row per assertion. That row carries a
+# *case id*, and the case id is the point. Today the assertion's identity is its
+# sentence: sheet.sh folds every run of digits to `#` and sheetdiff.py
+# intersects the results, so two lanes assert "the same thing" only when two
+# languages emit the same sentence to the byte. That is an obligation nobody can
+# keep by hand, and it is already broken -- verify-windows.ps1 shares no sentence
+# with verify-linux.sh for the geometry and position facts both assert, and the
+# four copies of the live-half check disagree about a `live half: ` prefix. A
+# case id says two lanes asserted one thing without asking their prose to match.
+#
+# So: the detail string stays whatever the suite already printed, and the id is
+# carried beside it rather than parsed back out of it.
+
+# The lane this is running on. CI names it per job; a developer running a suite
+# by hand gets `local`, which is honest -- a reading taken on a workstation is
+# not a lane reading and should not be filed as one.
+NT_LANE="${NT_LANE:-local}"
+
+# The suite's own name, for the TSV's second column. Derived from $0 rather than
+# passed, because every call site would otherwise repeat the filename it is
+# already in, and the one that eventually disagreed would be the interesting one.
+NT_SUITE="${NT_SUITE:-$(basename "${0%.sh}")}"
+
+# Where the rows go. Unset means prose only, which is what a suite run by hand
+# in a terminal wants; NT_RESULTS_DIR is what CI and test/run.sh set, so every
+# suite in a lane lands its rows beside the others without any call site knowing.
+if [ -z "${NT_RESULTS:-}" ] && [ -n "${NT_RESULTS_DIR:-}" ]; then
+    mkdir -p "$NT_RESULTS_DIR" 2>/dev/null || true
+    NT_RESULTS="$NT_RESULTS_DIR/$NT_SUITE.tsv"
+fi
+
+NT_FAILURES=0
+NT_PASSES=0
+NT_SKIPS=0
+
+# A field with a tab or a newline in it would silently move every column after
+# it, so the separator is removed rather than escaped: these are human sentences
+# and a stray tab in one is never load-bearing. Carriage returns go too -- the
+# Windows lanes read titles through PowerShell and a trailing \r in a detail
+# string would otherwise reach the file and compare unequal to the same sentence
+# taken on Linux.
+nt_clean() { printf '%s' "$*" | tr -d '\t\r\n'; }
+
+# One row. Written with >> and not held in a variable, so a suite killed by its
+# timeout still leaves behind everything it had established up to that point --
+# which is the run you most want the rows from.
+nt_row() {
+    [ -n "${NT_RESULTS:-}" ] || return 0
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$NT_LANE" "$NT_SUITE" "$(nt_clean "$1")" "$2" "$(nt_clean "$3")" \
+        >> "$NT_RESULTS" 2>/dev/null || true
+    return 0
+}
+
+# The three verdicts and the reading.
+#
+# Every one of these returns 0. Suites here run under `set -euo pipefail` and a
+# reporter that can end the run it is reporting on would take the totals line
+# down with it -- the one line that says how many failures there were.
+nt_pass() {
+    NT_PASSES=$((NT_PASSES + 1))
+    echo "  PASS: $2"
+    nt_row "$1" PASS "$2"
+    return 0
+}
+
+nt_fail() {
+    NT_FAILURES=$((NT_FAILURES + 1))
+    echo "  FAIL: $2"
+    nt_row "$1" FAIL "$2"
+    return 0
+}
+
+# SKIP, which until now did not exist. sheet.sh has counted a skip column since
+# it was written and two files in the whole tree ever filled it, so a lane that
+# *cannot* run a check has been indistinguishable from one that did not -- and
+# the exemptions that do exist are spelled as a lane name in an if, which says
+# nothing to a reader of the run. A skip carries its reason for the same purpose
+# a failure carries its detail.
+nt_skip() {
+    NT_SKIPS=$((NT_SKIPS + 1))
+    echo "  SKIP: $2"
+    nt_row "$1" SKIP "$2"
+    return 0
+}
+
+# A measurement, never a verdict. It takes no case id because it is not a case:
+# `report:` lines are the standing evidence a later round reads, and filing them
+# as assertions would put readings in the cross-lane matrix, where every row is
+# supposed to be something that can be true or false.
+nt_report() { echo "report: $*"; return 0; }
+
+# The two comparisons that account for most of the assertions in the tree.
+#
+# The spelling of the passing line is `name (value)` and of the failing one
+# `name expected=… actual=…`, which is what assemble.sh's eq() has always
+# printed and what most of the suites copied from it.
+nt_eq() {
+    if [ "$3" = "$4" ]; then
+        nt_pass "$1" "$2 ($3)"
+    else
+        nt_fail "$1" "$2 expected=$4 actual=$3"
+    fi
+}
+
+nt_match() {
+    case "$3" in
+        $4) nt_pass "$1" "$2 ($3)" ;;
+        *)  nt_fail "$1" "$2 did not match $4; actual=$3" ;;
+    esac
+}
+
+# The last line of a suite, and its exit status.
+#
+# The status is the count of failed cases. That contract predates this file --
+# verify-std.sh has always exited its failure count and says so at length -- and
+# test/run.sh relies on it to add a lane up without parsing anything.
+#
+# The totals line keeps the shape verify-std.sh established, with the two
+# counters that were never there before. A caller that has its own arithmetic to
+# do (decoflip adds its halves to its differential) reads $NT_FAILURES and calls
+# nothing here.
+nt_finish() {
+    nt_report "totals ${NT_SUITE} passes=$NT_PASSES failures=$NT_FAILURES skips=$NT_SKIPS"
+    exit "$NT_FAILURES"
+}

@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+# SPDX-License-Identifier: ISC
+
+# The recorded runs are data, read field by field with awk on every lane
+# including the Windows ones. A checkout that turned them into CRLF would put a
+# carriage return on the last field of every row -- which is a tick a reader
+# cannot parse as a number, and an invisible difference in every reading derived
+# from it. They are LF wherever they land.
+*.tsv text eol=lf
+
+# The suites and the launcher's own parts, for the same reason one step down:
+# these are run by bash on Windows, and `\r` at the end of a line is a syntax
+# error there in exactly the places it is hardest to read.
+*.sh text eol=lf
