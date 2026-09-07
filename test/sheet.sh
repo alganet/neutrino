@@ -120,8 +120,8 @@ is_png() {
 # but a lane that knows why it is handing over two directories should say so:
 # "netinstall" and "the suites" is a distinction a reader can use, and
 # `/home/runner/netinstall-screenshots` is not.
-SHOTS="$(mktemp)"; LOGS="$(mktemp)"
-trap 'rm -f "$SHOTS" "$LOGS"' EXIT
+SHOTS="$(mktemp)"; LOGS="$(mktemp)"; ROWS="$(mktemp)"
+trap 'rm -f "$SHOTS" "$LOGS" "$ROWS"' EXIT
 for arg in "$@"; do
     case "$arg" in
         *=*) label="${arg%%=*}"; src="${arg#*=}" ;;
@@ -132,10 +132,17 @@ for arg in "$@"; do
         find "$src" -type f -name '*.png' 2>/dev/null | sort |
             while IFS= read -r f; do printf '%s\t%s\n' "$label" "$f"; done >> "$SHOTS"
         find "$src" -type f -name '*.log' 2>/dev/null | sort >> "$LOGS"
+        # The harness's rows. A `.tsv` here is never a log and never a picture:
+        # it is what a suite asserted, already keyed by case id, and the section
+        # it feeds below is the only one on this page that does not have to
+        # recover its structure from prose.
+        find "$src" -type f -name '*.tsv' 2>/dev/null | sort |
+            while IFS= read -r f; do cat "$f"; done >> "$ROWS"
     else
         case "$src" in
             *.png) printf '%s\t%s\n' "$label" "$src" >> "$SHOTS" ;;
             *.log) echo "$src" >> "$LOGS" ;;
+            *.tsv) cat "$src" >> "$ROWS" ;;
         esac
     fi
 done
@@ -152,7 +159,7 @@ done
 # hands over a directory and not a list. `-anim-NN.png` is what
 # nt_screenshot_burst writes and nothing else in this tree writes.
 ANIMS="$(mktemp)"; STILLS="$(mktemp)"
-trap 'rm -f "$SHOTS" "$LOGS" "$ANIMS" "$STILLS"' EXIT
+trap 'rm -f "$SHOTS" "$LOGS" "$ROWS" "$ANIMS" "$STILLS"' EXIT
 grep -aE -- '-anim-[0-9]+\.png$' "$SHOTS" > "$ANIMS" 2>/dev/null || true
 grep -avE -- '-anim-[0-9]+\.png$' "$SHOTS" > "$STILLS" 2>/dev/null || true
 
@@ -183,8 +190,8 @@ NLOGS="$(wc -l < "$LOGS" | tr -d ' ')"
 # collapse to one row here. That is the right trade for finding duplicates
 # across lanes and the wrong one for reading a single result, so the raw lines
 # stay in the logs below, whole.
-ASSERTS="$(mktemp)"; PERLOG="$(mktemp)"
-trap 'rm -f "$SHOTS" "$LOGS" "$ANIMS" "$STILLS" "$ASSERTS" "$PERLOG"' EXIT
+ASSERTS="$(mktemp)"; PERLOG="$(mktemp)"; ROWSORT="$(mktemp)"
+trap 'rm -f "$SHOTS" "$LOGS" "$ROWS" "$ANIMS" "$STILLS" "$ASSERTS" "$PERLOG" "$ROWSORT"' EXIT
 
 while IFS= read -r log <&3; do
     [ -f "$log" ] || continue
@@ -195,7 +202,7 @@ while IFS= read -r log <&3; do
     count() { c="$(grep -acE "$1" "$2" 2>/dev/null || true)"; printf '%s' "${c:-0}"; }
     np="$(count '(^|[[:space:]])PASS:' "$log")"
     nf="$(count '(^|[[:space:]])FAIL:' "$log")"
-    ns="$(count '(^|[[:space:]])SKIP' "$log")"
+    ns="$(count '(^|[[:space:]])SKIP:' "$log")"
     nr="$(count '(^|[[:space:]])report:' "$log")"
     printf '%s\t%s\t%s\t%s\t%s\n' "$(basename "$log")" "$np" "$nf" "$ns" "$nr" >> "$PERLOG"
     # Two passes over the prefixes, not one. A suite that reports through
@@ -215,6 +222,15 @@ done 3< "$LOGS"
 
 N_ASSERT="$(wc -l < "$ASSERTS" | tr -d ' ')"
 N_FAIL="$(awk -F'\t' '{n+=$3} END{print n+0}' "$PERLOG" 2>/dev/null || echo 0)"
+
+# The cases, counted off the rows rather than off the sentences. These two
+# sections answer the same question and only one of them can be wrong about it:
+# the prose digest folds every run of digits to `#` and cannot tell two
+# assertions apart when a number is all that differs, which is a trade worth
+# making to find repetition across lanes and not worth making anywhere else.
+N_CASES="$(awk -F'\t' 'NF>=4' "$ROWS" 2>/dev/null | wc -l | tr -d ' ')"
+N_CASE_FAIL="$(awk -F'\t' '$4 == "FAIL"' "$ROWS" 2>/dev/null | wc -l | tr -d ' ')"
+N_CASE_SKIP="$(awk -F'\t' '$4 == "SKIP"' "$ROWS" 2>/dev/null | wc -l | tr -d ' ')"
 N_DISTINCT="$(sort -u "$ASSERTS" 2>/dev/null | wc -l | tr -d ' ')"
 echo "  sheet: lane=$LANE shots=$NSHOTS (${NANIM} burst frames) logs=$NLOGS -> $OUT"
 
@@ -417,6 +433,26 @@ if [ -n "$NOTPNG" ]; then
     printf '</pre>\n'
 fi
 
+if [ "$N_CASES" != 0 ]; then
+    printf '<h2>Cases</h2>\n'
+    printf '<p class="empty">%s case(s), %s failed, %s skipped &mdash; keyed by id, so this row compares with every other lane.</p>\n' \
+        "$N_CASES" "$N_CASE_FAIL" "$N_CASE_SKIP"
+    printf '<table class="digest"><thead><tr><th>case</th><th>verdict</th><th>suite</th><th>detail</th></tr></thead><tbody>\n'
+    # Failures first, then skips, then the rest by id: a reader opening this
+    # page has one question and it belongs at the top of that order.
+    awk -F'\t' 'NF>=4 { r = ($4=="FAIL") ? 0 : ($4=="SKIP") ? 1 : 2; print r "\t" $0 }' "$ROWS" |
+        sort -t"$(printf '\t')" -k1,1n -k4,4 |
+        cut -f2- > "$ROWSORT"
+    while IFS="$(printf '\t')" read -r rlane rsuite rid rverdict rdetail <&4; do
+        cls=""
+        [ "$rverdict" = "FAIL" ] && cls=' class="bad"'
+        printf '<tr><td>%s</td><td%s>%s</td><td>%s</td><td>%s</td></tr>\n' \
+            "$(printf '%s' "$rid" | esc)" "$cls" "$rverdict" \
+            "$(printf '%s' "$rsuite" | esc)" "$(printf '%s' "$rdetail" | esc)"
+    done 4< "$ROWSORT"
+    printf '</tbody></table>\n'
+fi
+
 if [ "$N_ASSERT" != 0 ]; then
     printf '<h2>What this lane asserted</h2>\n'
     printf '<table class="digest"><thead><tr><th>log</th><th>pass</th><th>fail</th><th>skip</th><th>readings</th></tr></thead><tbody>\n'
@@ -432,8 +468,12 @@ if [ "$N_ASSERT" != 0 ]; then
     # doing more than once" and the answer is at the top of that order.
     printf '<details><summary>every assertion, normalised &mdash; %s distinct of %s</summary><pre>' \
         "$N_DISTINCT" "$N_ASSERT"
+    # awk, for the reason the cases array above is built in awk: `\t` in a sed
+    # replacement is a tab on GNU sed and a literal `t` on the BSD sed macOS
+    # ships, so every row of this table has read `12tthe assertion` in the macOS
+    # sheet since it was written.
     sort "$ASSERTS" | uniq -c | sort -rn |
-        sed -E 's/^ *([0-9]+) /\1\t/' | esc
+        awk '{ n = $1; sub(/^ *[0-9]+ +/, ""); printf "%s\t%s\n", n, $0 }' | esc
     printf '</pre></details>\n'
 fi
 
@@ -469,6 +509,28 @@ echo '</main>'
         "$LANE" "${GITHUB_SHA:-}" "${GITHUB_RUN_ID:-}"
     printf '"shots":%s,"frames":%s,"logs":%s,"assertions":%s,"distinct":%s,"failures":%s,' \
         "$NSHOTS" "$NANIM" "$NLOGS" "$N_ASSERT" "$N_DISTINCT" "$N_FAIL"
+    # The cases, by id. This is what makes a cross-lane matrix exact: two lanes
+    # reporting `walk.resize` are reporting the same case whatever either of
+    # them printed, which is the requirement the sentence-keyed list below
+    # cannot meet and has already failed to.
+    # Built in awk and not in sed, and that is not a style preference.
+    #
+    # `awk -F'\t'` means a tab on every awk there is. `sed 's/\t/'` means a tab
+    # on GNU sed and a literal `t` on the BSD sed macOS ships -- so the
+    # substitution that formats these rows simply never matched there, the raw
+    # tab-separated lines fell through unescaped, and the digest was invalid
+    # JSON. The macOS lane then carried a sheet that looked perfect and was
+    # silently absent from the cross-lane grid, which is the failure this whole
+    # section exists to make impossible.
+    printf '"cases":['
+    awk -F'\t' 'NF>=4 { print $3 "\t" $4 "\t" $2 }' "$ROWS" 2>/dev/null | sort -u |
+        awk -F'\t' '{
+            id=$1; v=$2; su=$3;
+            gsub(/"/, "\\\"", id); gsub(/"/, "\\\"", v); gsub(/"/, "\\\"", su);
+            gsub(/</, "\\u003c", id); gsub(/</, "\\u003c", su);
+            printf "%s{\"id\":\"%s\",\"v\":\"%s\",\"suite\":\"%s\"}", (NR>1 ? "," : ""), id, v, su
+        }'
+    printf '],'
     printf '"asserted":['
     sort "$ASSERTS" | uniq -c | sort -rn |
         sed -E -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/</\\u003c/g' \
