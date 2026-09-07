@@ -1,0 +1,8 @@
+0	STD-FONT-CTL eng=WebKit	900x600	62,42	900x632	10	62,42
+0	STD-FONT-KW-A caption=13px|system-ui|400 icon=13px|system-ui|400 menu=13px|-apple-menu|400	900x600	62,42	900x632	18	62,42
+0	STD-FONT-KW-B message-box=13px|system-ui|400 small-caption=11px|system-ui|400 status-bar=10px|-apple-status-bar|400 identical=3/6	900x600	62,42	900x632	27	62,42
+0	STD-FONT-GEN absent=339.95 system-ui=344.92 ui-sans-serif=344.92 ui-serif=351.06 ui-monospace=494.53 ui-rounded=345.34 sans-serif=362.47 serif~339.95 monospace=480.08 cursive=350.11 -apple-system=344.92	900x600	62,42	900x632	35	62,42
+0	STD-FONT-UNIT 1in=96 10pt=13.333333px medium=16px dpr=1 rootsize=32px rootfamily=-webkit-standard	900x600	62,42	900x632	43	62,42
+0	STD-FONT-NT-A source=macos ui=-/system-ui/13px/400 document=Helvetica/sans-serif/12px/400 monospace=Menlo/monospace/11px/400 titlebar=-/system-ui/13px/700 small=-/system-ui/11px/400	900x600	62,42	900x632	52	62,42
+0	STD-FONT-NT-B match=15/15 fallback=monospace agree=kw:13|nt:13|delta:0	900x600	62,42	900x632	60	62,42
+0	STD-FONT-END	900x600	62,42	900x632	69	62,42

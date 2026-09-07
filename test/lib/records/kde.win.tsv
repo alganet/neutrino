@@ -1,0 +1,13 @@
+8	STD-WIN-EXIST-SELF eng=QtWebEngine ow=number oh=number iw=number ih=number sx=number sy=number rt=function rz=function mt=function mv=function cl=function op=function rfs=function xfs=function	900x600	61,64	902x625	1	63,104
+1247	STD-WIN-DESC-SELF ow=w1c1g1oS oh=w1c1g1oS iw=w1c1g1oS ih=w1c1g1oS sx=w1c1g1oS sy=w1c1g1oS rt=w1c1g0oS rz=w1c1g0oS mt=w1c1g0oS mv=w1c1g0oS cl=w1c1g0oS op=w1c1g0oS CTLown=w1c1g0oS CTLforged=w0c0g1oS	900x600	61,64	902x625	22	63,104
+3010	STD-WIN-RT-PAIR req=640x480 call=ok ow=642 oh=505 iw=640 ih=480 sx=61 sy=64	640x480	61,64	642x505	52	63,104
+4773	STD-WIN-RZ-PAIR req=+40+40 call=ok ow=682 oh=545 iw=680 ih=520 sx=61 sy=64	680x520	61,64	682x545	82	63,104
+6538	STD-WIN-MT-PAIR req=120,90 call=ok ow=682 oh=545 iw=680 ih=520 sx=120 sy=90	680x520	120,90	682x545	112	122,130
+8252	STD-WIN-MV-PAIR req=+30+30 call=ok ow=682 oh=545 iw=680 ih=520 sx=150 sy=120	680x520	150,120	682x545	141	152,160
+9780	STD-WIN-GONE-SELF nw=undefined	680x520	150,120	682x545	167	152,160
+11252	STD-WIN-OPEN-SELF noargs=null/same blank=object/same self=object/same	680x520	150,120	682x545	192	152,160
+12781	STD-WIN-APPREGION-SELF computed=drag	680x520	150,120	682x545	218	152,160
+15194	STD-WIN-FS1-PAIR nogesture call=ok settled=rejected:TypeError fsel=none activation=false ow=682 oh=545 iw=680 ih=520 sx=150 sy=120	680x520	150,120	682x545	259	152,160
+16675	STD-WIN-OVR-SELF ow=ok/yes sx=ok/yes rt=ok/yes mt=ok/yes op=ok/yes	680x520	150,120	682x545	284	152,160
+18151	STD-WIN-CLOSE-PAIR about-to-call	680x520	150,120	682x545	309	152,160
+19681	<none>	0x0	-2,-40	2x25	335	0,0

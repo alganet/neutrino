@@ -1,0 +1,8 @@
+7	STD-FONT-CTL eng=WebKit	900x600	62,84	900x617	1	62,118
+1422	STD-FONT-KW-A caption=13px|Sans|400 icon=13px|Sans|400 menu=13px|Sans|400	900x600	62,84	900x617	25	62,118
+2891	STD-FONT-KW-B message-box=13px|Sans|400 small-caption=13px|Sans|400 status-bar=13px|Sans|400 identical=6/6	900x600	62,84	900x617	50	62,118
+4419	STD-FONT-GEN absent=407 system-ui~407 ui-sans-serif~407 ui-serif~407 ui-monospace~407 ui-rounded~407 sans-serif~407 serif=426 monospace=480 cursive=426 -apple-system~407	900x600	62,84	900x617	76	62,118
+5894	STD-FONT-UNIT 1in=96 10pt=13.333333px medium=16px dpr=1 rootsize=32px rootfamily=-webkit-standard	900x600	62,84	900x617	101	62,118
+7427	STD-FONT-NT-A source=gtk ui=-/sans-serif/13.33px/400 document=Cantarell/sans-serif/14.67px/400 monospace=-/monospace/14.67px/400 titlebar=-/sans-serif/13.33px/400 small=-/sans-serif/13.33px/400	900x600	62,84	900x617	127	62,118
+8957	STD-FONT-NT-B match=15/15 fallback=monospace agree=kw:13|nt:13.33|delta:0.33	900x600	62,84	900x617	153	62,118
+10431	STD-FONT-END	900x600	62,84	900x617	178	62,118

@@ -1,0 +1,7 @@
+7	STD-THEME-CTL eng=QtWebEngine	900x600	61,64	902x625	1	63,104
+1305	STD-THEME-A-SELF mq=light nsrc=qt nscheme=light n:background=efefef n:foreground=000000 n:base=ffffff n:text=000000 n:accent=308cc6 n:accentText=ffffff n:border=b8b8b8	900x600	61,64	902x625	23	63,104
+2836	STD-THEME-B-SELF control=UNSUP Canvas=ffffff CanvasText=000000 ButtonFace=efefef ButtonText=000000 ButtonBorder=767676 AccentColor=UNSUP AccentColorText=UNSUP Highlight=b5d5ff HighlightText=000000 SelectedItem=UNSUP SelectedItemText=UNSUP Field=ffffff FieldText=000000 GrayText=808080 LinkText=0000ee	900x600	61,64	902x625	49	63,104
+4305	STD-THEME-V-SELF v:ButtonFace=efefef v:ButtonText=000000 v:Canvas=ffffff v:CanvasText=000000 v:Highlight=308cc6 v:HighlightText=ffffff v:ButtonBorder=b8b8b8 pal=qt match=7/7 miss= fallback=ffffff canvas=ffffff	900x600	61,64	902x625	74	63,104
+5835	STD-THEME-P-SELF setprop=ok readback=123456 pol=DEFAULT	900x600	61,64	902x625	100	63,104
+7307	STD-THEME-F-SELF sysui=350 sans=350 absent=354	900x600	61,64	902x625	125	63,104
+8837	STD-THEME-END	900x600	61,64	902x625	151	63,104

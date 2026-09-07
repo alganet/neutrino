@@ -1,0 +1,12 @@
+0	STD-WIN-EXIST-SELF eng=WebKit ow=number oh=number iw=number ih=number sx=number sy=number rt=function rz=function mt=function mv=function cl=function op=function rfs=undefined xfs=undefined	900x600	62,42	900x632	11	62,42
+0	STD-WIN-DESC-SELF ow=w1c1g1oS oh=w1c1g1oS iw=w1c1g1oS ih=w1c1g1oS sx=w1c1g1oS sy=w1c1g1oS rt=w1c1g0oS rz=w1c1g0oS mt=w1c1g0oS mv=w1c1g0oS cl=w1c1g0oS op=w1c1g0oS CTLown=w1c1g0oS CTLforged=w0c0g1oS	900x600	62,42	900x632	17	62,42
+0	STD-WIN-RT-PAIR req=640x480 call=ok ow=0 oh=0 iw=640 ih=480 sx=0 sy=768	640x480	62,42	640x512	28	62,42
+0	STD-WIN-RZ-PAIR req=+40+40 call=ok ow=0 oh=0 iw=680 ih=520 sx=0 sy=768	680x520	62,42	680x552	39	62,42
+0	STD-WIN-MT-PAIR req=120,90 call=ok ow=0 oh=0 iw=680 ih=520 sx=0 sy=768	680x520	120,90	680x552	50	120,90
+0	STD-WIN-MV-PAIR req=+30+30 call=ok ow=0 oh=0 iw=680 ih=520 sx=0 sy=768	680x520	150,120	680x552	61	150,120
+0	STD-WIN-GONE-SELF nw=undefined	680x520	150,120	680x552	70	150,120
+0	STD-WIN-OPEN-SELF noargs=null/same blank=null/same self=object/same	680x520	150,120	680x552	78	150,120
+0	STD-WIN-APPREGION-SELF computed=empty	680x520	150,120	680x552	87	150,120
+0	STD-WIN-FS1-PAIR nogesture call=threw:TypeError settled=pending fsel=none activation=false ow=0 oh=0 iw=680 ih=520 sx=0 sy=768	680x520	150,120	680x552	100	150,120
+0	STD-WIN-OVR-SELF ow=ok/yes sx=ok/yes rt=ok/yes mt=ok/yes op=ok/yes	680x520	150,120	680x552	107	150,120
+0	STD-WIN-CLOSE-PAIR about-to-call	680x520	150,120	680x552	117	150,120

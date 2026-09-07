@@ -1,0 +1,8 @@
+1	neutrino	900x600	54,40	916x639	1
+2057	STD-THEME-CTL eng=WebView2	900x600	54,40	916x639	31
+3573	STD-THEME-A-SELF mq=light nsrc=windows nscheme=light n:background=f0f0f0 n:foreground=000000 n:base=ffffff n:text=000000 n:accent=0078d4 n:accentText=ffffff n:border=a0a0a0	900x600	54,40	916x639	55
+5015	STD-THEME-B-SELF control=UNSUP Canvas=ffffff CanvasText=000000 ButtonFace=f0f0f0 ButtonText=000000 ButtonBorder=000000 AccentColor=0075ff AccentColorText=ffffff Highlight=0078d4 HighlightText=ffffff SelectedItem=1967d2 SelectedItemText=ffffff Field=ffffff FieldText=000000 GrayText=6d6d6d LinkText=0066cc	900x600	54,40	916x639	78
+6531	STD-THEME-V-SELF v:ButtonFace=f0f0f0 v:ButtonText=000000 v:Canvas=ffffff v:CanvasText=000000 v:Highlight=0078d4 v:HighlightText=ffffff v:ButtonBorder=a0a0a0 pal=windows match=7/7 miss= fallback=ffffff canvas=ffffff	900x600	54,40	916x639	102
+8048	STD-THEME-P-SELF setprop=ok readback=123456 pol=DEFAULT	900x600	54,40	916x639	126
+9623	STD-THEME-F-SELF sysui=306 sans=311 absent=281	900x600	54,40	916x639	151
+11126	STD-THEME-END	900x600	54,40	916x639	175
