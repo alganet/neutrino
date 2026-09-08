@@ -26,7 +26,16 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+# The repo root. $PSScriptRoot is the directory this file is in, so the climb is
+# one step per directory between it and the root -- test/suite is two.
+#
+# It was two steps off $MyInvocation.MyCommand.Path, which is the *file* rather
+# than its directory and therefore needed one more than the depth. That was
+# right at test/decoflip.ps1 and one short the moment this moved a room deeper,
+# and $root builds three more paths, so the file found neither its artifact nor
+# the verifier nor the differential. $PSScriptRoot is what every other .ps1 here
+# uses and it is the spelling selftest.sh can check the count against.
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $logdir = if ($env:NT_FLIP_LOGDIR) { $env:NT_FLIP_LOGDIR } else { $env:USERPROFILE }
 $halfFailures = 0
 # Whether a half could not be started at all, which is different from a half

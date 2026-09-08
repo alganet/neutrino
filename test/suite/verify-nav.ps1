@@ -60,7 +60,13 @@ if (-not $lane -or -not (Test-Path $lane) -or -not $outDir) {
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $log = Join-Path $outDir "nav.log"
 
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+# The documents this serves, which are not the room this file lives in. The
+# target a page navigates at is a probe; the server that hands it over is
+# apparatus. test/apparatus/serve-target.sh draws the same line for the unix
+# lanes, and getting it wrong here is what the room move shipped: the server
+# came up on the suite directory, answered 404 for nav-target.html, and every
+# case below reported that there was nothing to navigate at.
+$docs = Join-Path (Split-Path -Parent $PSScriptRoot) "probe"
 $port = 8097
 $target = "http://127.0.0.1:$port/nav-target.html"
 $work = Join-Path $env:TEMP ("verifynav-" + [System.IO.Path]::GetRandomFileName())
@@ -150,7 +156,7 @@ if (-not $python) {
 }
 
 $server = Start-Process -FilePath $python.Source `
-    -ArgumentList "-m", "http.server", "--bind", "127.0.0.1", "--directory", $here, "$port" `
+    -ArgumentList "-m", "http.server", "--bind", "127.0.0.1", "--directory", $docs, "$port" `
     -PassThru -WindowStyle Hidden -RedirectStandardError $serverLog `
     -RedirectStandardOutput (Join-Path $work "server.out")
 
