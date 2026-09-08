@@ -3307,7 +3307,28 @@ jobs:
             echo
             python3 test/matrix.py --markdown "$@"
           } >> "$GITHUB_STEP_SUMMARY"
-          python3 test/matrix.py "$@" | tee matrix.txt
+          # --strict, so this job has exactly one thing it can go red on.
+          #
+          # It had none. The grid is the only place all ten lanes are visible at
+          # once, and it was reporting to a step that returned 0 whatever it
+          # found -- so the two structural defects only it can see were things a
+          # person had to notice by diffing two runs, and both of them got
+          # through that way: four lanes publishing sheets with no cases at all,
+          # and a walk record read as rows putting `500x400` in the grid.
+          #
+          # Not the failures. A lane that fails a case is already red on its own
+          # job, and saying so twice would make this step a second opinion about
+          # something that is not its business. What is its business is a lane
+          # that went quiet and an id nobody declared -- neither of which any
+          # single lane can see about itself.
+          #
+          # Redirected rather than piped: `| tee` would exit with tee's status
+          # and this would go back to being a step that cannot fail, which is
+          # the whole defect. Same reason test/step.sh does it that way.
+          MRC=0
+          python3 test/matrix.py --strict "$@" > matrix.txt 2>&1 || MRC=$?
+          cat matrix.txt
+          exit $MRC
       - uses: actions/upload-artifact@v7
         if: always()
         with:
