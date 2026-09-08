@@ -13,9 +13,22 @@
 
 set -euo pipefail
 
+# The six words. Twelve prose assertions reached nothing, and the file ended on
+# `[ "$FAILURES" -eq 0 ]` -- so three failures and one were the same 1 to the
+# lane, and three of its four exits left with no verdict counted at all.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+
+# What this run has left to answer. Its three early exits each left the cases
+# below them unreported, and an unreported case is a hole the grid cannot tell
+# from a suite that never ran.
+skip_rest() {
+    nt_skip early.reported "$1"
+    nt_skip early.load.pending "$1"
+    nt_skip early.held "$1"
+}
+
 TIMEOUT=90
 POLL_INTERVAL=0.5
-FAILURES=0
 TARGET_URL="http://127.0.0.1:8098/early-target.html"
 
 # The control, and it comes before everything because everything depends on it.
@@ -33,13 +46,14 @@ TARGET_BODY="$(mktemp)"
 trap 'rm -f "$TARGET_BODY"' EXIT
 if curl -fsS -m 5 "$TARGET_URL" -o "$TARGET_BODY" 2>/dev/null &&
    grep -q "EARLY-TARGET" "$TARGET_BODY"; then
-    echo "  PASS: control the target answers at $TARGET_URL"
+    nt_pass early.target.served "control the target answers at $TARGET_URL"
 else
-    echo "  FAIL: nothing is serving $TARGET_URL"
+    nt_fail early.target.served "nothing is serving $TARGET_URL"
     echo "        the page under test cannot navigate anywhere, so a guard that"
     echo "        does nothing would pass this run -- which is the reason this"
     echo "        target stopped being a host that never resolves"
-    exit 1
+    skip_rest "there was nothing to navigate at, so nothing below was measured"
+    nt_finish
 fi
 
 case "$(uname -s)" in
@@ -57,11 +71,20 @@ case "$(uname -s)" in
             }
         elif command -v wmctrl >/dev/null 2>&1; then
             read_title() {
-                wmctrl -l 2>/dev/null | sed -n 's/^[^ ]* *[^ ]* *[^ ]* *\(EARLY .*\)$/\1/p' | tail -1
+                # `|| true`, the way the xdotool branch above has it and for
+                # the reason verify-attack.sh spells out where it carries the
+                # same line: this file runs under `set -euo pipefail`, so a
+                # wmctrl that cannot open the display takes the pipeline
+                # non-zero and set -e ends the suite inside the wait loop --
+                # before the "never reported" branch that exists to say so.
+                # Latent rather than live, because both Linux lanes install
+                # xdotool and take the branch above.
+                wmctrl -l 2>/dev/null | sed -n 's/^[^ ]* *[^ ]* *[^ ]* *\(EARLY .*\)$/\1/p' | tail -1 || true
             }
         else
-            echo "verify-early.sh: need xdotool or wmctrl to read a window title" >&2
-            exit 1
+            nt_skip early.target.served "no xdotool or wmctrl here to read a window title with"
+            skip_rest "there is no way to read a window title on this machine"
+            nt_finish
         fi
         ;;
 esac
@@ -77,25 +100,18 @@ while [ $SECONDS -lt $deadline ]; do
 done
 
 if [ -z "$TITLE" ]; then
-    echo "FAIL: the app never reported"
-    echo "      a build that renders nothing refuses this navigation by doing"
-    echo "      nothing at all, so no report is a failure and not a pass"
-    exit 1
+    nt_fail early.reported "the app never reported: a build that renders nothing refuses this navigation by doing nothing at all, so no report is a failure and not a pass"
+    nt_skip early.load.pending "nothing reported, so there were no fields to read"
+    nt_skip early.held "nothing reported, so there were no fields to read"
+    nt_finish
 fi
+
+nt_pass early.reported "the app reported a title"
 
 echo "  report: $TITLE"
 
 field() { echo "$TITLE" | sed -n "s/.* $1=\([A-Za-z]*\).*/\1/p"; }
 
-assert() {
-    local name="$1" expected="$2" actual="$3"
-    if [ "$actual" = "$expected" ]; then
-        echo "  PASS: $name = $actual"
-    else
-        echo "  FAIL: $name expected=$expected actual=$actual"
-        FAILURES=$((FAILURES + 1))
-    fi
-}
 
 TRANSPORT="$(field tx)"
 echo "  transport: $TRANSPORT"
@@ -115,15 +131,16 @@ echo "  transport: $TRANSPORT"
 READY="$(field ready)"
 if [ "$TRANSPORT" = "scriptmessage" ]; then
     if [ "$READY" = "complete" ]; then
-        echo "  FAIL: the document had finished loading when it reported (ready=$READY)"
-        echo "        the stall did not hold, so the navigation met an armed"
-        echo "        guard for a reason this test exists to rule out"
-        FAILURES=$((FAILURES + 1))
+        nt_fail early.load.pending "the document had finished loading when it reported (ready=$READY); the stall did not hold, so the navigation met an armed guard for a reason this test exists to rule out"
     else
-        echo "  PASS: the load was still pending (ready=$READY)"
+        nt_pass early.load.pending "the load was still pending (ready=$READY)"
     fi
 else
-    echo "  NOTE: ready = $READY (this guard does not key on the load finishing)"
+    # A NOTE, which is prose nothing reads. It is this platform saying it cannot
+    # ask the question -- Qt's guard arms on the first navigation and the macOS
+    # one at the commit of this document, so a completed load says nothing
+    # either way there -- and that is what a skip is for.
+    nt_skip early.load.pending "ready = $READY, and this guard does not key on the load finishing, so a completed load says nothing either way"
 fi
 
 # The result, and every platform is asserted to it now. "escaped" means the
@@ -147,7 +164,6 @@ fi
 # own failure on every launch, which is how PR 23's finding survived four PRs
 # of this suite passing. test/navrefuse.sh is where that build is compared
 # against itself with the refusal deleted; this stays the end-to-end reading.
-assert "the page kept out of the window" "held" "$(field at)"
+nt_eq early.held "the page kept out of the window" "$(field at)" "held"
 
-echo "=== Results: $FAILURES failure(s) ==="
-[ "$FAILURES" -eq 0 ]
+nt_finish
