@@ -2047,6 +2047,12 @@ jobs:
         shell: pwsh
         run: |
           .\test\neutrinoattack.cmd
+          # The name the rows file under. Set here rather than left to derive
+          # from the filename, so this lane's twelve attack.* cases sit in the
+          # sheet under the same `attack` the four bash lanes get from
+          # suites.tsv -- and so the day this lane joins the manifest, the
+          # manifest's name is already the one in the file.
+          $env:NT_SUITE = "attack"
           & .\test\verify-attack.ps1 *>&1 | Tee-Object -FilePath "$HOME\attack-verify.log"
           $testExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "ATTACK *" } | Stop-Process -Force -ErrorAction SilentlyContinue

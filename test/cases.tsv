@@ -138,8 +138,18 @@ lanes.handoff.said	the hand-off refusal is printed rather than silent	gjs kde li
 lanes.handoff.status	a walk that ends in a hand-off refusal still exits non-zero	gjs kde linux-engines macos
 lanes.python.reached	python3 is reached where osascript does not exist	gjs kde linux-engines macos
 
-# The hostile document, from test/verify-attack.sh -- what a page that is trying
-# to drive the native window gets, on the three lanes that can run one.
+# The hostile document, from test/verify-attack.sh and test/verify-attack.ps1 --
+# what a page that is trying to drive the native window gets, on the four lanes
+# that can run one.
+#
+# windows-content is on these ids now, and it is the first family answered by a
+# PowerShell suite in its own right rather than through a record handed to bash.
+# verify-attack.ps1 was always the near-line-for-line twin of verify-attack.sh
+# -- same probe, same settled-title protocol, same field names, comments that
+# quote each other -- and it asserted every one of these facts in sentences of
+# its own that no reader could line up with the other three lanes'. It speaks
+# the six words now, so the twin pair answers one set of questions instead of
+# two sets that happen to agree.
 #
 # Two of these are the escape itself rather than a residual, and they are why
 # the suite exits where it finds them: a frame or a data: document whose title
@@ -154,18 +164,18 @@ lanes.python.reached	python3 is reached where osascript does not exist	gjs kde l
 # read; it is a skip carrying the reason now, so the cell says which of the two
 # it is. test/navrefuse.sh is where that question is asked against a target that
 # answers.
-attack.reported	the attack app reported a settled title	gjs kde macos
-attack.frame.title-escape	no frame's title reached the native window	gjs kde macos
-attack.data.escape	no data: document drove the native window	gjs kde macos
-attack.wire.control	a well-formed record down the same path is obeyed	gjs kde macos
-attack.raw.refused	a malformed record is refused	gjs kde macos
-attack.base.pinned	base-uri is pinned against a forged one	gjs kde macos
-attack.inline.blocked	an inline script does not run	gjs kde macos
-attack.eval.blocked	eval and Function do not compile	gjs kde macos
-attack.frame.api	a frame handed the API could not drive the window	gjs kde macos
-attack.forge.refused	a forged title is refused where the title is not the channel	gjs kde macos
-attack.nav.refused	the hostile navigation is refused	gjs kde macos
-attack.postnav.channel	a refused navigation leaves the app able to drive its own window	gjs kde macos
+attack.reported	the attack app reported a settled title	gjs kde macos windows-content
+attack.frame.title-escape	no frame's title reached the native window	gjs kde macos windows-content
+attack.data.escape	no data: document drove the native window	gjs kde macos windows-content
+attack.wire.control	a well-formed record down the same path is obeyed	gjs kde macos windows-content
+attack.raw.refused	a malformed record is refused	gjs kde macos windows-content
+attack.base.pinned	base-uri is pinned against a forged one	gjs kde macos windows-content
+attack.inline.blocked	an inline script does not run	gjs kde macos windows-content
+attack.eval.blocked	eval and Function do not compile	gjs kde macos windows-content
+attack.frame.api	a frame handed the API could not drive the window	gjs kde macos windows-content
+attack.forge.refused	a forged title is refused where the title is not the channel	gjs kde macos windows-content
+attack.nav.refused	the hostile navigation is refused	gjs kde macos windows-content
+attack.postnav.channel	a refused navigation leaves the app able to drive its own window	gjs kde macos windows-content
 
 # The loader environment, from test/loaders.sh -- what the standalone launch
 # path hands its engine, and what it must not.
