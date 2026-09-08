@@ -933,8 +933,19 @@ BADARG="$(awk -F'\t' '$1 == "bad" { print " " $2 ":" substr($4, 1, 44) }' "$CALL
 # row saying "the instrument exists" was filed on exactly the runs where nothing
 # else could be. Given a passing voice, they say so on every run.
 #
-# A skip counts as a voice: a case that can only skip or fail is one that says
-# why it could not answer, which is not silence.
+# A skip is not enough of a voice, and this line used to say it was: "a case
+# that can only skip or fail is one that says why it could not answer, which is
+# not silence." That is true of the skip and false of the case. navrefuse.respell
+# could fail where the respelled build came out identical to the shipped one, and
+# could be skipped by either gate above it, and on the run where the apparatus
+# worked neither fired and it filed nothing. It read as a hole on macos, and
+# matrix.py --strict found it a full round after this check had passed it.
+#
+# So what is required is a *passing* voice: an emitter that is not one of the
+# four fail-or-skip words. A case with none cannot report a healthy run, and the
+# healthy run is the one it will spend its life on. Measured before the rule was
+# tightened: exactly one case in the tree had no passing voice, which is the one
+# above, so this is not a rule the tree has to be bent to fit.
 #
 # The vocabulary above is the substantive change here, and it is the reason this
 # is worth a second look so soon after writing it. The scan knew nt_pass,
@@ -950,10 +961,11 @@ BADARG="$(awk -F'\t' '$1 == "bad" { print " " $2 ":" substr($4, 1, 44) }' "$CALL
 # reading now rather than an assumption.
 SILENT="$(awk -F'\t' '
     $1 != "id" { next }
-    { seen[$4 "\t" $2] = 1; if ($3 != "nt_fail" && $3 != "ctl_fail") voiced[$4] = 1 }
+    { seen[$4 "\t" $2] = 1
+      if ($3 !~ /^(nt_fail|ctl_fail|nt_skip|ctl_skip)$/) voiced[$4] = 1 }
     END { for (k in seen) { split(k, a, "\t"); if (!(a[1] in voiced)) print a[2] ":" a[1] } }
 ' "$CALLS" | sort -u | tr '\n' ' ')"
-[ -z "$SILENT" ] && ok "no case speaks only when it fails" \
+[ -z "$SILENT" ] && ok "every case has a voice for the run where it holds" \
     || bad "these cases file nothing on a good run:$SILENT"
 
 # ------------------------------------------------------------------- reap.sh
