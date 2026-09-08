@@ -12,6 +12,12 @@ set -euo pipefail
 # platform's; the verdicts are not, and were three copies until now.
 . "$(cd "$(dirname "$0")" && pwd)/lib/walk.sh"
 
+# The case this file answers after the shared walk, named so that a walk which
+# stops early skips it too. It is set here and not in walk.sh because it applies
+# to three of the five lanes that hold the walk, and a skip filed on a lane the
+# registry does not name for it is a verdict matrix.py drops.
+NT_WALK_EXTRA="walk.renderer.sandboxed"
+
 # Overridable so a run against stub instruments does not wait out a real
 # minute per state; every lane leaves it alone and gets the sixty seconds a
 # cold runner needs.
@@ -251,28 +257,28 @@ assert_position() {
 # --- Test steps ---
 
 echo "=== Waiting for window ==="
-WID=$(wait_for_title "neutrino") || { nt_fail walk.window.appeared "window never appeared"; exit 1; }
+WID=$(wait_for_title "neutrino") || nt_walk_stopped walk.window.appeared "window never appeared"
 nt_pass walk.window.appeared "the app opened a window"
 echo "Window found: $WID"
 screenshot "00-initial"
 
 echo "=== Step 0: Ready ==="
-WID=$(wait_for_title "STEP0") || { nt_fail walk.step0.reached "STEP0 never reached"; exit 1; }
+WID=$(wait_for_title "STEP0") || nt_walk_stopped walk.step0.reached "STEP0 never reached"
 assert_title walk.step0.reached "$WID" "STEP0"
 screenshot "01-step0"
 
 echo "=== Step 1: title ==="
-WID=$(wait_for_title "STEP1-Test Title") || { nt_fail walk.title "STEP1 never reached"; exit 1; }
+WID=$(wait_for_title "STEP1-Test Title") || nt_walk_stopped walk.title "STEP1 never reached"
 assert_title walk.title "$WID" "STEP1-Test Title"
 screenshot "02-step1"
 
 echo "=== Step 2: resize ==="
-WID=$(wait_for_title "STEP2") || { nt_fail walk.resize "STEP2 never reached"; exit 1; }
+WID=$(wait_for_title "STEP2") || nt_walk_stopped walk.resize "STEP2 never reached"
 assert_geometry walk.resize "$WID" 500 400
 screenshot "03-step2"
 
 echo "=== Step 3: move ==="
-WID=$(wait_for_title "STEP3") || { nt_fail walk.move "STEP3 never reached"; exit 1; }
+WID=$(wait_for_title "STEP3") || nt_walk_stopped walk.move "STEP3 never reached"
 assert_position walk.move "$WID" 0 0
 screenshot "04-step3"
 
@@ -304,7 +310,7 @@ else
 fi
 
 echo "=== Waiting for TESTS DONE ==="
-WID=$(wait_for_title "TESTS DONE") || { nt_fail walk.done "tests never completed"; exit 1; }
+WID=$(wait_for_title "TESTS DONE") || nt_walk_stopped walk.done "tests never completed"
 screenshot "06-done"
 
 nt_pass walk.done "the walk ran to the end"
