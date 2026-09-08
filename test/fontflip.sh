@@ -34,6 +34,10 @@ set -uo pipefail
 # The window title, by whichever reader this machine has -- the fifth copy of
 # that cascade lived here. See lib/title.sh.
 . "$(cd "$(dirname "$0")" && pwd)/lib/title.sh"
+# And the shape this file's live half shares with themeflip.sh's three: launch,
+# first reading, settle. The verdicts stay here -- two flips, two findings, and
+# a second one whose passing reading is a font name and not `moved=yes`.
+. "$(cd "$(dirname "$0")" && pwd)/lib/live.sh"
 
 MODE="${1:-gtk}"
 WATCH="${2:-8}"
@@ -245,35 +249,6 @@ run_windows() {
 LIVE_ART="${3:-$ROOT/test/neutrinolivefont.cmd}"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 
-live_title() { nt_title 'STD-LIVEFONT'; }
-
-live_stop() {
-    [ -n "${LIVE_PID:-}" ] || return 0
-    pkill -P "$LIVE_PID" 2>/dev/null || true
-    kill "$LIVE_PID" 2>/dev/null || true
-    LIVE_PID=""
-}
-
-# Wait for a title to say `moved=yes` with at least N readings behind it.
-#
-# The count matters as much as the word. After the second flip the title
-# already says `moved=yes` from the first one, so a wait on the word alone
-# would return immediately and report a watcher that never fired as working.
-live_await() {
-    local want="$1" waited=0 t n
-    while [ "$waited" -lt 30 ]; do
-        t="$(live_title)"
-        n="$(nt_field n "$t")"
-        case "$t" in
-            *moved=yes*) [ -n "$n" ] && [ "$n" -ge "$want" ] && { printf '%s' "$t"; return 0; } ;;
-        esac
-        sleep 0.5
-        waited=$((waited + 1))
-    done
-    printf '%s' "$(live_title)"
-    return 1
-}
-
 # What GTK is actually drawing with, asked of the toolkit rather than of the
 # key that was written.
 #
@@ -300,7 +275,7 @@ gtk_toolkit_font() {
 }
 
 live_half_gtk() {
-    local rc=0 waited=0 before after
+    local rc=0 after
 
     command -v gsettings >/dev/null 2>&1 || {
         note "live half: no gsettings here; nothing to flip live"
@@ -310,39 +285,16 @@ live_half_gtk() {
         note "live half: neither xdotool nor wmctrl is here, so nothing can read a title"
         return 0
     }
-    if [ ! -r "$LIVE_ART" ]; then
-        bash "$ROOT/test/mkapp.sh" --testing "$ROOT/test/neutrinolivefont.js" "$LIVE_ART" || {
-            echo "FAIL: live half: could not build the live probe"
-            return 1
-        }
-    fi
-
     gtk_save || note "live half: no writable font-name key; the flip may not take"
     # Saved before the app starts and restored on every path out, including the
     # two failures below -- this is a file a person runs on their own desktop.
-    trap 'live_stop; gtk_restore' EXIT
+    trap 'nt_live_stop; gtk_restore' EXIT
 
-    bash "$LIVE_ART" > "$LOGDIR/fontflip-live-app.log" 2>&1 &
-    LIVE_PID=$!
-
-    # By title and not by pid: the .cmd execs an interpreter, so the process
-    # holding the window is a child whose pid this shell never learns.
-    while [ "$waited" -lt 90 ]; do
-        [ -n "$(live_title)" ] && break
-        sleep 1
-        waited=$((waited + 1))
-    done
-    before="$(live_title)"
-    [ -z "$before" ] && {
-        echo "FAIL: live half: no STD-LIVEFONT window in 90s; the probe never came up"
-        live_stop; gtk_restore; trap - EXIT; return 1
-    }
-    note "live before: $before"
-    case "$before" in
-        *src=null*)
-            echo "FAIL: live half: the probe read no toolkit, so a flip would prove nothing"
-            live_stop; gtk_restore; trap - EXIT; return 1 ;;
-    esac
+    nt_live_start "$ROOT/test/neutrinolivefont.js" "$LIVE_ART" \
+        "$LOGDIR/fontflip-live-app.log" ||
+        { nt_live_stop; gtk_restore; trap - EXIT; return 1; }
+    nt_live_up 'STD-LIVEFONT' 90 ||
+        { nt_live_stop; gtk_restore; trap - EXIT; return 1; }
 
     # --- flip one: the ui role, through GtkSettings ---------------------------
     #
@@ -370,7 +322,8 @@ live_half_gtk() {
         note "  reading about this machine and is not asserted; flip two still is."
     else
         expect=$((expect + 1))
-        after="$(live_await "$expect")" || true
+        nt_live_settle 'STD-LIVEFONT' 15 "$expect" || true
+        after="$NT_LIVE_TITLE"
         note "live after 1: ${after:-<nothing>}"
         case "$after" in
             *moved=yes*)
@@ -406,7 +359,8 @@ live_half_gtk() {
         # not always two: a desktop where the ui knob did not reach the toolkit
         # has delivered nothing yet.
         expect=$((expect + 1))
-        after="$(live_await "$expect")" || true
+        nt_live_settle 'STD-LIVEFONT' 15 "$expect" || true
+        after="$NT_LIVE_TITLE"
         note "live after 2: ${after:-<nothing>}"
         case "$after" in
             *mono=LiberationMono*|*mono=DejaVuSerif*)
@@ -422,7 +376,7 @@ live_half_gtk() {
         note "monospace knob restored: $(gsettings get "$mono_schema" monospace-font-name 2>/dev/null)"
     fi
 
-    live_stop
+    nt_live_stop
     gtk_restore
     trap - EXIT
     return "$rc"

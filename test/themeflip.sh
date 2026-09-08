@@ -29,6 +29,10 @@ set -uo pipefail
 # about. Sourcing it brings the harness with it, which is where NT_STATUS_FILE
 # comes from.
 . "$(cd "$(dirname "$0")" && pwd)/lib/title.sh"
+# And the shape all three of this file's live halves had -- launch, first
+# reading, settle, verdict. See lib/live.sh for what was the same in four
+# copies and what is genuinely each knob's own.
+. "$(cd "$(dirname "$0")" && pwd)/lib/live.sh"
 
 MODE="${1:-gtk}"
 ART="${2:-test/neutrinostdtheme.cmd}"
@@ -374,12 +378,8 @@ gtk_change_seen() {
 # has no reason to mention the change. Measured, three instruments over five
 # theme changes on Mint 22: notify::gtk-theme-name 5, style-updated 2, polling
 # 5. This half is the guard on the signal that answers 5.
-# The probe's title. Matched on the prefix the probe writes, because the rest of
-# that title is the reading being taken.
-live_title() { nt_title 'STD-LIVE'; }
-
 live_half_gtk() {
-    local before after n rc=0 waited=0 was_gnome="" was_cinnamon=""
+    local rc=0 was_gnome="" was_cinnamon=""
 
     command -v gsettings >/dev/null 2>&1 || {
         note "live half: no gsettings here; nothing to flip live"
@@ -397,7 +397,7 @@ live_half_gtk() {
         [ -n "$was_cinnamon" ] && gsettings set org.cinnamon.desktop.interface gtk-theme "$was_cinnamon" >/dev/null 2>&1
         rm -rf "$NT_THEME_DIR/NeutrinoFlipA" "$NT_THEME_DIR/NeutrinoFlipB"
         [ -n "$NT_XSETTINGSD_MINE" ] && { kill "$NT_XSETTINGSD_MINE" 2>/dev/null; rm -f "$HOME/.xsettingsd"; }
-        [ -n "${LIVE_PID:-}" ] && { pkill -P "$LIVE_PID" 2>/dev/null; kill "$LIVE_PID" 2>/dev/null; }
+        nt_live_stop
         return 0
     }
 
@@ -429,39 +429,12 @@ live_half_gtk() {
             ;;
     esac
 
-    if [ ! -f "$LIVE_ART" ]; then
-        note "live half: building $LIVE_ART"
-        bash "$ROOT/test/mkapp.sh" --testing \
-            "$ROOT/test/neutrinolivetheme.js" "$LIVE_ART" || {
-            echo "FAIL: live half: could not build the live probe"
-            gtk_live_restore; return 1
-        }
-    fi
-
     knob_clear
     gtk_theme_set NeutrinoFlipA
     sleep 2
-    bash "$LIVE_ART" > "$LOGDIR/flip-live-app.log" 2>&1 &
-    LIVE_PID=$!
-
-    # By title and not by pid: the .cmd execs an interpreter, so the process
-    # holding the window is a child whose pid this shell never learns.
-    while [ "$waited" -lt 90 ]; do
-        [ -n "$(live_title)" ] && break
-        sleep 1
-        waited=$((waited + 1))
-    done
-    before="$(live_title)"
-    [ -z "$before" ] && {
-        echo "FAIL: live half: no STD-LIVE window in 90s; the probe never came up"
-        gtk_live_restore; return 1
-    }
-    note "live before: $before"
-    case "$before" in
-        *src=null*)
-            echo "FAIL: live half: the probe read no toolkit, so a flip would prove nothing"
-            gtk_live_restore; return 1 ;;
-    esac
+    nt_live_start "$ROOT/test/neutrinolivetheme.js" "$LIVE_ART" \
+        "$LOGDIR/flip-live-app.log" || { gtk_live_restore; return 1; }
+    nt_live_up 'STD-LIVE' 90 || { gtk_live_restore; return 1; }
 
     gtk_theme_set NeutrinoFlipB
     case "$NT_KNOB" in
@@ -469,28 +442,11 @@ live_half_gtk() {
         *) note "live knob after the flip: $(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null)" ;;
     esac
 
-    waited=0
-    while [ "$waited" -lt 30 ]; do
-        after="$(live_title)"
-        case "$after" in *"moved=yes"*) break ;; esac
-        sleep 0.5
-        waited=$((waited + 1))
-    done
-    after="$(live_title)"
-    note "live after: ${after:-<nothing>}"
-
-    n="$(nt_field n "$after")"
-    case "$after" in
-        *"moved=yes"*)
-            echo "PASS: the running app was handed a new palette when the desktop's accent moved"
-            note "live readings n=${n:-?}" ;;
-        STD-LIVE*)
-            echo "FAIL: the accent moved under a running app and it was handed nothing (n=${n:-?}); the theme watcher did not fire"
-            rc=1 ;;
-        *)
-            echo "FAIL: live half: the probe stopped writing its title after the flip"
-            rc=1 ;;
-    esac
+    nt_live_settle 'STD-LIVE' 15
+    nt_live_verdict 'STD-LIVE' \
+        "the running app was handed a new palette when the desktop's accent moved" \
+        "the accent moved under a running app and it was handed nothing" \
+        "the theme watcher did not fire" || rc=1
 
     gtk_live_restore
     return "$rc"
@@ -538,7 +494,7 @@ qt_start_window() {
 }
 
 live_half_qt() {
-    local before after n rc=0 waited=0 was="" lit="" drk="" qt_kde_p qt_kde_plugin
+    local rc=0 was="" lit="" drk="" qt_kde_p qt_kde_plugin
 
     command -v plasma-apply-colorscheme >/dev/null 2>&1 || {
         note "live half: no plasma-apply-colorscheme here; this is not a KDE and the GTK plugin delivers nothing live (see qml/window.qml)"
@@ -572,10 +528,7 @@ live_half_qt() {
     was="$(kreadconfig6 --file kdeglobals --group General --key ColorScheme 2>/dev/null)"
     qt_live_restore() {
         plasma-apply-colorscheme "${was:-BreezeLight}" >/dev/null 2>&1
-        [ -n "${LIVE_PID:-}" ] && {
-            pkill -P "$LIVE_PID" 2>/dev/null
-            kill "$LIVE_PID" 2>/dev/null
-        }
+        nt_live_stop
         return 0
     }
 
@@ -601,40 +554,18 @@ live_half_qt() {
     fi
     note "live control: the colour scheme knob moves a Qt palette across launches"
 
-    if [ ! -f "$LIVE_ART" ]; then
-        note "live half: building $LIVE_ART"
-        bash "$ROOT/test/mkapp.sh" --testing \
-            "$ROOT/test/neutrinolivetheme.js" "$LIVE_ART" || {
-            echo "FAIL: live half: could not build the live probe"
-            qt_live_restore; return 1
-        }
-    fi
-
     plasma-apply-colorscheme BreezeLight >/dev/null 2>&1
     sleep 2
-    bash "$LIVE_ART" > "$LOGDIR/flip-live-app.log" 2>&1 &
-    LIVE_PID=$!
+    nt_live_start "$ROOT/test/neutrinolivetheme.js" "$LIVE_ART" \
+        "$LOGDIR/flip-live-app.log" || { qt_live_restore; return 1; }
+    nt_live_up 'STD-LIVE' 180 || { qt_live_restore; return 1; }
 
-    # By title and not by pid: the .cmd execs an interpreter, so the process
-    # holding the window is a child whose pid this shell never learns.
-    while [ "$waited" -lt 180 ]; do
-        [ -n "$(live_title)" ] && break
-        sleep 1
-        waited=$((waited + 1))
-    done
-    before="$(live_title)"
-    [ -z "$before" ] && {
-        echo "FAIL: live half: no STD-LIVE window in 180s; the probe never came up"
-        qt_live_restore; return 1
-    }
-    note "live before: $before"
-    case "$before" in
-        *src=null*)
-            echo "FAIL: live half: the probe read no toolkit, so a flip would prove nothing"
-            qt_live_restore; return 1 ;;
+    # The one arm no other half has, and it is not a failure: a probe that came
+    # up on some other toolkit is a machine this lane has nothing to say about.
+    case "$NT_LIVE_TITLE" in
         *src=qt*) ;;
         *)
-            note "live half: the probe came up on $(nt_field src "$before") and not qt; nothing here to judge the Qt lane by"
+            note "live half: the probe came up on $(nt_field src "$NT_LIVE_TITLE") and not qt; nothing here to judge the Qt lane by"
             qt_live_restore; return 0 ;;
     esac
 
@@ -646,35 +577,18 @@ live_half_qt() {
     plasma-apply-colorscheme BreezeDark >/dev/null 2>&1
     note "live knob after the flip: ColorScheme=$(kreadconfig6 --file kdeglobals --group General --key ColorScheme 2>/dev/null)"
 
-    waited=0
-    while [ "$waited" -lt 30 ]; do
-        after="$(live_title)"
-        case "$after" in *"moved=yes"*) break ;; esac
-        sleep 0.5
-        waited=$((waited + 1))
-    done
-    after="$(live_title)"
-    note "live after: ${after:-<nothing>}"
-
-    n="$(nt_field n "$after")"
-    case "$after" in
-        *"moved=yes"*)
-            echo "PASS: the running app was handed a new palette when the desktop's colour scheme moved"
-            note "live readings n=${n:-?}" ;;
-        STD-LIVE*)
-            echo "FAIL: the colour scheme moved under a running app and it was handed nothing (n=${n:-?}); the theme watcher did not fire"
-            rc=1 ;;
-        *)
-            echo "FAIL: live half: the probe stopped writing its title after the flip"
-            rc=1 ;;
-    esac
+    nt_live_settle 'STD-LIVE' 15
+    nt_live_verdict 'STD-LIVE' \
+        "the running app was handed a new palette when the desktop's colour scheme moved" \
+        "the colour scheme moved under a running app and it was handed nothing" \
+        "the theme watcher did not fire" || rc=1
 
     qt_live_restore
     return "$rc"
 }
 
 live_half() {
-    local before after n rc=0 waited=0
+    local rc=0
 
     # Two of the three modes have a knob that is desktop state rather than a
     # variable in this shell, and each carries its own half above.
@@ -688,55 +602,13 @@ live_half() {
         return $?
     fi
 
-    # Built here when it was not handed in, so a caller that has not been
-    # taught about this probe still runs the half rather than silently not
-    # running it. CI builds and parse-checks it beside the other artifacts.
-    if [ ! -f "$LIVE_ART" ]; then
-        note "live half: building $LIVE_ART"
-        bash "$ROOT/test/mkapp.sh" --testing \
-            "$ROOT/test/neutrinolivetheme.js" "$LIVE_ART" || {
-            echo "FAIL: live half: could not build the live probe"
-            return 1
-        }
-    fi
-
     knob_clear
-    rm -f "$NT_STATUS_FILE"
-    bash "$LIVE_ART" > "$LOGDIR/flip-live-app.log" 2>&1 &
-    LIVE_PID=$!
-    # Every way out of this function goes through here, including the two that
-    # give up before the flip. A half that returns leaving its app on screen
-    # hands the next thing to read a title the same shape as its own -- which
-    # is the hazard the whole wait_gone dance above this exists for, arriving
-    # from the one direction that dance cannot see.
-    live_stop() {
-        pkill -P "$LIVE_PID" 2>/dev/null || true
-        kill "$LIVE_PID" 2>/dev/null || true
-    }
-
-    # The first reading, and the app is not asked to hurry. This is the same
-    # budget the other halves' verifier allows for a first window on this
-    # platform: osascript starting, the bridge coming up, WKWebView creating
-    # its content process.
-    while [ "$waited" -lt 180 ]; do
-        before="$(sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null)"
-        case "$before" in STD-LIVE*) break ;; esac
-        sleep 1
-        waited=$((waited + 1))
-    done
-    case "${before:-}" in
-        STD-LIVE*) note "live before: $before" ;;
-        *)
-            echo "FAIL: live half: no STD-LIVE title in 180s; the probe never came up"
-            live_stop
-            return 1 ;;
-    esac
-    case "$before" in
-        *src=null*)
-            echo "FAIL: live half: the probe read no toolkit, so a flip would prove nothing"
-            live_stop
-            return 1 ;;
-    esac
+    # 180s, and the app is not asked to hurry: that is the same budget the other
+    # halves' verifier allows for a first window on this platform -- osascript
+    # starting, the bridge coming up, WKWebView creating its content process.
+    nt_live_start "$ROOT/test/neutrinolivetheme.js" "$LIVE_ART" \
+        "$LOGDIR/flip-live-app.log" || return 1
+    nt_live_up 'STD-LIVE' 180 || { nt_live_stop; return 1; }
 
     # System Events and not `defaults write`, and this half is the reason the
     # comment in knob_set says which of the two notifies. `defaults write` lands
@@ -754,37 +626,20 @@ live_half() {
     # watcher broken when what failed was the switch.
     if [ "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode' 2>/dev/null)" != "true" ]; then
         note "live half: the appearance switch did not take (automation refused?); no live flip to observe"
-        live_stop
+        nt_live_stop
         return 0
     fi
 
     # Ten seconds against a notification that arrives in one. The palette is
     # delivered by evaluating into the page, so what is being waited for is a
     # notification, a re-read, a diff and one script evaluation.
-    waited=0
-    while [ "$waited" -lt 20 ]; do
-        after="$(sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null)"
-        case "$after" in *"moved=yes"*) break ;; esac
-        sleep 0.5
-        waited=$((waited + 1))
-    done
-    after="$(sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null)"
-    note "live after: ${after:-<nothing>}"
+    nt_live_settle 'STD-LIVE' 10
+    nt_live_verdict 'STD-LIVE' \
+        "the running app was handed a new palette when the desktop flipped" \
+        "the desktop flipped under a running app and it was handed nothing" \
+        "the theme watcher did not fire" || rc=1
 
-    n="$(nt_field n "$after")"
-    case "$after" in
-        *"moved=yes"*)
-            echo "PASS: the running app was handed a new palette when the desktop flipped"
-            note "live readings n=${n:-?}" ;;
-        STD-LIVE*)
-            echo "FAIL: the desktop flipped under a running app and it was handed nothing (n=${n:-?}); the theme watcher did not fire"
-            rc=1 ;;
-        *)
-            echo "FAIL: live half: the probe stopped writing its title after the flip"
-            rc=1 ;;
-    esac
-
-    live_stop
+    nt_live_stop
     return "$rc"
 }
 
