@@ -288,9 +288,26 @@ echo keep > "$APPDIR/carried-over"
 printf 'echo v2\n' > "$SERVE/alive.cmd"
 SPEC2="alive-example-com-1$(nt_pin "$SERVE/alive.cmd")"
 APP2="$(nt_as "$BIN" "$SPEC2" "$WORK/bin")"
+# Said either way, both of them, and neither was. e2e.repin.differs spoke only
+# when the two pins came out the same and e2e.repin.fetched only when the second
+# one would not fetch, so on every good run -- which is every run -- the pair
+# filed nothing at all and the grid carried two holes. Found by matrix.py once
+# --strict started counting a case missing from some of its lanes; before that
+# the cells were drawn as `-` and the run went green.
+#
+# The three below them have the same shape at one remove: they are asked only on
+# the path where the fetch worked, so they say why on the two paths where it
+# could not be asked instead of leaving three more.
+NT_REPIN_REST="e2e.repin.state e2e.repin.launcher e2e.repin.lastwins"
 if [ "$SPEC" = "$SPEC2" ]; then
     nt_fail e2e.repin.differs "second pin expected=different actual=same"
+    nt_skip e2e.repin.fetched "the second pin is the same spec, so there is no new fetch to make"
+    for c in $NT_REPIN_REST; do
+        nt_skip "$c" "the second pin is the same spec, so nothing was replaced"
+    done
 elif "$APP2" --fetch >/dev/null 2>&1; then
+    nt_pass e2e.repin.differs "the second pin is a different spec"
+    nt_pass e2e.repin.fetched "and it fetches"
     if [ -f "$APPDIR/carried-over" ]; then
         nt_pass e2e.repin.state "app dir state survived the version change"
     else
@@ -307,7 +324,11 @@ elif "$APP2" --fetch >/dev/null 2>&1; then
         nt_fail e2e.repin.lastwins "pin precedence expected=last-wins actual=both-or-neither"
     fi
 else
+    nt_pass e2e.repin.differs "the second pin is a different spec"
     nt_fail e2e.repin.fetched "second pin expected=fetched actual=failed"
+    for c in $NT_REPIN_REST; do
+        nt_skip "$c" "the second pin did not fetch, so nothing below it was replaced"
+    done
 fi
 cp "$WORK/v1.cmd" "$SERVE/alive.cmd"
 
