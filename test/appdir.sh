@@ -52,7 +52,10 @@ APP="$(cd "$(dirname "$APP")" && pwd)/$(basename "$APP")"
 WORK="$(mktemp -d)"
 trap 'chmod -R u+w "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 
-FAILURES=0
+# The six words. This suite had no `pass` at all -- a `report` and a `fail` and
+# nothing else -- so every green assertion in it was invisible, and a lane where
+# the Qt document has no name looked exactly like a lane that stopped asking.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
 UP_WAIT=25
 
 # The two knobs this file needs for the qml it drives itself.
@@ -75,8 +78,21 @@ UP_WAIT=25
 export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage"
 export QML_XHR_ALLOW_FILE_READ=1
 
-report() { echo "report: $*"; }
-fail()   { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
+report() { nt_report "$*"; }
+# The sections below the controls, for a lane that cannot reach them.
+skip_sections() {
+    nt_skip appdir.control.payload-live "$1"
+    nt_skip appdir.control.launched "$1"
+    nt_skip appdir.nodoc.empty "$1"
+    nt_skip appdir.nodoc.descriptor "$1"
+    nt_skip appdir.plant.qml "$1"
+    nt_skip appdir.plant.js "$1"
+    nt_skip appdir.plant.window "$1"
+    nt_skip appdir.race.not-read "$1"
+    nt_skip appdir.race.window "$1"
+    nt_skip appdir.inject.string "$1"
+    nt_skip appdir.inject.window "$1"
+}
 
 # Mirrors find_qt_runtime, absolute paths included: the distributions that keep
 # the QML runtime off PATH do not agree on where they put it instead.
@@ -221,9 +237,21 @@ PLANTED
 
 echo "=== appdir: the Qt document has no name ==="
 report "lane qml=${QML_RUNNER:-none} gijs=${GIJS_RUNNER:-none} display=${DISPLAY:-none}"
-[ -z "$QML_RUNNER" ] && fail "no qml runtime on this lane; nothing below is a reading"
-[ -n "$GIJS_RUNNER" ] &&
-    report "note: $GIJS_RUNNER is present, so the launcher takes that branch and run_qt never runs"
+if [ -z "$QML_RUNNER" ]; then
+    nt_fail appdir.control.qml-runtime "no qml runtime on this lane; nothing below is a reading"
+    skip_sections "there is no qml runtime here, so the Qt launch path was never taken"
+    nt_finish
+fi
+nt_pass appdir.control.qml-runtime "this lane has a qml runtime to take the Qt branch with"
+
+# A note that was a skip. Where gijs is present the launcher takes that branch
+# and run_qt never runs, so every section below is about a path this launch did
+# not go down -- which is eleven cases unanswerable rather than false, and was
+# a sentence in the log and an empty column in the grid.
+if [ -n "${GIJS_RUNNER:-}" ]; then
+    skip_sections "$GIJS_RUNNER is present, so the launcher takes that branch and run_qt never runs"
+    nt_finish
+fi
 
 # The planted document, run by the engine directly. If this does not announce
 # itself the payload is dead and every refusal below means nothing.
@@ -238,8 +266,11 @@ if [ -n "$QML_RUNNER" ]; then
     LIVE_RAN=NO
     grep -qa __APPDIR_PLANTED_QML__ "$WORK/live.log" && LIVE_RAN=YES
     report "control payload live=$LIVE_RAN window=$LIVE"
-    [ "$LIVE_RAN" = YES ] ||
-        fail "control expected=the planted document announces itself when the engine runs it actual=silent; every refusal below is unmeasured"
+    if [ "$LIVE_RAN" = YES ]; then
+        nt_pass appdir.control.payload-live "the planted document announces itself when the engine runs it"
+    else
+        nt_fail appdir.control.payload-live "control expected=the planted document announces itself when the engine runs it actual=silent; every refusal below is unmeasured"
+    fi
 fi
 
 # =====================================================================
@@ -250,15 +281,20 @@ run_app "$CTL"
 CTL_FILES="$(ls -1a "$CTL/app" 2>/dev/null | grep -v '^\.\{1,2\}$' | tr '\n' ',' | sed 's/,$//')"
 report "nodoc window=$LAST_WINDOW left=${CTL_FILES:-none} argv=$(sed -e 's/ *$//' -e 's/.* //' <<<"$LAST_ARGV")"
 if [ "$LAST_WINDOW" != UP ]; then
-    fail "the shipped build did not come up; every reading below is unmeasured"
+    nt_fail appdir.control.launched "the shipped build did not come up; every reading below is unmeasured"
     report "nodoc tail: $(tail -c 400 <<<"$LAST_LOG" | tr '\n' ' ')"
+else
+    nt_pass appdir.control.launched "the shipped build comes up"
 fi
-[ -z "$CTL_FILES" ] ||
-    fail "nodoc expected=app_dir empty after a launch actual=$CTL_FILES"
+if [ -z "$CTL_FILES" ]; then
+    nt_pass appdir.nodoc.empty "app_dir is empty after a launch"
+else
+    nt_fail appdir.nodoc.empty "nodoc expected=app_dir empty after a launch actual=$CTL_FILES"
+fi
 case "$LAST_ARGV" in
-    "") fail "nodoc expected=an engine to read a command line from actual=none was ever seen" ;;
-    */fd/[0-9]*) ;;
-    *) fail "nodoc expected=the engine's argument names a descriptor actual=$LAST_ARGV" ;;
+    "") nt_fail appdir.nodoc.descriptor "nodoc expected=an engine to read a command line from actual=none was ever seen" ;;
+    */fd/[0-9]*) nt_pass appdir.nodoc.descriptor "the engine's argument names a descriptor" ;;
+    *) nt_fail appdir.nodoc.descriptor "nodoc expected=the engine's argument names a descriptor actual=$LAST_ARGV" ;;
 esac
 
 # =====================================================================
@@ -275,9 +311,21 @@ AFTER="$(cat "$L/app/window.qml" "$L/app/neutrino.js" 2>/dev/null | cksum)"
 QML_RAN="$(marked __APPDIR_PLANTED_QML__)"
 JS_RAN="$(marked __APPDIR_PLANTED_JS__)"
 report "plant qml_ran=$QML_RAN js_ran=$JS_RAN window=$LAST_WINDOW untouched=$([ "$BEFORE" = "$AFTER" ] && echo YES || echo NO)"
-[ "$QML_RAN" = NO ] || fail "plant expected=the planted window.qml is not read actual=it ran"
-[ "$JS_RAN" = NO ] || fail "plant expected=the planted neutrino.js is not read actual=it ran"
-[ "$LAST_WINDOW" = UP ] || fail "plant expected=the app comes up beside a planted document actual=DOWN"
+if [ "$QML_RAN" = NO ]; then
+    nt_pass appdir.plant.qml "the planted window.qml is not read"
+else
+    nt_fail appdir.plant.qml "plant expected=the planted window.qml is not read actual=it ran"
+fi
+if [ "$JS_RAN" = NO ]; then
+    nt_pass appdir.plant.js "the planted neutrino.js is not read"
+else
+    nt_fail appdir.plant.js "plant expected=the planted neutrino.js is not read actual=it ran"
+fi
+if [ "$LAST_WINDOW" = UP ]; then
+    nt_pass appdir.plant.window "the app comes up beside a planted document"
+else
+    nt_fail appdir.plant.window "plant expected=the app comes up beside a planted document actual=DOWN"
+fi
 chmod u+w "$L/app/window.qml" "$L/app/neutrino.js" 2>/dev/null
 
 # =====================================================================
@@ -313,9 +361,16 @@ kill "$RACER" 2>/dev/null; wait "$RACER" 2>/dev/null
 RACE_QML="$(marked __APPDIR_PLANTED_QML__)"
 RACE_JS="$(marked __APPDIR_PLANTED_JS__)"
 report "race qml_ran=$RACE_QML js_ran=$RACE_JS window=$LAST_WINDOW"
-{ [ "$RACE_QML" = NO ] && [ "$RACE_JS" = NO ]; } ||
-    fail "race expected=a rewritten document is not read actual=qml=$RACE_QML js=$RACE_JS"
-[ "$LAST_WINDOW" = UP ] || fail "race expected=the app comes up under a rewriter actual=DOWN"
+if [ "$RACE_QML" = NO ] && [ "$RACE_JS" = NO ]; then
+    nt_pass appdir.race.not-read "a document rewritten throughout the launch is not read"
+else
+    nt_fail appdir.race.not-read "race expected=a rewritten document is not read actual=qml=$RACE_QML js=$RACE_JS"
+fi
+if [ "$LAST_WINDOW" = UP ]; then
+    nt_pass appdir.race.window "the app comes up under a rewriter"
+else
+    nt_fail appdir.race.window "race expected=the app comes up under a rewriter actual=DOWN"
+fi
 
 # =====================================================================
 # inject: the path is a string and not program text
@@ -333,17 +388,28 @@ if mkdir -p "$INJ_DIR" 2>/dev/null; then
     run_app "$INJ_DIR"
     INJ_RAN="$(marked __APPDIR_INJECTED__)"
     report "inject ran=$INJ_RAN window=$LAST_WINDOW"
-    [ "$INJ_RAN" = NO ] || fail "inject expected=the path is a string actual=the statement in it ran"
-    [ "$LAST_WINDOW" = UP ] ||
-        fail "inject expected=the app comes up from a directory with a quote in its name actual=DOWN"
+    if [ "$INJ_RAN" = NO ]; then
+        nt_pass appdir.inject.string "the path is a string and not program text"
+    else
+        nt_fail appdir.inject.string "inject expected=the path is a string actual=the statement in it ran"
+    fi
+    if [ "$LAST_WINDOW" = UP ]; then
+        nt_pass appdir.inject.window "the app comes up from a directory with a quote in its name"
+    else
+        nt_fail appdir.inject.window "inject expected=the app comes up from a directory with a quote in its name actual=DOWN"
+    fi
 else
-    report "inject: this filesystem would not take the directory name; unmeasured"
+    # "unmeasured" was the word this line already used. A filesystem that will
+    # not take the name is one where the question cannot be put, which is not
+    # the same as the quoting having failed -- and the two were one empty cell.
+    WHY="this filesystem would not take the directory name, so the quoting was never put to it"
+    nt_skip appdir.inject.string "$WHY"
+    nt_skip appdir.inject.window "$WHY"
 fi
 
 app_down
-echo "=== appdir: $FAILURES failure(s) ==="
 # The count, and not whether there was one. test/run.sh adds a lane up by summing
 # what its suites exit with, which is the whole reason it does not have to parse a
 # log -- so a suite that saturates at 1 tells it that a lane with five broken
-# assertions has one thing wrong with it.
-exit "$FAILURES"
+# assertions has one thing wrong with it. nt_finish is where that contract lives.
+nt_finish

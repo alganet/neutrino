@@ -398,6 +398,36 @@ docswap.swap.window	a window came up at all three delays	windows-content
 docswap.swap.one-read	both markers came from one read at all three delays	windows-content
 docswap.oldswap.reproduced	the defect reproduces at at least one delay	windows-content
 
+# The program the Qt launch path runs, from test/appdir.sh -- kde alone, which
+# is the lane that has a QML runtime and no gijs to take the other branch.
+#
+# This suite had no `pass` at all: a `report` and a `fail` and nothing else, so
+# every green assertion in three hundred and fifty lines was invisible and a
+# lane where the Qt document has no name looked exactly like a lane that had
+# stopped asking. Each of these fails against the commit before the fix -- the
+# document is created under `set -C`, unlinked at once and handed over as a
+# descriptor path, so there is no name to plant under and nothing to replace.
+#
+# Two of them were prose that meant a skip. Where gijs is present the launcher
+# takes that branch and run_qt never runs, so all eleven cases below the runtime
+# control are about a path this launch did not go down -- a `note:` in the log
+# and an empty column in the grid. And a filesystem that will not take a
+# directory name with a quote in it is one where the injection question cannot
+# be put, which is not the same as the quoting having failed; the line already
+# called that "unmeasured".
+appdir.control.qml-runtime	this lane has a qml runtime to take the Qt branch with	kde
+appdir.control.payload-live	the planted document announces itself when run directly	kde
+appdir.control.launched	the shipped build comes up	kde
+appdir.nodoc.empty	app_dir is empty after a launch	kde
+appdir.nodoc.descriptor	the engine's argument names a descriptor	kde
+appdir.plant.qml	the planted window.qml is not read	kde
+appdir.plant.js	the planted neutrino.js is not read	kde
+appdir.plant.window	the app comes up beside a planted document	kde
+appdir.race.not-read	a document rewritten throughout the launch is not read	kde
+appdir.race.window	the app comes up under a rewriter	kde
+appdir.inject.string	the path is a string and not program text	kde
+appdir.inject.window	the app comes up from a directory with a quote in its name	kde
+
 # A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
 # because the failure it provokes is the WebView2 package download 404ing and no
 # other lane has that path to fail on.
