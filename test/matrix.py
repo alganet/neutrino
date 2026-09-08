@@ -159,7 +159,7 @@ def text(lanes, grid, reg, holes):
                "expected to report it and did not" % (NOTAPP, ABSENT))
     if holes:
         out.append("")
-        out.append("declared in cases.tsv and reported by no lane that it "
+        out.append("declared in cases.tsv and not reported by every lane it "
                    "applies to (%d):" % len(holes))
         for cid, where in holes:
             out.append("  %-*s  expected on: %s" % (w, cid, where))
@@ -223,11 +223,24 @@ def main(argv):
     # and did not mention it. Only lanes that published are considered: a lane
     # that did not run is a different problem and this is not the tool that
     # notices it.
+    #
+    # *Any* missing lane, not only a case missing on all of them. This asked
+    # `len(missing) == len(want)` until now, so a case three lanes reported and
+    # the fourth did not was drawn as a `-` and exited 0 -- while rank() above
+    # was already sorting that row to the top and saying why in its own comment:
+    # "a case three lanes report and the fourth does not is the same shape of
+    # question as one three lanes pass and the fourth fails". One file, two
+    # answers, and the exit status had the wrong one.
+    #
+    # Found by a grid diff: three env.toolkit.* cases went missing on
+    # macos-netinstall when netinstall/test/env.sh was converted, because the
+    # Darwin arm of its toolkit block set two variables and filed no rows. The
+    # diff against the previous run showed it; --strict returned 0.
     holes = []
     for cid, (_, spec) in sorted(reg.items()):
         want = [l for l in lanes if applies(spec, l)]
         missing = [l for l in want if l not in grid.get(cid, {})]
-        if want and len(missing) == len(want):
+        if want and missing:
             holes.append((cid, " ".join(missing)))
 
     print(markdown(lanes, grid, reg, holes) if fmt == "markdown"
@@ -274,7 +287,17 @@ def main(argv):
         for cid in stray:
             print("  %s   on: %s" % (cid, " ".join(sorted(grid[cid]))))
 
-    if strict and (quiet or stray):
+    # Holes count too, and did not until now. This asked only about `quiet` and
+    # `stray`, so a case its registry says applies to four lanes and three
+    # reported was drawn as a `-`, printed in the list above, and exited 0 --
+    # which meant the one reader who had to notice it was a human comparing two
+    # grids. Three of them arrived that way in one push and the diff caught what
+    # this did not.
+    #
+    # A hole is the same failure as a quiet lane at a finer grain: the lane
+    # published, the registry expected the case, and nothing was filed. There is
+    # no reason for one of those to fail the run and the other to pass it.
+    if strict and (quiet or stray or holes):
         return 1
     return 0
 

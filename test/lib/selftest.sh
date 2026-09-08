@@ -456,6 +456,48 @@ if command -v "$(nt_python)" >/dev/null 2>&1 && [ -f "$WORK/sheet.html" ]; then
     else
         ok "matrix.py --strict fails on a lane that went quiet"
     fi
+
+    # And a case one lane reports and another does not, which is the same
+    # failure at a finer grain and did not fail this tool until now: a case
+    # missing on *some* of the lanes it applies to was drawn as a `-`, listed
+    # under the grid, and exited 0. Three of those arrived in one push -- the
+    # Darwin arm of netinstall/test/env.sh's toolkit block set two variables and
+    # filed no rows -- and the only thing that noticed was a human diffing two
+    # grids.
+    #
+    # Two lanes are needed to have a partial hole at all, so the second sheet is
+    # the first with its lane renamed and one case cut out of the digest.
+    sed -e 's/"lane":"selftest"/"lane":"selftest2"/' \
+        -e 's/,{"id":"sheet.probe.c","v":"FAIL","suite":"[^"]*"}//' \
+        "$WORK/sheet.html" > "$WORK/sheet2.html"
+    {
+        printf 'sheet.probe.a\ta control\tselftest selftest2\n'
+        printf 'sheet.probe.b\ta control\tselftest selftest2\n'
+        printf 'sheet.probe.c\tthe one the second lane drops\tselftest selftest2\n'
+    } > "$MREG"
+    if "$(nt_python)" "$ROOT/test/matrix.py" --strict --registry "$MREG" \
+        "$WORK/sheet.html" "$WORK/sheet2.html" >/dev/null 2>&1; then
+        bad "matrix.py --strict passed a case one lane reported and another did not"
+    else
+        ok "matrix.py --strict fails on a case missing from one of its lanes"
+    fi
+    # The control for it: the same two sheets, with the registry saying that the
+    # third case applies to the lane that has it and not to the one that does
+    # not. Nothing is then missing and nothing is undeclared, and it must pass --
+    # or the check above would be firing on any two-lane grid rather than on the
+    # hole. `sheet.probe.c` stays declared, because dropping it would trip the
+    # undeclared-id check instead and prove the wrong thing.
+    {
+        printf 'sheet.probe.a\ta control\tselftest selftest2\n'
+        printf 'sheet.probe.b\ta control\tselftest selftest2\n'
+        printf 'sheet.probe.c\tdeclared only where it is reported\tselftest\n'
+    } > "$MREG"
+    if "$(nt_python)" "$ROOT/test/matrix.py" --strict --registry "$MREG" \
+        "$WORK/sheet.html" "$WORK/sheet2.html" >/dev/null 2>&1; then
+        ok "and passes two lanes that both reported everything declared"
+    else
+        bad "matrix.py --strict failed two lanes that reported all their cases"
+    fi
 else
     echo "  SKIP: no python3 or no sheet, so matrix.py --strict did not run"
 fi
