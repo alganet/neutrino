@@ -321,3 +321,41 @@ fetchbound.fallback.size.nocache	and leaves nothing in the cache	gjs bsd windows
 fetchbound.fallback.clock	the fallback gives up on an endless dribble	gjs bsd windows-launch macos-netinstall
 fetchbound.fallback.clock.names	and names the host rather than blaming the network	gjs bsd windows-launch macos-netinstall
 fetchbound.stderr.guard	a fetch whose stderr is already past the limit still succeeds	gjs bsd windows-launch macos-netinstall
+
+# The downloader's own configuration, from netinstall/test/fetchconf.sh. The
+# same four lanes, and the most gated suite in the tree: the downloader has to
+# be curl, the curl has to honour CURL_HOME, a config location has to be both
+# honoured and readable under the fetch phase, and the fallback branch needs a
+# wget. Every one of those gates reports per case now rather than printing a
+# line of prose and filing nothing.
+#
+# fetchconf.override.size and .time are the pair that made this worth doing.
+# They were asserted unconditionally against a variable the gate above them
+# leaves as "unasked", so a lane whose curl does not honour CURL_HOME said
+# "SKIP: this curl does not honour CURL_HOME" and then went red twice on
+# actual='unasked' -- a lane reporting a failure about a measurement it had
+# just said it could not take. Measured both ways: forcing that gate gives two
+# failures on the version before this and two skips after it.
+#
+# fetchconf.steal.control is one id with two expectations, the same shape as
+# envlen.trunc.keep255. Both branches read $STEAL_IN; what differs is what the
+# platform's confinement should have done with it -- POSIX grants the blobs
+# directory so the steal lands inside it at 31b, and windows grants the payload
+# file alone so it cannot land at all and reads 0b. One claim, one measurement.
+#
+# The two sentences beside it are POSIX-only: on windows the steal fails inside
+# curl before netinstall inspects a destination, so there is no sentence of
+# netinstall's to assert. That was a note in prose and is a skip as well now,
+# because windows-launch is a lane both cases are expected on.
+fetchconf.server.up	the hostile server came up	gjs bsd windows-launch macos-netinstall
+fetchconf.control.benign	a benign payload with no configuration anywhere is fetched	gjs bsd windows-launch macos-netinstall
+fetchconf.downloader.line	--info's downloader line ends in the output flag, dest and url	gjs bsd windows-launch macos-netinstall
+fetchconf.info.config	--info names what the downloader reads besides its argv	gjs bsd windows-launch macos-netinstall
+fetchconf.kctl	handed a config by name, this curl reads it	gjs bsd windows-launch macos-netinstall
+fetchconf.locations	every configuration location reads exactly as measured	gjs bsd windows-launch macos-netinstall
+fetchconf.override.size	a config cannot raise the argv's size bound	gjs bsd windows-launch macos-netinstall
+fetchconf.override.time	a config cannot lower the argv's clock either	gjs bsd windows-launch macos-netinstall
+fetchconf.steal.control	a config's output flag reaches exactly what this platform grants	gjs bsd windows-launch macos-netinstall
+fetchconf.steal.message	netinstall says the downloader wrote nothing where it was told	gjs bsd windows-launch macos-netinstall
+fetchconf.steal.oldsentence	and not the superseded sentence about a file that was never written	gjs bsd windows-launch macos-netinstall
+fetchconf.wget.control	the fallback branch fetches a benign payload	gjs bsd windows-launch macos-netinstall
