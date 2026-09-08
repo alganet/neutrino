@@ -48,13 +48,37 @@ for v in TIGHT FAILCLOSED SESSION OPENSESSION; do
         eval "$v=\"\$(cd \"\$(dirname \"$b\")\" && pwd)/\$(basename \"$b\")\""
 done
 . "$(dirname "$0")/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity, so the one sourced second is the one this file
+# speaks. probe(), nt_note and nt_result are lib.sh's and are not shadowed.
+#
+# The tenth netinstall suite through the conversion, and the one with the most
+# ways to stop early. Four binaries are optional arguments -- tight, fail-closed,
+# session, open-session -- and the session half is Linux-only and needs a user
+# namespace the runner may refuse. Where the earlier suites could put a skip in
+# an else, this one has to put them before an `exit`, because a suite that
+# returns in the middle leaves every case after it as a hole and a hole reads
+# like a lane that stopped reporting.
+. "$(cd "$(dirname "$0")/../../test/lib" && pwd)/harness.sh"
+# The annotation lib.sh's nt_fail emitted, kept by name so a red netinstall check
+# still says so on the run page.
+NT_ANNOTATE=netinstall
+
+# The session half's cases, listed once because three different places have to
+# say "none of these could be asked here".
+NT_SESSION_CASES="phases.session.baseline phases.session.strict.refused \
+phases.session.strict.said phases.session.pid.norun phases.session.pid.said \
+phases.session.normal.ran phases.session.normal.said phases.session.fork"
+nt_skip_session() {
+    local c
+    for c in $NT_SESSION_CASES; do nt_skip "$c" "$1"; done
+}
 
 WORK="$(mktemp -d)"
 SERVE="$WORK/serve"
 mkdir -p "$SERVE" "$WORK/bin"
 export NEUTRINO_HOME="$WORK/home"
 
-FAILURES=0
 
 # One line per measurement, printed together at the end.
 RESULTS="$WORK/results.log"
@@ -159,11 +183,10 @@ rm -f "$HOMEJAR"
 if CURL_HOME="$(nt_native "$WORK/rc-control")" "$CURLBIN" -fsS \
         "$NEUTRINO_TEST_ORIGIN/cost.txt" -o "$WORK/control.out" >/dev/null 2>&1 &&
    [ -f "$HOMEJAR" ]; then
-    echo "  PASS: CONTROL_JAR_WRITTEN"
+    nt_pass phases.control.jar "CONTROL_JAR_WRITTEN"
     CONTROL_OK=1
 else
-    nt_fail "control expected=CONTROL_JAR_WRITTEN actual=no jar at $HOMEJAR (curl $("$CURLBIN" --version 2>&1 | head -1))"
-    FAILURES=$((FAILURES + 1))
+    nt_fail phases.control.jar "control expected=CONTROL_JAR_WRITTEN actual=no jar at $HOMEJAR (curl $("$CURLBIN" --version 2>&1 | head -1))"
 fi
 rm -f "$HOMEJAR"
 
@@ -173,8 +196,14 @@ rm -f "$HOMEJAR"
 #
 # Each run starts from an empty cache, or netinstall answers from the blob it
 # already has and no fetch child is created at all.
-probe_write() {
-    local app="$1" label="$2" jar="$3" name="$4" want="$5"
+# assert_write and assert_cost, and the rename is the same one writable.sh,
+# envlen.sh and confine.sh each needed: these are the helpers that take their id
+# through a variable, so they are the ones the registry scan in
+# test/lib/selftest.sh cannot follow by reading the file, and assert_[a-z_]+ is
+# the shape that scan knows. It also stops something that asserts from being
+# named after the probe() beside it, which only records.
+assert_write() {
+    local id="$1" app="$2" label="$3" jar="$4" name="$5" want="$6"
     local out rc got
 
     rm -rf "$NEUTRINO_HOME"
@@ -191,18 +220,16 @@ probe_write() {
     out="$(CURL_HOME="$(nt_native "$NEUTRINO_HOME/blobs")" nt_timeout 60 "$app" 2>"$WORK/err")"
     rc=$?
     if ! grep -q APP_RAN <<<"$out"; then
-        nt_fail "$label/$name: the fetch itself did not complete (rc=$rc) err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$id" "$label/$name: the fetch itself did not complete (rc=$rc) err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
         return
     fi
     got=BLOCKED
     [ -f "$jar" ] && got=ESCAPED
     probe "$label: ${name}_${got}"
     if [ "$got" = "$want" ]; then
-        echo "  PASS: $label ${name}_${got}"
+        nt_pass "$id" "$label ${name}_${got}"
     else
-        nt_fail "$label/$name expected=$want actual=$got"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$id" "$label/$name expected=$want actual=$got"
     fi
     rm -f "$jar"
 }
@@ -246,9 +273,9 @@ case "$SAYS_FETCH" in
 esac
 
 echo "=== Default tier: what the fetch child could write ==="
-probe_write "$APP" default "$HOMEJAR" HOMEJAR "$WANT_HOME"
+assert_write phases.fetch.home "$APP" default "$HOMEJAR" HOMEJAR "$WANT_HOME"
 report_confine default
-probe_write "$APP" default "$TMPJAR" TMPJAR "$WANT_TMP"
+assert_write phases.fetch.tmp "$APP" default "$TMPJAR" TMPJAR "$WANT_TMP"
 
 echo "=== Default tier: the in-reach control ==="
 # The other half of the control pair: a jar inside the directory the fetch
@@ -272,30 +299,41 @@ if [ "$NT_WINDOWS" = "1" ]; then
     # And the jar staying absent is the assertion, not a control. It is what
     # says the grant is a file and not a directory: the obvious implementation
     # -- labelling blobs -- would write this jar and pass everything above it.
+    # Two facts here and they are two cases. The control is that the child ran
+    # at all -- without it every BLOCKED above is unearned -- and the assertion
+    # is that the jar stayed absent, which is what says the grant is a file and
+    # not a directory. On the other three platforms the control is the jar being
+    # written, because there the grant *is* the directory. One id for the
+    # control with two expectations, and a second id for the windows-only claim.
     if ! grep -q APP_RAN <<<"$OUT"; then
-        nt_fail "in-reach control expected=APP_RAN actual=nothing; the fetch never completed and every BLOCKED above is unearned; err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
-        FAILURES=$((FAILURES + 1))
+        nt_fail phases.control.inreach "in-reach control expected=APP_RAN actual=nothing; the fetch never completed and every BLOCKED above is unearned; err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
+        nt_skip phases.blobjar "the fetch never completed, so there is nothing to read the grant's width from"
     elif [ -f "$BLOBJAR" ]; then
+        nt_pass phases.control.inreach "APP_RAN -- the child ran and read the config"
         probe "default: BLOBJAR_ESCAPED -- the grant is wider than the payload file"
-        nt_fail "BLOBJAR expected=BLOCKED actual=ESCAPED; the fetch child wrote $BLOBJAR"
-        FAILURES=$((FAILURES + 1))
+        nt_fail phases.blobjar "BLOBJAR expected=BLOCKED actual=ESCAPED; the fetch child wrote $BLOBJAR"
     else
+        nt_pass phases.control.inreach "APP_RAN -- the child ran and read the config"
         probe "default: BLOBJAR_BLOCKED -- the payload file was the only write"
-        echo "  PASS: BLOBJAR_BLOCKED -- the child ran and the payload file was its only write"
+        nt_pass phases.blobjar "BLOBJAR_BLOCKED -- the child ran and the payload file was its only write"
     fi
     rm -f "$BLOBJAR"
 elif [ -f "$BLOBJAR" ]; then
-    echo "  PASS: INJAR_WRITTEN -- the config is read from inside the confinement"
+    nt_pass phases.control.inreach "INJAR_WRITTEN -- the config is read from inside the confinement"
 else
-    nt_fail "in-reach control expected=INJAR_WRITTEN actual=nothing at $BLOBJAR; every BLOCKED above is unearned"
-    FAILURES=$((FAILURES + 1))
+    nt_fail phases.control.inreach "in-reach control expected=INJAR_WRITTEN actual=nothing at $BLOBJAR; every BLOCKED above is unearned"
 fi
 
+if [ -z "$APP_TIGHT" ]; then
+    for c in phases.tight.home phases.tight.tmp phases.tight.blobjar phases.info.tight phases.cost.tight; do
+        nt_skip "$c" "no tight-tier binary was given to this suite"
+    done
+fi
 if [ -n "$APP_TIGHT" ]; then
     echo "=== Tight tier: the same two questions ==="
-    probe_write "$APP_TIGHT" tight "$HOMEJAR" HOMEJAR "$WANT_TIGHT_HOME"
+    assert_write phases.tight.home "$APP_TIGHT" tight "$HOMEJAR" HOMEJAR "$WANT_TIGHT_HOME"
     report_confine tight
-    probe_write "$APP_TIGHT" tight "$TMPJAR" TMPJAR "$WANT_TIGHT_TMP"
+    assert_write phases.tight.tmp "$APP_TIGHT" tight "$TMPJAR" TMPJAR "$WANT_TIGHT_TMP"
 
     # The strongest thing the tight tier says, and the one that separates it
     # from every other platform here: the fetch child may write the payload file
@@ -306,6 +344,11 @@ if [ -n "$APP_TIGHT" ]; then
     # It is also the control that says the tier is a file grant rather than a
     # directory one. A tight tier that had taken the obvious route -- labelling
     # blobs -- would write this jar and pass everything above it.
+    if [ "$NT_WINDOWS" != "1" ]; then
+        # The other three grant the blobs directory wholesale, so there is no
+        # narrower grant here to read. Only windows makes this claim.
+        nt_skip phases.tight.blobjar "this platform grants the blobs directory, so the payload file is not a narrower grant"
+    fi
     if [ "$NT_WINDOWS" = "1" ]; then
         echo "=== Tight tier: and nothing else, not even in blobs ==="
         rm -rf "$NEUTRINO_HOME"
@@ -314,14 +357,12 @@ if [ -n "$APP_TIGHT" ]; then
         OUT="$(CURL_HOME="$(nt_native "$NEUTRINO_HOME/blobs")" nt_timeout 60 "$APP_TIGHT" 2>"$WORK/err")"
         if grep -q APP_RAN <<<"$OUT" && [ ! -f "$BLOBJAR" ]; then
             probe "tight: BLOBJAR_BLOCKED -- the payload file was the only write"
-            echo "  PASS: BLOBJAR_BLOCKED"
+            nt_pass phases.tight.blobjar "BLOBJAR_BLOCKED"
         elif [ -f "$BLOBJAR" ]; then
             probe "tight: BLOBJAR_ESCAPED -- the grant is wider than the payload file"
-            nt_fail "tight/BLOBJAR expected=BLOCKED actual=ESCAPED; the fetch child wrote $BLOBJAR"
-            FAILURES=$((FAILURES + 1))
+            nt_fail phases.tight.blobjar "tight/BLOBJAR expected=BLOCKED actual=ESCAPED; the fetch child wrote $BLOBJAR"
         else
-            nt_fail "tight/BLOBJAR: the fetch itself did not complete; err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
-            FAILURES=$((FAILURES + 1))
+            nt_fail phases.tight.blobjar "tight/BLOBJAR: the fetch itself did not complete; err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
         fi
         rm -f "$BLOBJAR"
     fi
@@ -355,21 +396,18 @@ if [ -n "$APP_TIGHT" ]; then
     probe "--info fetch line, tight: ${TINFO:-<absent>}"
     if [ "$NT_WINDOWS" = "1" ]; then
         if grep -q "low integrity" <<<"$TINFO"; then
-            echo "  PASS: the tight tier's fetch line names what it applies"
+            nt_pass phases.info.tight "the tight tier's fetch line names what it applies"
         else
-            nt_fail "--info fetch tight expected=low integrity actual=$TINFO"
-            FAILURES=$((FAILURES + 1))
+            nt_fail phases.info.tight "--info fetch tight expected=low integrity actual=$TINFO"
         fi
     fi
 fi
 if [ -z "$INFO" ]; then
-    nt_fail "--info expected=a fetch line actual=none"
-    FAILURES=$((FAILURES + 1))
+    nt_fail phases.info.fetch "--info expected=a fetch line actual=none"
 elif grep -q "$WANT_INFO" <<<"$INFO"; then
-    echo "  PASS: --info names this platform's fetch mechanism ($WANT_INFO)"
+    nt_pass phases.info.fetch "--info names this platform's fetch mechanism ($WANT_INFO)"
 else
-    nt_fail "--info fetch expected=$WANT_INFO actual=$INFO"
-    FAILURES=$((FAILURES + 1))
+    nt_fail phases.info.fetch "--info fetch expected=$WANT_INFO actual=$INFO"
 fi
 
 # =====================================================================
@@ -382,21 +420,20 @@ fi
 # on windows. Kept as an assertion rather than a reading, because the day this
 # stops being true is the day the fix stops being affordable.
 echo "=== Cost: curl under the run phase's own confinement ==="
-cost_probe() {
-    local app="$1" label="$2" out
+assert_cost() {
+    local id="$1" app="$2" label="$3" out
     rm -rf "$NEUTRINO_HOME"
     out="$(nt_timeout 60 "$app" 2>"$WORK/err")"
     case "$out" in
         *PAYLOADCURL_OK*)
             probe "$label: PAYLOADCURL_OK"
-            echo "  PASS: $label curl works under the run phase confinement" ;;
-        *)  nt_fail "$label: curl under the run phase expected=PAYLOADCURL_OK actual=$(tr '\n' ' ' <<<"$out" | cut -c1-160)"
-            FAILURES=$((FAILURES + 1)) ;;
+            nt_pass "$id" "$label curl works under the run phase confinement" ;;
+        *)  nt_fail "$id" "$label: curl under the run phase expected=PAYLOADCURL_OK actual=$(tr '\n' ' ' <<<"$out" | cut -c1-160)" ;;
     esac
     probe "$label: run phase is '$("$app" --info 2>/dev/null | awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print }')'"
 }
-cost_probe "$APP" default
-[ -n "$APP_TIGHT" ] && cost_probe "$APP_TIGHT" tight
+assert_cost phases.cost.default "$APP" default
+[ -n "$APP_TIGHT" ] && assert_cost phases.cost.tight "$APP_TIGHT" tight
 
 [ "$CONTROL_OK" = "1" ] || probe "the control failed, so every BLOCKED above is unearned"
 
@@ -409,6 +446,11 @@ cost_probe "$APP" default
 # changed, windows without any hook at all. NEUTRINO_TEST_NO_CONFINE is what
 # stands in here for the kernel too old for Landlock, the macOS that rejects the
 # profile, and the windows that cannot make a job object.
+if [ -z "$FAILCLOSED" ]; then
+    for c in phases.strict.nofetch phases.strict.said phases.strict.nopayload phases.strict.both; do
+        nt_skip "$c" "no fail-closed binary was given to this suite"
+    done
+fi
 if [ -n "$FAILCLOSED" ]; then
     echo "=== A strict build refuses to fetch unconfined ==="
     printf 'echo PAYLOAD_RAN\n' > "$SERVE/strictprobe.cmd"
@@ -420,20 +462,21 @@ if [ -n "$FAILCLOSED" ]; then
     BLOBS="$(ls "$NEUTRINO_HOME/blobs" 2>/dev/null | grep -c '^[0-9a-f]\{64\}$')"
     probe "strict, nothing available: blobs=$BLOBS exit=$RC"
     if [ "$BLOBS" -eq 0 ]; then
-        echo "  PASS: STRICT_FETCH_REFUSED -- nothing was downloaded"
+        nt_pass phases.strict.nofetch "STRICT_FETCH_REFUSED -- nothing was downloaded"
     else
-        nt_fail "strict fetch expected=nothing downloaded actual=$BLOBS blob(s)"
-        FAILURES=$((FAILURES + 1))
+        nt_fail phases.strict.nofetch "strict fetch expected=nothing downloaded actual=$BLOBS blob(s)"
     fi
     if grep -qa "refusing to fetch unconfined" "$WORK/err"; then
-        echo "  PASS: said why on stderr"
+        nt_pass phases.strict.said "said why on stderr"
     else
-        nt_fail "stderr expected=refusing-to-fetch-unconfined actual=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
-        FAILURES=$((FAILURES + 1))
+        nt_fail phases.strict.said "stderr expected=refusing-to-fetch-unconfined actual=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
     fi
+    # Said either way: this spoke only when a strict build had run the payload
+    # anyway, so the run where it behaved filed nothing at all.
     if grep -q PAYLOAD_RAN <<<"$OUT"; then
-        nt_fail "strict build ran the payload with confinement disabled"
-        FAILURES=$((FAILURES + 1))
+        nt_fail phases.strict.nopayload "strict build ran the payload with confinement disabled"
+    else
+        nt_pass phases.strict.nopayload "and did not run the payload"
     fi
 
     echo "=== And fetches, and runs, when both phases are confined ==="
@@ -456,16 +499,14 @@ if [ -n "$FAILCLOSED" ]; then
     if [ "${SAYS_FETCH#none}" != "$SAYS_FETCH" ]; then
         if [ "$RC" -ne 0 ] && ! grep -q PAYLOAD_RAN <<<"$OUT" &&
            grep -qa "refusing to fetch unconfined" "$WORK/err"; then
-            echo "  PASS: nothing confines here, so it refused at the fetch and said so (exit $RC)"
+            nt_pass phases.strict.both "nothing confines here, so it refused at the fetch and said so (exit $RC)"
         else
-            nt_fail "strict build with nothing to confine it expected=refuse at the fetch actual=exit $RC $(tr '\n' ' ' < "$WORK/err" | cut -c1-160)"
-            FAILURES=$((FAILURES + 1))
+            nt_fail phases.strict.both "strict build with nothing to confine it expected=refuse at the fetch actual=exit $RC $(tr '\n' ' ' < "$WORK/err" | cut -c1-160)"
         fi
     elif grep -q PAYLOAD_RAN <<<"$OUT"; then
-        echo "  PASS: BOTH_PHASES_CONFINED -- fetched and ran"
+        nt_pass phases.strict.both "BOTH_PHASES_CONFINED -- fetched and ran"
     else
-        nt_fail "strict build expected=fetch and run actual=exit $RC err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
-        FAILURES=$((FAILURES + 1))
+        nt_fail phases.strict.both "strict build expected=fetch and run actual=exit $RC err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
     fi
 fi
 
@@ -485,9 +526,18 @@ fi
 # will not produce one on its own.
 if [ -z "$SESSION" ] || [ "$(uname -s)" != "Linux" ]; then
     probe "session states: SKIPPED (no strict+session binary, or not linux)"
+    # Before the exit, not after it. A suite that returns from the middle leaves
+    # every case below as a hole, and a hole is what a lane that stopped
+    # reporting looks like -- so the reason has to be filed here, where it is
+    # still known.
+    if [ "$(uname -s)" != "Linux" ]; then
+        nt_skip_session "the session half is linux-only; this is $(uname -s)"
+    else
+        nt_skip_session "no strict+session binary was given to this suite"
+    fi
     cat "$RESULTS"
-    echo "=== Results: $FAILURES failure(s) ==="
-    exit $FAILURES
+    echo "=== Results: $NT_FAILURES failure(s) ==="
+    exit $NT_FAILURES
 fi
 
 # The order inside the payload is load-bearing. unshare(CLONE_NEWPID) puts the
@@ -560,9 +610,10 @@ nt_tier_closes() {
 }
 if ! nt_userns nt_tier_closes; then
     probe "session states: UNMEASURED -- the tier cannot close here ($(half_info))"
+    nt_skip_session "the tier cannot close here ($(half_info))"
     cat "$RESULTS"
-    echo "=== Results: $FAILURES failure(s) ==="
-    exit $FAILURES
+    echo "=== Results: $NT_FAILURES failure(s) ==="
+    exit $NT_FAILURES
 fi
 [ "$NT_USERNS_LIFTED" = "1" ] &&
     probe "session states: measured with kernel.apparmor_restrict_unprivileged_userns lifted for this suite"
@@ -571,9 +622,13 @@ echo "=== The whole session, closed, as the baseline ==="
 rm -rf "$NEUTRINO_HOME"
 BASE="$(nt_timeout 60 "$HALFAPP" 2>"$WORK/err")"
 probe "closed: $(grep -o 'BUS_[A-Z]*\|SYSTEMBUS_[A-Z]*\|PIDS:[0-9]*\|UID:[0-9]*\|FORK_AGAIN_[A-Z]*' <<<"$BASE" | tr '\n' ' ')"
-if ! grep -q PAYLOAD_RAN <<<"$BASE"; then
-    nt_fail "the closed baseline never ran; every half-closed reading below is against nothing"
-    FAILURES=$((FAILURES + 1))
+# Said either way, and it was not before: a baseline that ran printed nothing,
+# so the row carrying "everything below has something to be read against" was
+# filed on exactly the runs where nothing below could be.
+if grep -q PAYLOAD_RAN <<<"$BASE"; then
+    nt_pass phases.session.baseline "the closed baseline ran"
+else
+    nt_fail phases.session.baseline "the closed baseline never ran; every half-closed reading below is against nothing"
 fi
 
 # Two binaries for each state: the session tier as it ships, which has to keep
@@ -582,6 +637,12 @@ fi
 # everything each pass half of this.
 OPENAPP=""
 [ -n "$OPENSESSION" ] && OPENAPP="$(nt_as "$OPENSESSION" "$HALFSPEC" "$WORK/bin-open")"
+if [ -z "$OPENAPP" ]; then
+    for c in phases.session.pid.norun phases.session.pid.said \
+             phases.session.normal.ran phases.session.normal.said phases.session.fork; do
+        nt_skip "$c" "no open-session binary was given to this suite, so there is nothing to compare the strict build against"
+    done
+fi
 
 for STEP in seal pid map; do
     echo "=== A session that failed at: $STEP ==="
@@ -590,20 +651,18 @@ for STEP in seal pid map; do
     RC=$?
     probe "$STEP, strict build: exit=$RC $(grep -oa 'refusing to run[a-z :]*' "$WORK/err" | tail -1)"
     if grep -q PAYLOAD_RAN <<<"$OUT"; then
-        nt_fail "$STEP: a strict build launched into a session that did not close"
-        FAILURES=$((FAILURES + 1))
+        nt_fail phases.session.strict.refused "$STEP: a strict build launched into a session that did not close"
     else
-        echo "  PASS: the strict build refused"
+        nt_pass phases.session.strict.refused "$STEP: the strict build refused"
     fi
     # Half confined and broken are different refusals, and which one arrives
     # says whether the tier repaired what it could.
     WANT_SAID="refusing to run half confined"
     [ "$STEP" = "pid" ] && WANT_SAID="refusing to run: .*session broken"
     if grep -qa "$WANT_SAID" "$WORK/err"; then
-        echo "  PASS: and said '$WANT_SAID'"
+        nt_pass phases.session.strict.said "$STEP: and said '$WANT_SAID'"
     else
-        nt_fail "$STEP: stderr expected=$WANT_SAID actual=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
-        FAILURES=$((FAILURES + 1))
+        nt_fail phases.session.strict.said "$STEP: stderr expected=$WANT_SAID actual=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
     fi
 
     [ -n "$OPENAPP" ] || continue
@@ -619,42 +678,39 @@ for STEP in seal pid map; do
     # normal build is asserted to refuse as hard as the strict one.
     if [ "$STEP" = "pid" ]; then
         if grep -q PAYLOAD_RAN <<<"$OUT"; then
-            nt_fail "pid: the normal build launched into a process that can fork once"
-            FAILURES=$((FAILURES + 1))
+            nt_fail phases.session.pid.norun "pid: the normal build launched into a process that can fork once"
         else
-            echo "  PASS: no build launches into an unfinishable session"
+            nt_pass phases.session.pid.norun "no build launches into an unfinishable session"
         fi
         if grep -qa "refusing to run: .*session broken" "$WORK/err"; then
-            echo "  PASS: and said so as a refusal, not a warning"
+            nt_pass phases.session.pid.said "and said so as a refusal, not a warning"
         else
-            nt_fail "pid: stderr expected=refusing-to-run-session-broken actual=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
-            FAILURES=$((FAILURES + 1))
+            nt_fail phases.session.pid.said "pid: stderr expected=refusing-to-run-session-broken actual=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
         fi
         continue
     fi
 
     if ! grep -q PAYLOAD_RAN <<<"$OUT"; then
-        nt_fail "$STEP: the normal build did not run at all; a step that fails now costs the launch"
-        FAILURES=$((FAILURES + 1))
+        nt_fail phases.session.normal.ran "$STEP: the normal build did not run at all; a step that fails now costs the launch"
         continue
     fi
+    nt_pass phases.session.normal.ran "$STEP: the normal build ran"
     if grep -qa "warning: running half confined" "$WORK/err"; then
-        echo "  PASS: it ran, and said what it actually got"
+        nt_pass phases.session.normal.said "$STEP: it ran, and said what it actually got"
     else
-        nt_fail "$STEP: stderr expected=warning-running-half-confined actual=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
-        FAILURES=$((FAILURES + 1))
+        nt_fail phases.session.normal.said "$STEP: stderr expected=warning-running-half-confined actual=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
     fi
     # The fork ceiling is the whole reason this is not merely a weaker sandbox.
     # Both remaining states asked for a pid namespace and were finished into
     # one on the way out, so both have to come back able to fork -- including
     # the unmapped one, which is in trouble for a different reason.
     case " $MARKS " in
-        *FORK_AGAIN_OK*) echo "  PASS: the app can still fork" ;;
-        *) nt_fail "$STEP: expected=FORK_AGAIN_OK actual=$MARKS err=$(grep -oai 'cannot fork' "$WORK/err" | head -1)"
-           FAILURES=$((FAILURES + 1)) ;;
+        *FORK_AGAIN_OK*) nt_pass phases.session.fork "$STEP: the app can still fork" ;;
+        *) nt_fail phases.session.fork "$STEP: expected=FORK_AGAIN_OK actual=$MARKS err=$(grep -oai 'cannot fork' "$WORK/err" | head -1)" ;;
     esac
 done
 
 cat "$RESULTS"
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+exit $NT_FAILURES
