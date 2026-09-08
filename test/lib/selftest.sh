@@ -688,6 +688,89 @@ for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.s
     NT_SPEAKERS="$NT_SPEAKERS $suite"
 done
 
+# ------------------------------------------------ every verdict call, read once
+
+# The two checks below ask two questions about the same thing -- every verdict
+# call in every suite that speaks the harness -- so the tree is read once into a
+# table and both of them read the table.
+#
+# It is read in awk, and that is a portability fix and not a tidying. Both scans
+# spelled the boundary in front of the verb `\b`, and `\b` is a GNU extension:
+# POSIX ERE has no word boundary at all, and a grep whose ERE is the system's
+# takes a backslash before an ordinary character as that character -- so the
+# pattern went looking for a literal `bnt_pass`, matched nothing, and each check
+# reported that nothing as a pass. This file knows better sixty lines up, where
+# the orphan scan spells its own boundary `([^A-Za-z0-9.-]|$)` and says why.
+# These two were written without it and nothing said so, because a scan that
+# matches nothing and a tree with nothing wrong in it produce the same green.
+#
+# awk splits on whitespace, so the boundary is the field and there is none to
+# spell. It reads the same 584 calls the greps read here, byte for byte, and it
+# reads them on a platform where the greps may have been reading none.
+CALLS="$WORK/calls.tsv"
+: > "$CALLS"
+for suite in $NT_SPEAKERS; do
+    awk -v f="$(basename "$suite")" '
+        # The same comment strip the greps did, and the same limitation: a `#`
+        # inside a string takes the rest of the line with it. No verdict call in
+        # the tree is written that way, and a scan that lexed the shell properly
+        # would be a larger thing to trust than the one it replaced.
+        { sub(/#.*/, "") }
+        {
+            for (i = 1; i < NF; i++) {
+                verb = $i
+                # The six words, the wrappers, and the two vocabularies built on
+                # top of them: analyse.sh files through ctl_pass/ctl_fail/
+                # ctl_skip and the walk verifiers through walk.sh nt_walk_*
+                # comparators. A definition -- `ctl_pass() {` -- is a different
+                # token and does not match.
+                if (verb !~ /^(nt_pass|nt_fail|nt_skip|ctl_pass|ctl_fail|ctl_skip|nt_walk_[a-z_]+|assert_[a-z_]+)$/) continue
+                arg = $(i + 1)
+                gsub(/"/, "", arg)
+                if (arg ~ /^[a-z][a-z0-9]*(\.[a-z0-9.-]+)+$/) { print "id\t" f "\t" verb "\t" arg; continue }
+                # An id handed through a variable. Five suites do it, and the
+                # orphan scan above knows them by the assert_ prefix.
+                if (arg ~ /^\$[A-Za-z_{0-9]/) continue
+                # `command -v nt_pass >/dev/null` is a test for the function,
+                # not a call of it. test/lib/walk.sh opens with one, because it
+                # is sourced by three verifiers and refuses to load where the
+                # harness has not been.
+                if (arg == ">/dev/null") continue
+                # Only the three verdict words are held to taking a literal id.
+                # assert_*, ctl_* and nt_walk_* are handed one in a variable as
+                # a matter of course, which is why they are read for ids above
+                # and not judged for the want of one here.
+                if (verb !~ /^nt_(pass|fail|skip)$/) continue
+                call = ""
+                for (j = i; j <= NF && j < i + 7; j++) call = call (call == "" ? "" : " ") $j
+                print "bad\t" f "\t" verb "\t" call
+            }
+        }
+    ' "$suite" >> "$CALLS"
+done
+
+# The canary, and the reason either check below can be believed.
+#
+# Both of them report by finding nothing, so a scan that read no calls at all
+# passes in exactly the same green as a tree with no defect in it. That is not a
+# hypothetical: it is what `\b` did wherever the grep was not GNU's, and it is
+# the second thing in this file caught examining an empty set and calling the
+# result a pass. A scan gets to say how much it looked at.
+#
+# The three verdict words rather than a count, because a floor under 584 calls
+# is a number somebody has to maintain and what actually separates a working
+# scan from a broken one is that a broken one finds none of anything.
+MUTE=""
+for w in nt_pass nt_fail nt_skip; do
+    n="$(awk -F'\t' -v w="$w" '$3 == w' "$CALLS" | wc -l | tr -d ' ')"
+    [ "$n" -gt 0 ] || MUTE="$MUTE $w"
+done
+NCALLS="$(wc -l < "$CALLS" | tr -d ' ')"
+NSPK="$(awk -F'\t' '{ print $2 }' "$CALLS" | sort -u | wc -l | tr -d ' ')"
+[ -z "$MUTE" ] \
+    && ok "the verdict-call scan reads the tree ($NCALLS calls in $NSPK suites)" \
+    || bad "the verdict-call scan found no$MUTE anywhere, so the checks below prove nothing"
+
 # Every verdict call is handed an id and not a sentence.
 #
 # This is the shape a half-converted suite has, and it has happened: a call left
@@ -702,30 +785,16 @@ done
 # missed them, and with the local helpers deleted they became `ok: command not
 # found` -- silently, because a case arm's status does not reach the exit code.
 # A before-and-after diff of the prose caught that one; this catches the class.
-#
-# An id has a dot in it and no spaces. A variable is allowed: five suites hand
-# their id to a wrapper, and the scan above knows those by the assert_ prefix.
-BADARG=""
-for suite in $NT_SPEAKERS; do
-    hits="$(sed 's/#.*//' "$suite" |
-        grep -oE '\bnt_(pass|fail|skip) +("[^"]*"|[^ ]+)' |
-        awk '{ $1 = ""; sub(/^ /, ""); print }' |
-        grep -vE '^"?\$[A-Za-z_{0-9]' |
-        grep -vE '^[a-z][a-z0-9]*(\.[a-z0-9.-]+)+$' || true)"
-    # `command -v nt_pass >/dev/null` is a test for the function, not a call of
-    # it. test/lib/walk.sh opens with one, because it is sourced by three
-    # verifiers and refuses to load where the harness has not been.
-    hits="$(printf '%s' "$hits" | grep -v '^>/dev/null$' || true)"
-    [ -z "$hits" ] || BADARG="$BADARG $(basename "$suite"):$(echo $hits | cut -c1-40)"
-done
+BADARG="$(awk -F'\t' '$1 == "bad" { print " " $2 ":" substr($4, 1, 44) }' "$CALLS" |
+    sort -u | tr -d '\n')"
 [ -z "$BADARG" ] && ok "every verdict call is handed a case id, not a sentence" \
     || bad "a verdict call's first argument is not a case id:$BADARG"
 
 # No case speaks only when it fails.
 #
-# A case whose every emission is an nt_fail files nothing on a good run, so its
+# A case whose every emission is a failure files nothing on a good run, so its
 # cell is a hole -- and a hole was drawn as a `-` and exited green until
-# matrix.py --strict started counting one. Two arrived that way in the last push
+# matrix.py --strict started counting one. Two arrived that way two pushes ago
 # and the grid caught them; this catches the shape at a desk instead.
 #
 # It is the single most common defect this whole conversion turned up. A dozen
@@ -733,16 +802,26 @@ done
 # row saying "the instrument exists" was filed on exactly the runs where nothing
 # else could be. Given a passing voice, they say so on every run.
 #
-# nt_skip counts as a voice: a case that can only skip or fail is one that says
+# A skip counts as a voice: a case that can only skip or fail is one that says
 # why it could not answer, which is not silence.
-SILENT="$(for suite in $NT_SPEAKERS; do
-    sed 's/#.*//' "$suite" |
-        grep -oE '\b(nt_pass|nt_fail|nt_skip|assert_[a-z_]+) +[a-z][a-z0-9.]*\.[a-z0-9.-]+' |
-        awk -v f="$(basename "$suite")" '{ print f "\t" $1 "\t" $2 }'
-done | awk -F'\t' '
-    { seen[$3 "\t" $1] = 1; if ($2 != "nt_fail") voiced[$3] = 1 }
+#
+# The vocabulary above is the substantive change here, and it is the reason this
+# is worth a second look so soon after writing it. The scan knew nt_pass,
+# nt_fail, nt_skip and assert_* -- four of the six words and the wrapper prefix
+# -- so 67 call sites were invisible to it: analyse.sh files 59 verdicts through
+# ctl_* and the walk verifiers file 8 through walk.sh's comparators. A case that
+# only ever ctl_fails is precisely the defect this check exists for, and the
+# check could not see one. The orphan scan sixty lines up has known both
+# vocabularies all along, for the same reason and in nearly the same words.
+#
+# With them in it still finds nothing, which is what makes the widening worth
+# keeping: the shape is absent from those 67 sites as well, and that is a
+# reading now rather than an assumption.
+SILENT="$(awk -F'\t' '
+    $1 != "id" { next }
+    { seen[$4 "\t" $2] = 1; if ($3 != "nt_fail" && $3 != "ctl_fail") voiced[$4] = 1 }
     END { for (k in seen) { split(k, a, "\t"); if (!(a[1] in voiced)) print a[2] ":" a[1] } }
-' | sort -u | tr '\n' ' ')"
+' "$CALLS" | sort -u | tr '\n' ' ')"
 [ -z "$SILENT" ] && ok "no case speaks only when it fails" \
     || bad "these cases file nothing on a good run:$SILENT"
 
