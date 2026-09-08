@@ -57,6 +57,14 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 . "$(dirname "$0")/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity. nt_note is lib.sh's and is not shadowed.
+#
+# windows-launch alone, and this file says why in its own skip: everywhere else
+# nt_exec execs, so there is no "after" in which to take a grant back, and no
+# other platform's launcher compiles anything.
+. "$(cd "$(dirname "$0")/../../test/lib" && pwd)/harness.sh"
+NT_ANNOTATE=netinstall
 
 if [ "$NT_WINDOWS" != "1" ]; then
     # Not a platform gap. Everywhere else nt_exec execs, so there is no "after"
@@ -71,7 +79,6 @@ SERVE="$WORK/serve"
 mkdir -p "$SERVE" "$WORK/bin"
 export NEUTRINO_HOME="$WORK/home"
 
-FAILURES=0
 
 cleanup() {
     kill ${NT_SERVER_PID:-} 2>/dev/null
@@ -132,12 +139,15 @@ nt_info_confine() {
         awk '$1 == "confine" { $1 = ""; sub(/^ +/, ""); print; exit }'
 }
 
-check() {
-    if [ "$2" = "$3" ]; then
-        echo "  PASS: $1"
+# assert_eq, with the id first. Named for the shape the registry scan in
+# test/lib/selftest.sh knows -- assert_[a-z_]+ -- because this is the helper that
+# takes its id through a variable, which is the one thing that scan cannot
+# follow by reading the file. envlen.sh's check_eq became the same name.
+assert_eq() {
+    if [ "$3" = "$4" ]; then
+        nt_pass "$1" "$2"
     else
-        nt_fail "$1 expected=$3 actual=$2"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$1" "$2 expected=$4 actual=$3"
     fi
 }
 
@@ -163,13 +173,12 @@ echo "=== Before the first launch ==="
 BEFORE_SLOT="$(nt_info_slot)"
 BEFORE_CONFINE="$(nt_info_confine)"
 nt_note "slot before=$BEFORE_SLOT"
-check "--info owes a build before there is one" \
+assert_eq slot.info.owes "--info owes a build before there is one" \
       "$BEFORE_SLOT" "never built"
 if grep -q "for this build" <<<"$BEFORE_CONFINE"; then
-    echo "  PASS: and the confine line names the slot it would open"
+    nt_pass slot.confine.names "and the confine line names the slot it would open"
 else
-    nt_fail "confine expected=a line naming the slot actual=$BEFORE_CONFINE"
-    FAILURES=$((FAILURES + 1))
+    nt_fail slot.confine.names "confine expected=a line naming the slot actual=$BEFORE_CONFINE"
 fi
 
 # =====================================================================
@@ -180,25 +189,22 @@ ONE="$(nt_launch 1)"
 echo "$ONE" | sed 's/^/  /'
 for want in SLOT_WRITABLE OWN_DIR_WRITABLE SHELF_REFUSED RECORD_REFUSED; do
     if nt_said "$ONE" "$want"; then
-        echo "  PASS: $want"
+        nt_pass slot.granted "$want"
     else
-        nt_fail "granted expected=$want actual=$(tr '\n' '/' <<<"$ONE")"
-        FAILURES=$((FAILURES + 1))
+        nt_fail slot.granted "granted expected=$want actual=$(tr '\n' '/' <<<"$ONE")"
     fi
 done
 
 if [ -f "$RECORD" ]; then
-    echo "  PASS: netinstall wrote the record"
+    nt_pass slot.record.written "netinstall wrote the record"
 else
-    nt_fail "record expected=$RECORD actual=missing"
-    FAILURES=$((FAILURES + 1))
+    nt_fail slot.record.written "record expected=$RECORD actual=missing"
 fi
-check "--info says sealed once it is" "$(nt_info_slot)" "sealed"
+assert_eq slot.info.sealed "--info says sealed once it is" "$(nt_info_slot)" "sealed"
 if grep -q "for this build" <<<"$(nt_info_confine)"; then
-    nt_fail "confine expected=no slot clause on a sealed launch actual=$(nt_info_confine)"
-    FAILURES=$((FAILURES + 1))
+    nt_fail slot.confine.quiet "confine expected=no slot clause on a sealed launch actual=$(nt_info_confine)"
 else
-    echo "  PASS: and the confine line stops naming it"
+    nt_pass slot.confine.quiet "and the confine line stops naming it"
 fi
 
 KEPT="$(nt_sha256 "$SLOT/slot.exe")"
@@ -211,13 +217,12 @@ TWO="$(nt_launch 2)"
 echo "$TWO" | sed 's/^/  /'
 for want in SLOT_REFUSED OWN_DIR_WRITABLE SHELF_REFUSED RECORD_REFUSED; do
     if nt_said "$TWO" "$want"; then
-        echo "  PASS: $want"
+        nt_pass slot.sealed.state "$want"
     else
-        nt_fail "sealed expected=$want actual=$(tr '\n' '/' <<<"$TWO")"
-        FAILURES=$((FAILURES + 1))
+        nt_fail slot.sealed.state "sealed expected=$want actual=$(tr '\n' '/' <<<"$TWO")"
     fi
 done
-check "what the first launch left is unchanged" \
+assert_eq slot.sealed.unchanged "what the first launch left is unchanged" \
       "$(nt_sha256 "$SLOT/slot.exe")" "$KEPT"
 
 # =====================================================================
@@ -229,23 +234,21 @@ check "what the first launch left is unchanged" \
 # program's own integrity level that the record exists for.
 echo "=== A sealed slot changed from outside ==="
 echo "tampered" >> "$SLOT/slot.exe"
-check "--info owes a build after a file changed" \
+assert_eq slot.tamper.owes "--info owes a build after a file changed" \
       "$(nt_info_slot)" "the slot does not match its record"
 
 # The wipe is the other half: the next launch does not merely rebuild, it
 # rebuilds into a directory the tampered file is gone from.
 THREE="$(nt_launch 3)"
 if nt_said "$THREE" "SLOT_WRITABLE"; then
-    echo "  PASS: and the launch after it is granted again"
+    nt_pass slot.tamper.granted "and the launch after it is granted again"
 else
-    nt_fail "tamper expected=SLOT_WRITABLE actual=$(tr '\n' '/' <<<"$THREE")"
-    FAILURES=$((FAILURES + 1))
+    nt_fail slot.tamper.granted "tamper expected=SLOT_WRITABLE actual=$(tr '\n' '/' <<<"$THREE")"
 fi
 if grep -q tampered "$SLOT/slot.exe" 2>/dev/null; then
-    nt_fail "tamper expected=the tampered file is wiped actual=it survived"
-    FAILURES=$((FAILURES + 1))
+    nt_fail slot.tamper.wiped "tamper expected=the tampered file is wiped actual=it survived"
 else
-    echo "  PASS: and the tampered file did not survive the wipe"
+    nt_pass slot.tamper.wiped "and the tampered file did not survive the wipe"
 fi
 
 # =====================================================================
@@ -253,14 +256,13 @@ fi
 # =====================================================================
 echo "=== A file in a sealed slot that nobody vouched for ==="
 echo "planted" > "$SLOT/planted.exe"
-check "--info owes a build for a file the record does not name" \
+assert_eq slot.plant.owes "--info owes a build for a file the record does not name" \
       "$(nt_info_slot)" "the slot holds something the record does not name"
 nt_launch 4 >/dev/null
 if [ -f "$SLOT/planted.exe" ]; then
-    nt_fail "plant expected=the planted file is wiped actual=it survived"
-    FAILURES=$((FAILURES + 1))
+    nt_fail slot.plant.wiped "plant expected=the planted file is wiped actual=it survived"
 else
-    echo "  PASS: and it did not survive the wipe"
+    nt_pass slot.plant.wiped "and it did not survive the wipe"
 fi
 
 # =====================================================================
@@ -277,18 +279,18 @@ cat "$WORK/keep.cmd" > "$SERVE/slot.cmd"
 printf 'rem v2\r\n' >> "$SERVE/slot.cmd"
 SPEC2="slot-example-com-1$(nt_pin "$SERVE/slot.cmd")"
 APP="$(nt_as "$BIN" "$SPEC2" "$WORK/bin")"
-check "--info owes a build for a pin it has not seen" \
+assert_eq slot.repin.owes "--info owes a build for a pin it has not seen" \
       "$(nt_info_slot)" "the script changed"
 FIVE="$(nt_launch 5)"
 if nt_said "$FIVE" "SLOT_WRITABLE"; then
-    echo "  PASS: and the launch is granted"
+    nt_pass slot.repin.granted "and the launch is granted"
 else
-    nt_fail "repin expected=SLOT_WRITABLE actual=$(tr '\n' '/' <<<"$FIVE")"
-    FAILURES=$((FAILURES + 1))
+    nt_fail slot.repin.granted "repin expected=SLOT_WRITABLE actual=$(tr '\n' '/' <<<"$FIVE")"
 fi
-check "--info seals the new pin" "$(nt_info_slot)" "sealed"
+assert_eq slot.repin.sealed "--info seals the new pin" "$(nt_info_slot)" "sealed"
 
 nt_note "slot record=$(wc -l < "$RECORD" | tr -d ' ') lines"
-echo "=== Results: $FAILURES failure(s) ==="
-[ "$FAILURES" -eq 0 ] || exit 1
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+[ "$NT_FAILURES" -eq 0 ] || exit 1
 exit 0

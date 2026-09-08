@@ -543,3 +543,29 @@ privs.env.control.kept	the env battery reached the payload	windows-launch
 privs.env.control.dropped	and a name outside the allowlist is dropped	windows-launch
 privs.env.dropped	every loader knob is kept from the app	windows-launch
 privs.env.kept	and what cmd.exe and the CRT need still arrives	windows-launch
+
+# The windows build slot, from netinstall/test/slot.sh. windows-launch alone,
+# and the file says why in its own skip: everywhere else nt_exec execs, so there
+# is no "after" in which to take a grant back, and no other platform's launcher
+# compiles anything.
+#
+# The pair worth reading together is slot.granted and slot.sealed.state. They are
+# the same four markers off two launches -- the one that owes a build and the one
+# that does not -- and they are two ids because they are two claims about two
+# states, not one claim measured twice.
+slot.info.owes	--info owes a build before there is one	windows-launch
+slot.confine.names	and the confine line names the slot it would open	windows-launch
+slot.granted	the launch that owes a build is granted the slot	windows-launch
+slot.record.written	and netinstall writes the record	windows-launch
+slot.info.sealed	--info says sealed once it is	windows-launch
+slot.confine.quiet	and the confine line stops naming it	windows-launch
+slot.sealed.state	the launch that owes nothing is refused the slot	windows-launch
+slot.sealed.unchanged	and what the first launch left is unchanged	windows-launch
+slot.tamper.owes	--info owes a build after a sealed file changed	windows-launch
+slot.tamper.granted	and the launch after it is granted again	windows-launch
+slot.tamper.wiped	and the tampered file does not survive the wipe	windows-launch
+slot.plant.owes	--info owes a build for a file the record does not name	windows-launch
+slot.plant.wiped	and the planted file does not survive the wipe	windows-launch
+slot.repin.owes	--info owes a build for a pin it has not seen	windows-launch
+slot.repin.granted	and that launch is granted	windows-launch
+slot.repin.sealed	and --info seals the new pin	windows-launch
