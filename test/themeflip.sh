@@ -24,6 +24,12 @@
 
 set -uo pipefail
 
+# The window title, by whichever reader this machine has. This file carried one
+# of the five copies of that cascade, and lib/title.sh says what they disagreed
+# about. Sourcing it brings the harness with it, which is where NT_STATUS_FILE
+# comes from.
+. "$(cd "$(dirname "$0")" && pwd)/lib/title.sh"
+
 MODE="${1:-gtk}"
 ART="${2:-test/neutrinostdtheme.cmd}"
 SHOTS="${3:-$HOME/screenshots}"
@@ -397,21 +403,9 @@ gtk_change_seen() {
 # has no reason to mention the change. Measured, three instruments over five
 # theme changes on Mint 22: notify::gtk-theme-name 5, style-updated 2, polling
 # 5. This half is the guard on the signal that answers 5.
-# The probe's title, by whichever of the two readers this machine has --
-# xdotool where there is one and wmctrl otherwise, which is the fallback
-# verify-attack.sh already keeps so that a suite step is runnable on a desk and
-# not only on a runner. Matched on the prefix the probe writes, because the
-# rest of that title is the reading being taken.
-live_title() {
-    if command -v xdotool >/dev/null 2>&1; then
-        local w
-        w="$(xdotool search --name '^STD-LIVE' 2>/dev/null | head -1)"
-        [ -n "$w" ] && xdotool getwindowname "$w" 2>/dev/null
-        return 0
-    fi
-    wmctrl -l 2>/dev/null |
-        sed -n 's/^[^ ]* *[^ ]* *[^ ]* *\(STD-LIVE .*\)$/\1/p' | tail -1
-}
+# The probe's title. Matched on the prefix the probe writes, because the rest of
+# that title is the reading being taken.
+live_title() { nt_title 'STD-LIVE'; }
 
 live_half_gtk() {
     local before after n rc=0 waited=0 was_gnome="" was_cinnamon=""
@@ -420,7 +414,7 @@ live_half_gtk() {
         note "live half: no gsettings here; nothing to flip live"
         return 0
     }
-    command -v xdotool >/dev/null 2>&1 || command -v wmctrl >/dev/null 2>&1 || {
+    [ "$NT_TITLE_HOW" = none ] && {
         note "live half: neither xdotool nor wmctrl is here, so nothing can read a title"
         return 0
     }
@@ -597,7 +591,7 @@ live_half_qt() {
         note "live half: no qml runtime here to take a control reading with"
         return 0
     }
-    command -v xdotool >/dev/null 2>&1 || command -v wmctrl >/dev/null 2>&1 || {
+    [ "$NT_TITLE_HOW" = none ] && {
         note "live half: neither xdotool nor wmctrl is here, so nothing can read a title"
         return 0
     }

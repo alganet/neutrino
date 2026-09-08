@@ -18,6 +18,10 @@ set -euo pipefail
 # three lanes that run it had nothing to say in the grid about whether a hostile
 # document can drive the native window -- which is the question it exists for.
 . "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+# And the reader, which was three branches here and the same three in four other
+# suites. What is left below is the only thing that was ever this file's own:
+# which answers this platform is asserted to.
+. "$(cd "$(dirname "$0")" && pwd)/lib/title.sh"
 
 TIMEOUT=90
 POLL_INTERVAL=0.5
@@ -42,9 +46,6 @@ nt_skip_fields() {
 
 case "$(uname -s)" in
     Darwin)
-        # The macOS driver has no window the shell can query, so the title
-        # arrives through the same status file every other macOS check uses.
-        read_title() { sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null || true; }
         EXPECT_FORGE="REFUSED"
         # Recorded and not asserted, and no longer for the reason this used to
         # give. This driver does have a navigation guard -- PR 6 built one out
@@ -58,39 +59,15 @@ case "$(uname -s)" in
         EXPECT_NAV="any"
         ;;
     *)
-        # xdotool is what CI installs and what the other Linux verifier uses;
-        # wmctrl is the fallback so this is runnable on a desktop that has one
-        # and not the other.
-        if command -v xdotool >/dev/null 2>&1; then
-            read_title() {
-                local wid
-                wid=$(xdotool search --name "^ATTACK " 2>/dev/null | head -1) || true
-                [ -n "$wid" ] && xdotool getwindowname "$wid" 2>/dev/null || true
-            }
-        elif command -v wmctrl >/dev/null 2>&1; then
-            read_title() {
-                # `|| true`, the way the xdotool branch above has always had it.
-                # This file runs under `set -euo pipefail`, so with pipefail a
-                # wmctrl that cannot open the display takes the whole pipeline
-                # non-zero and set -e ends the suite inside the wait loop --
-                # before the "never reported" branch that exists to say so. The
-                # run then stops after "Waiting for the attack app to report"
-                # with no verdict and no reason, which is the one outcome this
-                # file is written to not produce.
-                #
-                # Latent rather than live: both Linux lanes install xdotool and
-                # take the branch above. It was found by running the suite on a
-                # machine with wmctrl and no display.
-                wmctrl -l 2>/dev/null | sed -n 's/^[^ ]* *[^ ]* *[^ ]* *\(ATTACK .*\)$/\1/p' | tail -1 || true
-            }
-        else
-            echo "verify-attack.sh: need xdotool or wmctrl to read a window title" >&2
-            exit 1
-        fi
         EXPECT_FORGE="REFUSED"
         EXPECT_NAV="REFUSED"
         ;;
 esac
+
+if [ "$NT_TITLE_HOW" = none ]; then
+    echo "verify-attack.sh: need xdotool or wmctrl to read a window title" >&2
+    exit 1
+fi
 
 # Two reports arrive: a snapshot taken before the navigation attempt, and the
 # settled one after it. On an engine that permits the navigation the second
@@ -100,7 +77,7 @@ echo "=== Waiting for the attack app to report ==="
 deadline=$((SECONDS + TIMEOUT))
 TITLE=""
 while [ $SECONDS -lt $deadline ]; do
-    TITLE="$(read_title)"
+    TITLE="$(nt_title "ATTACK ")"
     case "$TITLE" in *"ATTACK "*) break ;; esac
     TITLE=""
     sleep $POLL_INTERVAL
@@ -111,7 +88,7 @@ if [ -n "$TITLE" ]; then
     while [ $SECONDS -lt $settle ]; do
         case "$TITLE" in *"DONE"*) break ;; esac
         sleep $POLL_INTERVAL
-        latest="$(read_title)"
+        latest="$(nt_title "ATTACK ")"
         case "$latest" in *"ATTACK "*) TITLE="$latest" ;; esac
     done
 fi
