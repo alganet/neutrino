@@ -123,6 +123,45 @@ lanes.handoff.said	the hand-off refusal is printed rather than silent	gjs kde li
 lanes.handoff.status	a walk that ends in a hand-off refusal still exits non-zero	gjs kde linux-engines macos
 lanes.python.reached	python3 is reached where osascript does not exist	gjs kde linux-engines macos
 
+# The loader environment, from test/loaders.sh -- what the standalone launch
+# path hands its engine, and what it must not.
+#
+# The suite is older than this vocabulary and said everything it had to say in
+# prose: eleven PASS lines and fourteen failures, on four lanes, none of which
+# reached a case id. It is the largest family here whose lanes disagree by
+# design, and the disagreement is the toolkit rather than the machine.
+#
+# Which arm a lane is under is decided from the engine that actually came up and
+# not from the lane's name, because three engines drive GTK now -- gjs, cjs and
+# python3 -- and a lane matched on the string "gjs" would be put under Qt's
+# expectations and asserted the opposite of the truth about it.
+#
+# So the pairs. compat.data-taken and boundary.data-arrives assert opposite
+# things and each is registered only where it is true: the GTK lanes take the
+# data names with their compatibility unset, and everywhere else those names
+# have to arrive, because they name data and not code. The effect family splits
+# the same way -- four of its knobs are GTK's, the renderer prefix is Qt's, and
+# macos is registered for none of them, since osascript takes no insert at all
+# and there is no "loaded without the fix" half to compare against.
+loaders.control.unfixed	a build with the fix removed differs from the shipped one	gjs kde linux-engines macos
+loaders.instrument.marks	the module marks when something loads it	gjs kde linux-engines macos
+loaders.reach.engine	the launcher handed its environment to an engine this suite can read	gjs kde linux-engines macos
+loaders.reach.control-arrives	a name no rule touches reaches the engine, so an absence is a removal	gjs kde linux-engines macos
+loaders.reach.stopped	no loader-shaped name reaches the engine	gjs kde linux-engines macos
+loaders.compat.data-taken	the GTK lanes' compatibility unset takes the data names too	gjs linux-engines
+loaders.boundary.data-arrives	the data names still arrive where no compatibility unset takes them	kde macos
+loaders.control.lets-through	the same build without the fix lets the loader names through	gjs kde linux-engines macos
+loaders.keepers.arrive	every name the lane needs to keep still reaches the engine	gjs kde linux-engines macos
+loaders.effect.ldpreload	a preload loads no module into the engine	gjs kde linux-engines
+loaders.effect.gtkmodule	GTK_MODULES loads no module into the engine	gjs linux-engines
+loaders.effect.injectedbundle	an injected bundle loads no module into the web process	gjs linux-engines
+loaders.effect.gioextra	GIO_EXTRA_MODULES loads no module into the engine	gjs linux-engines
+loaders.effect.ldaudit	LD_AUDIT loads no module into the engine	gjs linux-engines
+loaders.effect.rendererprefix	QTWEBENGINE_CHROMIUM_FLAGS does not choose the renderer's program	kde
+loaders.sandbox.reachable	the sandbox the launcher computed cannot be turned off from the environment	gjs kde linux-engines macos
+loaders.cost.candidates	the app still comes up with every candidate name taken away	gjs kde linux-engines macos
+loaders.cost.shape	the app still comes up without what a shape rule would take	gjs kde linux-engines macos
+
 # The splash window, from netinstall/test/splash.sh -- the first suite in the
 # netinstall tree to speak this vocabulary, and the reason three lanes appear in
 # the grid at all.

@@ -62,11 +62,19 @@ MARKS="$WORK/marks"
 mkdir -p "$WORK/mod" "$MARKS"
 trap 'rm -rf "$WORK"' EXIT
 
-FAILURES=0
 UP_WAIT=20
 
-report() { echo "report: $*"; }
-fail()   { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
+# The six words. This file declared two of them for itself -- and `fail` printed
+# `FAIL:` where the rest of the tree prints `  FAIL:`, which is one of the two
+# spellings harness.sh's header names as the reason sheet.sh has to match a
+# prefix twice.
+#
+# Its verdicts were never invisible: eleven `echo "  PASS:"` lines say what held,
+# and they reach the job log. What they did not reach is a case id, so this suite
+# put nothing in the grid on any of the four lanes that run it. That is the
+# whole change here.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+report() { nt_report "$@"; }
 
 # The reach answer is forty names long and an annotation carries five lines, so
 # it goes out wrapped rather than one name per line or one line per lane.
@@ -212,8 +220,13 @@ awk '
 HAVE_UNFIXED=0
 if ! cmp -s "$APP" "$UNFIXED"; then
     HAVE_UNFIXED=1
+    # A passing voice, which this did not have. The control is the thing every
+    # "it would have failed before" below rests on, and it only ever spoke when
+    # it was missing -- so on every good run, which is every run, the one case
+    # that says the comparison is possible at all filed nothing.
+    nt_pass loaders.control.unfixed "a build with the fix removed differs from the shipped one"
 else
-    fail "control expected=a build with the fix removed actual=identical to the shipped one; every check below is unmeasured"
+    nt_fail loaders.control.unfixed "control expected=a build with the fix removed actual=identical to the shipped one; every check below is unmeasured"
 fi
 
 # =====================================================================
@@ -284,11 +297,16 @@ if [ "$MOD_OK" = "1" ]; then
         DYLD_INSERT_LIBRARIES="$WORK/mod/ldpreload$NT_MODEXT" \
         "$NT_ECHO" probe >/dev/null 2>"$WORK/instrument.err"
     if [ -e "$MARKS/ldpreload" ] || grep -q NT_MOD_LOADED "$WORK/instrument.err"; then
-        echo "  PASS: the module marks when it is loaded"
+        nt_pass loaders.instrument.marks "the module marks when it is loaded"
     else
-        fail "instrument expected=a mark from $NT_ECHO under a preload actual=none; every silence below is unmeasured"
+        nt_fail loaders.instrument.marks "instrument expected=a mark from $NT_ECHO under a preload actual=none; every silence below is unmeasured"
         MOD_OK=0
     fi
+else
+    # The compiler could not build it. Said, because the effect half below is
+    # then a set of silences, and a silence nobody accounts for reads as a
+    # refusal.
+    nt_skip loaders.instrument.marks "$NT_CC could not build the module here, so there is nothing to prove the instrument with"
 fi
 
 # =====================================================================
@@ -477,11 +495,27 @@ if [ "$HAVE_UNFIXED" = "1" ]; then
 fi
 
 if [ -z "$SHIPPED_ENV" ]; then
-    fail "reach expected=an engine process to read actual=none found; the reach half is unmeasured"
+    nt_fail loaders.reach.engine "reach expected=an engine process to read actual=none found; the reach half is unmeasured"
+    # Everything below this point reads that environment. None of it can be
+    # asked, and each one says so rather than leaving a hole the grid cannot
+    # tell from a suite that stopped early.
+    nt_skip loaders.reach.control-arrives "no engine process was found, so nothing can be read out of one"
+    nt_skip loaders.reach.stopped "no engine process was found, so nothing can be read out of one"
+    nt_skip loaders.compat.data-taken "no engine process was found, so nothing can be read out of one"
+    nt_skip loaders.boundary.data-arrives "no engine process was found, so nothing can be read out of one"
+    nt_skip loaders.control.lets-through "no engine process was found, so nothing can be read out of one"
+    nt_skip loaders.keepers.arrive "no engine process was found, so nothing can be read out of one"
 elif ! grep -qx 'NEUTRINO_LOADER_CONTROL=control' <<<"$SHIPPED_ENV"; then
-    fail "reach control expected=NEUTRINO_LOADER_CONTROL arrives actual=absent; the battery never got there"
+    nt_pass loaders.reach.engine "an engine process was found to read"
+    nt_fail loaders.reach.control-arrives "reach control expected=NEUTRINO_LOADER_CONTROL arrives actual=absent; the battery never got there"
+    nt_skip loaders.reach.stopped "the battery never reached the engine, so an absence here would not be a removal"
+    nt_skip loaders.compat.data-taken "the battery never reached the engine, so an absence here would not be a removal"
+    nt_skip loaders.boundary.data-arrives "the battery never reached the engine, so an absence here would not be a removal"
+    nt_skip loaders.control.lets-through "the battery never reached the engine, so an absence here would not be a removal"
+    nt_skip loaders.keepers.arrive "the battery never reached the engine, so an absence here would not be a removal"
 else
-    echo "  PASS: a name nothing touches arrives, so an absence below is a removal"
+    nt_pass loaders.reach.engine "an engine process was found to read"
+    nt_pass loaders.reach.control-arrives "a name nothing touches arrives, so an absence below is a removal"
     STOPPED=(); LEAKED=(); UNMEASURED=(); REPLACED=(); ARRIVED_DATA=()
     # Three outcomes, not two. A name can be gone; it can be there holding the
     # value this suite set, which is the leak; or it can be there holding
@@ -524,26 +558,34 @@ else
     report_list "reach replaced by the launcher's own value" "${REPLACED[@]+"${REPLACED[@]}"}"
     report_list "reach unmeasured (absent from the control too)" "${UNMEASURED[@]+"${UNMEASURED[@]}"}"
     if [ ${#LEAKED[@]} -eq 0 ]; then
-        echo "  PASS: no loader-shaped name reached the engine (${#STOPPED[@]} stopped)"
+        nt_pass loaders.reach.stopped "no loader-shaped name reached the engine (${#STOPPED[@]} stopped)"
     else
         report_list "reach LEAKED" "${LEAKED[@]}"
-        fail "reach expected=every loader-shaped name stopped actual=${#LEAKED[@]} reached the engine"
+        nt_fail loaders.reach.stopped "reach expected=every loader-shaped name stopped actual=${#LEAKED[@]} reached the engine"
     fi
     # The data names, asserted in whichever direction this lane calls for.
+    #
+    # The two arms assert opposite things and only one of them is true of any
+    # machine, which is why they are two cases and not one: on a GTK lane the
+    # compatibility unset takes these names, and everywhere else they have to
+    # arrive because they name data rather than code. The arm this lane is not
+    # under says why it could not be asked.
     case "$NT_LANE_KIND" in
         gtk)
             if [ ${#ARRIVED_DATA[@]} -eq 0 ]; then
-                echo "  PASS: the GTK lanes' compatibility unset still takes $NT_DATA"
+                nt_pass loaders.compat.data-taken "the GTK lanes' compatibility unset still takes $NT_DATA"
             else
                 report_list "reach data names still arriving" "${ARRIVED_DATA[@]}"
-                fail "compat expected=$NT_DATA removed on a GTK lane actual=${#ARRIVED_DATA[@]} arrived"
-            fi ;;
+                nt_fail loaders.compat.data-taken "compat expected=$NT_DATA removed on a GTK lane actual=${#ARRIVED_DATA[@]} arrived"
+            fi
+            nt_skip loaders.boundary.data-arrives "this lane loads GTK, so the compatibility unset takes these names and the boundary cannot be read here" ;;
         *)
             if [ ${#ARRIVED_DATA[@]} -gt 0 ]; then
-                echo "  PASS: $NT_DATA still arrive, which is the shape rule's boundary (${#ARRIVED_DATA[@]})"
+                nt_pass loaders.boundary.data-arrives "$NT_DATA still arrive, which is the shape rule's boundary (${#ARRIVED_DATA[@]})"
             else
-                fail "boundary expected=$NT_DATA arrive, since they name data and not code actual=stopped"
-            fi ;;
+                nt_fail loaders.boundary.data-arrives "boundary expected=$NT_DATA arrive, since they name data and not code actual=stopped"
+            fi
+            nt_skip loaders.compat.data-taken "this lane does not load GTK, so there is no compatibility unset to measure" ;;
     esac
 
     # The control has to show them arriving, or the line above is a rule that
@@ -554,10 +596,12 @@ else
             grep -q "^$n=" <<<"$CONTROL_ENV" && ARRIVED=$((ARRIVED + 1))
         done
         if [ "$ARRIVED" -gt 0 ]; then
-            echo "  PASS: the same build without the fix let $ARRIVED of them through"
+            nt_pass loaders.control.lets-through "the same build without the fix let $ARRIVED of them through"
         else
-            fail "control expected=the unfixed build lets these through actual=none arrived; the reach check proves nothing"
+            nt_fail loaders.control.lets-through "control expected=the unfixed build lets these through actual=none arrived; the reach check proves nothing"
         fi
+    else
+        nt_skip loaders.control.lets-through "there is no build with the fix removed here, so nothing says these names would have arrived"
     fi
     # And the other half of the rule: what carries data or a mode still has to
     # get there. A rule that took the namespaces outright would pass every line
@@ -570,10 +614,10 @@ else
     done
     report_list "reach keepers that arrive" "${KEPT[@]+"${KEPT[@]}"}"
     if [ ${#LOST[@]} -eq 0 ]; then
-        echo "  PASS: every keeper this lane sets still arrives (${#KEPT[@]})"
+        nt_pass loaders.keepers.arrive "every keeper this lane sets still arrives (${#KEPT[@]})"
     else
         report_list "reach keepers LOST" "${LOST[@]}"
-        fail "keepers expected=all arrive actual=${#LOST[@]} were taken"
+        nt_fail loaders.keepers.arrive "keepers expected=all arrive actual=${#LOST[@]} were taken"
     fi
 fi
 
@@ -618,87 +662,120 @@ effect() {
 # `want_engine` is the process the load has to be absent from. It is not always
 # the engine: an injected bundle loads into the web process, and asserting
 # against `gjs` there would pass while page content ran attacker code.
-knob_check() {
-    local tag="$1" want_engine="$2"; shift 2
+# assert_*, and named that way on purpose. The id is handed in rather than built
+# from $tag inside, because an id assembled out of a variable is one the registry
+# scan in test/lib/selftest.sh cannot resolve -- and the convention that makes it
+# resolvable is exactly this prefix, which that scan knows by name.
+#
+# Every path out of here files something. The two that end in a `report` used to
+# return in silence, and a silence is what a hole in the grid is made of.
+assert_knob() {
+    local id="$1" tag="$2" want_engine="$3"; shift 3
     local fixed unfixed
+    if [ "$MOD_OK" != "1" ]; then
+        nt_skip "$id" "the module could not be built here, so there is nothing to load and nothing to refuse"
+        return 0
+    fi
     effect "$tag" "$APP" fixed "$@"
     fixed="$EFFECT_PROCS"
     if [ "$HAVE_UNFIXED" != "1" ]; then
         report "effect $tag: no control build, so this is a reading and not a check"
+        nt_skip "$id" "there is no build with the fix removed, so a silence here says nothing about the fix"
         return 0
     fi
     effect "$tag" "$UNFIXED" unfixed "$@"
     unfixed="$EFFECT_PROCS"
     if ! grep -q "$want_engine" <<<"$unfixed"; then
         report "effect $tag: not honoured even with the fix removed (in=${unfixed:-none}); unmeasured here"
+        nt_skip "$id" "this engine does not honour $tag even with the fix removed, so there was nothing here to stop"
         return 0
     fi
     if grep -q "$want_engine" <<<"$fixed"; then
-        fail "effect $tag expected=nothing loaded into $want_engine actual=in=$fixed"
+        nt_fail "$id" "effect $tag expected=nothing loaded into $want_engine actual=in=$fixed"
     else
-        echo "  PASS: $tag loads into $want_engine without the fix and into nothing with it"
+        nt_pass "$id" "$tag loads into $want_engine without the fix and into nothing with it"
     fi
 }
 
-if [ "$MOD_OK" = "1" ]; then
-    EFFECT_PROCS=""
-    case "$NT_LANE_KIND" in
-        gtk)
-            # Named from the engine that came up rather than written as "gjs".
-            # These knobs load into whichever process is driving GTK, and on
-            # this lane that may be cjs or python3 -- a check that went looking
-            # for a gjs process would pass by finding nothing, which is the
-            # exact shape of reading a wide-open door as closed.
-            eng="${ENGINE_COMM##*/}"
-            knob_check ldpreload "$eng" LD_PRELOAD="$WORK/mod/ldpreload$NT_MODEXT"
-            knob_check gtkmodule "$eng" GTK_MODULES="$WORK/mod/gtkmodule$NT_MODEXT"
-            knob_check injectedbundle WebKitWebProcess WEBKIT_INJECTED_BUNDLE_PATH="$WORK/mod/bundle"
-            knob_check gioextra "$eng" GIO_EXTRA_MODULES="$WORK/mod/gio"
-            knob_check ldaudit "$eng" LD_AUDIT="$WORK/mod/ldaudit$NT_MODEXT"
-            ;;
-        qt)
-            knob_check ldpreload qml LD_PRELOAD="$WORK/mod/ldpreload$NT_MODEXT"
-            # Qt loads a plugin only with matching metadata, so the module would
-            # be rejected before its constructor mattered -- env.sh measured
-            # that and it is not re-measured here. The knob that needs none of
-            # it is the one Qt appends to Chromium's own argv, and the launcher
-            # does not merely pass that one through: it reads it and puts the
-            # value back. Its mark is a shell script, not the module, so this
-            # one is checked on the mark file rather than on a process name.
-            cat > "$WORK/mod/prefix.sh" <<'PREFIX'
+# The dispatch runs whether or not the module built, because assert_knob files a
+# skip for a knob it cannot ask. It used to sit inside `if [ "$MOD_OK" = "1" ]`,
+# and a compiler that would not produce the instrument took the whole effect half
+# out of the grid without leaving a row to say so.
+EFFECT_PROCS=""
+case "$NT_LANE_KIND" in
+    gtk)
+        # Named from the engine that came up rather than written as "gjs".
+        # These knobs load into whichever process is driving GTK, and on
+        # this lane that may be cjs or python3 -- a check that went looking
+        # for a gjs process would pass by finding nothing, which is the
+        # exact shape of reading a wide-open door as closed.
+        eng="${ENGINE_COMM##*/}"
+        assert_knob loaders.effect.ldpreload ldpreload "$eng" LD_PRELOAD="$WORK/mod/ldpreload$NT_MODEXT"
+        assert_knob loaders.effect.gtkmodule gtkmodule "$eng" GTK_MODULES="$WORK/mod/gtkmodule$NT_MODEXT"
+        assert_knob loaders.effect.injectedbundle injectedbundle WebKitWebProcess WEBKIT_INJECTED_BUNDLE_PATH="$WORK/mod/bundle"
+        assert_knob loaders.effect.gioextra gioextra "$eng" GIO_EXTRA_MODULES="$WORK/mod/gio"
+        assert_knob loaders.effect.ldaudit ldaudit "$eng" LD_AUDIT="$WORK/mod/ldaudit$NT_MODEXT"
+        nt_skip loaders.effect.rendererprefix "the renderer prefix is a Qt knob and this lane drives GTK"
+        ;;
+    qt)
+        assert_knob loaders.effect.ldpreload ldpreload qml LD_PRELOAD="$WORK/mod/ldpreload$NT_MODEXT"
+        # Qt loads a plugin only with matching metadata, so the module would
+        # be rejected before its constructor mattered -- env.sh measured
+        # that and it is not re-measured here. The knob that needs none of
+        # it is the one Qt appends to Chromium's own argv, and the launcher
+        # does not merely pass that one through: it reads it and puts the
+        # value back. Its mark is a shell script, not the module, so this
+        # one is checked on the mark file rather than on a process name.
+        cat > "$WORK/mod/prefix.sh" <<'PREFIX'
 #!/bin/sh
 [ -n "${NEUTRINO_TEST_MODULE_MARKDIR:-}" ] &&
     printf 'renderer\n' > "$NEUTRINO_TEST_MODULE_MARKDIR/rendererprefix" 2>/dev/null
 exec "$@"
 PREFIX
-            chmod +x "$WORK/mod/prefix.sh"
-            RENDER_FLAGS="--disable-dev-shm-usage --renderer-cmd-prefix=$WORK/mod/prefix.sh"
-            effect rendererprefix "$APP" fixed QTWEBENGINE_CHROMIUM_FLAGS="$RENDER_FLAGS"
-            fixed_mark=$([ -e "$MARKS/rendererprefix" ] && echo yes || echo no)
-            if [ "$HAVE_UNFIXED" = "1" ]; then
-                effect rendererprefix "$UNFIXED" unfixed QTWEBENGINE_CHROMIUM_FLAGS="$RENDER_FLAGS"
-                if [ ! -e "$MARKS/rendererprefix" ]; then
-                    report "effect rendererprefix: not honoured even with the fix removed; unmeasured here"
-                elif [ "$fixed_mark" = "yes" ]; then
-                    fail "effect rendererprefix expected=the renderer prefix never runs actual=it ran"
-                else
-                    echo "  PASS: QTWEBENGINE_CHROMIUM_FLAGS chooses the renderer's program without the fix and not with it"
-                fi
+        chmod +x "$WORK/mod/prefix.sh"
+        RENDER_FLAGS="--disable-dev-shm-usage --renderer-cmd-prefix=$WORK/mod/prefix.sh"
+        effect rendererprefix "$APP" fixed QTWEBENGINE_CHROMIUM_FLAGS="$RENDER_FLAGS"
+        fixed_mark=$([ -e "$MARKS/rendererprefix" ] && echo yes || echo no)
+        if [ "$HAVE_UNFIXED" = "1" ]; then
+            effect rendererprefix "$UNFIXED" unfixed QTWEBENGINE_CHROMIUM_FLAGS="$RENDER_FLAGS"
+            if [ ! -e "$MARKS/rendererprefix" ]; then
+                report "effect rendererprefix: not honoured even with the fix removed; unmeasured here"
+                nt_skip loaders.effect.rendererprefix "Qt does not honour the renderer prefix here even with the fix removed, so there was nothing to stop"
+            elif [ "$fixed_mark" = "yes" ]; then
+                nt_fail loaders.effect.rendererprefix "effect rendererprefix expected=the renderer prefix never runs actual=it ran"
+            else
+                nt_pass loaders.effect.rendererprefix "QTWEBENGINE_CHROMIUM_FLAGS chooses the renderer's program without the fix and not with it"
             fi
-            ;;
-        osascript)
-            # macOS asks the same question with the only knob that applies
-            # there. Measured across three rounds: osascript takes no insert --
-            # an arm64e platform binary and an arm64 dylib the runner just
-            # built -- and dyld ends the launch rather than continuing without
-            # it. So this is a check that the name does not arrive, which the
-            # reach section above already made, plus the reading that says why
-            # the effect half cannot be taken here.
-            effect ldpreload "$APP" dyld-insert \
-                DYLD_INSERT_LIBRARIES="$WORK/mod/ldpreload$NT_MODEXT"
-            ;;
-    esac
-fi
+        else
+            nt_skip loaders.effect.rendererprefix "there is no build with the fix removed, so a prefix that does not run says nothing about the fix"
+        fi
+        ;;
+    osascript)
+        # macOS asks the same question with the only knob that applies
+        # there. Measured across three rounds: osascript takes no insert --
+        # an arm64e platform binary and an arm64 dylib the runner just
+        # built -- and dyld ends the launch rather than continuing without
+        # it. So this is a check that the name does not arrive, which the
+        # reach section above already made, plus the reading that says why
+        # the effect half cannot be taken here.
+        effect ldpreload "$APP" dyld-insert \
+            DYLD_INSERT_LIBRARIES="$WORK/mod/ldpreload$NT_MODEXT"
+        # A reading and not a check, which is why no effect case is
+        # registered for this lane: osascript takes no insert at all, so
+        # there is no "loaded without the fix" half to compare against.
+        ;;
+    *)
+        # No engine came up, so there is no lane kind and no knob that
+        # belongs to one. The reach section has already failed over this;
+        # these say so rather than leaving the effect family blank.
+        nt_skip loaders.effect.ldpreload "no engine came up, so there is nothing to load a module into"
+        nt_skip loaders.effect.gtkmodule "no engine came up, so there is nothing to load a module into"
+        nt_skip loaders.effect.injectedbundle "no engine came up, so there is nothing to load a module into"
+        nt_skip loaders.effect.gioextra "no engine came up, so there is nothing to load a module into"
+        nt_skip loaders.effect.ldaudit "no engine came up, so there is nothing to load a module into"
+        nt_skip loaders.effect.rendererprefix "no engine came up, so there is nothing to load a module into"
+        ;;
+esac
 
 # =====================================================================
 # The sandbox nobody meant to make settable
@@ -778,6 +855,7 @@ sandbox_check() {
     report "sandbox $name fixed procs=${LAST_PROCS:-none} nosandbox=$LAST_NOSANDBOX window=$LAST_WINDOW off=$fixed_off"
     if [ "$HAVE_UNFIXED" != "1" ] || [ -z "$UNFIXED_SANDBOX_APP" ]; then
         report "sandbox $name: no control build, so this is a reading and not a check"
+        nt_skip loaders.sandbox.reachable "there is no build with the fix removed for this artifact, so a sandbox that stayed on says nothing about the fix"
         return 0
     fi
     run_app "$UNFIXED_SANDBOX_APP" "${SB_CLEAR[@]}" "$knob"
@@ -785,10 +863,11 @@ sandbox_check() {
     report "sandbox $name unfixed procs=${LAST_PROCS:-none} nosandbox=$LAST_NOSANDBOX window=$LAST_WINDOW off=$unfixed_off"
     if [ "$unfixed_off" != "yes" ]; then
         report "sandbox $name: the engine does not honour it even with the fix removed; unmeasured here"
+        nt_skip loaders.sandbox.reachable "this engine does not honour $name even with the fix removed, so there was no switch here to reach"
     elif [ "$fixed_off" = "yes" ]; then
-        fail "sandbox $name expected=the sandbox stays on actual=it was turned off from the environment"
+        nt_fail loaders.sandbox.reachable "sandbox $name expected=the sandbox stays on actual=it was turned off from the environment"
     else
-        echo "  PASS: $name turns the sandbox off without the fix and cannot reach it with it"
+        nt_pass loaders.sandbox.reachable "$name turns the sandbox off without the fix and cannot reach it with it"
     fi
 }
 
@@ -821,6 +900,16 @@ if [ "$SB_APPLIES" = "1" ] && [ "$SB_READY" = "1" ]; then
         gtk)  sandbox_check WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 ;;
         *)    sandbox_check QTWEBENGINE_DISABLE_SANDBOX=1 ;;
     esac
+elif [ "$SB_APPLIES" != "1" ]; then
+    # The reasons are already reported above -- no engine, or a macOS driver
+    # that hosts neither bubblewrap nor Chromium. This is the same sentence in
+    # the one place the grid reads.
+    nt_skip loaders.sandbox.reachable "this lane hosts no sandbox the environment could reach; the readings above say why"
+else
+    # The control launch could not establish what "sandboxed" looks like here,
+    # so a knob that appears to do nothing would be indistinguishable from a
+    # runner with nothing to turn off. That distinction is the whole section.
+    nt_skip loaders.sandbox.reachable "the control launch was not sandboxed to begin with, so there was nothing here to turn off"
 fi
 
 # =====================================================================
@@ -836,10 +925,10 @@ for n in $NT_CANDIDATES; do UNSET_ARGS+=(-u "$n"); done
 run_app "$APP" "${UNSET_ARGS[@]}"
 report "cost strip-candidates window=$LAST_WINDOW names=$(wc -w <<<"$NT_CANDIDATES" | tr -d ' ')"
 if [ "$LAST_WINDOW" = "UP" ]; then
-    echo "  PASS: the app comes up with every candidate name taken away first"
+    nt_pass loaders.cost.candidates "the app comes up with every candidate name taken away first"
 else
     report "cost tail: $(tr '\n' ' ' <<<"$LAST_LOG" | tr -d '[:cntrl:]' | tail -c 300)"
-    fail "cost expected=the app still comes up actual=no window; the rule is not free on this lane"
+    nt_fail loaders.cost.candidates "cost expected=the app still comes up actual=no window; the rule is not free on this lane"
 fi
 
 # And the same question asked the way a rule would ask it. A fixed list is not
@@ -891,14 +980,18 @@ if [ ${#SHAPED[@]} -gt 0 ]; then
     for n in "${SHAPED[@]}"; do SHAPE_ARGS+=(-u "$n"); done
     run_app "$APP" "${SHAPE_ARGS[@]}"
     report "cost strip-shaped window=$LAST_WINDOW names=${#SHAPED[@]}"
-    [ "$LAST_WINDOW" = "UP" ] ||
-        fail "cost expected=the app comes up without what the shape rule takes actual=no window"
+    if [ "$LAST_WINDOW" = "UP" ]; then
+        nt_pass loaders.cost.shape "the app comes up without what the shape rule would take (${#SHAPED[@]} names)"
+    else
+        nt_fail loaders.cost.shape "cost expected=the app comes up without what the shape rule takes actual=no window"
+    fi
+else
+    # A rule cannot be priced against an environment with nothing for it to
+    # take, and the comment on the denominator above is about exactly this
+    # reading. It was a silence; now it is a row that says which reading it was.
+    nt_skip loaders.cost.shape "this lane holds no name the shape rule would take, so there is nothing to price it against"
 fi
 
-echo "=== $FAILURES failure(s) ==="
-# The count, and not whether there was one. `$((FAILURES > 0))` is a deliberate
-# spelling of "did anything break", and it predates test/run.sh -- which adds a
-# lane up by summing what its suites exit with, precisely so that nothing has to
-# parse a log. Saturated at 1, this suite reports one broken loader assertion
-# whether one broke or fourteen did.
-exit "$FAILURES"
+# The count, and not whether there was one -- the note that used to be here said
+# so about `$((FAILURES > 0))`, and nt_finish is where that contract lives now.
+nt_finish
