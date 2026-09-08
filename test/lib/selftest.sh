@@ -670,9 +670,15 @@ done
 # No suite is run twice: once from the manifest and once by a hand-written step.
 # This is what makes a half-migrated lane safe, and it is the check that stops
 # the migration quietly double-running a suite for a whole round.
+# Over the full lane keys and not $LANES, which has the phase stripped off.
+# `run.sh --list linux-engines` returns nothing -- its rows are filed under
+# linux-engines:cjs and :py -- so iterating the stripped names made this check
+# vacuous for the one lane that runs its list twice, which is the lane most able
+# to run a suite twice by accident.
 DOUBLED=""
-for l in $LANES; do
-    for sname in $(bash "$RUNSH" --list "$l" 2>/dev/null); do
+for lk in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$SUITES_TSV" | sort -u); do
+    l="${lk%%:*}"
+    for sname in $(bash "$RUNSH" --list "$lk" 2>/dev/null); do
         # The lane's own run.sh invocations name the suites it has migrated.
         awk -v lane="$l" -v s="$sname" '
             /^  [a-z0-9-]+:$/ { j = $1; sub(/:$/, "", j) }
