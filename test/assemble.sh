@@ -309,8 +309,13 @@ for nt_mode in "" "--comments"; do
     fi
     nt_label="${nt_mode:---stripped}"
     eq "a stylesheet with comments builds ($nt_label)" "$?" "0"
+    # grep -cE, and the `\|` this replaced is why. BSD reads it as two literal
+    # characters, so on the macos lane -- and this file runs there on purpose --
+    # the pattern was one long literal that appears nowhere, the count was 0, and
+    # 0 is what this asserts. An assertion that expects nothing and asks a
+    # question that can only answer nothing passes without looking.
     eq "no comment survives ($nt_label)" \
-       "$(grep -c 'a normal comment\|runs across\|trailing, and on a line' "$T/css.cmd" | head -1)" "0"
+       "$(grep -cE 'a normal comment|runs across|trailing, and on a line' "$T/css.cmd" | head -1)" "0"
     eq "not even the licence header ($nt_label)" \
        "$(grep -c 'SPDX-License-Identifier: MIT' "$T/css.cmd" | head -1)" "0"
     for nt_rule in 'q{color:green}' 'r{color:blue}' 's{color:pink}' 't{color:grey}'; do

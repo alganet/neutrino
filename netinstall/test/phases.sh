@@ -621,7 +621,7 @@ fi
 echo "=== The whole session, closed, as the baseline ==="
 rm -rf "$NEUTRINO_HOME"
 BASE="$(nt_timeout 60 "$HALFAPP" 2>"$WORK/err")"
-probe "closed: $(grep -o 'BUS_[A-Z]*\|SYSTEMBUS_[A-Z]*\|PIDS:[0-9]*\|UID:[0-9]*\|FORK_AGAIN_[A-Z]*' <<<"$BASE" | tr '\n' ' ')"
+probe "closed: $(grep -oE 'BUS_[A-Z]*|SYSTEMBUS_[A-Z]*|PIDS:[0-9]*|UID:[0-9]*|FORK_AGAIN_[A-Z]*' <<<"$BASE" | tr '\n' ' ')"
 # Said either way, and it was not before: a baseline that ran printed nothing,
 # so the row carrying "everything below has something to be read against" was
 # filed on exactly the runs where nothing below could be.
@@ -669,7 +669,12 @@ for STEP in seal pid map; do
     rm -rf "$NEUTRINO_HOME"
     OUT="$(NEUTRINO_TEST_SESSION_FAIL=$STEP nt_timeout 60 "$OPENAPP" 2>"$WORK/err")"
     RC=$?
-    MARKS="$(grep -o 'BUS_[A-Z]*\|SYSTEMBUS_[A-Z]*\|PIDS:[0-9]*\|UID:[0-9]*\|PAYLOAD_RAN\|PROBE_FAILED\|FORK_AGAIN_[A-Z]*' <<<"$OUT" | tr '\n' ' ')"
+    # grep -oE: `\|` is GNU's alternation and BSD reads it literally, so this
+    # would have handed back an empty $MARKS on the bsd and macos-netinstall
+    # lanes rather than the marks it was asked for. Every case that reads $MARKS
+    # skips on all four lanes today for an unrelated reason, so it was a trap
+    # rather than a defect -- but it was the same trap as the one above.
+    MARKS="$(grep -oE 'BUS_[A-Z]*|SYSTEMBUS_[A-Z]*|PIDS:[0-9]*|UID:[0-9]*|PAYLOAD_RAN|PROBE_FAILED|FORK_AGAIN_[A-Z]*' <<<"$OUT" | tr '\n' ' ')"
     probe "$STEP, normal build: exit=$RC ${MARKS:-<no output>}"
 
     # "pid" is the one state with nothing left to try: the step that would have
