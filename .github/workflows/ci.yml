@@ -88,8 +88,7 @@ jobs:
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
       - run: bash test/apparatus/nobrowser.sh
-      - run: bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinotest.cmd
-      - run: bash test/build/parse.sh test/neutrinotest.cmd
+      - run: bash test/run.sh --build neutrinotest-release
       # The engine walk, asserted with stub interpreters: no display, no
       # toolkit, and it is the only place the meaning of an exit status is
       # checked rather than assumed.
@@ -417,8 +416,7 @@ jobs:
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
       - run: bash test/apparatus/nobrowser.sh
-      - run: bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinotest.cmd
-      - run: bash test/build/parse.sh test/neutrinotest.cmd
+      - run: bash test/run.sh --build neutrinotest-release
       # The walk itself: no display, no toolkit, stub engines. It asserts what a
       # status means, which is the contract the fallthrough rests on.
       - timeout-minutes: 5
@@ -587,9 +585,7 @@ jobs:
       - if: always()
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - if: always()
-        run: bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinotest.cmd
-      - if: always()
-        run: bash test/build/parse.sh test/neutrinotest.cmd
+        run: bash test/run.sh --build neutrinotest-release
       - if: always()
         timeout-minutes: 5
         run: bash test/run.sh linux-engines:py lanes
@@ -892,8 +888,7 @@ jobs:
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
       - run: bash test/apparatus/nobrowser.sh
-      - run: bash test/build/mkapp.sh --testing test/probe/neutrinotest.js test/neutrinotest.cmd
-      - run: bash test/build/parse.sh test/neutrinotest.cmd
+      - run: bash test/run.sh --build neutrinotest-testing
       # The engine walk, asserted with stub interpreters: no display, no
       # toolkit, and it is the only place the meaning of an exit status is
       # checked rather than assumed.
@@ -1460,9 +1455,7 @@ jobs:
         shell: bash
         run: bash test/lib/selftest.sh
       - shell: bash
-        run: bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinotest.cmd
-      - shell: bash
-        run: bash test/build/parse.sh test/neutrinotest.cmd
+        run: bash test/run.sh --build neutrinotest-release
       # And the suites themselves, which are a sixth language nothing checked.
       # The argument below is the one that applies: a file that does not parse
       # is a suite that never runs, found by running it. `$run:` is a scope and
@@ -1561,7 +1554,7 @@ jobs:
       # is the state each of those suites was measured in when it had a runner
       # to itself and appcache to warm it.
       - shell: bash
-        run: bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinowarm.cmd
+        run: bash test/run.sh --build neutrinowarm
       - name: warm the WebView2 runtime
         timeout-minutes: 5
         shell: pwsh
@@ -1649,7 +1642,7 @@ jobs:
       # what the stamp's certutil costs -- are the numbers the launcher's own
       # comment about size and modification time has been waiting for.
       - shell: bash
-        run: bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinotime.cmd
+        run: bash test/run.sh --build neutrinotime
       - name: launch time
         timeout-minutes: 10
         # continue-on-error, for the reason the sheet step gives: this is a
@@ -1725,7 +1718,7 @@ jobs:
       # here it wrote it once and trusted a stamp beside it afterwards.
       - if: always()
         shell: bash
-        run: bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinocache.cmd
+        run: bash test/run.sh --build neutrinocache
       - if: always()
         timeout-minutes: 15
         shell: pwsh
@@ -1743,8 +1736,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/build/mkapp.sh test/probe/neutrinoloaders.js test/neutrinostandalone.cmd
-          bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinostandalone-testing.cmd
+          bash test/run.sh --build neutrinostandalone neutrinostandalone-testing
       - if: always()
         timeout-minutes: 15
         shell: pwsh
@@ -1760,7 +1752,7 @@ jobs:
       # `if: always()` so it is measured whether or not appcache was.
       - if: always()
         shell: bash
-        run: bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinorace.cmd
+        run: bash test/run.sh --build neutrinorace
       # The gap between the compile and the START, asserted shut. The batch
       # region MOVEs the freshly compiled exe onto a predictable name in the app
       # folder, writes a manifest, and only then STARTs it -- and appcache.ps1
@@ -1804,11 +1796,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinoerr.cmd
-          sed -i 's/\(webView2PinnedVersion[ :=]*\)"[^"]*"/\1"0.0.0-neutrino-does-not-exist"/' test/neutrinoerr.cmd
-          grep -q 'webView2PinnedVersion[ :=]*"0.0.0-neutrino-does-not-exist"' test/neutrinoerr.cmd
-          sed -i 's/\(evergreenEntryExport[ :=]*\)"[^"]*"/\1"NeutrinoNoSuchExport"/' test/neutrinoerr.cmd
-          grep -q 'evergreenEntryExport[ :=]*"NeutrinoNoSuchExport"' test/neutrinoerr.cmd
+          bash test/run.sh --build neutrinoerr
       - if: always()
         timeout-minutes: 10
         shell: pwsh
@@ -1885,8 +1873,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/build/mkapp.sh --testing test/probe/neutrinotest.js test/neutrinoload1.cmd
-          bash test/build/mkapp.sh --testing test/probe/neutrinotest.js test/neutrinoload2.cmd
+          bash test/run.sh --build neutrinoload1 neutrinoload2
       - name: launch under load
         if: always()
         timeout-minutes: 15
@@ -2019,7 +2006,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/nt-results"
           echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       - shell: bash
-        run: bash test/build/mkapp.sh test/probe/neutrinoattack.js test/neutrinoattack.cmd
+        run: bash test/run.sh --build neutrinoattack
       # The suites this lane is made of, parsed before any of them runs, for
       # the same reason the compile below happens first -- see psparse.ps1.
       - timeout-minutes: 5
@@ -2082,7 +2069,7 @@ jobs:
       # the four-job split was bought for, kept without the four jobs.
       - if: always()
         shell: bash
-        run: bash test/build/mkapp.sh --overlay test/probe/nav-hermetic test/probe/neutrinonav.js test/neutrinonav.cmd
+        run: bash test/run.sh --build neutrinonav
       - if: always()
         timeout-minutes: 12
         shell: pwsh
@@ -2098,7 +2085,7 @@ jobs:
         run: cat ~/navlogs/nav.log
       - if: always()
         shell: bash
-        run: bash test/build/mkapp.sh --testing test/probe/neutrinodoc.js test/neutrinodoc.cmd
+        run: bash test/run.sh --build neutrinodoc
       - if: always()
         timeout-minutes: 20
         shell: pwsh
@@ -2145,12 +2132,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/build/mkapp.sh --testing test/probe/neutrinostdgeom.js test/neutrinostdgeom.cmd
-          bash test/build/parse.sh test/neutrinostdgeom.cmd
-          bash test/build/mkapp.sh --testing --decorations=none test/probe/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
-          bash test/build/parse.sh test/neutrinostdgeom-none.cmd
-          bash test/build/mkapp.sh --testing test/probe/neutrinostddoc.js test/neutrinostddoc.cmd
-          bash test/build/parse.sh test/neutrinostddoc.cmd
+          bash test/run.sh --build neutrinostdgeom neutrinostdgeom-none neutrinostddoc
       # Both halves and the differential, in place of the single launch this
       # step used to make -- the decorated half is that launch, it runs first
       # because it is the control, and its verifier exit is carried into this
@@ -2208,10 +2190,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/build/mkapp.sh --testing test/probe/neutrinostdwin.js test/neutrinostdwin.cmd
-          bash test/build/parse.sh test/neutrinostdwin.cmd
-          bash test/build/mkapp.sh --testing test/probe/neutrinostdtheme.js test/neutrinostdtheme.cmd
-          bash test/build/parse.sh test/neutrinostdtheme.cmd
+          bash test/run.sh --build neutrinostdwin neutrinostdtheme
       - if: always()
         timeout-minutes: 12
         shell: pwsh
@@ -2258,8 +2237,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/build/mkapp.sh --testing test/probe/neutrinostdtheme.js test/neutrinostdtheme.cmd
-          bash test/build/parse.sh test/neutrinostdtheme.cmd
+          bash test/run.sh --build neutrinostdtheme
       # The flip itself is test/suite/themeflip.ps1 now. It was fifty-odd lines of
       # inline pwsh, which is the one language here a workflow cannot check:
       # test/build/psparse.ps1 parses every .ps1 in that directory before any of them
@@ -2293,8 +2271,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/build/mkapp.sh --testing test/probe/neutrinolivetheme.js test/neutrinolivetheme.cmd
-          bash test/build/parse.sh test/neutrinolivetheme.cmd
+          bash test/run.sh --build neutrinolivetheme
       - if: always()
         timeout-minutes: 10
         shell: pwsh
@@ -2321,8 +2298,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/build/demoapp.sh test/neutrinodemo.cmd
-          bash test/build/parse.sh test/neutrinodemo.cmd
+          bash test/run.sh --build neutrinodemo
       - if: always()
         name: the app on the download page
         timeout-minutes: 10
@@ -2366,8 +2342,7 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          bash test/build/mkapp.sh --testing test/probe/neutrinostdfont.js test/neutrinostdfont.cmd
-          bash test/build/parse.sh test/neutrinostdfont.cmd
+          bash test/run.sh --build neutrinostdfont
           & .\test\suite\verify-std.ps1 -Probe font -ScreenshotDir $env:USERPROFILE `
             -Launch -Artifact .\test\neutrinostdfont.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdfont.log"
@@ -2395,8 +2370,7 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          bash test/build/mkapp.sh --testing test/probe/neutrinolivefont.js test/neutrinolivefont.cmd
-          bash test/build/parse.sh test/neutrinolivefont.cmd
+          bash test/run.sh --build neutrinolivefont
           & .\test\suite\fontlive.ps1 *>&1 | Tee-Object -FilePath "$HOME\fontlive.log"
           exit $LASTEXITCODE
       - name: sheet
@@ -2451,8 +2425,7 @@ jobs:
       # runs on three.
       - timeout-minutes: 5
         run: bash test/lib/selftest.sh
-      - run: bash test/build/mkapp.sh --testing test/probe/neutrinotest.js test/neutrinotest.cmd
-      - run: bash test/build/parse.sh test/neutrinotest.cmd
+      - run: bash test/run.sh --build neutrinotest-testing
       # The launcher's own seatbelt profile, asserted as a value: that it can be
       # built inside a profile that denies /tmp, that the text is the same
       # either way, that seatbelt takes it, and that what seatbelt takes

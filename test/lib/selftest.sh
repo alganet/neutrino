@@ -1128,6 +1128,15 @@ WANTED_APPS="$(awk -F'\t' '!/^#/ && NF { print $3 }' "$SUITES_TSV" |
     tr ' ' '\n' |
     awk '/^(app|build)=/ { sub(/^(app|build)=/, ""); print }' | sort -u)"
 
+# And the artifacts named by `run.sh --build` in a workflow, which is how a lane
+# whose suites are still pwsh asks for one. Those rows are read by the same
+# table and are no less declared for the step that runs them not being a
+# manifest row yet -- without this, every windows artifact reads as an orphan
+# and the check that is supposed to find a leftover finds eleven of them.
+WANTED_APPS="$WANTED_APPS $(sed -n 's/.*run\.sh --build //p' \
+    "$ROOT"/.github/workflows/*.yml | tr ' ' '\n' |
+    awk '/^neutrino[A-Za-z0-9-]*$/ { print }' | sort -u)"
+
 MISSING=""
 for a in $WANTED_APPS; do
     case " $(echo $APPNAMES) " in *" $a "*) ;; *) MISSING="$MISSING $a" ;; esac

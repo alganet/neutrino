@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: ISC
 #
 # Usage: run.sh [--list] [--dry-run] <lane>[:<phase>] [suite ...]
+#        run.sh --build <artifact> ...
 #
 # test/lib/harness.sh has referred to this file since it was written -- "what CI
 # and test/run.sh set", "test/run.sh relies on it to add a lane up without
@@ -45,17 +46,31 @@ APPS_FILE="${NT_APPS_FILE:-$HERE/apps.tsv}"
 
 LIST=0
 DRY=0
+BUILD_ONLY=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --list)    LIST=1; shift ;;
         --dry-run) DRY=1; shift ;;
+        --build)   BUILD_ONLY=1; shift ;;
         --) shift; break ;;
         -*) echo "run.sh: unknown option $1" >&2; exit 2 ;;
         *) break ;;
     esac
 done
 
-[ $# -ge 1 ] || { echo "usage: run.sh [--list] [--dry-run] <lane>[:<phase>] [suite ...]" >&2; exit 2; }
+[ $# -ge 1 ] || { echo "usage: run.sh [--list] [--dry-run] <lane>[:<phase>] [suite ...]" >&2
+                  echo "       run.sh --build <artifact> ..." >&2; exit 2; }
+
+# --build names artifacts and not a lane. An artifact is a row in apps.tsv; it
+# has no lane, no suite and no display, so none of the manifest reading below is
+# on its path. This is the door a `shell: bash` build step reaches for on a lane
+# whose suites are still pwsh and cannot be manifest rows yet -- the build was
+# never the part that had to stay in the workflow, only the step that runs it.
+if [ "$BUILD_ONLY" = 1 ]; then
+    LANE_KEY=""
+    NT_LANE="${NT_LANE:-local}"
+    export NT_LANE
+else
 
 LANE_KEY="$1"; shift
 # Everything left of the colon is the lane. A phase is how one lane runs its list
@@ -78,6 +93,8 @@ WANTED="$*"
 [ -n "${NT_RUN_SUITES:-}" ] && WANTED="$NT_RUN_SUITES"
 
 [ -f "$SUITES_FILE" ] || { echo "run.sh: no manifest at '$SUITES_FILE'" >&2; exit 2; }
+
+fi
 
 # ------------------------------------------------------------------ the manifest
 
@@ -104,7 +121,7 @@ nt_rows() {
 
 DEFAULTS="$(nt_rows | awk -F'\t' '$1 == "*" { print $2; exit }')"
 
-if [ -z "$(nt_rows)" ]; then
+if [ "$BUILD_ONLY" = 0 ] && [ -z "$(nt_rows)" ]; then
     echo "run.sh: no rows for lane '$LANE_KEY' in $SUITES_FILE" >&2
     exit 2
 fi
@@ -121,7 +138,7 @@ nt_app_out() {
 }
 
 nt_build() {
-    local name="$1" line builder source flags outname out
+    local name="$1" line builder source flags outname out nt_f nt_ov
     # Memoised. A lane runs five suites off four artifacts and the same one is
     # named by two rows; building it twice is thirty seconds of a runner for a
     # file that is already on disk and byte-identical.
@@ -144,8 +161,30 @@ nt_build() {
     # manifest that carried the paths would have to be re-edited by every move.
     case "$builder" in
         mkapp)
-            # shellcheck disable=SC2086
-            bash "$HERE/build/mkapp.sh" $flags "$HERE/probe/$source" "$out" || return 1 ;;
+            # The flags column is argv, and a bare `--overlay <name>` in it
+            # names a directory in probe/ the same way `source` names a file
+            # there. It is resolved here for the reason the rooms are not in the
+            # manifest at all -- and because the alternative, a path relative to
+            # whatever directory the caller happened to be in, is what the
+            # workflow spelled before this file existed.
+            set --
+            nt_ov=0
+            for nt_f in $flags; do
+                if [ "$nt_ov" = 1 ]; then
+                    set -- "$@" "$HERE/probe/$nt_f"; nt_ov=0
+                elif [ "$nt_f" = "--overlay" ]; then
+                    set -- "$@" "$nt_f"; nt_ov=1
+                else
+                    set -- "$@" "$nt_f"
+                fi
+            done
+            if [ "$nt_ov" = 1 ]; then
+                echo "  FAIL: artifact '$name' ends its flags with a bare --overlay"; return 1
+            fi
+            # ${1+"$@"} and not "$@": with no flags at all and `set -u`, the
+            # bare form is an unbound variable on the bash 3.2 macOS ships,
+            # which is the same reason nothing in this tree uses an array.
+            bash "$HERE/build/mkapp.sh" ${1+"$@"} "$HERE/probe/$source" "$out" || return 1 ;;
         demoapp)
             bash "$HERE/build/demoapp.sh" "$out" || return 1 ;;
         *)
@@ -156,6 +195,24 @@ nt_build() {
     BUILT="$BUILT $name"
     return 0
 }
+
+# --build ends here: the artifacts named on the command line, each built and
+# parsed exactly as a lane would have built it, and an exit status that is the
+# number that failed. No suite runs and no display is asked for.
+if [ "$BUILD_ONLY" = 1 ]; then
+    NT_BUILD_RC=0
+    for nt_name in "$@"; do
+        echo "::group::build $nt_name"
+        if nt_build "$nt_name"; then
+            echo "  built $nt_name"
+        else
+            NT_BUILD_RC=$((NT_BUILD_RC + 1))
+        fi
+        echo "::endgroup::"
+    done
+    [ "$NT_BUILD_RC" = 0 ] || echo "run.sh: $NT_BUILD_RC artifact(s) did not build" >&2
+    exit "$NT_BUILD_RC"
+fi
 
 # ---------------------------------------------------------------- the directives
 

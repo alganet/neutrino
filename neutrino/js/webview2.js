@@ -245,8 +245,7 @@
         "--no-first-run --disable-background-networking " +
         "--disable-component-update --disable-sync --no-pings";
 
-    NeutrinoWebview.webView2PinnedVersion = "1.0.4129.50";
-    NeutrinoWebview.webView2PinnedSha256 = "d3934f482d484b89fb4825df720c710664e1143a1e90f7b3a60794ef33f473d2";
+@@include js/webview2-pin.js
 
     /*
      * Exactly what is taken out of the archive, and what each one has to

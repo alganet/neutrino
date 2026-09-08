@@ -176,7 +176,7 @@
         return SystemRef.IO.File.Exists(dll) ? dll : null;
     };
 
-    NeutrinoWebview.evergreenEntryExport = "CreateWebViewEnvironmentWithOptionsInternal";
+@@include js/evergreen-export.js
 
     /*
      * Every interface in the table, built once. The slot numbers are the data
