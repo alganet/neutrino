@@ -207,7 +207,7 @@ chmod +x "$BIN"/*
 
 RESULTS="$WORK/walk.tsv"
 PATH="$BIN:$PATH" NT_LANE=selftest NT_RESULTS="$RESULTS" NT_WAIT_TIMEOUT=5 \
-    bash "$ROOT/test/verify-linux.sh" "$WORK/shots" > "$WORK/walk.out" 2>&1
+    bash "$ROOT/test/suite/verify-linux.sh" "$WORK/shots" > "$WORK/walk.out" 2>&1
 RC=$?
 
 [ "$RC" = "0" ] && ok "a clean walk exits 0" \
@@ -233,7 +233,7 @@ echo 1 > "$STATE/idx"; echo 0 > "$STATE/seen"
 mkxdotool 640x480
 BAD="$WORK/bad.tsv"
 PATH="$BIN:$PATH" NT_LANE=selftest NT_RESULTS="$BAD" NT_WAIT_TIMEOUT=5 \
-    bash "$ROOT/test/verify-linux.sh" "$WORK/shots-bad" > "$WORK/bad.out" 2>&1
+    bash "$ROOT/test/suite/verify-linux.sh" "$WORK/shots-bad" > "$WORK/bad.out" 2>&1
 BRC=$?
 
 [ "$BRC" = "1" ] && ok "a wrong size exits 1 (one failed case)" \
@@ -272,7 +272,7 @@ DECOY=$!
 if pgrep -f WebKitWebProcess >/dev/null 2>&1; then
     SBX="$WORK/sandbox.tsv"
     PATH="$BIN:$PATH" NT_LANE=selftest NT_RESULTS="$SBX" NT_WAIT_TIMEOUT=5 \
-        APP_PID=$$ bash "$ROOT/test/verify-linux.sh" "$WORK/shots-sbx" > "$WORK/sbx.out" 2>&1
+        APP_PID=$$ bash "$ROOT/test/suite/verify-linux.sh" "$WORK/shots-sbx" > "$WORK/sbx.out" 2>&1
     [ "$(awk -F'\t' '$3 == "walk.renderer.sandboxed" { print $4 }' "$SBX")" = "FAIL" ] \
         && ok "walk.renderer.sandboxed reports FAIL for a web process with no bwrap over it" \
         || bad "walk.renderer.sandboxed did not fail on an unsandboxed web process"
@@ -317,7 +317,7 @@ echo 1 > "$STATE/idx"; echo 0 > "$STATE/seen"
 mkxdotool 640x480
 STOP="$WORK/stop.tsv"
 PATH="$BIN:$PATH" NT_LANE=selftest NT_RESULTS="$STOP" NT_WAIT_TIMEOUT=2 \
-    bash "$ROOT/test/verify-linux.sh" "$WORK/shots-stop" > "$WORK/stop.out" 2>&1
+    bash "$ROOT/test/suite/verify-linux.sh" "$WORK/shots-stop" > "$WORK/stop.out" 2>&1
 STOPRC=$?
 cp "$STATE/titles.full" "$STATE/titles"
 
@@ -385,7 +385,7 @@ if [ -d "$RECDIR" ]; then
                 > "$WORK/rec-$base.out" 2>&1
         else
             NT_LANE="${base%%.*}" NT_SUITE=verify-std NT_RESULTS="$rrows" \
-                bash "$ROOT/test/verify-std.sh" "$probe" "$WORK/shots-rec" "$rec" \
+                bash "$ROOT/test/suite/verify-std.sh" "$probe" "$WORK/shots-rec" "$rec" \
                 > "$WORK/rec-$base.out" 2>&1
         fi
         rrc=$?
@@ -483,7 +483,7 @@ printf '  PASS: a prose assertion 12 times\n  FAIL: a prose failure\n' > "$SHEET
 # `900x600`, each holding `54,40`, off the windows-launch load replicas. The
 # three cases below must survive and nothing from this file may join them.
 cp "$ROOT/test/lib/records/windows-launch.walk.tsv" "$SHEETSRC/a-record.tsv" 2>/dev/null || true
-bash "$ROOT/test/sheet.sh" selftest "$WORK/sheet.html" "Logs=$SHEETSRC" >/dev/null 2>&1
+bash "$ROOT/test/report/sheet.sh" selftest "$WORK/sheet.html" "Logs=$SHEETSRC" >/dev/null 2>&1
 
 if "$(nt_python 2>/dev/null || echo python3)" - "$WORK/sheet.html" <<'PYEOF' 2>/dev/null
 import json, re, sys
@@ -519,7 +519,7 @@ if command -v "$(nt_python)" >/dev/null 2>&1 && [ -f "$WORK/sheet.html" ]; then
         printf 'sheet.probe.b\ta control\tselftest\n'
         printf 'sheet.probe.c\ta control\tselftest\n'
     } > "$MREG"
-    if "$(nt_python)" "$ROOT/test/matrix.py" --strict --registry "$MREG" \
+    if "$(nt_python)" "$ROOT/test/report/matrix.py" --strict --registry "$MREG" \
         "$WORK/sheet.html" >/dev/null 2>&1; then
         ok "matrix.py --strict passes a lane that reported what it declared"
     else
@@ -529,7 +529,7 @@ if command -v "$(nt_python)" >/dev/null 2>&1 && [ -f "$WORK/sheet.html" ]; then
     # An id in a sheet that the registry does not declare. This is the shape a
     # record read as rows takes: `500x400` reached the grid that way.
     printf 'sheet.probe.a\ta control\tselftest\n' > "$MREG"
-    if "$(nt_python)" "$ROOT/test/matrix.py" --strict --registry "$MREG" \
+    if "$(nt_python)" "$ROOT/test/report/matrix.py" --strict --registry "$MREG" \
         "$WORK/sheet.html" >/dev/null 2>&1; then
         bad "matrix.py --strict passed a sheet carrying undeclared case ids"
     else
@@ -538,7 +538,7 @@ if command -v "$(nt_python)" >/dev/null 2>&1 && [ -f "$WORK/sheet.html" ]; then
 
     # A lane the registry expects rows from that reported none of them.
     printf 'nothing.reported.here\ta case no sheet carries\tselftest\n' > "$MREG"
-    if "$(nt_python)" "$ROOT/test/matrix.py" --strict --registry "$MREG" \
+    if "$(nt_python)" "$ROOT/test/report/matrix.py" --strict --registry "$MREG" \
         "$WORK/sheet.html" >/dev/null 2>&1; then
         bad "matrix.py --strict passed a lane that reported none of its cases"
     else
@@ -563,7 +563,7 @@ if command -v "$(nt_python)" >/dev/null 2>&1 && [ -f "$WORK/sheet.html" ]; then
         printf 'sheet.probe.b\ta control\tselftest selftest2\n'
         printf 'sheet.probe.c\tthe one the second lane drops\tselftest selftest2\n'
     } > "$MREG"
-    if "$(nt_python)" "$ROOT/test/matrix.py" --strict --registry "$MREG" \
+    if "$(nt_python)" "$ROOT/test/report/matrix.py" --strict --registry "$MREG" \
         "$WORK/sheet.html" "$WORK/sheet2.html" >/dev/null 2>&1; then
         bad "matrix.py --strict passed a case one lane reported and another did not"
     else
@@ -580,7 +580,7 @@ if command -v "$(nt_python)" >/dev/null 2>&1 && [ -f "$WORK/sheet.html" ]; then
         printf 'sheet.probe.b\ta control\tselftest selftest2\n'
         printf 'sheet.probe.c\tdeclared only where it is reported\tselftest\n'
     } > "$MREG"
-    if "$(nt_python)" "$ROOT/test/matrix.py" --strict --registry "$MREG" \
+    if "$(nt_python)" "$ROOT/test/report/matrix.py" --strict --registry "$MREG" \
         "$WORK/sheet.html" "$WORK/sheet2.html" >/dev/null 2>&1; then
         ok "and passes two lanes that both reported everything declared"
     else
@@ -635,8 +635,11 @@ echo "### the registry, against every suite that speaks to it"
 # meant a second scan, and a second scan is a second thing that can quietly
 # read nothing.
 NT_SPEAKERS=""
-for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/test/*.ps1 \
-        "$ROOT"/netinstall/test/*.sh; do
+for suite in "$ROOT"/test/suite/*.sh "$ROOT"/test/suite/*.ps1 \
+        "$ROOT"/test/lib/*.sh "$ROOT"/test/lib/*.ps1 \
+        "$ROOT"/test/build/*.sh "$ROOT"/test/build/*.ps1 \
+        "$ROOT"/test/report/*.sh "$ROOT"/test/apparatus/*.sh \
+        "$ROOT"/test/run.sh "$ROOT"/netinstall/test/*.sh; do
     [ -f "$suite" ] || continue
     base="$(basename "$suite")"
     # This file is excluded because it quotes all six words while checking them,
@@ -647,7 +650,7 @@ for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/test/*.ps1 \
     [ "$base" = harness.ps1 ] && continue
     # A suite speaks the harness by sourcing one of the two files that define
     # it -- or by sourcing something under test/lib/ that sources one of them.
-    # The .sh spelling is `. lib/harness.sh` and the .ps1 spelling is
+    # The .sh spelling is `. ../lib/harness.sh` and the .ps1 spelling is
     # `. (Join-Path $PSScriptRoot "lib\harness.ps1")`, so the pattern matches
     # the filename and not the sourcing syntax, which the two do not share.
     #
@@ -830,7 +833,10 @@ UNKNOWN="$(printf '%s' "$UNKNOWN" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's
 # only from PowerShell is emitted, and a scan that could not see the file it
 # lives in would report it as registered-but-never-emitted -- which reads as a
 # stale registry entry and would get the id deleted rather than the glob fixed.
-NT_SUITES="$(ls "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/test/*.ps1 \
+NT_SUITES="$(ls "$ROOT"/test/suite/*.sh "$ROOT"/test/suite/*.ps1 \
+    "$ROOT"/test/lib/*.sh "$ROOT"/test/lib/*.ps1 \
+    "$ROOT"/test/build/*.sh "$ROOT"/test/build/*.ps1 \
+    "$ROOT"/test/report/*.sh "$ROOT"/test/apparatus/*.sh "$ROOT"/test/run.sh \
     "$ROOT"/netinstall/test/*.sh \
     2>/dev/null | grep -v 'selftest\.sh$')"
 
@@ -903,7 +909,7 @@ done < "$ROOT/test/cases.tsv"
 # failures rather than loud ones, which is why they need a check at all: the
 # grid goes on rendering and says something confident and wrong.
 
-# No id twice. test/matrix.py builds the registry as a dict keyed on the id, so
+# No id twice. test/report/matrix.py builds the registry as a dict keyed on the id, so
 # a second row with the same id replaces the first -- its title and, the part
 # that matters, its lane list. A case quietly expected on a different set of
 # lanes turns real holes into `.` and back, and nothing anywhere says so.
@@ -1005,7 +1011,7 @@ echo "### reap.sh, against the caller it must not kill"
 # script body, where no argv can see it -- which is luck, and stops being luck
 # the moment anyone parameterises it."
 #
-# test/step.sh parameterised it. `--app .../neutrinoattack.cmd` puts the pattern
+# test/lib/step.sh parameterised it. `--app .../neutrinoattack.cmd` puts the pattern
 # in step.sh's argv, `pgrep -f neutrinoattack` returned step.sh, and the suite
 # was SIGTERMed and then SIGKILLed by the thing it had just called. It exited 137
 # and the lane read that as 137 failures.
@@ -1021,7 +1027,7 @@ if command -v pgrep >/dev/null 2>&1 && command -v ps >/dev/null 2>&1; then
 bash "$NT_REAP_SH" nt-selftest-no-such-process >/dev/null 2>&1
 echo SURVIVED
 CALLEREOF
-    out="$(NT_REAP_SH="$ROOT/test/reap.sh" bash "$REAPCALLER" \
+    out="$(NT_REAP_SH="$ROOT/test/lib/reap.sh" bash "$REAPCALLER" \
         --app /tmp/nt-selftest-no-such-process.cmd 2>/dev/null)"
     if [ "$out" = "SURVIVED" ]; then
         ok "reap.sh does not kill the process that called it"
@@ -1142,7 +1148,7 @@ MISSING=""
 while IFS="$(printf '\t')" read -r name builder source flags outname; do
     case "$name" in \#*|"") continue ;; esac
     [ "$builder" = "mkapp" ] || continue
-    [ -f "$ROOT/test/$source" ] || MISSING="$MISSING $source"
+    [ -f "$ROOT/test/probe/$source" ] || MISSING="$MISSING $source"
 done < "$APPS_TSV"
 [ -z "$MISSING" ] && ok "every mkapp source in apps.tsv is on disk" \
     || bad "named in apps.tsv and not on disk:$MISSING"
@@ -1211,7 +1217,7 @@ done
     || bad "declared in suites.tsv and named by no step:$DORMANT"
 
 # The apparatus a suite needs is brought up by that suite, not by the step that
-# calls it. test/stall.py and test/serve-target.sh are the case this is written
+# calls it. test/apparatus/stall.py and test/apparatus/serve-target.sh are the case this is written
 # about: three lanes each spelled the same twelve lines to start them, launch
 # the app between them and tear them down afterwards, and the three copies were
 # not identical -- macos cleared the status file and cat'd the app's log, the
@@ -1221,7 +1227,7 @@ done
 # before the app launches, or the navigation fails on its own and every driver
 # reports `held` whether it has a guard or not. An ordering constraint pasted
 # into three jobs is an ordering constraint nobody is checking, so it lives in
-# test/early.sh and test/navrefuse.sh, which are the two files that need it.
+# test/suite/early.sh and test/suite/navrefuse.sh, which are the two files that need it.
 #
 # ERE and not `grep -e a \| b`: BSD grep reads GNU's BRE alternation as two
 # literal characters, and this file runs on the macos lane.
@@ -1244,7 +1250,7 @@ HANDLAID="$(awk '
 # the number. One of them had drifted several steps down the file and was
 # sitting inside the *previous* job's step list -- so kde's block, naming a
 # netinstall step that may take 35 minutes, appeared to annotate kde-live, which
-# runs test/qtkde.sh alone and has no netinstall step at all. A reader following
+# runs test/apparatus/qtkde.sh alone and has no netinstall step at all. A reader following
 # it would have been reading about the wrong lane, and kde-live, whose ceilings
 # it looked like it explained, had none of its own.
 #
@@ -1287,13 +1293,13 @@ ok "run.sh --dry-run resolves every lane in the manifest"
 # `\|` was found and named on this branch already: a manifest check spelled
 # `sed -n 's/^\(app\|build\)=//p'`, the macos lane matched nothing, and the note
 # on that commit is the one worth keeping -- "an empty list has nothing to fail
-# on". Two more were sitting in the tree. test/assemble.sh asked whether any CSS
+# on". Two more were sitting in the tree. test/suite/assemble.sh asked whether any CSS
 # comment survived the strip with `grep -c 'a\|b\|c'` and asserted the answer was
 # 0, which is what a pattern that cannot match returns for free; that file runs
 # on GNU, MSYS and BSD deliberately. netinstall/test/phases.sh built its marks
 # string the same way, on two BSD lanes, for cases that all skip today.
 #
-# `\b` was three patterns in this file and one in test/parse.sh, which runs on
+# `\b` was three patterns in this file and one in test/build/parse.sh, which runs on
 # every artifact on every lane and would have been telling macos the launcher
 # declares no name jsc.exe reserves without reading a line of it.
 #
@@ -1306,7 +1312,9 @@ ok "run.sh --dry-run resolves every lane in the manifest"
 # that was not given -E, because in an ERE a backslashed pipe is a literal pipe
 # and a legitimate thing to want.
 GNUISM=""
-for f in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
+for f in "$ROOT"/test/suite/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/test/build/*.sh \
+        "$ROOT"/test/report/*.sh "$ROOT"/test/apparatus/*.sh "$ROOT"/test/run.sh \
+        "$ROOT"/netinstall/test/*.sh; do
     [ -f "$f" ] || continue
     stripped="$(sed 's/#.*//' "$f")"
     hits="$(printf '%s\n' "$stripped" | grep -nE '(grep|sed|awk)[^|]*\\b' || true)"
@@ -1442,7 +1450,7 @@ printf '%s' "$FIXOUT" | grep -q 'unknown setup directive' &&
 # harness.sh derives $NT_SUITE from `basename "${0%.sh}"` when nothing sets it,
 # which names a suite after the script that implements it. That is one name for
 # four rows wherever a script serves more than one: stddoc, stdwin, stdtheme and
-# stdfont are all test/verify-std.sh, and every row they filed said `verify-std`.
+# stdfont are all test/suite/verify-std.sh, and every row they filed said `verify-std`.
 # run.sh exports the manifest's name over it, and this is what says so.
 #
 # The stub is deliberately not a .sh, so the two answers cannot be confused: left

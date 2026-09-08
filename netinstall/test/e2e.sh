@@ -41,7 +41,7 @@ echo "=== Build the app under test ==="
 # six-state window contract belongs to neutrino's verifiers, which every lane
 # that runs this suite has already run against a standalone launch of its own.
 # See nt_app_probe in lib.sh for the whole of that argument.
-bash "$ROOT/test/mkapp.sh" --testing "$NT_TESTDIR/alive.js" "$SERVE/alive.cmd"
+bash "$ROOT/test/build/mkapp.sh" --testing "$NT_TESTDIR/alive.js" "$SERVE/alive.cmd"
 SPEC="alive-example-com-1$(nt_pin "$SERVE/alive.cmd")"
 APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 echo "  built and pinned as $SPEC"
@@ -162,7 +162,7 @@ if [ "$NT_WINDOWS" = "1" ]; then
         # leave for the compile or for :LAUNCH before any certutil runs.
         # launcher.hash is where that call would write, so its absence is the
         # assertion: a launch that starts a process to answer a question
-        # nothing asks would put the file there. test/appcache.ps1 holds the
+        # nothing asks would put the file there. test/suite/appcache.ps1 holds the
         # other half, where the digest *is* read and the file must exist.
         if [ -f "$APPDIR/launcher.hash" ]; then
             nt_fail e2e.slot.nodigest "slot expected=no digest is taken where no stamp can be kept actual=$APPDIR/launcher.hash exists"

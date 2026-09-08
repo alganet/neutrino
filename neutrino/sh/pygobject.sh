@@ -6,7 +6,7 @@
 # in -- but this file is JavaScript, and a Python driver that re-derived
 # extractHtmlDocument, parseMessage and mayOpenExternal
 # would be a second copy of every decision the other three lanes share. Two
-# copies of a content policy is one copy that is wrong, and test/parse.sh
+# copies of a content policy is one copy that is wrong, and test/build/parse.sh
 # exists because this project has already paid for cross-engine divergence.
 #
 # It does not need one. JavaScriptCore ships with WebKitGTK -- the same source

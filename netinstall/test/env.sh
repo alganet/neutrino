@@ -472,7 +472,7 @@ fi
 
 if [ "$NT_HAVE_APP" = "1" ]; then
     echo "=== Build the app under test ==="
-    if bash "$ROOT/test/mkapp.sh" --testing "$NT_TESTDIR/alive.js" \
+    if bash "$ROOT/test/build/mkapp.sh" --testing "$NT_TESTDIR/alive.js" \
             "$SERVE/alive.cmd" >/dev/null 2>&1 &&
        [ -s "$SERVE/alive.cmd" ]; then
         # With the launcher's own loader scrub cut out of it, and both launches
@@ -484,7 +484,7 @@ if [ "$NT_HAVE_APP" = "1" ]; then
         # itself unmeasured; and the netinstall launch would be denied twice,
         # so this suite would go on passing after an env.c regression. What is
         # under test here is env.c's allowlist. The launcher's rule is asserted
-        # by test/loaders.sh, against a control patched exactly this way.
+        # by test/suite/loaders.sh, against a control patched exactly this way.
         awk '/^nt_scrub_loaders$/ { next } { print }' \
             "$SERVE/alive.cmd" > "$SERVE/alive.patched" &&
             mv "$SERVE/alive.patched" "$SERVE/alive.cmd"

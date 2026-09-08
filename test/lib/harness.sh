@@ -3,7 +3,8 @@
 # SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
 # SPDX-License-Identifier: ISC
 #
-# Sourced, never run. `. "$(dirname "$0")/lib/harness.sh"` at the top of a suite.
+# Sourced, never run. `. "$(dirname "$0")/../lib/harness.sh"` at the top of a
+# suite -- the suites live in test/suite/ and the libraries one room over.
 #
 # Until this file existed, every suite declared its own `pass`/`fail`/`report`
 # -- fifteen bash files, thirty-one definitions, and seventeen PowerShell files

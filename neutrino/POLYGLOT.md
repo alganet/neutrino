@@ -115,7 +115,7 @@ is still inside the block comment from line 1.
 
 The first `<!doctype html>` in the file, and it has to stay the first one: the
 launcher cuts the document from the doctype to the `<script` tag after it, and
-the page script from that same tag. `test/parse.sh` refuses a source where
+the page script from that same tag. `test/build/parse.sh` refuses a source where
 anything above the doctype so much as mentions a doctype, and `assemble.sh`
 refuses a `style.css` or a `body.html` carrying one.
 
@@ -199,7 +199,7 @@ effect from this spread would take about 110 pairs.
 The alternation is why the number is stated this way rather than as a win.
 Measured in sequential blocks the same two builds read 303ms against 291ms,
 which looks like a result until the same artifact is measured twice in different
-sessions and reads 230ms once and 303ms the next. `test/vmfloor.py` records a
+sessions and reads 230ms once and 303ms the next. `test/apparatus/vmfloor.py` records a
 20ms gain for stubbing these same two drivers out, taken as one median against
 another; that is inside this noise, and this is the paired version of that
 experiment.
@@ -231,7 +231,7 @@ said `'unsafe-eval'` for exactly those five calls: the page runs this dispatch o
 load, so the one document in this project that is meant to be unable to execute
 anything had to permit `eval` in order to find out where it was. The same move
 took the three `eval` calls out of `note()`, which is why `else/note.js` exists.
-`test/neutrinoattack.js` reports `evl=BLOCKED` on every engine, beside the
+`test/probe/neutrinoattack.js` reports `evl=BLOCKED` on every engine, beside the
 inline-script check it has always carried.
 
 What it costs an app is real: `eval` and `new Function` no longer run in this
@@ -240,7 +240,7 @@ overlay part like any other.
 
 ### The one rule each branch still has
 
-Each is a shape `test/parse.sh` refuses:
+Each is a shape `test/build/parse.sh` refuses:
 
 - **Nothing under `jsc/` may contain `*/`.** JavaScript has no nested block
   comments, so a single one there ends the outer comment early and spills typed
@@ -267,7 +267,7 @@ Each is a shape `test/parse.sh` refuses:
 
   A balanced pair compiles, and that is a trap rather than an allowance — the
   paragraph in `else/entry.js` that explains this rule used to name both
-  directives on one line and passed for that reason alone. `test/parse.sh`
+  directives on one line and passed for that reason alone. `test/build/parse.sh`
   refuses either, because balance is not a property a comment can be asked to
   maintain. Everything else in an app is fine: `class`, arrow functions,
   template literals, and text that is not JavaScript at all all compiled without
@@ -343,7 +343,7 @@ Some things in here are not whole documents, and they are named rather than
 hidden. `html/document.html` opens tags the skeleton's last line closes, which
 is also the here-document terminator. `app.js` is the body of a function rather
 than a program. `js/config.js` and `else/entry.js` carry an `@@include` and are
-therefore templates rather than JavaScript — `test/assemble.sh` works out which
+therefore templates rather than JavaScript — `test/suite/assemble.sh` works out which
 parts those are by looking for the directive rather than by keeping a list. And
 the include lists are `.list` files rather than `.js` and `.sh` ones,
 because a list of `@@include` lines is a manifest and not a program — giving it
@@ -436,7 +436,7 @@ Windows checks this tree out with CRLF, and the programs that read a part here
 disagree about it: `sed` and `awk` normalise on that platform and never show a
 return to their caller, while `cat` and bash `read` pass them along. The
 monolith went through sed and awk and nothing else, so it got unix endings by
-accident; this does it on purpose, and `test/assemble.sh` builds from a CRLF
+accident; this does it on purpose, and `test/suite/assemble.sh` builds from a CRLF
 copy of the tree on every lane and asserts the artifact is the same bytes.
 
 Each region can be checked by the language it is written in, on the text that is
@@ -448,10 +448,10 @@ JScript.NET have no checker to run; they are covered by the lanes.
 `./assemble.sh --check` runs them and writes nothing, and every build runs them
 unless it passes `--no-verify`. They reach into the overlays, so an app whose
 JavaScript does not parse is refused here rather than by an engine that opens no
-window. `test/mkapp.sh` passes `--no-verify` anyway: fifty builds out of one tree
+window. `test/build/mkapp.sh` passes `--no-verify` anyway: fifty builds out of one tree
 means fifty `node` startups, which was a step that timed out at five minutes on
 the Windows runner with nothing else wrong in the job, and the artifacts that
-matter go through `test/parse.sh`, which reads the built file.
+matter go through `test/build/parse.sh`, which reads the built file.
 
 ## Working on it
 
@@ -474,4 +474,4 @@ be read.
 
 Adding a part is a file plus a line in the include list beside it. Moving code
 between parts changes nothing about the artifact, which is what
-`test/assemble.sh` measures.
+`test/suite/assemble.sh` measures.

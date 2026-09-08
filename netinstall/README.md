@@ -1004,7 +1004,7 @@ thing from it: that the confinement just applied still lets a webview come up an
 script. That is `nt_app_probe` in `test/lib.sh`, and its answer is one of `NO_WINDOW`,
 `WINDOW_NO_CONTENT` or `CONTENT_OK`.
 
-It used to answer that by running `test/verify-linux.sh` and its macOS and Windows siblings —
+It used to answer that by running `test/suite/verify-linux.sh` and its macOS and Windows siblings —
 neutrino's own verifiers, which assert the window title at each of six states, the size to the pixel,
 the frame's corner and the desktop's palette, and keep a screenshot of every one. Every lane that
 runs this suite already runs that verifier against a standalone launch in a step of its own, minutes
@@ -1038,7 +1038,7 @@ mechanism stays a reading.
 The wayland half had never run anywhere until it got a lane of its own. Every other lane is X11,
 AppKit or `user32`, so the longest of the five platform files was compiled six times a push and
 executed never, and both of the suite's wayland cases ended in "no compositor on this machine". The
-lane brings up a headless `sway` (see `test/wayland-up.sh` for why sway and not weston: `grim` can
+lane brings up a headless `sway` (see `test/apparatus/wayland-up.sh` for why sway and not weston: `grim` can
 photograph it) and an X server beside it, which is also the only place the two cases about the
 *choice* between the protocols can be more than a skip — a stale `WAYLAND_DISPLAY` falling back to
 X11, and a reachable compositor being preferred when `DISPLAY` is set too.

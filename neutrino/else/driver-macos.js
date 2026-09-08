@@ -434,7 +434,7 @@
                  * window, and with the read -- either spelling -- the app
                  * keeps its own document. The same rule reaches win.center
                  * in createWindow and app.run in runEventLoop, and both
-                 * carry a note. test/navrefuse.sh asserts this one from
+                 * carry a note. test/suite/navrefuse.sh asserts this one from
                  * both sides, because a guard that says it failed while
                  * succeeding and one that says it succeeded while failing
                  * read the same from any single lane.

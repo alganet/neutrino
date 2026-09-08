@@ -36,7 +36,7 @@ REM replace -- measured on a runner as `poison ran=YES realapp=DOWN`, with the
 REM stamp that vouched for it left exactly as this file wrote it, because that
 REM stamp was as writable as the exe. Recompiling closed it by making the
 REM artifact too short-lived to poison: 290 ms every launch, plus a 150 ms
-REM window between the MOVE and the START that test/exerace.ps1 has to go on
+REM window between the MOVE and the START that test/suite/exerace.ps1 has to go on
 REM measuring shut because closing it needs a handle cmd cannot hand over.
 REM
 REM Beside the script is a different place with a different rule. netinstall
@@ -187,7 +187,7 @@ REM apart itself instead of asking powershell.exe to do it. Nothing here fails
 REM if they are dropped: every call to them is late-bound through eval("System"),
 REM so the build succeeds and the extraction throws "Function expected" at run
 REM time, where the caller reports it as a failed download. Measured, and it is
-REM why test/winexec.ps1 builds an extraction with this line's own /r list.
+REM why test/suite/winexec.ps1 builds an extraction with this line's own /r list.
 REM Both files sit in the framework directory on every runner measured, and the
 REM PowerShell command they replace asked for the same assembly by name, so the
 REM floor this launcher needs has not moved.

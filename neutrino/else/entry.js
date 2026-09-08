@@ -30,7 +30,7 @@
      * opening one alone leaves a conditional that never closes. A balanced pair
      * on one line compiles -- and that is exactly how this paragraph used to
      * pass, by naming both. Depending on balance is not a rule anybody can
-     * hold, so test/parse.sh refuses either.
+     * hold, so test/build/parse.sh refuses either.
      *
      * POLYGLOT.md spells them out, because POLYGLOT.md is not in the artifact.
      *

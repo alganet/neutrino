@@ -349,7 +349,7 @@
      * only when neither is there.
      *
      * That folder is one everything running as this user can write -- the
-     * sentence test/appcache.ps1 already carries -- and under netinstall
+     * sentence test/suite/appcache.ps1 already carries -- and under netinstall
      * that includes the confined app. So this is PR 3's finding in Windows
      * spelling: write xor execute stops an app running what it wrote, and
      * does not stop it asking someone else to run it.
@@ -415,7 +415,7 @@
      * reparse points and does not depend on the half that threw. 1024 is
      * FILE_ATTRIBUTE_REPARSE_POINT.
      *
-     * test/winexec.ps1 asserts that no call in this file passes a recursive
+     * test/suite/winexec.ps1 asserts that no call in this file passes a recursive
      * flag, by reading the file -- so this paragraph deliberately does not
      * spell the call it is about. That is the third kind of hazard this
      * polyglot has where prose is structure, after PR 19's two sequences

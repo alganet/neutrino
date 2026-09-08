@@ -5,8 +5,8 @@
 #
 # Sourced, never run, below the harness line:
 #
-#   . "$(dirname "$0")/lib/harness.sh"
-#   . "$(dirname "$0")/lib/title.sh"
+#   . "$(dirname "$0")/../lib/harness.sh"
+#   . "$(dirname "$0")/../lib/title.sh"
 #
 # Half of what this tree asserts arrives in a window title. The launcher's walk
 # names eight states in one, the standards probes report their fields in one,

@@ -9,7 +9,7 @@
 # GIO_EXTRA_MODULES loads into that and the network process; LD_AUDIT loads
 # everywhere, engine included; and on the Qt branch nothing was removed at all,
 # so QTWEBENGINE_CHROMIUM_FLAGS chose the program the renderer ran. Each of
-# those is a measurement in test/loaders.sh, not a worry.
+# those is a measurement in test/suite/loaders.sh, not a worry.
 #
 # Two of them are worse than a load, because they undo a decision this file
 # makes on purpose. neutrino_webkit_sandbox below runs bubblewrap to find out
@@ -64,7 +64,7 @@ nt_scrub_loaders() {
     # followed by a slash anywhere in the shell region closes it early and the
     # rest of the file is parsed as code -- which is what a regex ending
     # ".*" then "/" does. Anchoring with $ first is how the line above
-    # already avoids it, and test/parse.sh asserts the region contains none.
+    # already avoids it, and test/build/parse.sh asserts the region contains none.
     #
     # Two sequences, not one. The other is the document's doctype: it is where
     # both halves of this file are cut from, so a line up here that merely names
@@ -73,7 +73,7 @@ nt_scrub_loaders() {
     # enforce and no page can tell apart from one they do. Naming the script tag
     # up here is harmless now; naming the doctype is not. Both hazards cost a CI
     # round each, and both are checks rather than things to remember: the
-    # launcher refuses a source with two of them, and test/parse.sh says so
+    # launcher refuses a source with two of them, and test/build/parse.sh says so
     # before it gets that far.
     nt_names="$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*$/\1/p')"
     for nt_name in $nt_names; do

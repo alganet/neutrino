@@ -138,17 +138,21 @@ nt_build() {
     [ -z "$outname" ] || [ "$outname" = "-" ] && outname="$name.cmd"
     out="$HERE/$outname"
 
+    # The builder is in build/ and the source is in probe/, and neither room is
+    # spelled in apps.tsv. That table names an artifact, a builder and a source
+    # by name; where each of those lives is this runner's business, and a
+    # manifest that carried the paths would have to be re-edited by every move.
     case "$builder" in
         mkapp)
             # shellcheck disable=SC2086
-            bash "$HERE/mkapp.sh" $flags "$HERE/$source" "$out" || return 1 ;;
+            bash "$HERE/build/mkapp.sh" $flags "$HERE/probe/$source" "$out" || return 1 ;;
         demoapp)
-            bash "$HERE/demoapp.sh" "$out" || return 1 ;;
+            bash "$HERE/build/demoapp.sh" "$out" || return 1 ;;
         *)
             echo "  FAIL: artifact '$name' names an unknown builder '$builder'"; return 1 ;;
     esac
 
-    bash "$HERE/parse.sh" "$out" || return 1
+    bash "$HERE/build/parse.sh" "$out" || return 1
     BUILT="$BUILT $name"
     return 0
 }
@@ -196,7 +200,7 @@ nt_setup() {
             app=*)     APP_NAME="${d#app=}"; BUILD_NAMES="$BUILD_NAMES ${d#app=}" ;;
             build=*)   BUILD_NAMES="$BUILD_NAMES ${d#build=}" ;;
             cat=*)     cats="$cats --cat ${d#cat=}" ;;
-            # A session bus around the artifact test/step.sh launches. kde asks
+            # A session bus around the artifact test/lib/step.sh launches. kde asks
             # for one because QtWebEngine wants a bus and the container has no
             # desktop to inherit one from; nothing else does. It is a directive
             # rather than an env(1) in the command column for the reason the
@@ -262,7 +266,7 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     fi
 
     if [ "$DRY" = 1 ]; then
-        echo "$suite: bash $HERE/step.sh$STEP_ARGS --log $suite $APP_ARG -- $command"
+        echo "$suite: bash $HERE/lib/step.sh$STEP_ARGS --log $suite $APP_ARG -- $command"
         continue
     fi
 
@@ -275,7 +279,7 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     #
     # Without this a suite is named by the script that implements it, because
     # that is all harness.sh has to go on -- `basename "${0%.sh}"`. Four rows on
-    # every desktop lane run test/verify-std.sh, so stddoc, stdwin, stdtheme and
+    # every desktop lane run test/suite/verify-std.sh, so stddoc, stdwin, stdtheme and
     # stdfont all filed as `verify-std`, appending to one file; the sheet's
     # per-case table then had a suite column that could not say which of the four
     # a row came from, and neither could a reader. fontflip and fontlive are the
@@ -284,8 +288,8 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     # that same pile as well.
     #
     # It moves no cell in the grid, and that is worth saying because it was the
-    # stated reason for not doing it. test/sheet.sh builds its digest from
-    # (id, verdict, suite) triples, but test/matrix.py reads the id and the
+    # stated reason for not doing it. test/report/sheet.sh builds its digest from
+    # (id, verdict, suite) triples, but test/report/matrix.py reads the id and the
     # verdict and never the suite -- so the name reaches the sheet's own table
     # and stops there. Nothing globs these files by name either: sheet.sh takes
     # `*.tsv` from the directory it is pointed at.
@@ -314,7 +318,7 @@ while IFS="$(printf '\t')" read -r suite setup command; do
 
     if [ "$RC" = 0 ]; then
         # shellcheck disable=SC2086
-        bash "$HERE/step.sh" $STEP_ARGS --log "$suite" $APP_ARG -- $command
+        bash "$HERE/lib/step.sh" $STEP_ARGS --log "$suite" $APP_ARG -- $command
         RC=$?
     fi
 

@@ -363,7 +363,7 @@ NT_Q3="'''"
 # `cat: .../launcher.cmd$'\r': No such file or directory` with every build step
 # on the Windows lane red behind it. And the parts that are never stripped, the
 # skeleton and the document, would have kept their returns in a file where
-# everything else had lost them: test/parse.sh reads the here-document
+# everything else had lost them: test/build/parse.sh reads the here-document
 # delimiter off the seam line with a `$` anchor and would have found nothing
 # there, on an artifact that no shell could run either.
 #

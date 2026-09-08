@@ -11,7 +11,7 @@
      *
      * Every one of these numbers came out of `build/native/include/WebView2.h`
      * in the package this build already pins, and none was counted by hand.
-     * test/evergreen.ps1 lifts this object out of the built artifact, parses
+     * test/suite/evergreen.ps1 lifts this object out of the built artifact, parses
      * that header, and fails on any disagreement -- which is the same
      * arrangement webView2Members has, and for the same reason: a pinned
      * constant nobody re-checks is a constant that is right until it is
@@ -50,7 +50,7 @@
      * The two structs are the exception because they have to be. A struct is
      * not passed the way a pointer is, whatever its size, and a struct passed
      * as a pointer is not a wrong value -- it is a crash. Both layouts are read
-     * out of the pinned header by test/evergreen.ps1 rather than remembered.
+     * out of the pinned header by test/suite/evergreen.ps1 rather than remembered.
      */
     NeutrinoWebview.webView2Interfaces = {
         environment: {

@@ -20,7 +20,7 @@
 # not, and this is that half, in one copy.
 #
 # It runs on every lane because bash does. That is not a new bet -- decoflip.ps1
-# already ends by calling `bash test/decodiff.sh` and adding its exit status,
+# already ends by calling `bash test/suite/decodiff.sh` and adding its exit status,
 # and sheet.sh has been the one reporting tool on all of them since it was
 # written. Measured before it was moved: the five records verify-std.ps1
 # sampled on windows-content, replayed through these functions, produce the same

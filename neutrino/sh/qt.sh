@@ -23,7 +23,7 @@ find_qt_runtime() {
     # a star followed by a slash anywhere in the shell region ends the comment
     # early and every line after it is parsed as code -- the hazard the scrub
     # above already has a paragraph about. Writing the wildcard as its own path
-    # component keeps the two characters apart; test/parse.sh is what caught it
+    # component keeps the two characters apart; test/build/parse.sh is what caught it
     # being written the other way.
     for path in /usr/lib/*; do
         if [ -x "$path/qt6/bin/qml" ]; then

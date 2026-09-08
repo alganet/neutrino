@@ -150,7 +150,7 @@
      * WebView2 with no `postMessage` wired -- a record and a title share
      * one property, and the marker is what tells them apart. Refusing the
      * marker on every lane rather than only on that one keeps
-     * `test/neutrinoattack.js`'s planted record reading the same
+     * `test/probe/neutrinoattack.js`'s planted record reading the same
      * everywhere, and costs an app nothing it would ever want.
      *
      * An empty title is not a title. A document that never named itself

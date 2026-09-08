@@ -105,7 +105,7 @@ for n in 0 1 8 15 16 17 24 31 32 33 63 64 65 80; do
     fi
     # One id for fourteen lengths. The sentence carries the length, which is
     # what a reader of a red lane needs; the id says "the floor holds", which is
-    # the one thing four lanes are agreeing about. test/matrix.py lets FAIL win
+    # the one thing four lanes are agreeing about. test/report/matrix.py lets FAIL win
     # over a repeated id, so a boundary that moved is a red cell and not an
     # averaged one.
     if [ "$got" = "$want" ]; then

@@ -80,7 +80,7 @@ WKWebView and WebView2 agree on. This file stays on ES5 because all four clear i
 without argument.
 
 Two constraints do remain. No line may read `NeutrinoWebview.run();`, because
-[`test/parse.sh`](../test/parse.sh) lifts the launcher's object out of a built
+[`test/build/parse.sh`](../test/build/parse.sh) lifts the launcher's object out of a built
 `.cmd` with a `sed` range that ends there and the app sits inside that range. And
 no line may call `eval` or `new Function`: the document carries
 `script-src 'none'`, so both throw and the page script stops where it stood. An
@@ -97,6 +97,6 @@ runs this app and the suites that do run wait for a document by hand.
 
 The launcher holds an app's script until the document is there now, on every
 lane, and `body0=yes` is asserted on all five on every push — see
-[`test/neutrinostddoc.js`](../test/neutrinostddoc.js). This app is written the
+[`test/probe/neutrinostddoc.js`](../test/probe/neutrinostddoc.js). This app is written the
 way that fix allows: no polling, no ready guard, `getElementById` on the first
 line.

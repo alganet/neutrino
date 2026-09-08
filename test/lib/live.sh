@@ -72,7 +72,7 @@ NT_LIVE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 nt_live_build() {
     [ -f "$2" ] && return 0
     nt_report "live half: building $2"
-    bash "$NT_LIVE_ROOT/test/mkapp.sh" --testing "$1" "$2" && return 0
+    bash "$NT_LIVE_ROOT/test/build/mkapp.sh" --testing "$1" "$2" && return 0
     echo "FAIL: live half: could not build the live probe"
     return 1
 }

@@ -40,7 +40,7 @@
 # The payload is a batch probe and not neutrino: what is measured here is the
 # grant, the revoke and the record. Whether the *launcher* stops compiling is
 # e2e.sh's second-launch arm, and what a standalone launcher does with a slot
-# beside its script is test/appcache.ps1's.
+# beside its script is test/suite/appcache.ps1's.
 #
 # Every reading is taken by writing a per-run tag and reading it back, never by
 # asking whether a file exists. On a sealed launch the file run one wrote is

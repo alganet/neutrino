@@ -39,7 +39,7 @@
 #                   cannot see it", and it needs no screen-recording permission,
 #                   which is what makes it usable from a terminal.
 #   title           with --probe, what the page put in its own window title
-#                   through test/demoprobe.js -- so "the webview rendered" is
+#                   through test/probe/demoprobe.js -- so "the webview rendered" is
 #                   the page's answer and not an inference.
 #
 # --probe also lays neutrino/build/testing over the app, because the status file
@@ -95,9 +95,9 @@ mkdir -p "$APPSRC"
 cp "$ROOT"/pages/demo/* "$APPSRC/"
 OVERLAYS=(--overlay "$APPSRC")
 if [ "$PROBE" = 1 ]; then
-    cat "$ROOT/test/demoprobe.js" >> "$APPSRC/app.js"
+    cat "$ROOT/test/probe/demoprobe.js" >> "$APPSRC/app.js"
     OVERLAYS+=(--overlay "$ROOT/neutrino/build/testing")
-    echo "  artifact:   pages/demo + test/demoprobe.js + build/testing"
+    echo "  artifact:   pages/demo + test/probe/demoprobe.js + build/testing"
 else
     echo "  artifact:   pages/demo, as published"
 fi

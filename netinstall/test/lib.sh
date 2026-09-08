@@ -12,7 +12,7 @@ export NT_WINDOWS NT_EXE
 
 # The suite's own web server, two directories up. Resolved from this file rather
 # than from $0 because every script here sources lib.sh from a different place.
-NT_HTTPSERVE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)/test/httpserve.py"
+NT_HTTPSERVE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)/test/apparatus/httpserve.py"
 export NT_HTTPSERVE
 
 # This directory, resolved the same way and for the same reason: the liveness
@@ -71,7 +71,7 @@ nt_serve() {
     # refused.
     log="${TMPDIR:-/tmp}/nt-serve-$$-$port.log"
     local t0=$SECONDS
-    # test/httpserve.py and not `-m http.server`: the module looks up what
+    # test/apparatus/httpserve.py and not `-m http.server`: the module looks up what
     # loopback is called every time it binds, macOS counts that as looking for
     # devices on the local network, and the runner then asks a question nobody
     # is there to answer. The numbers this function already prints are what
@@ -368,7 +368,7 @@ nt_kill_tree() {
 # Three suites here launch a real webview and none of them is asking about
 # neutrino's window: `e2e.sh` wants to know that a fetched and verified app
 # runs, `confine-strict.sh` and `confine-session.sh` that a tier is worth
-# having. Each of them used to answer that by running `test/verify-linux.sh`
+# having. Each of them used to answer that by running `test/suite/verify-linux.sh`
 # and its two siblings -- neutrino's own verifiers, which assert the title at
 # each of six states, the size to the pixel, the frame's corner and the
 # desktop's palette, and keep a screenshot of every one.
