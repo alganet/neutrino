@@ -646,10 +646,28 @@ for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/test/*.ps1 \
     [ "$base" = harness.sh ] && continue
     [ "$base" = harness.ps1 ] && continue
     # A suite speaks the harness by sourcing one of the two files that define
-    # it. The .sh spelling is `. lib/harness.sh` and the .ps1 spelling is
+    # it -- or by sourcing something under test/lib/ that sources one of them.
+    # The .sh spelling is `. lib/harness.sh` and the .ps1 spelling is
     # `. (Join-Path $PSScriptRoot "lib\harness.ps1")`, so the pattern matches
     # the filename and not the sourcing syntax, which the two do not share.
-    grep -qE 'harness\.(sh|ps1)' "$suite" 2>/dev/null || continue
+    #
+    # The second half of that is the fix for a defect this file could not see.
+    # The pattern was `harness\.(sh|ps1)` alone, so a suite reaching the
+    # vocabulary through lib/title.sh or lib/live.sh -- which is how
+    # decoflip.sh, fontflip.sh and themeflip.sh reach it -- named neither file
+    # and was not a speaker. Their verdict calls went unread by both checks
+    # below, and the canary said 1204 either way: a scan that stopped seeing
+    # three files reports the same green as a tree with nothing wrong in it,
+    # which is the exact shape this file has now been caught in three times.
+    # verify-std.sh is a fourth, reaching it through lib/analyse.sh.
+    #
+    # Any path under test/lib/, and not a list of the libraries that carry the
+    # harness. A wrong answer in one direction costs nothing -- a file scanned
+    # for verdict calls it does not make is a file with no verdict calls -- and
+    # a wrong answer in the other is the silence above. lib/display.sh brings
+    # no harness and a suite that sources only it is read for nothing, which is
+    # the right price.
+    grep -qE 'harness\.(sh|ps1)|lib[/\\][A-Za-z0-9_-]+\.(sh|ps1)' "$suite" 2>/dev/null || continue
     NT_SPEAKERS="$NT_SPEAKERS $suite"
 done
 
@@ -734,16 +752,23 @@ EARLY=""
 for suite in $NT_SPEAKERS; do
     case "$suite" in *.ps1) continue ;; esac
     # The source *line* and not a mention of the filename. NT_SPEAKERS is built
-    # by grepping for `harness.sh`, which a comment satisfies -- run.sh names it
-    # in its own header and sources nothing -- so a file with no `.` line is not
-    # a sourcing suite and this check does not apply to it.
+    # by grepping for a filename, which a comment satisfies -- run.sh names
+    # harness.sh in its own header and sources nothing -- so a file with no `.`
+    # line is not a sourcing suite and this check does not apply to it.
+    #
+    # Any lib under test/lib/ counts as the line to be below, not harness.sh
+    # alone. A suite that reaches the vocabulary through lib/title.sh gets
+    # NT_STATUS_FILE from that source line, so that is the line its reads have
+    # to come after -- and with only `harness.sh` named here, three such suites
+    # had no source line the scan could find and were exempted from the check
+    # rather than held to it.
     #
     # And the variable names carry a boundary, or NT_SUITE matches the
     # NT_SUITES_FILE that run.sh reads three lines in. That is the same defect
     # the orphan scan was fixed for, arrived at from the other side.
     n="$(awk '
         { line = $0; sub(/#.*/, "", line) }
-        srcline == 0 && line ~ /^[[:space:]]*\.[[:space:]].*harness\.sh/ { srcline = NR }
+        srcline == 0 && line ~ /^[[:space:]]*\.[[:space:]].*(harness\.sh|lib\/[A-Za-z0-9_-]+\.sh)/ { srcline = NR }
         use == 0 && line ~ /NT_(LANE|SUITE|RESULTS|STATUS_FILE|FAILURES|PASSES|SKIPS)([^A-Za-z0-9_]|$)/ { use = NR }
         END { if (srcline > 0 && use > 0 && use < srcline) print use; else print 0 }
     ' "$suite")"
