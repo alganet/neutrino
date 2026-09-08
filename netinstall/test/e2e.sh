@@ -13,6 +13,17 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 . "$(dirname "$0")/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity. nt_note is lib.sh's and is not shadowed.
+#
+# The sixteenth and last netinstall suite. It runs everywhere the runner runs
+# it -- gjs, kde, macos-netinstall, windows-launch -- and asks a different set on
+# each: the build slot and its stamp are windows, the launcher's own confinement
+# is macOS, and the polyglot's runtime probe is the platforms with no webview at
+# all. So the lane lists in test/cases.tsv carry that, the way confine.sh's do,
+# and the gates inside a platform are skips.
+. "$(cd "$(dirname "$0")/../../test/lib" && pwd)/harness.sh"
+NT_ANNOTATE=netinstall
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 WORK="$(mktemp -d)"
@@ -23,7 +34,6 @@ export NEUTRINO_HOME="$WORK/home"
 nt_serve "$SERVE" || exit 2
 trap 'kill $NT_SERVER_PID 2>/dev/null; rm -rf "$WORK"' EXIT
 
-FAILURES=0
 
 echo "=== Build the app under test ==="
 # netinstall's own app and not test/neutrinotest.js. What this suite asserts
@@ -45,32 +55,28 @@ APPDIR="$NEUTRINO_HOME/apps/$(nt_appkey "$SPEC")/alive"
 
 echo "=== Fetch and verify ==="
 if "$APP" --fetch >/dev/null 2>&1; then
-    echo "  PASS: fetched"
+    nt_pass e2e.fetch "fetched"
 else
-    nt_fail "fetch expected=ok actual=failed"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.fetch "fetch expected=ok actual=failed"
 fi
 
 if cmp -s "$SERVE/alive.cmd" "$SCRIPT"; then
-    echo "  PASS: cached bytes are identical to what was served"
+    nt_pass e2e.cache.identical "cached bytes are identical to what was served"
 else
-    nt_fail "cached bytes expected=identical actual=differ"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.cache.identical "cached bytes expected=identical actual=differ"
 fi
 
 if [ ! -w "$SCRIPT" ]; then
-    echo "  PASS: cached launcher is read-only"
+    nt_pass e2e.cache.readonly "cached launcher is read-only"
 else
-    nt_fail "cached launcher expected=read-only actual=writable"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.cache.readonly "cached launcher expected=read-only actual=writable"
 fi
 
 FULL="$(nt_sha256 "$SERVE/alive.cmd")"
 if [ -f "$NEUTRINO_HOME/blobs/$FULL" ]; then
-    echo "  PASS: blob is content-addressed as blobs/$FULL"
+    nt_pass e2e.blob.addressed "blob is content-addressed as blobs/$FULL"
 else
-    nt_fail "blob expected=blobs/$FULL actual=missing"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.blob.addressed "blob expected=blobs/$FULL actual=missing"
 fi
 
 # What a launch has to answer here, and the three answers it can give, are in
@@ -100,20 +106,21 @@ if [ "$NT_WINDOWS" = "1" ]; then
         sleep 1
     done
     if [ -f "$SLOTEXE" ]; then
-        echo "  PASS: jsc.exe compiled the app into the build slot"
+        nt_pass e2e.compiled "jsc.exe compiled the app into the build slot"
+        nt_skip e2e.compiled.stamped "the slot is where it landed, and a slot carries a record rather than a stamp"
     elif [ -f "$KEPT" ]; then
-        echo "  PASS: jsc.exe compiled the app beside the script it was verified from"
+        nt_pass e2e.compiled "jsc.exe compiled the app beside the script it was verified from"
         if [ -f "${SCRIPT%.cmd}.stamp" ]; then
-            echo "  PASS: and stamped it with the source it was built from"
+            nt_pass e2e.compiled.stamped "and stamped it with the source it was built from"
         else
-            nt_fail "stamp expected=${SCRIPT%.cmd}.stamp actual=missing"
-            FAILURES=$((FAILURES + 1))
+            nt_fail e2e.compiled.stamped "stamp expected=${SCRIPT%.cmd}.stamp actual=missing"
         fi
     elif [ -f "$FALLBACK" ]; then
-        echo "  PASS: jsc.exe compiled the app into its own dir (stamp refused above it)"
+        nt_pass e2e.compiled "jsc.exe compiled the app into its own dir (stamp refused above it)"
+        nt_skip e2e.compiled.stamped "it landed in its own dir, where the stamp was refused"
     else
-        nt_fail "compiled exe expected=$SLOTEXE, $KEPT or $FALLBACK actual=missing"
-        FAILURES=$((FAILURES + 1))
+        nt_fail e2e.compiled "compiled exe expected=$SLOTEXE, $KEPT or $FALLBACK actual=missing"
+        nt_skip e2e.compiled.stamped "nothing was compiled, so there is nothing to have stamped"
     fi
     STATE="$(nt_app_probe 120)"
     nt_kill_tree $APP_PID
@@ -129,10 +136,9 @@ if [ "$NT_WINDOWS" = "1" ]; then
     if [ -f "$SLOTEXE" ]; then
         echo "=== And a second launch through cmd.exe ==="
         if [ -f "$SLOT.stamp" ]; then
-            echo "  PASS: the slot carries a record netinstall wrote"
+            nt_pass e2e.slot.record "the slot carries a record netinstall wrote"
         else
-            nt_fail "slot record expected=$SLOT.stamp actual=missing"
-            FAILURES=$((FAILURES + 1))
+            nt_fail e2e.slot.record "slot record expected=$SLOT.stamp actual=missing"
         fi
         BEFORE="$(nt_sha256 "$SLOTEXE")"
         BEFORE_MT="$(nt_mtime "$SLOTEXE")"
@@ -145,10 +151,9 @@ if [ "$NT_WINDOWS" = "1" ]; then
         nt_kill_tree $APP2_PID
         nt_note "slot second=$STATE2 same=$([ "$BEFORE" = "$AFTER" ] && echo YES || echo NO) mtime_moved=$([ "$BEFORE_MT" = "$AFTER_MT" ] && echo NO || echo YES)"
         if [ "$BEFORE" != "$AFTER" ] || [ "$BEFORE_MT" != "$AFTER_MT" ]; then
-            nt_fail "slot expected=the second launch reuses the exe actual=it was rebuilt"
-            FAILURES=$((FAILURES + 1))
+            nt_fail e2e.slot.reused "slot expected=the second launch reuses the exe actual=it was rebuilt"
         else
-            echo "  PASS: a second launch runs the kept exe and compiles nothing"
+            nt_pass e2e.slot.reused "a second launch runs the kept exe and compiles nothing"
         fi
         # And no digest was taken for either of them. The launcher hashes the
         # script only where a stamp can be compared with the answer, and under
@@ -160,16 +165,14 @@ if [ "$NT_WINDOWS" = "1" ]; then
         # nothing asks would put the file there. test/appcache.ps1 holds the
         # other half, where the digest *is* read and the file must exist.
         if [ -f "$APPDIR/launcher.hash" ]; then
-            nt_fail "slot expected=no digest is taken where no stamp can be kept actual=$APPDIR/launcher.hash exists"
-            FAILURES=$((FAILURES + 1))
+            nt_fail e2e.slot.nodigest "slot expected=no digest is taken where no stamp can be kept actual=$APPDIR/launcher.hash exists"
         else
-            echo "  PASS: neither launch ran a certutil nothing would have read"
+            nt_pass e2e.slot.nodigest "neither launch ran a certutil nothing would have read"
         fi
         if [ "$STATE2" != "$STATE" ]; then
-            nt_fail "slot expected=the second launch comes up like the first ($STATE) actual=$STATE2"
-            FAILURES=$((FAILURES + 1))
+            nt_fail e2e.slot.secondup "slot expected=the second launch comes up like the first ($STATE) actual=$STATE2"
         else
-            echo "  PASS: and comes up from it"
+            nt_pass e2e.slot.secondup "and comes up from it"
         fi
     fi
 elif command -v osascript >/dev/null 2>&1 && [ "$(uname -s)" = "Darwin" ]; then
@@ -188,7 +191,7 @@ elif command -v osascript >/dev/null 2>&1 && [ "$(uname -s)" = "Darwin" ]; then
 
     # What the launcher said about its own confinement, which until this suite
     # read it was written to app.log and looked at by nobody: the dump at the
-    # bottom of this file is behind `if [ "$FAILURES" -ne 0 ]`, so on a green run
+    # bottom of this file is behind `if [ "$NT_FAILURES" -ne 0 ]`, so on a green run
     # these lines went nowhere, and two defects lived in that gap.
     #
     # Silence is the pass, and on this platform it now means something more
@@ -221,19 +224,15 @@ elif command -v osascript >/dev/null 2>&1 && [ "$(uname -s)" = "Darwin" ]; then
         "$WORK/app.log" 2>/dev/null | head -1)"
     case "${NT_CONFINE_SAID:-}" in
         "")
-            echo "  PASS: the launcher found netinstall's profile already in force and said nothing" ;;
+            nt_pass e2e.launcher.confine "the launcher found netinstall's profile already in force and said nothing" ;;
         *"could not build"*)
-            nt_fail "launcher confinement expected=silence actual=could-not-build (a here-document under a profile that denies /tmp)"
-            FAILURES=$((FAILURES + 1)) ;;
+            nt_fail e2e.launcher.confine "launcher confinement expected=silence actual=could-not-build (a here-document under a profile that denies /tmp)" ;;
         *"rejected"*)
-            nt_fail "launcher confinement expected=silence actual=seatbelt-rejected (the launcher's own profile is bad)"
-            FAILURES=$((FAILURES + 1)) ;;
+            nt_fail e2e.launcher.confine "launcher confinement expected=silence actual=seatbelt-rejected (the launcher's own profile is bad)" ;;
         *"already inside"*)
-            nt_fail "launcher confinement expected=silence actual=not-nesting (a second profile is no longer accepted after netinstall's; the app has only netinstall's)"
-            FAILURES=$((FAILURES + 1)) ;;
+            nt_fail e2e.launcher.confine "launcher confinement expected=silence actual=not-nesting (a second profile is no longer accepted after netinstall's; the app has only netinstall's)" ;;
         *)
-            nt_fail "launcher confinement expected=silence actual=$NT_CONFINE_SAID"
-            FAILURES=$((FAILURES + 1)) ;;
+            nt_fail e2e.launcher.confine "launcher confinement expected=silence actual=$NT_CONFINE_SAID" ;;
     esac
 elif [ -n "${DISPLAY:-}" ] && nt_linux_runtime; then
     echo "=== Launch through the linux runtime ==="
@@ -244,38 +243,42 @@ elif [ -n "${DISPLAY:-}" ] && nt_linux_runtime; then
     nt_kill_tree $APP_PID
 else
     echo "=== No webview runtime here; assert the polyglot's shell path ran ==="
+    NT_POLYGLOT_ASKED=1
     ERR="$(nt_timeout 60 "$APP" 2>&1 >/dev/null)"
     RC=$?
     if [ "$RC" -eq 124 ]; then
-        nt_fail "polyglot did not exit; a runtime was found that nt_linux_runtime missed"
-        FAILURES=$((FAILURES + 1))
+        nt_fail e2e.polyglot "polyglot did not exit; a runtime was found that nt_linux_runtime missed"
     elif grep -q "No suitable runtime found" <<<"$ERR"; then
-        echo "  PASS: sh executed the polyglot and reached its runtime probe"
+        nt_pass e2e.polyglot "sh executed the polyglot and reached its runtime probe"
     else
-        nt_fail "polyglot expected=runtime-probe actual=$(tr '\n' ' ' <<<"$ERR")"
-        FAILURES=$((FAILURES + 1))
+        nt_fail e2e.polyglot "polyglot expected=runtime-probe actual=$(tr '\n' ' ' <<<"$ERR")"
     fi
 fi
+
+# The branch not taken says so. Three of the four launch paths above have a
+# runtime and so never reach the polyglot's shell fallback, and one has no
+# runtime and so never gets a window -- and each of those is a lane that could
+# not ask rather than a lane nobody asked, which is a distinction the grid can
+# only show if there is a row.
+[ "${NT_POLYGLOT_ASKED:-0}" = 1 ] ||
+    nt_skip e2e.polyglot "this lane has a webview runtime, so the shell fallback was never the path taken"
 
 case "$STATE" in
     # Empty is the no-runtime branch above, which asserted its own thing and
     # left nothing for this to judge. Every other silence is named.
-    "") ;;
+    "") nt_skip e2e.app.window "no webview runtime here; the polyglot's shell path was asserted instead" ;;
     CONTENT_OK)
-        echo "  PASS: the installed app opened a webview and its script ran" ;;
+        nt_pass e2e.app.window "the installed app opened a webview and its script ran" ;;
     WINDOW_NO_CONTENT)
         # The distinction this probe exists for: the process started and got a
         # window, and the page inside it never ran. A launcher that cannot find
         # its runtime fails differently, and so does a sandbox that kills the
         # renderer -- naming which one is the finding.
-        nt_fail "the installed app got a window but its script never ran"
-        FAILURES=$((FAILURES + 1)) ;;
+        nt_fail e2e.app.window "the installed app got a window but its script never ran" ;;
     NO_WINDOW)
-        nt_fail "the installed app never got a window"
-        FAILURES=$((FAILURES + 1)) ;;
+        nt_fail e2e.app.window "the installed app never got a window" ;;
     *)
-        nt_fail "the webview probe did not report a state ($STATE)"
-        FAILURES=$((FAILURES + 1)) ;;
+        nt_fail e2e.app.window "the webview probe did not report a state ($STATE)" ;;
 esac
 
 echo "=== A new pin reuses the app dir and replaces the launcher ==="
@@ -286,30 +289,25 @@ printf 'echo v2\n' > "$SERVE/alive.cmd"
 SPEC2="alive-example-com-1$(nt_pin "$SERVE/alive.cmd")"
 APP2="$(nt_as "$BIN" "$SPEC2" "$WORK/bin")"
 if [ "$SPEC" = "$SPEC2" ]; then
-    nt_fail "second pin expected=different actual=same"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.repin.differs "second pin expected=different actual=same"
 elif "$APP2" --fetch >/dev/null 2>&1; then
     if [ -f "$APPDIR/carried-over" ]; then
-        echo "  PASS: app dir state survived the version change"
+        nt_pass e2e.repin.state "app dir state survived the version change"
     else
-        nt_fail "app dir state expected=preserved actual=lost"
-        FAILURES=$((FAILURES + 1))
+        nt_fail e2e.repin.state "app dir state expected=preserved actual=lost"
     fi
     if cmp -s "$SERVE/alive.cmd" "$SCRIPT"; then
-        echo "  PASS: launcher replaced by the new pin"
+        nt_pass e2e.repin.launcher "launcher replaced by the new pin"
     else
-        nt_fail "launcher expected=new-version actual=stale"
-        FAILURES=$((FAILURES + 1))
+        nt_fail e2e.repin.launcher "launcher expected=new-version actual=stale"
     fi
     if "$APP2" --verify >/dev/null 2>&1 && ! "$APP" --verify >/dev/null 2>&1; then
-        echo "  PASS: last pin wins; the old pin no longer verifies"
+        nt_pass e2e.repin.lastwins "last pin wins; the old pin no longer verifies"
     else
-        nt_fail "pin precedence expected=last-wins actual=both-or-neither"
-        FAILURES=$((FAILURES + 1))
+        nt_fail e2e.repin.lastwins "pin precedence expected=last-wins actual=both-or-neither"
     fi
 else
-    nt_fail "second pin expected=fetched actual=failed"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.repin.fetched "second pin expected=fetched actual=failed"
 fi
 cp "$WORK/v1.cmd" "$SERVE/alive.cmd"
 
@@ -325,17 +323,15 @@ DSPEC="demo-127_0_0_1-2$(nt_pin "$SERVE/demo/netinstall.cmd")"
 DAPP="$(nt_as "$BIN" "$DSPEC" "$WORK/bin")"
 DURL="$("$DAPP" --info 2>/dev/null | awk '$1 == "url" { print $2 }')"
 if [ "$DURL" = "$NEUTRINO_TEST_ORIGIN/demo/netinstall.cmd" ]; then
-    echo "  PASS: shape 2 resolved to $DURL"
+    nt_pass e2e.shape2.url "shape 2 resolved to $DURL"
 else
-    nt_fail "shape 2 url expected=$NEUTRINO_TEST_ORIGIN/demo/netinstall.cmd actual=${DURL:-<none>}"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.shape2.url "shape 2 url expected=$NEUTRINO_TEST_ORIGIN/demo/netinstall.cmd actual=${DURL:-<none>}"
 fi
 DSCRIPT="$NEUTRINO_HOME/apps/$(nt_appkey "$DSPEC")/netinstall.cmd"
 if "$DAPP" --fetch >/dev/null 2>&1 && cmp -s "$SERVE/demo/netinstall.cmd" "$DSCRIPT"; then
-    echo "  PASS: fetched and verified through the subdirectory"
+    nt_pass e2e.shape2.fetch "fetched and verified through the subdirectory"
 else
-    nt_fail "shape 2 fetch expected=ok actual=failed ($DSCRIPT)"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.shape2.fetch "shape 2 fetch expected=ok actual=failed ($DSCRIPT)"
 fi
 echo "=== A shape that names both file and directory ==="
 mkdir -p "$SERVE/toy"
@@ -344,33 +340,31 @@ TSPEC="calc-toy-127_0_0_1-3$(nt_pin "$SERVE/toy/calc.cmd")"
 TAPP="$(nt_as "$BIN" "$TSPEC" "$WORK/bin")"
 TSCRIPT="$NEUTRINO_HOME/apps/$(nt_appkey "$TSPEC")/calc.cmd"
 if "$TAPP" --fetch >/dev/null 2>&1 && cmp -s "$SERVE/toy/calc.cmd" "$TSCRIPT"; then
-    echo "  PASS: shape 3 fetched $(nt_appkey "$TSPEC")/calc.cmd"
+    nt_pass e2e.shape3.fetch "shape 3 fetched $(nt_appkey "$TSPEC")/calc.cmd"
 else
-    nt_fail "shape 3 fetch expected=ok actual=failed ($TSCRIPT)"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.shape3.fetch "shape 3 fetch expected=ok actual=failed ($TSCRIPT)"
 fi
 # Same segments, same pin, different shape: different URL, so the app dirs must
 # not be the same one. This is what keeping the shape in the cache key buys.
 if [ "$(nt_appkey "$DSPEC")" != "$(nt_appkey "$TSPEC")" ] && [ -f "$DSCRIPT" ] && [ -f "$TSCRIPT" ]; then
-    echo "  PASS: the two shapes kept separate app directories"
+    nt_pass e2e.shapes.distinct "the two shapes kept separate app directories"
 else
-    nt_fail "app dirs expected=distinct actual=$(nt_appkey "$DSPEC") vs $(nt_appkey "$TSPEC")"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.shapes.distinct "app dirs expected=distinct actual=$(nt_appkey "$DSPEC") vs $(nt_appkey "$TSPEC")"
 fi
 
 echo "=== neutrino's own app dir landed inside the writable dir ==="
 if [ -d "$APPDIR" ]; then
-    echo "  PASS: $APPDIR"
+    nt_pass e2e.appdir.inside "$APPDIR"
 else
-    nt_fail "appdir expected=$APPDIR actual=missing"
-    FAILURES=$((FAILURES + 1))
+    nt_fail e2e.appdir.inside "appdir expected=$APPDIR actual=missing"
 fi
 
-if [ "$FAILURES" -ne 0 ] && [ -s "$WORK/app.log" ]; then
+if [ "$NT_FAILURES" -ne 0 ] && [ -s "$WORK/app.log" ]; then
     echo "=== App output ==="
     tail -40 "$WORK/app.log"
     nt_note "app log: $(tr '\n' ' ' < "$WORK/app.log" | tail -c 400)"
 fi
 
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+exit $NT_FAILURES

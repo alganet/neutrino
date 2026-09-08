@@ -569,3 +569,43 @@ slot.plant.wiped	and the planted file does not survive the wipe	windows-launch
 slot.repin.owes	--info owes a build for a pin it has not seen	windows-launch
 slot.repin.granted	and that launch is granted	windows-launch
 slot.repin.sealed	and --info seals the new pin	windows-launch
+
+# The installed app, end to end, from netinstall/test/e2e.sh -- the sixteenth
+# and last netinstall suite to file rows.
+#
+# Four launch branches and a different claim behind each: windows compiles the
+# app and keeps it in a build slot, macOS has a launcher that must find
+# netinstall's profile already in force and say nothing about it, a lane with a
+# webview gets a window, and a lane with no runtime at all is left asserting
+# that the polyglot's shell half ran. So the lane lists carry the divergence,
+# the way confine.sh's do.
+#
+# e2e.polyglot and e2e.app.window are the pair that had to be made to report.
+# They are opposite ends of the same fork -- a lane reaches exactly one of them
+# -- and each used to fall through in silence on the branches that were not its
+# own. Both carry all four lanes and skip where the branch was not taken, which
+# is what says "this lane has a runtime" rather than leaving a hole that reads
+# like a lane that stopped reporting.
+e2e.fetch	the app fetches and verifies	gjs kde windows-launch macos-netinstall
+e2e.cache.identical	the cached bytes are what was served	gjs kde windows-launch macos-netinstall
+e2e.cache.readonly	and the cached launcher is read-only	gjs kde windows-launch macos-netinstall
+e2e.blob.addressed	the blob is content-addressed by its digest	gjs kde windows-launch macos-netinstall
+e2e.polyglot	a lane with no runtime still runs the polyglot's shell half	gjs kde windows-launch macos-netinstall
+e2e.app.window	the installed app opens a webview and its script runs	gjs kde windows-launch macos-netinstall
+e2e.repin.differs	a new pin is a different spec	gjs kde windows-launch macos-netinstall
+e2e.repin.fetched	and it fetches	gjs kde windows-launch macos-netinstall
+e2e.repin.state	app dir state survives the version change	gjs kde windows-launch macos-netinstall
+e2e.repin.launcher	and the launcher is replaced by the new pin	gjs kde windows-launch macos-netinstall
+e2e.repin.lastwins	last pin wins; the old one no longer verifies	gjs kde windows-launch macos-netinstall
+e2e.shape2.url	a shape with a directory resolves into the subdirectory	gjs kde windows-launch macos-netinstall
+e2e.shape2.fetch	and fetches through it	gjs kde windows-launch macos-netinstall
+e2e.shape3.fetch	a shape naming both file and directory fetches	gjs kde windows-launch macos-netinstall
+e2e.shapes.distinct	and the two shapes keep separate app directories	gjs kde windows-launch macos-netinstall
+e2e.appdir.inside	neutrino's own app dir lands inside the writable dir	gjs kde windows-launch macos-netinstall
+e2e.compiled	jsc.exe compiled the app somewhere it is allowed to	windows-launch
+e2e.compiled.stamped	and stamped it with the source it was built from	windows-launch
+e2e.slot.record	the build slot carries a record netinstall wrote	windows-launch
+e2e.slot.reused	a second launch runs the kept exe and compiles nothing	windows-launch
+e2e.slot.nodigest	and takes no digest nothing would have read	windows-launch
+e2e.slot.secondup	and comes up from it	windows-launch
+e2e.launcher.confine	the launcher finds netinstall's profile in force and says nothing	macos-netinstall
