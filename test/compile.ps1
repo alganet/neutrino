@@ -30,28 +30,41 @@
 
 $ErrorActionPreference = "Continue"
 
-$failures = 0
-function Report($m) { Write-Output "report: $m" }
-function Fail($m) { Write-Output "FAIL: $m"; $script:failures++ }
+# The six words. Four checks, none of which said anything when it held -- on a
+# suite whose whole subject is that an artifact which does not compile is an app
+# that never appears, and whose absence of a FAIL was the only sign it did.
+. (Join-Path $PSScriptRoot "lib\harness.ps1")
+
+function Report($m) { nt_report $m }
+
+# The two gates say "nothing below is a reading" and "this runner cannot say" in
+# as many words, and then exited with the rest unreported.
+function skip_rest($why) {
+    nt_skip compile.refs $why
+    nt_skip compile.compiles $why
+}
 
 Write-Output "=== compile: does the artifact compile ==="
 
 $artifact = $args[0]
 if (-not $artifact) { $artifact = "test\neutrinotest.cmd" }
 if (-not (Test-Path $artifact)) {
-    Fail "no built artifact at '$artifact'; nothing below is a reading"
-    Write-Output "=== compile: 1 failure(s) ==="
-    exit 1
+    nt_fail compile.artifact "no built artifact at '$artifact'; nothing below is a reading"
+    nt_skip compile.jsc "there was no artifact to compile, so the compiler was never reached for"
+    skip_rest "there was no artifact to read or compile"
+    nt_finish
 }
+nt_pass compile.artifact "there is a built artifact at '$artifact'"
 
 $fx = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319"
 if (-not (Test-Path (Join-Path $fx "jsc.exe"))) { $fx = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319" }
 $jsc = Join-Path $fx "jsc.exe"
 if (-not (Test-Path $jsc)) {
-    Fail "no jsc.exe under $env:WINDIR\Microsoft.NET; this runner cannot say"
-    Write-Output "=== compile: 1 failure(s) ==="
-    exit 1
+    nt_fail compile.jsc "no jsc.exe under $env:WINDIR\Microsoft.NET; this runner cannot say"
+    skip_rest "there is no jsc here, so nothing could be compiled"
+    nt_finish
 }
+nt_pass compile.jsc "jsc.exe is here to compile with"
 
 # The artifact's own reference list, and not a second copy of it. winexec.ps1
 # already asserts that this line names what the driver needs; what matters here
@@ -62,7 +75,9 @@ $refs = @([regex]::Matches($text, '/r:"%FX_DIR%\\([^"]+)"') |
     ForEach-Object { $_.Groups[1].Value })
 Report "references $(if ($refs.Count) { $refs -join ',' } else { 'none found on the jsc line' })"
 if (-not $refs.Count) {
-    Fail "no /r: entries in the artifact; the compile below would not be the launcher's"
+    nt_fail compile.refs "no /r: entries in the artifact; the compile below would not be the launcher's"
+} else {
+    nt_pass compile.refs "the artifact names its own reference list ($($refs.Count) entries)"
 }
 
 $work = Join-Path $env:TEMP ("compile-" + [Guid]::NewGuid().ToString("N"))
@@ -77,6 +92,7 @@ $log = & $jsc $argv 2>&1 | Out-String
 $built = Test-Path $outExe
 
 if ($built) {
+    nt_pass compile.compiles "the artifact compiles"
     Report "compiled $((Get-Item $outExe).Length) bytes"
     # Warnings are not failures and are worth seeing anyway: the reserved word
     # that started this arrived alongside one, and a warning nobody prints is a
@@ -84,13 +100,11 @@ if ($built) {
     $said = ($log -replace '\s+', ' ').Trim()
     if ($said) { Report "compiler said $said" }
 } else {
-    Fail "the artifact does not compile"
+    nt_fail compile.compiles "the artifact does not compile"
     foreach ($line in ($log -split "`r?`n")) {
         if ($line.Trim()) { Write-Output "  $($line.Trim())" }
     }
 }
 
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-Write-Output "=== compile: $failures failure(s) ==="
-if ($failures -gt 0) { exit 1 }
-exit 0
+nt_finish
