@@ -145,3 +145,44 @@ verify.payload.oversized	an oversized payload is refused	gjs bsd windows-launch 
 verify.name.missing	a spec naming a file the server does not have is refused	gjs bsd windows-launch macos-netinstall
 verify.cache.offline	a cached app resolves with the server down	gjs bsd windows-launch macos-netinstall
 verify.cache.tampered	a tampered cache is refetched, not trusted	gjs bsd windows-launch macos-netinstall
+
+# The spec grammar, from netinstall/test/names.sh -- the third netinstall suite
+# through the conversion, and the first where an id is not one assertion.
+#
+# That file makes about seventy of them, and most are one spec apiece: twelve
+# reserved shapes, nine malformed names, six downloader markers, six pin lengths.
+# Seventy rows here would be seventy rows of `.` in six of the ten columns, and
+# they would say seventy times over the one thing this suite has to say -- that
+# four lanes read the grammar the same way. So an id names the question and the
+# sentence keeps the spec, which is what a reader of a red lane actually needs.
+#
+# Nothing is averaged away by that. test/matrix.py resolves a repeated id by
+# letting FAIL win -- it has done since decoflip started reporting one case under
+# two decoration settings -- so a family whose twelfth member broke is a red
+# cell. Measured rather than assumed: asserting that shape 1 is reserved, which
+# it is not, turns names.shape.reserved red on a lane where its other twelve
+# members passed, whichever end of the list the failure is at.
+#
+# Same lanes as verify: the netinstall suite without a shorter list named for it.
+# Two of these skip on windows-launch rather than failing -- there is no name
+# without .exe there to strip, and a symlink needs privilege -- which is a SKIP
+# with a reason on it and not a hole.
+names.shape.resolved	each of the four assigned shapes resolves to its URL	gjs bsd windows-launch macos-netinstall
+names.grammar.resolved	the rest of the accepted grammar resolves	gjs bsd windows-launch macos-netinstall
+names.fields.parsed	--info reports the name, dir, host and token it parsed	gjs bsd windows-launch macos-netinstall
+names.cachekey.shape	the cache key keeps the shape and drops the pin	gjs bsd windows-launch macos-netinstall
+names.grammar.rejected	a malformed spec is refused	gjs bsd windows-launch macos-netinstall
+names.shape.reserved	shapes 4 through f are unassigned and every one refuses	gjs bsd windows-launch macos-netinstall
+names.shape.miscount	a shape that would eat the host is refused, not resolved	gjs bsd windows-launch macos-netinstall
+names.shape.reason	an unassigned-shape refusal names the shape	gjs bsd windows-launch macos-netinstall
+names.pin.floor	the pin floor holds at both ends	gjs bsd windows-launch macos-netinstall
+names.pin.floor.reason	a refusal by length names the pin and both numbers	gjs bsd windows-launch macos-netinstall
+names.exe.stripped	an .exe suffix is stripped before the parse	gjs bsd windows-launch macos-netinstall
+names.duplicate.resolved	a downloader's second-copy marker still resolves	gjs bsd windows-launch macos-netinstall
+names.duplicate.announced	and the duplicate says so rather than running quietly	gjs bsd windows-launch macos-netinstall
+names.duplicate.mistyped	a mistyped pin is refused whatever the typo is made of	gjs bsd windows-launch macos-netinstall
+names.duplicate.narrow	a tail that is not a downloader's marker is refused	gjs bsd windows-launch macos-netinstall
+names.duplicate.charset.reason	an unrecognised suffix names the character and the fix	gjs bsd windows-launch macos-netinstall
+names.duplicate.safari.reason	a "-1" refusal blames the suffix, not the digest	gjs bsd windows-launch macos-netinstall
+names.duplicate.sibling	the sibling it points at keeps its extension	gjs bsd windows-launch macos-netinstall
+names.symlink.real	a symlink resolves to the real name, never the link	gjs bsd windows-launch macos-netinstall
