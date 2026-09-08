@@ -26,15 +26,28 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 
-$Failures = 0
-function Note($m) { Write-Host "report: $m" }
-function Fail($m) { Write-Host "FAIL: $m"; $script:Failures++ }
+# The six words, and the same four cases the Unix twin files. Both halves
+# reported every passing branch as a `note`, so the run where the demo worked
+# filed nothing on either lane -- and the one case that is only about this
+# platform, that WebView2 is what renders here, was a branch that spoke when it
+# failed and was silent otherwise.
+. (Join-Path $PSScriptRoot "lib\harness.ps1")
+
+# The three cases below the title all read one field out of it, and demo.sh
+# spells this the same way for the same reason.
+function skip_fields($why) {
+    nt_skip demo.engine.named $why
+    nt_skip demo.transport.wired $why
+    nt_skip demo.close.bound $why
+    nt_skip demo.engine.webview2 $why
+}
 
 $AppName = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)
 
 if (-not (Test-Path -LiteralPath $Artifact)) {
-    Fail "no artifact at $Artifact; test/demoapp.sh builds it"
-    exit 1
+    nt_fail demo.reported "no artifact at $Artifact; test/demoapp.sh builds it"
+    skip_fields "there was no artifact to launch, so nothing reported a title"
+    nt_finish
 }
 
 # Start-Process and no pipe, which is the idiom the warm-up step in ci.yml
@@ -42,7 +55,7 @@ if (-not (Test-Path -LiteralPath $Artifact)) {
 # exe and exits, so a pipe on the launcher outlives the launcher and this would
 # wait on a handle the app never closes. -WindowStyle Hidden hides the console
 # cmd.exe opens, not the window the app is about to show.
-Note "launching $Artifact"
+nt_report "launching $Artifact"
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $Artifact -WindowStyle Hidden | Out-Null
 
 Write-Host "=== Waiting for the demo to report ==="
@@ -67,35 +80,35 @@ try {
     $bmp.Save((Join-Path $ScreenshotDir "demo.png"),
         [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose(); $g.Dispose()
-    Note "shot $ScreenshotDir\demo.png"
+    nt_report "shot $ScreenshotDir\demo.png"
 } catch {
-    Note "the capture threw: $($_.Exception.Message)"
+    nt_report "the capture threw: $($_.Exception.Message)"
 }
 
 if (-not $title) {
-    Fail "no DEMOPROBE title in ${Timeout}s; the app's own script did not reach the reporter"
+    nt_fail demo.reported "no DEMOPROBE title in ${Timeout}s; the app's own script did not reach the reporter"
     # And what did come up, because "no window with this name" and "no window at
     # all" want different fixes. The app's own account too, where it left one --
     # a release build writes neutrino-error.log and nothing else.
     foreach ($o in @(Get-Process -ErrorAction SilentlyContinue |
             Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle })) {
-        Note "  window up: $($o.ProcessName) [$($o.Id)] '$($o.MainWindowTitle)'"
+        nt_report "  window up: $($o.ProcessName) [$($o.Id)] '$($o.MainWindowTitle)'"
     }
     $log = Join-Path (Join-Path $PSScriptRoot $AppName) "neutrino-error.log"
     if (Test-Path -LiteralPath $log) {
-        Note "the app's own failure:"
-        Get-Content -LiteralPath $log | Select-Object -Last 8 | ForEach-Object { Note "  $_" }
+        nt_report "the app's own failure:"
+        Get-Content -LiteralPath $log | Select-Object -Last 8 | ForEach-Object { nt_report "  $_" }
     } else {
-        Note "no neutrino-error.log beside the app"
+        nt_report "no neutrino-error.log beside the app"
     }
     Get-Process -Name $AppName -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
-    Write-Host ""
-    Write-Host "=== Results: $Failures failure(s) ==="
-    exit $Failures
+    skip_fields "nothing reported, so there were no fields to read"
+    nt_finish
 }
 
-Note "title [$title]"
+nt_pass demo.reported "the demo reported a title"
+nt_report "title [$title]"
 
 function Field($name) {
     if ($title -match " $name=(\S+)") { return $Matches[1] }
@@ -113,31 +126,37 @@ $bound = Field "bound"
 # UNFILLED is the app running and reporting nothing.
 switch -Regex ($eng) {
     '^(WebView2|QtWebEngine|Chromium|WebKit)$' {
-        Note "engine $eng -- the app read its own markup and named the engine"
+        nt_pass demo.engine.named "engine $eng -- the app read its own markup and named the engine"
     }
     '^UNREADABLE$' {
-        Fail "eng=UNREADABLE: document.getElementById answered null in the app's own script, so the early shell was not on the page when it ran"
+        nt_fail demo.engine.named "eng=UNREADABLE: document.getElementById answered null in the app's own script, so the early shell was not on the page when it ran"
     }
     '^(UNFILLED|)$' {
-        Fail "eng=$(if ($eng) { $eng } else { '<absent>' }): the app ran and never filled its own page in"
+        nt_fail demo.engine.named "eng=$(if ($eng) { $eng } else { '<absent>' }): the app ran and never filled its own page in"
     }
-    default { Fail "eng=$eng is not an engine this app knows how to name" }
+    default { nt_fail demo.engine.named "eng=$eng is not an engine this app knows how to name" }
 }
 
 # Windows should be WebView2 and nothing else. The generic list above is shared
 # with the Unix twin; this is the one line that is about this platform.
 if ($eng -eq "WebView2") {
-    Note "and WebView2 is what this platform renders through"
+    nt_pass demo.engine.webview2 "WebView2 is what this platform renders through"
 } elseif ($eng -match '^(QtWebEngine|Chromium|WebKit)$') {
-    Fail "eng=$eng on Windows; this lane renders through WebView2 and nothing else"
+    nt_fail demo.engine.webview2 "eng=$eng on Windows; this lane renders through WebView2 and nothing else"
+} else {
+    # The arm that was not here. eng=UNREADABLE, UNFILLED or absent matched
+    # neither branch, so on the run this file exists to catch -- the one where
+    # the app never filled its page in -- this case filed nothing and read as a
+    # hole rather than as the engine question being unanswerable.
+    nt_skip demo.engine.webview2 "eng=$(if ($eng) { $eng } else { '<absent>' }), so there is no engine name to hold against WebView2"
 }
 
 switch -Regex ($tx) {
-    '^(webmessage|title)$' { Note "transport $tx" }
+    '^(webmessage|title)$' { nt_pass demo.transport.wired "transport $tx" }
     '^unwired$' {
-        Fail "tx=unwired: this launch has no channel to the host, so none of the window verbs on the page can work"
+        nt_fail demo.transport.wired "tx=unwired: this launch has no channel to the host, so none of the window verbs on the page can work"
     }
-    default { Fail "tx=$(if ($tx) { $tx } else { '<absent>' }) is not a transport this lane offers" }
+    default { nt_fail demo.transport.wired "tx=$(if ($tx) { $tx } else { '<absent>' }) is not a transport this lane offers" }
 }
 
 # Against the app's own config rather than a number written here, for the reason
@@ -146,30 +165,28 @@ $cfg = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "..\pages\demo\con
 $wantW = if ($cfg -match '"width"\s*:\s*(\d+)') { $Matches[1] } else { "?" }
 $wantH = if ($cfg -match '"height"\s*:\s*(\d+)') { $Matches[1] } else { "?" }
 if ($size -eq "${wantW}_x_${wantH}") {
-    Note "size $size agrees with config.json"
+    nt_report "size $size agrees with config.json"
 } else {
     # A reading and not a control: innerWidth is the content area and a window
     # manager may hand back less than was asked for. What would be a defect is
     # the app failing to read a size at all, which the engine branch covers.
-    Note "size $size against config ${wantW}x${wantH} -- the window manager had the last word"
+    nt_report "size $size against config ${wantW}x${wantH} -- the window manager had the last word"
 }
 
-Note "desktop $desktop"
+nt_report "desktop $desktop"
 
 # The button, which is the whole of what the person on Windows Home reported.
 if ($bound -eq "yes") {
-    Note "the Close button has a handler on it"
+    nt_pass demo.close.bound "the Close button has a handler on it"
 } else {
     # ${bound} and not $bound. A colon after a variable in a double-quoted
     # string is PowerShell's scope qualifier -- `$bound:` is read as a
     # namespace, and the whole file then fails to parse rather than this line
     # failing to interpolate. It cost a round: nothing in demo.ps1 ran.
-    Fail "bound=${bound}: the Close button on the published demo has no handler, which is exactly the defect this file was written for"
+    nt_fail demo.close.bound "bound=${bound}: the Close button on the published demo has no handler, which is exactly the defect this file was written for"
 }
 
 Get-Process -Name $AppName -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
-Write-Host ""
-Write-Host "=== Results: $Failures failure(s) ==="
-exit $Failures
+nt_finish
