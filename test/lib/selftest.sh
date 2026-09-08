@@ -509,7 +509,19 @@ while IFS="$(printf '\t')" read -r rid _rest; do
         # covered without this line being touched again. It is the same
         # allowance the `$stem\.\$` escape above makes for an id whose last
         # segment is built at runtime.
-        if grep -qE "(nt_(pass|fail|skip|walk_[a-z_]+)|ctl_(pass|fail|skip)|assert_[a-z_]+) \"?($rid|$stem\.\\\$)" "$suite" 2>/dev/null; then
+        #
+        # $rid is followed by a boundary, and without it this scan reports a
+        # false pass. The match was unanchored, so an id that is a *prefix* of
+        # another was found by the longer one: registering envlen.trunc.keep255
+        # beside envlen.trunc.keep255.control made the first one look emitted
+        # whether anything emitted it or not. An orphan check that can be
+        # satisfied by a different case is not checking the thing it is for.
+        #
+        # The boundary goes on that alternative only. The other one ends in a
+        # literal `$` -- it is how an id whose last segment is built at runtime
+        # is matched, `std.win.open-target.$v` -- and a boundary after it would
+        # refuse the variable that has to follow.
+        if grep -qE "(nt_(pass|fail|skip|walk_[a-z_]+)|ctl_(pass|fail|skip)|assert_[a-z_]+) \"?($rid([^A-Za-z0-9.-]|\$)|$stem\.\\\$)" "$suite" 2>/dev/null; then
             found=1; break
         fi
     done
