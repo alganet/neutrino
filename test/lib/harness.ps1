@@ -153,7 +153,7 @@ function nt_row($id, $verdict, $detail) {
 # array where it expected a field. verify-attack.ps1 reports from inside
 # assert_field and reads fields out of Get-Field in the same file, so this is
 # the shape that file already has. The CI steps capture it -- every one of them
-# runs the suite as `& .\test\suite.ps1 *>&1 | Tee-Object`, and `*>&1` merges
+# runs the suite as `& .\test\suite\<name>.ps1 *>&1 | Tee-Object`, and `*>&1` merges
 # the information stream Write-Host writes to. Both halves were measured: a
 # probe function that reported twice and then returned a value handed its caller
 # THE-RETURN-VALUE alone, and the prose reached the tee'd log intact.
