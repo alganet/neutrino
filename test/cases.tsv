@@ -205,6 +205,29 @@ standalone.derived.said	the refusal says the document was not found	windows-laun
 standalone.derived.paths	the refusal names both paths it looked for	windows-launch
 standalone.restored	with the document back the exe comes up again	windows-launch
 
+# The navigation a page makes before its own load has finished, from
+# test/early.sh and test/verify-early.sh -- gjs, kde and macos, the three lanes
+# that run the row.
+#
+# early.target.served is the control and it is the whole reason the rest means
+# anything. The target used to be a host that never resolves, which made `held`
+# free: a driver with no guard at all reports it, because the provisional load
+# fails on its own. It is served over loopback now, and a server that is not up
+# puts the suite straight back where it was -- passing every lane by refusing a
+# navigation nobody could have made. Two files can find that out, so both file
+# it: early.sh where the target never came up, verify-early.sh where it did not
+# answer, and the three cases behind it are skipped by whichever got there.
+#
+# early.load.pending is asked only where the guard keys on the load finishing,
+# which is the WebKitGTK driver and only it. Qt's arms on the first navigation
+# and the macOS one at the commit of this document, so a completed load says
+# nothing either way there -- which was a NOTE nothing read and is a skip
+# carrying its reason now. The cell says which of the two it is.
+early.target.served	the navigation target answers	gjs kde macos
+early.reported	the early-navigation app reported a title	gjs kde macos
+early.load.pending	the load was still pending when the page navigated	gjs kde macos
+early.held	the page that arrived was kept out of the window	gjs kde macos
+
 # A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
 # because the failure it provokes is the WebView2 package download 404ing and no
 # other lane has that path to fail on.

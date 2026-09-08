@@ -42,6 +42,11 @@
 
 set -uo pipefail
 
+# The six words, for the one verdict this wrapper files itself. Everything else
+# here is apparatus -- two servers and a launch -- and the readings belong to
+# test/verify-early.sh, which this runs and whose exit status it returns.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+
 APP="${1:-}"
 if [ -z "$APP" ] || [ ! -f "$APP" ]; then
     echo "usage: early.sh <app.cmd built from test/neutrinoearly.js>" >&2
@@ -85,10 +90,17 @@ STALL_PID=$!
 # does. Its diagnostic goes to stderr, which is this suite's stdout by the time
 # step.sh has it.
 if ! PAGES_PID="$(bash "$HERE/serve-target.sh" "$PAGES_LOG")"; then
-    echo "  FAIL: nothing is serving the navigation target"
+    # The verifier never runs from here, so it files nothing -- and four cases
+    # that file nothing are four holes the grid cannot tell from a lane that
+    # never ran this suite. The control it would have filed is filed here
+    # instead, and the three behind it are skipped by name.
+    nt_fail early.target.served "nothing is serving the navigation target"
     echo "        the page under test cannot navigate anywhere, so a guard that"
     echo "        does nothing would pass this run"
-    exit 1
+    nt_skip early.reported "the target never came up, so the app was never launched"
+    nt_skip early.load.pending "the target never came up, so the app was never launched"
+    nt_skip early.held "the target never came up, so the app was never launched"
+    nt_finish
 fi
 
 # The macOS status file, cleared before the app that writes it starts.
