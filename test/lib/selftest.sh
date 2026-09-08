@@ -1105,6 +1105,36 @@ for l in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$SUITES_TSV" | sort -u); do
 done
 ok "run.sh --dry-run resolves every lane in the manifest"
 
+# No pattern in the tree spells a word boundary `\b`.
+#
+# `\b` is a GNU extension. POSIX ERE has no word boundary, and a grep whose ERE
+# is the system's takes a backslash before an ordinary character as that
+# character -- so the pattern hunts for a literal `b` and matches nothing.
+#
+# Every failure of this is silent in the same direction. A scan that matches
+# nothing reports nothing, and reporting nothing is what all four of these did to
+# say a tree was clean: three scans in this file, and the reserved-word check in
+# test/parse.sh, which runs on every artifact on every lane and would have been
+# telling macos that the launcher declares no name jsc.exe reserves without
+# having read a line of it.
+#
+# So it is a rule with a check rather than four fixes. The boundary this tree
+# uses instead is a character class -- `([^A-Za-z0-9.-]|$)` in the orphan scan,
+# `([^A-Za-z0-9_$]|$)` in parse.sh, where `$` is part of a JavaScript name and
+# not a boundary around one -- which says what the boundary is made of and works
+# on every grep there is.
+#
+# Comments are stripped first: this file discusses `\b` at length and would
+# otherwise be its own worst offender.
+BOUNDARY=""
+for f in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
+    [ -f "$f" ] || continue
+    hits="$(sed 's/#.*//' "$f" | grep -nE '(grep|sed|awk)[^|]*\\b' || true)"
+    [ -z "$hits" ] || BOUNDARY="$BOUNDARY $(basename "$f"):$(printf '%s' "$hits" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')"
+done
+[ -z "$BOUNDARY" ] && ok "no pattern in the tree spells a word boundary with \\b" \
+    || bad "a GNU-only \\b is in a pattern at:$BOUNDARY"
+
 # Every suite in the manifest can carry a count out.
 #
 # run.sh adds a lane up by summing what its suites exit with, and says so at
