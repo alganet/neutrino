@@ -241,6 +241,35 @@ BRC=$?
 [ "$(awk -F'\t' '$3 == "walk.resize" { print $4 }' "$BAD")" = "FAIL" ] \
     && ok "walk.resize reports FAIL when the window is the wrong size" \
     || bad "walk.resize did not fail on a 640x480 window asked to be 500x400"
+
+# The renderer-sandbox case, both ways.
+#
+# It reads the whole machine's process table, which is right on a runner and
+# wrong everywhere else, so it is asked only where $APP_PID says this run
+# launched the app. Those are two different answers and both are checked here:
+# the walks above ran without an APP_PID and must have skipped it, and a run
+# that does have one, with something whose argv looks like a WebKitWebProcess
+# and no bwrap over it, must go red.
+#
+# The decoy is `exec -a`, which sets a process's argv without running anything
+# by that name -- there is no WebKitGTK on a machine that is running this file,
+# and waiting for one would be a check that never runs.
+[ "$(awk -F'\t' '$3 == "walk.renderer.sandboxed" { print $4 }' "$RESULTS")" = "SKIP" ] \
+    && ok "the renderer-sandbox case skips when this run launched no app" \
+    || bad "walk.renderer.sandboxed did not skip without an APP_PID"
+
+echo 1 > "$STATE/idx"; echo 0 > "$STATE/seen"
+mkxdotool 500x400
+bash -c 'exec -a WebKitWebProcess sleep 30' >/dev/null 2>&1 &
+DECOY=$!
+SBX="$WORK/sandbox.tsv"
+PATH="$BIN:$PATH" NT_LANE=selftest NT_RESULTS="$SBX" NT_WAIT_TIMEOUT=5 \
+    APP_PID=$$ bash "$ROOT/test/verify-linux.sh" "$WORK/shots-sbx" > "$WORK/sbx.out" 2>&1
+kill "$DECOY" 2>/dev/null || true
+wait "$DECOY" 2>/dev/null || true
+[ "$(awk -F'\t' '$3 == "walk.renderer.sandboxed" { print $4 }' "$SBX")" = "FAIL" ] \
+    && ok "walk.renderer.sandboxed reports FAIL for a web process with no bwrap over it" \
+    || bad "walk.renderer.sandboxed did not fail on an unsandboxed web process"
 # The rest of the walk still has to be reported. A suite that stops at its first
 # failure tells you one thing was wrong and nothing about what else was.
 [ "$(awk -F'\t' '$3 == "walk.done" { print $4 }' "$BAD")" = "PASS" ] \

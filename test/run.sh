@@ -169,7 +169,7 @@ SETUP_BAD=""
 SOFT=0
 
 nt_setup() {
-    local wm="" tk="" leash="" reap="" cats="" nodisp=0 d
+    local wm="" tk="" leash="" reap="" cats="" dbus="" nodisp=0 d
     APP_NAME=""; BUILD_NAMES=""; SETUP_BAD=""; SOFT=0
     for d in $1 $2; do
         [ "$d" = "-" ] && continue
@@ -196,6 +196,13 @@ nt_setup() {
             app=*)     APP_NAME="${d#app=}"; BUILD_NAMES="$BUILD_NAMES ${d#app=}" ;;
             build=*)   BUILD_NAMES="$BUILD_NAMES ${d#build=}" ;;
             cat=*)     cats="$cats --cat ${d#cat=}" ;;
+            # A session bus around the artifact test/step.sh launches. kde asks
+            # for one because QtWebEngine wants a bus and the container has no
+            # desktop to inherit one from; nothing else does. It is a directive
+            # rather than an env(1) in the command column for the reason the
+            # header gives about that column: the command is the verifier, and
+            # the artifact is launched by step.sh.
+            dbus)      dbus=" --dbus" ;;
             reap=*)    reap="${d#reap=}" ;;
             # continue-on-error, spelled once. Four steps carry it in the
             # workflow and every one of them is a probe: it reports a reading
@@ -212,6 +219,7 @@ nt_setup() {
     [ -n "$leash" ] && STEP_ARGS="$STEP_ARGS --timeout $leash"
     [ -n "$reap" ]  && STEP_ARGS="$STEP_ARGS --reap $reap"
     [ -n "$cats" ] && STEP_ARGS="$STEP_ARGS$cats"
+    [ -n "$dbus" ] && STEP_ARGS="$STEP_ARGS$dbus"
     return 0
 }
 

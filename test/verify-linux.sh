@@ -21,6 +21,24 @@ SCREENSHOT_DIR="${1:-.}"
 
 mkdir -p "$SCREENSHOT_DIR"
 
+# A plain background behind every picture this file takes.
+#
+# Cosmetic, and asserted by nothing -- the colour appears nowhere else in this
+# tree. X's default root is a black-and-white stipple, and a window edge against
+# it is hard to see in a sheet; a flat dark blue makes the frame this suite is
+# largely about legible at a glance.
+#
+# It lived in the workflow, on two of the four jobs that run this file. gjs and
+# kde set it, and the two linux-engines halves did not, because their blocks were
+# pasted without the line -- so one lane's walk pictures came out on a different
+# background from another's for no reason anybody chose. It belongs with the
+# thing that takes the pictures.
+#
+# Not in test/lib/display.sh, which would have been the other place: that would
+# put this colour behind every screenshot every windowed suite takes on every X
+# lane, which is a change to a great many sheets to fix a difference in one.
+command -v xsetroot >/dev/null 2>&1 && xsetroot -solid "#112233" 2>/dev/null || true
+
 # The root window: the whole desktop, with the app somewhere on it. Every
 # verifier here frames its pictures that way, so a sheet can be read across
 # lanes and so anything sitting on top of the app is in the shot rather than
@@ -290,6 +308,44 @@ WID=$(wait_for_title "TESTS DONE") || { nt_fail walk.done "tests never completed
 screenshot "06-done"
 
 nt_pass walk.done "the walk ran to the end"
+
+# The renderer's own sandbox, read off the process table rather than off a
+# variable.
+#
+# This was four lines of shell in .github/workflows/ci.yml, on the two
+# linux-engines halves and nowhere else -- although gjs runs the same WebKitGTK
+# and had the same question to answer. It wrote `FAIL:` to the step's stderr and
+# set TEST_EXIT, which turned the lane red and told the grid nothing: there was
+# no case id, so a lane whose renderer stopped being sandboxed and a lane that
+# never asked looked identical in every sheet.
+#
+# A window is not the assertion. A lane that came up with nothing around the
+# process holding page content looks the same from outside as one that did it
+# right, which is why this is asked of the process table at all.
+#
+# Asked only where this run launched the app itself. $APP_PID is exported by
+# test/step.sh for the artifact it starts, so it is set on the lanes and unset
+# everywhere else -- and "everywhere else" matters, because the process table
+# this reads is the whole machine's. On a runner nothing else is on it; on a
+# developer's desktop a browser is, and the check as it stood in the workflow
+# would have called that browser's unsandboxed renderer a failure of the lane.
+# test/lib/selftest.sh runs this file against stub instruments and found exactly
+# that, which is the only reason the gate is here rather than discovered later.
+#
+# Skipped and not passed where there is nothing to ask: kde, whose renderer is
+# Chromium and whose sandbox is a different question; and any run with no app of
+# its own. A skip says which; a silent pass would not.
+if [ -z "${APP_PID:-}" ]; then
+    nt_skip walk.renderer.sandboxed "this run did not launch the app, so the process table is not this walk's to read"
+elif pgrep -f WebKitWebProcess >/dev/null 2>&1; then
+    if pgrep -a bwrap 2>/dev/null | grep -q WebKitWebProcess; then
+        nt_pass walk.renderer.sandboxed "the web process is under bwrap"
+    else
+        nt_fail walk.renderer.sandboxed "the web process is not under bwrap on this lane"
+    fi
+else
+    nt_skip walk.renderer.sandboxed "no WebKitWebProcess on this lane; its renderer sandbox is a different question"
+fi
 
 echo ""
 nt_finish
