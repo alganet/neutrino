@@ -44,9 +44,11 @@ $AppName   = [System.IO.Path]::GetFileNameWithoutExtension($AppCmd)
 $AppFolder = Join-Path (Split-Path -Parent $AppCmd) $AppName
 $ErrorLog  = Join-Path $AppFolder "neutrino-error.log"
 
-$Failures = 0
-function Pass($m) { Write-Host "  PASS: $m" }
-function Fail($m) { Write-Host "  FAIL: $m"; $script:Failures++ }
+# The six words. The three checks below were the right three and reached
+# nothing: this suite printed the only spelling in the tree that already matched
+# harness.sh's, and still filed no row, so the lane could say a failed
+# initialisation ends and be believed only by someone reading the log.
+. (Join-Path $PSScriptRoot "lib\harness.ps1")
 
 if (Test-Path $AppFolder) { Remove-Item -Recurse -Force $AppFolder -ErrorAction SilentlyContinue }
 
@@ -60,11 +62,18 @@ $launcher | Wait-Process -Timeout 180 -ErrorAction SilentlyContinue
 if ($launcher.HasExited) {
     Write-Host "  (the .cmd returned rc=$($launcher.ExitCode); START reports on the launch, not on what it launched)"
 } else {
-    Fail "the .cmd itself never returned; nothing below is about the driver"
-    Write-Host "  report: winerr launcher=STUCK box=SKIPPED ended=SKIPPED recorded=SKIPPED"
-    Write-Host "=== Results: $Failures failure(s) ==="
-    exit 1
+    nt_fail winerr.launcher.returned "the .cmd itself never returned; nothing below is about the driver"
+    # The three words that used to be spelled SKIPPED inside a report line.
+    # sheet.sh has counted a skip column since it was written and this was one
+    # of the two places in the tree that had something to put in it, said in a
+    # way nothing could read.
+    $why = "the .cmd never returned, so the driver was never reached"
+    nt_skip winerr.box.shown $why
+    nt_skip winerr.process.ended $why
+    nt_skip winerr.recorded $why
+    nt_finish
 }
+nt_pass winerr.launcher.returned "the .cmd returned and the driver was reached"
 
 function Get-Box {
     Get-Process -Name $AppName -ErrorAction SilentlyContinue |
@@ -83,10 +92,10 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500
 }
 if ($box) {
-    Pass "a window titled 'neutrino' came up"
+    nt_pass winerr.box.shown "a window titled 'neutrino' came up"
     $boxSeen = "SHOWN"
 } else {
-    Fail "no window ever came up; a fix that shows nobody anything would pass the checks below"
+    nt_fail winerr.box.shown "no window ever came up; a fix that shows nobody anything would pass the checks below"
     $boxSeen = "ABSENT"
 }
 
@@ -101,9 +110,9 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500
 }
 if ($ended) {
-    Pass "the process ended without anyone clicking anything"
+    nt_pass winerr.process.ended "the process ended without anyone clicking anything"
 } else {
-    Fail "the process is still up; this is the modal that never returns"
+    nt_fail winerr.process.ended "the process is still up; this is the modal that never returns"
     Get-Process -Name $AppName -ErrorAction SilentlyContinue |
         ForEach-Object { Write-Host "    still up: $($_.ProcessName) '$($_.MainWindowTitle)'" }
     Stop-Process -Name $AppName -Force -ErrorAction SilentlyContinue
@@ -114,20 +123,19 @@ $recorded = "ABSENT"
 if (Test-Path $ErrorLog) {
     $text = (Get-Content -Raw $ErrorLog)
     if ($text -match "WebView2") {
-        Pass "neutrino-error.log names the failure"
+        nt_pass winerr.recorded "neutrino-error.log names the failure"
         $recorded = "NAMED"
     } else {
-        Fail "neutrino-error.log is there but does not say what failed"
+        nt_fail winerr.recorded "neutrino-error.log is there but does not say what failed"
         $recorded = "EMPTY"
     }
 } else {
-    Fail "nothing in the app folder names the failure"
+    nt_fail winerr.recorded "nothing in the app folder names the failure"
     Write-Host "    app folder holds: $((Get-ChildItem -Name $AppFolder -ErrorAction SilentlyContinue) -join ',')"
 }
 
 # One line the annotator can carry out whole, on the same terms as every other
 # verifier here: the job log needs a token and the checks API does not.
 $endedWord = if ($ended) { "ENDED" } else { "STUCK" }
-Write-Host "  report: winerr box=$boxSeen ended=$endedWord recorded=$recorded"
-Write-Host "=== Results: $Failures failure(s) ==="
-exit $Failures
+nt_report "winerr box=$boxSeen ended=$endedWord recorded=$recorded"
+nt_finish
