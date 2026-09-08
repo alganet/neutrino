@@ -125,9 +125,18 @@ nt_live_stop() {
 #   1  no title at all: the probe never came up, and there is nothing to judge
 #   2  src=null: it came up and read no toolkit, so a flip would prove nothing
 #
-# The second is the one worth having. A probe that reports faithfully that it
-# was handed nothing looks, after a flip that delivers nothing, exactly like a
-# working watcher on a desktop that did not move.
+# Two failures and one question, and they belong together: both mean there is no
+# reading here to judge, which is a different thing from a watcher that did not
+# fire. They keep two sentences because the fixes differ.
+#
+# ------------------------------------------------------- with and without an id
+#
+# $NT_LIVE_CASE is how a suite that speaks the harness gets a verdict out of
+# this, and an empty one is how the suites that do not get the prose they always
+# printed. Set it through assert_live_up rather than by hand: the id is that
+# function's first argument, which is what selftest.sh's registry scan follows
+# -- an id reaching nt_pass through a variable is the one shape it cannot see,
+# and `assert_` is the prefix it knows.
 nt_live_up() {
     local prefix="$1" secs="$2" waited=0
     while [ "$waited" -lt "$secs" ]; do
@@ -138,16 +147,49 @@ nt_live_up() {
     done
     NT_LIVE_TITLE="$(nt_title "$prefix")"
     if [ -z "$NT_LIVE_TITLE" ]; then
-        echo "FAIL: live half: no $prefix window in ${secs}s; the probe never came up"
+        nt_live_say fail "live half: no $prefix window in ${secs}s; the probe never came up"
         return 1
     fi
-    nt_report "live before: $NT_LIVE_TITLE"
     case "$NT_LIVE_TITLE" in
         *src=null*)
-            echo "FAIL: live half: the probe read no toolkit, so a flip would prove nothing"
+            nt_report "live before: $NT_LIVE_TITLE"
+            nt_live_say fail "live half: the probe read no toolkit, so a flip would prove nothing"
             return 1 ;;
     esac
+    nt_live_say pass "live before: $NT_LIVE_TITLE"
     return 0
+}
+
+# One sentence, said as a verdict where there is a case to file it under and as
+# the line it always was where there is not.
+#
+# The passing spelling is the difference worth noting: without a case this is
+# the `report: live before: ...` line every copy printed, and with one it is
+# that line *and* a PASS. A case emitted only by fail and skip files nothing on
+# the healthy run, which is the run it spends its life on.
+nt_live_say() {
+    if [ -z "${NT_LIVE_CASE:-}" ]; then
+        case "$1" in
+            pass) nt_report "$2" ;;
+            *)    echo "FAIL: $2" ;;
+        esac
+        return 0
+    fi
+    case "$1" in
+        pass) nt_report "$2"; nt_pass "$NT_LIVE_CASE" "$2" ;;
+        *)    nt_fail "$NT_LIVE_CASE" "$2" ;;
+    esac
+}
+
+# The same reading, filed under a case. The id comes first because that is where
+# selftest.sh's scan looks, and the `assert_` prefix is what tells it to.
+assert_live_up() {
+    local id="$1"; shift
+    NT_LIVE_CASE="$id"
+    nt_live_up "$@"
+    local rc=$?
+    NT_LIVE_CASE=""
+    return "$rc"
 }
 
 # After the flip: wait for the title to say it moved, then stop waiting whatever

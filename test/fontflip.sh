@@ -43,7 +43,29 @@ MODE="${1:-gtk}"
 WATCH="${2:-8}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-note() { echo "report: $*"; }
+note() { nt_report "$*"; }
+
+# The eight cases this file holds, and the two lists a gate reaches for.
+#
+# Every gate below says "nothing under here is a reading", and each has to say
+# which questions it could not reach -- an unreported case is a hole, and a hole
+# is indistinguishable from a suite that never ran.
+#
+# The two halves are two lists because two manifest rows run them: `fontflip`
+# asks what the toolkit emits and `fontlive` whether a running page is told, and
+# neither row reaches the other's questions. See NT_FONTFLIP_HALF at the bottom.
+skip_probe() {
+    nt_skip fontflip.probe.baseline "$1"
+    nt_skip fontflip.probe.watched "$1"
+    nt_skip fontflip.probe.restored "$1"
+}
+
+skip_live() {
+    nt_skip fontflip.live.reported "$1"
+    nt_skip fontflip.live.ui-knob "$1"
+    nt_skip fontflip.live.ui "$1"
+    nt_skip fontflip.live.mono "$1"
+}
 
 # One probe run, with its output shown whichever way it goes.
 #
@@ -82,16 +104,14 @@ run_probe() {
     # the fix it pointed at.
     if grep -q 'FONTPROBE' "$out"; then
         sed -n 's/^.*\(FONTPROBE\)/\1/p' "$out"
-    else
-        note "the probe printed no FONTPROBE line (exit $rc); its whole output follows"
-        sed 's/^/  probe: /' "$out"
-        FAILURES=$((FAILURES + 1))
+        rm -f "$out"
+        return 0
     fi
+    note "the probe printed no FONTPROBE line (exit $rc); its whole output follows"
+    sed 's/^/  probe: /' "$out"
     rm -f "$out"
+    return 1
 }
-
-fail() { echo "  FAIL: $*"; FAILURES=$((FAILURES + 1)); }
-FAILURES=0
 
 # The font the flip moves to, chosen so that every field a probe reports moves
 # with it: a different family, a different size, and a weight that is not 400.
@@ -163,11 +183,44 @@ gtk_set() {
 # Windows text size slider writes. Driven from the probe's own side rather than
 # here, because this file is bash and that lane's harness is not.
 
+# Every schema gtk_save recorded, read back after gtk_restore ran.
+#
+# The header's promise is that a desktop this file moved is a desktop it put
+# back, and until now nothing checked it: gtk_restore wrote the values and
+# reported the first schema's, which is the value it had just written. A person
+# who runs this on their own machine is owed better than a report of the write.
+#
+# Read with a here-document and not `printf | while`, because the loop's
+# findings have to survive it: a `while` on the right of a pipe is a subshell,
+# which is why gtk_restore itself can only ever call gsettings from in there.
+gtk_restored() {
+    local line s v now
+    NT_RESTORE_BAD=""
+    [ -n "$gtk_saved" ] || return 2
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        s="${line%%=*}"; v="${line#*=}"
+        now="$(gsettings get "$s" font-name 2>/dev/null)"
+        [ "$now" = "$v" ] || NT_RESTORE_BAD="$NT_RESTORE_BAD $s=$now(wanted $v)"
+    done <<EOF
+$gtk_saved
+EOF
+    [ -z "$NT_RESTORE_BAD" ]
+}
+
 run_gtk() {
-    command -v gsettings >/dev/null 2>&1 || { note "no gsettings here; nothing to flip"; return 0; }
+    command -v gsettings >/dev/null 2>&1 || {
+        note "no gsettings here; nothing to flip"
+        skip_probe "no gsettings here, so there is no knob to move and nothing to read"
+        return 0
+    }
     local runtime=""
     for c in gjs cjs; do command -v "$c" >/dev/null 2>&1 && { runtime="$c"; break; }; done
-    [ -n "$runtime" ] || { note "no gjs or cjs here; the gtk probe cannot run"; return 0; }
+    [ -n "$runtime" ] || {
+        note "no gjs or cjs here; the gtk probe cannot run"
+        skip_probe "neither gjs nor cjs is here, so the probe that takes these readings cannot run"
+        return 0
+    }
     note "gtk runtime=$runtime"
 
     gtk_save || { note "no writable font-name key in any schema; nothing to flip"; }
@@ -177,18 +230,48 @@ run_gtk() {
     # Baseline first, with no watch, so the reading of what the desktop *is*
     # cannot be confused with the reading of what it became.
     note "--- gtk baseline"
-    run_probe 30 "$runtime" "$ROOT/test/fontprobe-gtk.js"
+    if run_probe 30 "$runtime" "$ROOT/test/fontprobe-gtk.js"; then
+        nt_pass fontflip.probe.baseline "the probe read the desktop's fonts before anything moved"
+    else
+        nt_fail fontflip.probe.baseline "the probe printed no reading at all; a lane with no fonts and a probe that died look identical from here"
+    fi
 
+    # Its output and its status go to files, and both are read after the wait.
+    #
+    # This probe is backgrounded so the flip can happen underneath it, and until
+    # now that put its verdict in a subshell: run_probe counted its own failure
+    # into a $FAILURES the parent never saw, so a probe that died during the
+    # watch was a step that passed. A row filed from in there would have been
+    # worse -- red in the grid and zero in the exit code.
     note "--- gtk live (${WATCH}s, flipped at 2s)"
-    run_probe $((WATCH + 20)) "$runtime" "$ROOT/test/fontprobe-gtk.js" "$WATCH" &
+    local watchlog watchrc
+    watchlog="$(mktemp)"; watchrc="$(mktemp)"
+    ( run_probe $((WATCH + 20)) "$runtime" "$ROOT/test/fontprobe-gtk.js" "$WATCH" \
+        > "$watchlog" 2>&1; echo $? > "$watchrc" ) &
     local probe=$!
     sleep 2
     gtk_set "$FLIP_TO"
     note "flipped to '$FLIP_TO'"
     wait "$probe" 2>/dev/null || true
+    cat "$watchlog"
+    if [ "$(cat "$watchrc" 2>/dev/null)" = 0 ]; then
+        nt_pass fontflip.probe.watched "the probe read the desktop's fonts while they moved under it"
+    else
+        nt_fail fontflip.probe.watched "the probe printed no reading while the font moved under it; whether this toolkit emits anything is what this lane runs to find out, and a dead probe cannot say"
+    fi
+    rm -f "$watchlog" "$watchrc"
 
     gtk_restore
     trap - EXIT
+    local restored=0
+    gtk_restored || restored=$?
+    if [ "$restored" = 0 ]; then
+        nt_pass fontflip.probe.restored "every font-name key this run moved is back where it was found"
+    elif [ "$restored" = 2 ]; then
+        nt_skip fontflip.probe.restored "no writable font-name key was saved, so nothing here was moved and nothing had to be put back"
+    else
+        nt_fail fontflip.probe.restored "the desktop was left flipped:$NT_RESTORE_BAD -- this file is one a person runs on their own machine"
+    fi
 
     note "--- gtk after restore"
     timeout 30 "$runtime" "$ROOT/test/fontprobe-gtk.js" 2>&1 |
@@ -204,11 +287,26 @@ run_gtk() {
 # fonts, window.qml says so where someone would go to add a watcher, and there
 # is nothing left here for a flip to measure.
 run_macos() {
-    command -v osascript >/dev/null 2>&1 || { note "no osascript here"; return 0; }
+    command -v osascript >/dev/null 2>&1 || {
+        note "no osascript here"
+        skip_probe "no osascript here, so the probe that takes these readings cannot run"
+        return 0
+    }
     note "--- macos baseline"
-    run_probe 60 osascript -l JavaScript "$ROOT/test/fontprobe-macos.js"
+    if run_probe 60 osascript -l JavaScript "$ROOT/test/fontprobe-macos.js"; then
+        nt_pass fontflip.probe.baseline "the probe read the desktop's fonts before anything moved"
+    else
+        nt_fail fontflip.probe.baseline "the probe printed no reading at all; a lane with no fonts and a probe that died look identical from here"
+    fi
+    # Skipped and not passed, and the difference is the header's whole argument:
+    # macOS has no user setting for the UI font, so there is no knob to move and
+    # nothing to watch move. That is a reading about the platform and not a gap
+    # in this file -- but it is also not this lane answering the question, and a
+    # pass here would say it was.
     note "macos has no scriptable UI-font knob; the live half is not run on this lane"
     note "that is the reading, not a gap: see the header"
+    nt_skip fontflip.probe.watched "macOS has no scriptable UI-font knob, so there is nothing that could move under a running probe"
+    nt_skip fontflip.probe.restored "nothing was flipped on this lane, so nothing had to be put back"
 }
 
 run_windows() {
@@ -279,10 +377,12 @@ live_half_gtk() {
 
     command -v gsettings >/dev/null 2>&1 || {
         note "live half: no gsettings here; nothing to flip live"
+        skip_live "no gsettings here, so there is no knob a running app could be told about"
         return 0
     }
     [ "$NT_TITLE_HOW" = none ] && {
         note "live half: neither xdotool nor wmctrl is here, so nothing can read a title"
+        skip_live "nothing here can read a window title, so the probe's readings cannot be reached"
         return 0
     }
     gtk_save || note "live half: no writable font-name key; the flip may not take"
@@ -291,10 +391,15 @@ live_half_gtk() {
     trap 'nt_live_stop; gtk_restore' EXIT
 
     nt_live_start "$ROOT/test/neutrinolivefont.js" "$LIVE_ART" \
-        "$LOGDIR/fontflip-live-app.log" ||
-        { nt_live_stop; gtk_restore; trap - EXIT; return 1; }
-    nt_live_up 'STD-LIVEFONT' 90 ||
-        { nt_live_stop; gtk_restore; trap - EXIT; return 1; }
+        "$LOGDIR/fontflip-live-app.log" || {
+        nt_fail fontflip.live.reported "the live probe could not be built, so it never ran"
+        skip_live "there was no probe to run, so nothing below was measured"
+        nt_live_stop; gtk_restore; trap - EXIT; return 1
+    }
+    assert_live_up fontflip.live.reported 'STD-LIVEFONT' 90 || {
+        skip_live "the probe reported nothing usable, so no flip below could be judged"
+        nt_live_stop; gtk_restore; trap - EXIT; return 1
+    }
 
     # --- flip one: the ui role, through GtkSettings ---------------------------
     #
@@ -316,23 +421,28 @@ live_half_gtk() {
         # here would be this file reporting a measurement it never took.
         note "could not read what GTK is drawing with on this lane, so whether the"
         note "  ui knob took cannot be told. Flip one is not asserted; flip two is."
+        nt_skip fontflip.live.ui-knob "neither gjs nor cjs is here to read what GTK is drawing with, so whether the knob reached GtkSettings was never measured"
+        nt_skip fontflip.live.ui "the ui knob could not be controlled, so a delivery that did not arrive would be unreadable"
     elif [ "$toolkit_before" = "$toolkit_after" ]; then
         note "the ui knob did not reach GtkSettings on this desktop, so the rendered"
         note "  ui font never moved and there was nothing to deliver. Flip one is a"
         note "  reading about this machine and is not asserted; flip two still is."
+        nt_skip fontflip.live.ui-knob "the ui knob did not reach GtkSettings on this desktop (${toolkit_before:-<none>} held), which is a fact about the machine and not about the watcher"
+        nt_skip fontflip.live.ui "the rendered ui font never moved, so there was nothing for the page to be told about"
     else
+        nt_pass fontflip.live.ui-knob "control the ui knob reached GtkSettings: ${toolkit_before:-<none>} -> ${toolkit_after:-<none>}"
         expect=$((expect + 1))
         nt_live_settle 'STD-LIVEFONT' 15 "$expect" || true
         after="$NT_LIVE_TITLE"
         note "live after 1: ${after:-<nothing>}"
         case "$after" in
             *moved=yes*)
-                echo "PASS: the running app was handed new fonts when the desktop's ui font moved" ;;
+                nt_pass fontflip.live.ui "the running app was handed new fonts when the desktop's ui font moved" ;;
             STD-LIVEFONT*)
-                echo "FAIL: the ui font moved under a running app and it was handed nothing; notify::gtk-font-name and style-updated both did not deliver"
+                nt_fail fontflip.live.ui "the ui font moved under a running app and it was handed nothing; notify::gtk-font-name and style-updated both did not deliver"
                 rc=1 ;;
             *)
-                echo "FAIL: live half: the probe stopped writing its title after the first flip"
+                nt_fail fontflip.live.ui "live half: the probe stopped writing its title after the first flip"
                 rc=1 ;;
         esac
     fi
@@ -352,6 +462,7 @@ live_half_gtk() {
     if [ -z "$mono_schema" ]; then
         note "live half: no writable monospace-font-name on this desktop; the second flip is not run"
         note "that is a reading about this machine and not about the watcher"
+        nt_skip fontflip.live.mono "no writable monospace-font-name on this desktop, so the one knob this half exists for cannot be moved"
     else
         gsettings set "$mono_schema" monospace-font-name "$MONO_FLIP_TO" >/dev/null 2>&1 || true
         note "live flip 2: $mono_schema monospace-font-name -> '$MONO_FLIP_TO'"
@@ -364,12 +475,12 @@ live_half_gtk() {
         note "live after 2: ${after:-<nothing>}"
         case "$after" in
             *mono=LiberationMono*|*mono=DejaVuSerif*)
-                echo "PASS: and again when only the monospace font moved" ;;
+                nt_pass fontflip.live.mono "and again when only the monospace font moved" ;;
             STD-LIVEFONT*)
-                echo "FAIL: the monospace font moved under a running app and it was handed nothing; the changed:: watchers on the GSettings keys did not deliver"
+                nt_fail fontflip.live.mono "the monospace font moved under a running app and it was handed nothing; the changed:: watchers on the GSettings keys did not deliver"
                 rc=1 ;;
             *)
-                echo "FAIL: live half: the probe stopped writing its title after the second flip"
+                nt_fail fontflip.live.mono "live half: the probe stopped writing its title after the second flip"
                 rc=1 ;;
         esac
         gsettings set "$mono_schema" monospace-font-name "$was_mono" >/dev/null 2>&1 || true
@@ -382,29 +493,49 @@ live_half_gtk() {
     return "$rc"
 }
 
-# Both halves by default, and the probe half skippable.
+# Which half this run is, and it is one knob now rather than the absence of one.
 #
-# themeflip.sh carries the same knob under the same reasoning: the container
-# that supplies a real desktop has one question to ask and no reason to pay for
-# the other. Here it is the reverse of that lane -- the probe half is the cheap
-# one and the live half needs a display -- but the shape is the one a reader of
-# this tree already knows.
+# This was `NT_FONTFLIP_LIVE_ONLY=1` on the row that wanted only the live half,
+# and nothing on the row that wanted only the probe -- which meant that row ran
+# the live half too. Two rows on gjs and on linux-engines each ran it, so one
+# lane asked the same question twice, and once these halves carry case ids that
+# stops being merely wasteful: matrix.py folds two verdicts on one lane
+# FAIL-over-PASS, so a cell would answer for two runs of a question that is only
+# asked once.
+#
+# So the manifest names the half. `probe` is what the toolkit emits, `live` is
+# whether a page that was already open is told, and `both` is what a person
+# running this file by hand gets, because on a desk there is no reason to pick.
+NT_FONTFLIP_HALF="${NT_FONTFLIP_HALF:-both}"
+
 run_gtk_all() {
     local rc=0
-    if [ "${NT_FONTFLIP_LIVE_ONLY:-}" != "1" ]; then
-        run_gtk || rc=$?
-    fi
-    live_half_gtk || rc=$?
+    case "$NT_FONTFLIP_HALF" in
+        probe|both) run_gtk || rc=$? ;;
+        *) skip_probe "this row runs the live half; the probe half is the fontflip row's" ;;
+    esac
+    case "$NT_FONTFLIP_HALF" in
+        live|both) live_half_gtk || rc=$? ;;
+        *) skip_live "this row runs the probe half; the live half is the fontlive row's" ;;
+    esac
     return "$rc"
 }
 
 case "$MODE" in
-    gtk)     run_gtk_all || FAILURES=$((FAILURES + 1)) ;;
+    gtk)     run_gtk_all || true ;;
     qt)      note "the qt lane is launch-only for fonts; there is nothing to flip" ;;
-    macos)   run_macos ;;
+    macos)
+        run_macos
+        # No live half here and none possible, so the four it would have filed
+        # are skipped rather than left as holes -- except that the registry does
+        # not name this lane for them at all, which is the other way to say the
+        # same thing and the one that keeps the grid honest. See cases.tsv.
+        ;;
     windows) run_windows ;;
     *)       echo "fontflip.sh: unknown mode '$MODE'"; exit 2 ;;
 esac
 
-note "totals fontflip failures=$FAILURES"
-exit "$FAILURES"
+# The count, and the exit. This file ended on a $FAILURES of its own that
+# run_probe incremented from inside a background subshell, so the one probe that
+# could plausibly die -- the one watching a live flip -- could never be counted.
+nt_finish
