@@ -123,6 +123,35 @@ lanes.handoff.said	the hand-off refusal is printed rather than silent	gjs kde li
 lanes.handoff.status	a walk that ends in a hand-off refusal still exits non-zero	gjs kde linux-engines macos
 lanes.python.reached	python3 is reached where osascript does not exist	gjs kde linux-engines macos
 
+# The hostile document, from test/verify-attack.sh -- what a page that is trying
+# to drive the native window gets, on the three lanes that can run one.
+#
+# Two of these are the escape itself rather than a residual, and they are why
+# the suite exits where it finds them: a frame or a data: document whose title
+# reached the window has already driven it, and nothing measured afterwards
+# would be about the build under test. They were bare `FAIL:` lines and an
+# `exit 1` before this, so the run that mattered most filed the least.
+#
+# Two more are asserted on one platform and recorded on the other, and the
+# reason is in the suite: the macOS driver aims its navigation at a host that
+# never resolves, so the provisional load fails on its own and every driver
+# reports REFUSED whether it refused anything or not. That was a NOTE nothing
+# read; it is a skip carrying the reason now, so the cell says which of the two
+# it is. test/navrefuse.sh is where that question is asked against a target that
+# answers.
+attack.reported	the attack app reported a settled title	gjs kde macos
+attack.frame.title-escape	no frame's title reached the native window	gjs kde macos
+attack.data.escape	no data: document drove the native window	gjs kde macos
+attack.wire.control	a well-formed record down the same path is obeyed	gjs kde macos
+attack.raw.refused	a malformed record is refused	gjs kde macos
+attack.base.pinned	base-uri is pinned against a forged one	gjs kde macos
+attack.inline.blocked	an inline script does not run	gjs kde macos
+attack.eval.blocked	eval and Function do not compile	gjs kde macos
+attack.frame.api	a frame handed the API could not drive the window	gjs kde macos
+attack.forge.refused	a forged title is refused where the title is not the channel	gjs kde macos
+attack.nav.refused	the hostile navigation is refused	gjs kde macos
+attack.postnav.channel	a refused navigation leaves the app able to drive its own window	gjs kde macos
+
 # The loader environment, from test/loaders.sh -- what the standalone launch
 # path hands its engine, and what it must not.
 #
