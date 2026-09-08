@@ -65,10 +65,65 @@
 
 $ErrorActionPreference = "Continue"
 
-$failures = 0
-function Report($m) { Write-Output "report: $m" }
-function Fail($m) { Write-Output "FAIL: $m"; $script:failures++ }
-function Section($m) { Write-Output "report: === $m" }
+# The six words. Twenty-eight checks over six sections, every one of them a
+# `report:` line with an `if (bad) { Fail }` under it, so a run where all of it
+# held said nothing a reader downstream could see.
+. (Join-Path $PSScriptRoot "lib\harness.ps1")
+
+function Report($m) { nt_report $m }
+function Section($m) { nt_report "=== $m" }
+
+# Three of this file's gates say "nothing below is a reading" or "its readings
+# are absent, not negative" in as many words, and then exited or fell through
+# with the cases behind them unreported. An unreported case is a hole, which
+# --strict goes red on and which the grid cannot tell from a lane that never ran
+# the suite -- so the sections are skippable by name, and the gate that could
+# not be got past says which questions went unasked.
+function skip_static($why) {
+    nt_skip winexec.refs.named $why
+    nt_skip winexec.refs.present $why
+    nt_skip winexec.names.by-name $why
+    nt_skip winexec.tree.no-recursive $why
+    nt_skip winexec.tree.reparse-tested $why
+}
+function skip_search($why) {
+    nt_skip winexec.search.decoy-live $why
+    nt_skip winexec.search.control-bare $why
+    nt_skip winexec.search.appdir-bare $why
+    nt_skip winexec.search.cwd-bare $why
+    nt_skip winexec.search.fixed-full $why
+}
+function skip_inproc($why) {
+    nt_skip winexec.inproc.compiles $why
+    nt_skip winexec.inproc.whole $why
+    nt_skip winexec.inproc.before-compiles $why
+    nt_skip winexec.inproc.before-breaks $why
+}
+function skip_before_delete($why) {
+    nt_skip winexec.delete.before-spared $why
+    nt_skip winexec.delete.before-throws $why
+    nt_skip winexec.delete.before-residue $why
+}
+function skip_delete($why) {
+    nt_skip winexec.delete.control-plain $why
+    nt_skip winexec.delete.junction-plain $why
+    nt_skip winexec.delete.before-spared $why
+    nt_skip winexec.delete.before-throws $why
+    nt_skip winexec.delete.before-residue $why
+    nt_skip winexec.delete.junction-safe $why
+    nt_skip winexec.delete.safe-removes $why
+    nt_skip winexec.delete.safe-spared $why
+}
+function skip_everything($why) {
+    nt_skip winexec.refs.list $why
+    skip_static $why
+    nt_skip winexec.search.built $why
+    skip_search $why
+    nt_skip winexec.inproc.archive $why
+    skip_inproc $why
+    nt_skip winexec.delete.built $why
+    skip_delete $why
+}
 
 Write-Output "=== winexec: the program the driver runs, and the tree it deletes ==="
 
@@ -77,10 +132,11 @@ Write-Output "=== winexec: the program the driver runs, and the tree it deletes 
 $webview = $args[0]
 if (-not $webview) { $webview = "test\neutrinotest.cmd" }
 if (-not (Test-Path $webview)) {
-    Fail "no built artifact at '$webview'; nothing below is a reading"
-    Write-Output "=== winexec: $failures failure(s) ==="
-    exit 1
+    nt_fail winexec.control.artifact "no built artifact at '$webview'; nothing below is a reading"
+    skip_everything "there was no artifact to read, so nothing below was measured"
+    nt_finish
 }
+nt_pass winexec.control.artifact "there is a built artifact to read"
 
 $work = Join-Path $env:TEMP ("winexec-" + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $work -Force | Out-Null
@@ -94,10 +150,11 @@ if (-not (Test-Path (Join-Path $fx "jsc.exe"))) { $fx = $fx64 }
 $jsc = Join-Path $fx "jsc.exe"
 Report "env jsc=$(Test-Path $jsc) fx=$fx sysdir=$([System.Environment]::SystemDirectory) ps=$($PSVersionTable.PSVersion)"
 if (-not (Test-Path $jsc)) {
-    Fail "no jsc; nothing below is a reading"
-    Write-Output "=== winexec: $failures failure(s) ==="
-    exit 1
+    nt_fail winexec.control.jsc "no jsc; nothing below is a reading"
+    skip_everything "there is no jsc here, so nothing below could be built or measured"
+    nt_finish
 }
+nt_pass winexec.control.jsc "jsc is here to build the probes with"
 
 # Runs a compiled console program with a chosen working directory and a bound.
 # Start-Process and not a pipeline, for the reason PR 20 wrote down: a pipe on
@@ -178,18 +235,35 @@ if ($compileBlock.Success) {
 }
 Report "refs list=$($refNames -join ',')"
 if ($refNames.Count -eq 0) {
-    Fail "refs expected=a /r list in the :COMPILE block actual=none found; the sections below are unmeasured"
+    nt_fail winexec.refs.list "refs expected=a /r list in the :COMPILE block actual=none found; the sections below are unmeasured"
+    # The list is what every section below compiles against, so there is nothing
+    # left here that can be answered rather than guessed at.
+    $why = "no /r list was found, so there was no reference list to check or compile with"
+    skip_static $why
+    nt_skip winexec.search.built $why
+    skip_search $why
+    nt_skip winexec.inproc.archive $why
+    skip_inproc $why
+    nt_skip winexec.delete.built $why
+    skip_delete $why
+    nt_finish
 }
-foreach ($needed in @("System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll")) {
-    if ($refNames -notcontains $needed) {
-        Fail "refs expected=$needed on the jsc line actual=absent"
-    }
+nt_pass winexec.refs.list "the :COMPILE block names a /r list ($($refNames.Count) entries)"
+
+$missingRefs = @(@("System.IO.Compression.dll", "System.IO.Compression.FileSystem.dll") |
+    Where-Object { $refNames -notcontains $_ })
+if ($missingRefs.Count -gt 0) {
+    nt_fail winexec.refs.named "refs expected=both compression assemblies on the jsc line actual=$($missingRefs -join ',') absent"
+} else {
+    nt_pass winexec.refs.named "both compression assemblies are on the jsc line"
 }
 
 $absent = @($refNames | Where-Object { -not (Test-Path (Join-Path $fx $_)) })
 Report "refs present=$($refNames.Count - $absent.Count)/$($refNames.Count) absent=$($absent -join ',')"
 if ($absent.Count -gt 0) {
-    Fail "refs expected=every named assembly present in the framework directory actual=$($absent -join ',') absent"
+    nt_fail winexec.refs.present "refs expected=every named assembly present in the framework directory actual=$($absent -join ',') absent"
+} else {
+    nt_pass winexec.refs.present "every named assembly is present in the framework directory"
 }
 
 # =====================================================================
@@ -203,7 +277,9 @@ $byName = @([regex]::Matches($source, 'startInfo\.FileName|UseShellExecute\s*=\s
 $shellTrue = @([regex]::Matches($source, 'UseShellExecute\s*=\s*true'))
 Report "names by_name=$($byName.Count) shellexecute_true=$($shellTrue.Count)"
 if ($byName.Count -gt 0) {
-    Fail "names expected=no process started by name actual=$($byName.Count) occurrence(s)"
+    nt_fail winexec.names.by-name "names expected=no process started by name actual=$($byName.Count) occurrence(s)"
+} else {
+    nt_pass winexec.names.by-name "no ProcessStartInfo in the file runs a program by name"
 }
 
 # =====================================================================
@@ -213,10 +289,14 @@ $recursive = @([regex]::Matches($source, 'Directory\.Delete\([^)]*,\s*true\s*\)'
 $reparse = @([regex]::Matches($source, 'attrs & 1024'))
 Report "tree recursive_deletes=$($recursive.Count) reparse_tests=$($reparse.Count)"
 if ($recursive.Count -gt 0) {
-    Fail "tree expected=no recursive Directory.Delete actual=$($recursive.Count) occurrence(s)"
+    nt_fail winexec.tree.no-recursive "tree expected=no recursive Directory.Delete actual=$($recursive.Count) occurrence(s)"
+} else {
+    nt_pass winexec.tree.no-recursive "the file holds no recursive Directory.Delete"
 }
 if ($reparse.Count -eq 0) {
-    Fail "tree expected=the walk tests FILE_ATTRIBUTE_REPARSE_POINT actual=no such test"
+    nt_fail winexec.tree.reparse-tested "tree expected=the walk tests FILE_ATTRIBUTE_REPARSE_POINT actual=no such test"
+} else {
+    nt_pass winexec.tree.reparse-tested "the walk tests FILE_ATTRIBUTE_REPARSE_POINT"
 }
 
 # =====================================================================
@@ -307,8 +387,10 @@ function Case-Search($label, $exe, $cwd, $mode) {
 }
 
 if (-not $okSearch) {
-    Fail "search did not build; its readings are absent, not negative"
+    nt_fail winexec.search.built "search did not build; its readings are absent, not negative"
+    skip_search "the search probes would not build, so the search order was never exercised"
 } else {
+    nt_pass winexec.search.built "the search probes built"
     Copy-Item $decoyStage (Join-Path $binPlant "powershell.exe") -Force
     Copy-Item $decoyStage (Join-Path $cwdPlant "powershell.exe") -Force
 
@@ -318,12 +400,16 @@ if (-not $okSearch) {
     Run-Probe $decoyStage $work @() "decoylive"
     Report "control decoy live=$(Test-Path $decoyMark) rc=$($script:runCode)"
     if (-not (Test-Path $decoyMark)) {
-        Fail "control expected=the decoy writes its mark when run actual=silent"
+        nt_fail winexec.search.decoy-live "control expected=the decoy writes its mark when run actual=silent"
+    } else {
+        nt_pass winexec.search.decoy-live "the decoy writes its mark when run directly"
     }
 
     Case-Search "control-bare" $resolverClean $cwdClean "bare"
     if ($script:caseWho -ne "real") {
-        Fail "control expected=the real powershell runs when nothing is planted actual=$($script:caseWho)"
+        nt_fail winexec.search.control-bare "control expected=the real powershell runs when nothing is planted actual=$($script:caseWho)"
+    } else {
+        nt_pass winexec.search.control-bare "the real powershell runs when nothing is planted"
     }
 
     # The two entries in the search order, measured apart. In the launcher they
@@ -331,18 +417,24 @@ if (-not $okSearch) {
     Case-Search "appdir-bare" $resolverPlant $cwdClean "bare"
     $whoAppdir = $script:caseWho
     if ($whoAppdir -ne "decoy") {
-        Fail "appdir-bare expected=a program planted beside the exe is what runs actual=$whoAppdir"
+        nt_fail winexec.search.appdir-bare "appdir-bare expected=a program planted beside the exe is what runs actual=$whoAppdir"
+    } else {
+        nt_pass winexec.search.appdir-bare "a program planted beside the exe is what a bare name runs"
     }
     Case-Search "cwd-bare" $resolverClean $cwdPlant "bare"
     $whoCwd = $script:caseWho
     if ($whoCwd -ne "decoy") {
-        Fail "cwd-bare expected=a program planted in the current directory is what runs actual=$whoCwd"
+        nt_fail winexec.search.cwd-bare "cwd-bare expected=a program planted in the current directory is what runs actual=$whoCwd"
+    } else {
+        nt_pass winexec.search.cwd-bare "a program planted in the current directory is what a bare name runs"
     }
 
     Case-Search "fixed-full" $resolverPlant $cwdPlant "full"
     $whoFixed = $script:caseWho
     if ($whoFixed -ne "real") {
-        Fail "fixed-full expected=an absolute path refuses both plants actual=$whoFixed"
+        nt_fail winexec.search.fixed-full "fixed-full expected=an absolute path refuses both plants actual=$whoFixed"
+    } else {
+        nt_pass winexec.search.fixed-full "an absolute path refuses both plants"
     }
     Report "search summary appdir=$whoAppdir cwd=$whoCwd fixed=$whoFixed"
 }
@@ -434,15 +526,23 @@ function Variant($label, $names) {
 }
 
 if (-not $nestedOk) {
-    Fail "control expected=an archive with a forward-slash member name actual=not built; inproc is unmeasured"
+    nt_fail winexec.inproc.archive "control expected=an archive with a forward-slash member name actual=not built; inproc is unmeasured"
+    skip_inproc "the fixture archive would not build, so no extraction was run"
 } else {
+    nt_pass winexec.inproc.archive "the fixture archive with a forward-slash member name built"
     # The shipped list. This is the assertion that the /r lines are not only
     # present but sufficient.
     Variant "shipped" $refNames
     if (-not $script:variantBuilt) {
-        Fail "inproc expected=the driver's reference list compiles the extraction actual=it did not build"
-    } elseif ($script:variantLen -ne $entryBytes) {
-        Fail "inproc expected=the member extracted whole ($entryBytes bytes) actual=$($script:variantLen)"
+        nt_fail winexec.inproc.compiles "inproc expected=the driver's reference list compiles the extraction actual=it did not build"
+        nt_skip winexec.inproc.whole "the extraction did not build, so nothing was extracted to measure"
+    } else {
+        nt_pass winexec.inproc.compiles "the driver's reference list compiles the extraction"
+        if ($script:variantLen -ne $entryBytes) {
+            nt_fail winexec.inproc.whole "inproc expected=the member extracted whole ($entryBytes bytes) actual=$($script:variantLen)"
+        } else {
+            nt_pass winexec.inproc.whole "the member extracted whole ($entryBytes bytes)"
+        }
     }
 
     # The before-state, carried as an artifact: the same source, the same list
@@ -451,9 +551,15 @@ if (-not $nestedOk) {
     $withoutCompression = @($refNames | Where-Object { $_ -notlike "System.IO.Compression*" })
     Variant "nocompression" $withoutCompression
     if (-not $script:variantBuilt) {
-        Fail "before expected=dropping the references still compiles actual=it failed to build"
-    } elseif ($script:variantLen -ne -1) {
-        Fail "before expected=dropping the references breaks the extraction actual=it extracted $($script:variantLen) bytes"
+        nt_fail winexec.inproc.before-compiles "before expected=dropping the references still compiles actual=it failed to build"
+        nt_skip winexec.inproc.before-breaks "the before-state did not build, so what it does at run time was never reached"
+    } else {
+        nt_pass winexec.inproc.before-compiles "dropping the references still compiles, which is the point"
+        if ($script:variantLen -ne -1) {
+            nt_fail winexec.inproc.before-breaks "before expected=dropping the references breaks the extraction actual=it extracted $($script:variantLen) bytes"
+        } else {
+            nt_pass winexec.inproc.before-breaks "dropping the references breaks the extraction at run time"
+        }
     }
 }
 
@@ -532,8 +638,10 @@ function New-Scene($name, $withJunction) {
 }
 
 if (-not $okDelete) {
-    Fail "delete did not build; its readings are absent, not negative"
+    nt_fail winexec.delete.built "delete did not build; its readings are absent, not negative"
+    skip_delete "the delete probes would not build, so no tree was walked"
 } else {
+    nt_pass winexec.delete.built "the delete probes built"
     # The control that says what the junction did, and not the runner.
     New-Scene "nojunc" $false
     $r0 = $script:sceneRoot
@@ -541,7 +649,9 @@ if (-not $okDelete) {
     $r0Gone = -not (Test-Path $r0)
     Report "control plain-nojunction root_removed=$r0Gone out=$($script:runOut)"
     if (-not $r0Gone) {
-        Fail "control expected=a plain recursive delete removes a tree with no junction in it actual=it is still there"
+        nt_fail winexec.delete.control-plain "control expected=a plain recursive delete removes a tree with no junction in it actual=it is still there"
+    } else {
+        nt_pass winexec.delete.control-plain "a plain recursive delete removes a tree with no junction in it"
     }
 
     # The before-state, asserted to what was measured, all three halves: the
@@ -551,20 +661,28 @@ if (-not $okDelete) {
     $v1 = $script:sceneVictim
     $r1 = $script:sceneRoot
     if (-not $script:sceneOk) {
-        Fail "control expected=a junction a normal account can create actual=mklink /J did not"
+        nt_fail winexec.delete.junction-plain "control expected=a junction a normal account can create actual=mklink /J did not"
+        skip_before_delete "there was no junction to delete through, so the before-state was never exercised"
     } else {
+        nt_pass winexec.delete.junction-plain "a normal account can create the junction the before-state needs"
         Run-Probe $delExe $work @("plain", $r1) "delplain"
         $keep1 = Test-Path (Join-Path $v1 "keep.txt")
         $residue1 = Residue $r1
         Report "before plain root=$(Test-Path $r1) victim_keep=$keep1 residue=$residue1 out=$($script:runOut)"
         if (-not $keep1) {
-            Fail "before expected=the junction's target is spared actual=it was deleted through"
+            nt_fail winexec.delete.before-spared "before expected=the junction's target is spared actual=it was deleted through"
+        } else {
+            nt_pass winexec.delete.before-spared "the junction's target is spared"
         }
         if ($script:runOut -notlike "*System.IO.IOException*") {
-            Fail "before expected=the recursive delete throws IOException on a junction actual=$($script:runOut)"
+            nt_fail winexec.delete.before-throws "before expected=the recursive delete throws IOException on a junction actual=$($script:runOut)"
+        } else {
+            nt_pass winexec.delete.before-throws "the recursive delete throws IOException on a junction"
         }
         if ($residue1 -ne "empty") {
-            Fail "before expected=it empties the directory and leaves it actual=residue=$residue1"
+            nt_fail winexec.delete.before-residue "before expected=it empties the directory and leaves it actual=residue=$residue1"
+        } else {
+            nt_pass winexec.delete.before-residue "it empties the directory and leaves it behind"
         }
     }
 
@@ -573,21 +691,27 @@ if (-not $okDelete) {
     $v2 = $script:sceneVictim
     $r2 = $script:sceneRoot
     if (-not $script:sceneOk) {
-        Fail "control expected=a junction for the shipped walk actual=mklink /J did not"
+        nt_fail winexec.delete.junction-safe "control expected=a junction for the shipped walk actual=mklink /J did not"
+        $why = "there was no junction for the shipped walk to meet"
+        nt_skip winexec.delete.safe-removes $why
+        nt_skip winexec.delete.safe-spared $why
     } else {
+        nt_pass winexec.delete.junction-safe "a junction is there for the shipped walk to meet"
         Run-Probe $delExe $work @("safe", $r2) "delsafe"
         $rootGone = -not (Test-Path $r2)
         $keep2 = Test-Path (Join-Path $v2 "keep.txt")
         Report "safe root_removed=$rootGone victim_keep=$keep2 out=$($script:runOut)"
         if (-not $rootGone) {
-            Fail "safe expected=the walk removes the tree it is given actual=residue=$(Residue $r2)"
+            nt_fail winexec.delete.safe-removes "safe expected=the walk removes the tree it is given actual=residue=$(Residue $r2)"
+        } else {
+            nt_pass winexec.delete.safe-removes "the shipped walk removes the tree it is given"
         }
         if (-not $keep2) {
-            Fail "safe expected=the junction's target is spared actual=it was deleted through"
+            nt_fail winexec.delete.safe-spared "safe expected=the junction's target is spared actual=it was deleted through"
+        } else {
+            nt_pass winexec.delete.safe-spared "the shipped walk spares the junction's target"
         }
     }
 }
 
-Write-Output "=== winexec: $failures failure(s) ==="
-if ($failures -gt 0) { exit 1 }
-exit 0
+nt_finish

@@ -281,6 +281,50 @@ appcache.sealed.reused	the kept program in a sealed slot is reused	windows-launc
 appcache.sealed.untouched	the program in a sealed slot is not rewritten	windows-launch
 appcache.sealed.comes-up	the app comes up from the sealed slot	windows-launch
 
+# The program the Windows driver runs and the tree it deletes, from
+# test/winexec.ps1 -- windows-launch alone, and six sections named in its header.
+#
+# Three of these families carry a before-state as an artifact the suite builds:
+# `search`, `inproc` and `delete` each compile the spelling that was replaced
+# and measure it failing, so "it would have failed before" is taken on every
+# push rather than claimed once. That is why winexec.search.appdir-bare and
+# winexec.search.cwd-bare are passes when the decoy *does* run: they are the
+# defect, reproduced, and the case that says the fix is elsewhere --
+# winexec.search.fixed-full, where an absolute path refuses both plants.
+#
+# The three gates say "nothing below is a reading" and "its readings are absent,
+# not negative" in as many words, and then exited or fell through with the cases
+# behind them unreported -- which is the one thing those sentences were trying
+# to prevent, said to a reader who was not there. They skip by name now.
+winexec.control.artifact	there is a built artifact to read	windows-launch
+winexec.control.jsc	jsc is here to build the probes with	windows-launch
+winexec.refs.list	the :COMPILE block names a /r list	windows-launch
+winexec.refs.named	both compression assemblies are on the jsc line	windows-launch
+winexec.refs.present	every named assembly is present in the framework directory	windows-launch
+winexec.names.by-name	no ProcessStartInfo runs a program by name	windows-launch
+winexec.tree.no-recursive	the file holds no recursive Directory.Delete	windows-launch
+winexec.tree.reparse-tested	the walk tests FILE_ATTRIBUTE_REPARSE_POINT	windows-launch
+winexec.search.built	the search probes built	windows-launch
+winexec.search.decoy-live	the decoy writes its mark when run directly	windows-launch
+winexec.search.control-bare	the real powershell runs when nothing is planted	windows-launch
+winexec.search.appdir-bare	a bare name runs a program planted beside the exe	windows-launch
+winexec.search.cwd-bare	a bare name runs a program planted in the current directory	windows-launch
+winexec.search.fixed-full	an absolute path refuses both plants	windows-launch
+winexec.inproc.archive	the fixture archive with a forward-slash member built	windows-launch
+winexec.inproc.compiles	the driver's reference list compiles the extraction	windows-launch
+winexec.inproc.whole	the member extracted whole	windows-launch
+winexec.inproc.before-compiles	dropping the references still compiles	windows-launch
+winexec.inproc.before-breaks	dropping the references breaks the extraction at run time	windows-launch
+winexec.delete.built	the delete probes built	windows-launch
+winexec.delete.control-plain	a plain recursive delete removes a tree with no junction	windows-launch
+winexec.delete.junction-plain	a normal account can create the junction the before-state needs	windows-launch
+winexec.delete.before-spared	the junction's target is spared by the recursive delete	windows-launch
+winexec.delete.before-throws	the recursive delete throws IOException on a junction	windows-launch
+winexec.delete.before-residue	it empties the directory and leaves it behind	windows-launch
+winexec.delete.junction-safe	a junction is there for the shipped walk to meet	windows-launch
+winexec.delete.safe-removes	the shipped walk removes the tree it is given	windows-launch
+winexec.delete.safe-spared	the shipped walk spares the junction's target	windows-launch
+
 # A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
 # because the failure it provokes is the WebView2 package download 404ing and no
 # other lane has that path to fail on.
