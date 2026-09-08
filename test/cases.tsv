@@ -177,6 +177,28 @@ attack.forge.refused	a forged title is refused where the title is not the channe
 attack.nav.refused	the hostile navigation is refused	gjs kde macos windows-content
 attack.postnav.channel	a refused navigation leaves the app able to drive its own window	gjs kde macos windows-content
 
+# A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
+# because the failure it provokes is the WebView2 package download 404ing and no
+# other lane has that path to fail on.
+#
+# Three things have to hold and none is worth anything without the others: the
+# box has to come up, or "it ended promptly" is satisfied by a fix that shows
+# nobody anything; the process has to end, or the box is the old modal that
+# never returned; and the failure has to be on disk, or nobody who was not
+# watching the screen can find out why. That is three cases and not one, and it
+# was three checks reaching nothing.
+#
+# winerr.launcher.returned is the control. Where the .cmd itself hangs, the
+# driver was never reached and the three below are unanswerable rather than
+# false -- which the suite already knew and said as `box=SKIPPED ended=SKIPPED
+# recorded=SKIPPED` inside a report line. sheet.sh has counted a skip column
+# since it was written, and this was one of the two places in the tree with
+# something to put in it, spelled so that nothing could read it.
+winerr.launcher.returned	the .cmd returned and the driver was reached	windows-launch
+winerr.box.shown	the failed initialisation reaches the screen	windows-launch
+winerr.process.ended	the box lets go on its own	windows-launch
+winerr.recorded	the failure is on disk afterwards	windows-launch
+
 # The hostile navigation against a target that answers, from test/verify-nav.ps1.
 #
 # The attack family above asks this question too and cannot settle it: that page
