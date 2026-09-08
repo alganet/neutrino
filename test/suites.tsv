@@ -1,0 +1,111 @@
+# suites.tsv - what each lane runs, and the desktop each suite needs.
+#
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+# SPDX-License-Identifier: ISC
+#
+# lane <TAB> suite <TAB> setup <TAB> command
+#
+# Until this file existed, the answer to "what does the kde lane run" was to read
+# 3365 lines of .github/workflows/ci.yml and hold thirty steps in your head. The
+# lanes genuinely differ -- that is the point of having ten of them -- but the
+# difference was an emergent property of a YAML file rather than something a
+# reader could see, and the difference that was there by accident looked exactly
+# like the difference that was there on purpose.
+#
+# So the divergence is declared. `themescheme` runs on GTK lanes and not on Qt
+# ones because WebKitGTK's prefers-color-scheme follows the theme's *name*; that
+# is a fact worth writing down once, in the place that decides it, instead of
+# being visible only as a step that is present in one job and absent in another.
+#
+# ------------------------------------------------------------------ the columns
+#
+# `lane` is a lane key. `<lane>:<phase>` names one pass of a lane that runs its
+# list more than once: linux-engines swaps its engine packages and runs the same
+# suites again, and until now the two halves filed their rows under one name and
+# neither was attributable. Everything left of the colon is what reaches
+# $NT_LANE, so cases.tsv and the grid never see a phase.
+#
+# `suite` is the name, and it is four things at once: step.sh's --log, the
+# $NT_SUITE the harness files rows under, the heading in the job log, and the row
+# in the timing table. Unique per lane. A row whose suite column is `*` is the
+# lane's defaults -- see below.
+#
+# `setup` is space-separated directives from a closed vocabulary, listed in
+# test/run.sh. An unknown directive is an error and not a shrug: a typo that is
+# silently ignored is a suite running without the display it asked for.
+#
+# `command` is argv, split on whitespace and run through test/step.sh. Because it
+# is argv and not a shell fragment, a suite that needs a variable in its
+# environment spells it with env(1) in this column, and there is no `env=`
+# directive to specify, test and explain.
+#
+# ------------------------------------------------------------- the defaults row
+#
+# `display=metacity gtk` is true of fourteen gjs rows and would be written
+# fourteen times. The `*` row says it once and every suite row on that lane
+# merges over it, so what is left in a row is only what makes that row different
+# -- which is the whole reason to read one.
+#
+# --------------------------------------------------------------------- ordering
+#
+# File order is run order. That matters more here than it did in YAML, where the
+# step list was the order and could not be anything else: selftest stays first on
+# the lanes that run it, because a broken reporter makes every reading behind it
+# unreadable and that is worth finding out first.
+#
+# ------------------------------------------------------------- what is not here
+#
+# Provisioning is not a suite. apt, brew, sysctl, setup-zig, docker login, the
+# engine-removal guards, anything reading a secret and anything with a ${{ }} in
+# it stays in the workflow, which is the thing that owns the machine. So does
+# every `uses:` step, and the sheet and upload steps at the end of each lane --
+# those name per-lane picture directories with human captions and there is
+# nothing repeated about them.
+#
+# Four lanes have no rows here at all, and should not. bsd, kde-live, wayland and
+# macos-netinstall each run one command -- netinstall/test/run.sh, or qtkde.sh --
+# inside a VM action or a container pull. netinstall has a runner of its own and
+# it is better at that job than this one would be. This is the runner for the
+# test/ tree, and four lanes running neither is the honest answer; it is the same
+# answer cases.tsv already gives them.
+#
+# ------------------------------------------------------------------- migration
+#
+# A lane moves onto this file one suite at a time. `run.sh <lane> a b c` runs
+# only the rows it names, so a row that exists here and is not yet named by the
+# workflow does not run, and a step the workflow still spells by hand is not
+# duplicated. The rows below are the twenty steps that were already one-liners
+# through step.sh -- the safest thing to move first, and the set whose arithmetic
+# this runner has to get right before anything harder is put through it.
+#
+# The leashes are the `timeout-minutes` those steps carried, in seconds. They
+# were a ceiling GitHub enforced per step; a lane is fewer steps now, so the leash
+# a row declares is the one that suite has. That is also why test/step.sh grew a
+# watchdog: on macOS there is no timeout(1), and a declared leash with nothing
+# behind it is the failure this project has a name for.
+
+gjs	*	display=metacity gtk timeout=480
+gjs	stddoc	app=neutrinostddoc	bash test/verify-std.sh doc ~/screenshots
+gjs	stdwin	app=neutrinostdwin timeout=600	bash test/verify-std.sh win ~/screenshots
+gjs	stdtheme	app=neutrinostdtheme	bash test/verify-std.sh theme ~/screenshots
+gjs	demo	app=neutrinodemo	bash test/demo.sh ~/screenshots
+gjs	stdfont	app=neutrinostdfont	bash test/verify-std.sh font ~/screenshots
+linux-engines:cjs	*	display=metacity gtk timeout=480
+linux-engines:cjs	stddoc	app=neutrinostddoc	bash test/verify-std.sh doc ~/screenshots
+linux-engines:cjs	stdwin	app=neutrinostdwin timeout=600	bash test/verify-std.sh win ~/screenshots
+linux-engines:cjs	stdtheme	app=neutrinostdtheme	bash test/verify-std.sh theme ~/screenshots
+linux-engines:py	*	display=metacity gtk timeout=480
+linux-engines:py	stddoc	app=neutrinostddoc	bash test/verify-std.sh doc ~/screenshots
+linux-engines:py	stdwin	app=neutrinostdwin timeout=600	bash test/verify-std.sh win ~/screenshots
+linux-engines:py	stdtheme	app=neutrinostdtheme	bash test/verify-std.sh theme ~/screenshots
+linux-engines:py	stdfont	app=neutrinostdfont	bash test/verify-std.sh font ~/screenshots
+kde	*	display=openbox qt timeout=480
+kde	stddoc	app=neutrinostddoc	bash test/verify-std.sh doc ~/screenshots
+kde	stdwin	app=neutrinostdwin timeout=600	bash test/verify-std.sh win ~/screenshots
+kde	stdtheme	app=neutrinostdtheme	bash test/verify-std.sh theme ~/screenshots
+kde	stdfont	app=neutrinostdfont	bash test/verify-std.sh font ~/screenshots
+macos	*	timeout=480
+macos	stddoc	app=neutrinostddoc	bash test/verify-std.sh doc ~/screenshots
+macos	stdwin	app=neutrinostdwin timeout=600	bash test/verify-std.sh win ~/screenshots
+macos	stdtheme	app=neutrinostdtheme	bash test/verify-std.sh theme ~/screenshots
+macos	stdfont	app=neutrinostdfont	bash test/verify-std.sh font ~/screenshots

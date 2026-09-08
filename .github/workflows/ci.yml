@@ -267,11 +267,7 @@ jobs:
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
-          bash test/parse.sh test/neutrinostddoc.cmd
-          bash test/step.sh --display metacity --gtk --log stddoc --app test/neutrinostddoc.cmd -- \
-            bash test/verify-std.sh doc ~/screenshots
+        run: bash test/run.sh gjs stddoc
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -290,18 +286,10 @@ jobs:
       # engine says and settles nothing about where the value came from.
       - if: always()
         timeout-minutes: 10
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
-          bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/step.sh --display metacity --gtk --log stdwin --app test/neutrinostdwin.cmd -- \
-            bash test/verify-std.sh win ~/screenshots
+        run: bash test/run.sh gjs stdwin
       - if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
-          bash test/parse.sh test/neutrinostdtheme.cmd
-          bash test/step.sh --display metacity --gtk --log stdtheme --app test/neutrinostdtheme.cmd -- \
-            bash test/verify-std.sh theme ~/screenshots
+        run: bash test/run.sh gjs stdtheme
       # Round 3b: a desktop built so the media query is wrong about it.
       #
       # The two steps above ask what this runner's desktop looks like, and both
@@ -384,11 +372,7 @@ jobs:
       - if: always()
         name: the app on the download page
         timeout-minutes: 8
-        run: |
-          bash test/demoapp.sh test/neutrinodemo.cmd
-          bash test/parse.sh test/neutrinodemo.cmd
-          bash test/step.sh --display metacity --gtk --log demo --app test/neutrinodemo.cmd -- \
-            bash test/demo.sh ~/screenshots
+        run: bash test/run.sh gjs demo
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which
       # made comparing the decorated frame against the chromeless one a matter
@@ -426,11 +410,7 @@ jobs:
       - name: fonts
         if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
-          bash test/parse.sh test/neutrinostdfont.cmd
-          bash test/step.sh --display metacity --gtk --log stdfont --app test/neutrinostdfont.cmd -- \
-            bash test/verify-std.sh font ~/screenshots
+        run: bash test/run.sh gjs stdfont
       # And a running app, with the desktop's fonts moved underneath it.
       #
       # The step above launches once and reads once, so a watcher that never
@@ -636,11 +616,7 @@ jobs:
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
-          bash test/parse.sh test/neutrinostddoc.cmd
-          bash test/step.sh --display metacity --gtk --log stddoc --app test/neutrinostddoc.cmd -- \
-            bash test/verify-std.sh doc ~/screenshots
+        run: bash test/run.sh linux-engines:cjs stddoc
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -659,18 +635,10 @@ jobs:
       # engine says and settles nothing about where the value came from.
       - if: always()
         timeout-minutes: 10
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
-          bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/step.sh --display metacity --gtk --log stdwin --app test/neutrinostdwin.cmd -- \
-            bash test/verify-std.sh win ~/screenshots
+        run: bash test/run.sh linux-engines:cjs stdwin
       - if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
-          bash test/parse.sh test/neutrinostdtheme.cmd
-          bash test/step.sh --display metacity --gtk --log stdtheme --app test/neutrinostdtheme.cmd -- \
-            bash test/verify-std.sh theme ~/screenshots
+        run: bash test/run.sh linux-engines:cjs stdtheme
       # Round 3b: a desktop built so the media query is wrong about it.
       #
       # The two steps above ask what this runner's desktop looks like, and both
@@ -879,11 +847,7 @@ jobs:
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
-          bash test/parse.sh test/neutrinostddoc.cmd
-          bash test/step.sh --display metacity --gtk --log stddoc --app test/neutrinostddoc.cmd -- \
-            bash test/verify-std.sh doc ~/screenshots
+        run: bash test/run.sh linux-engines:py stddoc
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -902,18 +866,10 @@ jobs:
       # engine says and settles nothing about where the value came from.
       - if: always()
         timeout-minutes: 10
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
-          bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/step.sh --display metacity --gtk --log stdwin --app test/neutrinostdwin.cmd -- \
-            bash test/verify-std.sh win ~/screenshots
+        run: bash test/run.sh linux-engines:py stdwin
       - if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
-          bash test/parse.sh test/neutrinostdtheme.cmd
-          bash test/step.sh --display metacity --gtk --log stdtheme --app test/neutrinostdtheme.cmd -- \
-            bash test/verify-std.sh theme ~/screenshots
+        run: bash test/run.sh linux-engines:py stdtheme
       # Round 3b: a desktop built so the media query is wrong about it.
       #
       # The two steps above ask what this runner's desktop looks like, and both
@@ -1017,11 +973,7 @@ jobs:
       - name: fonts
         if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
-          bash test/parse.sh test/neutrinostdfont.cmd
-          bash test/step.sh --display metacity --gtk --log stdfont --app test/neutrinostdfont.cmd -- \
-            bash test/verify-std.sh font ~/screenshots
+        run: bash test/run.sh linux-engines:py stdfont
       # And a running app, with the desktop's fonts moved underneath it.
       #
       # The step above launches once and reads once, so a watcher that never
@@ -1389,11 +1341,7 @@ jobs:
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
-          bash test/parse.sh test/neutrinostddoc.cmd
-          bash test/step.sh --display openbox --qt --log stddoc --app test/neutrinostddoc.cmd -- \
-            bash test/verify-std.sh doc ~/screenshots
+        run: bash test/run.sh kde stddoc
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -1412,18 +1360,10 @@ jobs:
       # engine says and settles nothing about where the value came from.
       - if: always()
         timeout-minutes: 10
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
-          bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/step.sh --display openbox --qt --log stdwin --app test/neutrinostdwin.cmd -- \
-            bash test/verify-std.sh win ~/screenshots
+        run: bash test/run.sh kde stdwin
       - if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
-          bash test/parse.sh test/neutrinostdtheme.cmd
-          bash test/step.sh --display openbox --qt --log stdtheme --app test/neutrinostdtheme.cmd -- \
-            bash test/verify-std.sh theme ~/screenshots
+        run: bash test/run.sh kde stdtheme
       # Round 3: where each colour came from.
       #
       # The single-launch theme step above says what an engine reports and
@@ -1488,11 +1428,7 @@ jobs:
       - name: fonts
         if: always()
         timeout-minutes: 8
-        run: |
-          bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
-          bash test/parse.sh test/neutrinostdfont.cmd
-          bash test/step.sh --display openbox --qt --log stdfont --app test/neutrinostdfont.cmd -- \
-            bash test/verify-std.sh font ~/screenshots
+        run: bash test/run.sh kde stdfont
       - name: sheet
         if: always()
         continue-on-error: true
@@ -3096,12 +3032,7 @@ jobs:
           exit $TEST_EXIT
       - if: always()
         timeout-minutes: 8
-        run: |
-          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
-          bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
-          bash test/parse.sh test/neutrinostddoc.cmd
-          bash test/step.sh --log stddoc --app test/neutrinostddoc.cmd -- \
-            bash test/verify-std.sh doc ~/screenshots
+        run: bash test/run.sh macos stddoc
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -3120,20 +3051,10 @@ jobs:
       # engine says and settles nothing about where the value came from.
       - if: always()
         timeout-minutes: 10
-        run: |
-          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
-          bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
-          bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/step.sh --log stdwin --app test/neutrinostdwin.cmd -- \
-            bash test/verify-std.sh win ~/screenshots
+        run: bash test/run.sh macos stdwin
       - if: always()
         timeout-minutes: 8
-        run: |
-          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
-          bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
-          bash test/parse.sh test/neutrinostdtheme.cmd
-          bash test/step.sh --log stdtheme --app test/neutrinostdtheme.cmd -- \
-            bash test/verify-std.sh theme ~/screenshots
+        run: bash test/run.sh macos stdtheme
       # Round 3: where each colour came from.
       #
       # The single-launch theme step above says what an engine reports and
@@ -3203,12 +3124,7 @@ jobs:
       - name: fonts
         if: always()
         timeout-minutes: 8
-        run: |
-          rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
-          bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
-          bash test/parse.sh test/neutrinostdfont.cmd
-          bash test/step.sh --log stdfont --app test/neutrinostdfont.cmd -- \
-            bash test/verify-std.sh font ~/screenshots
+        run: bash test/run.sh macos stdfont
       - name: sheet
         if: always()
         continue-on-error: true
