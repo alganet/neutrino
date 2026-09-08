@@ -512,3 +512,34 @@ env.tight.home.ctor	and it runs	gjs kde macos-netinstall
 # instead of emitting an annotation into a green lane.
 landlockfloor.host.abi	the host's own confine line can be read	gjs
 walk.renderer.sandboxed	the web process runs under bwrap	gjs kde linux-engines
+
+# The crash-write channel and the token, from netinstall/test/crashdump.sh and
+# netinstall/test/privs.sh. windows-launch alone for both: crashdump.sh says so
+# in its own skip -- the other three platforms close that channel with
+# RLIMIT_CORE and phases.sh already reads it off the `limits` line -- and a token
+# privilege has no counterpart off windows, which is why confine.sh asks the
+# containment question on the three platforms that do have one and this file asks
+# this one where it exists.
+#
+# crashdump's two cases are the instrument and not the finding. What that suite
+# produces is a survey of where a dump lands at which integrity with and without
+# a LocalDumps key, which is a reading; what can be false is whether the probe
+# built and whether it actually reached low integrity, and every reading rests on
+# both. The second of those spoke only on failure before, so a run where the
+# lowering worked filed nothing at all.
+crashdump.probe.built	the crash probe built	windows-launch
+crashdump.probe.lowered	and reached low integrity, which every reading below rests on	windows-launch
+privs.deny.applied	the deny ACE the traverse probe needs was applied	windows-launch
+privs.payload.ran	the payload ran under the adjusted token	windows-launch
+privs.control.some	the unconfined token had privileges to strip	windows-launch
+privs.control.changenotify	and SeChangeNotifyPrivilege was enabled before netinstall ran	windows-launch
+privs.control.read	the confined payload can read a file nothing denies	windows-launch
+privs.control.traverse	the unconfined token walks the denied path	windows-launch
+privs.kept.changenotify	SeChangeNotifyPrivilege survives and stays enabled	windows-launch
+privs.kept.traverse	and still bypasses traverse checking	windows-launch
+privs.others.removed	every other privilege is removed	windows-launch
+privs.info.claims	--info claims a stripping exactly when one happened	windows-launch
+privs.env.control.kept	the env battery reached the payload	windows-launch
+privs.env.control.dropped	and a name outside the allowlist is dropped	windows-launch
+privs.env.dropped	every loader knob is kept from the app	windows-launch
+privs.env.kept	and what cmd.exe and the CRT need still arrives	windows-launch
