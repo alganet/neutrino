@@ -84,6 +84,45 @@ std.font.fallback	an unset font property reaches the generic beside it	gjs kde l
 std.font.agree	the launcher and the engine read one desktop the same way	gjs kde linux-engines macos windows-content
 std.font.end-observed	the font probe ran to the end	gjs kde linux-engines macos windows-content
 
+# The engine walk, from test/lanes.sh -- which engine is chosen, and what a
+# status coming back from one means.
+#
+# It runs on four lanes and needs no display on any of them: the candidates are
+# stub interpreters that record having run and exit with a status the suite
+# picks, because the walk's contract is "what does a status mean" and a stub can
+# say a status a real interpreter can only be coaxed into. That is also why this
+# family is on macos, which runs it from a step of its own rather than from the
+# manifest: two of these name osascript, and until that step existed they were
+# asserted only where osascript does not exist.
+#
+# Five of them are a skip on any given machine and never the same five, which is
+# this family's whole shape. Whether a lane can hand its engine a document with
+# no name is a property of the kernel -- Linux reopens an unlinked descriptor
+# through /proc/self/fd and macOS cannot -- so lanes.qt.reached is asked exactly
+# where the four lanes.handoff.* cases cannot be, and the other way round. Both
+# arms are registered for all four lanes because both are real questions there;
+# which one gets asked is the machine's answer, not the registry's.
+lanes.none.status	an engineless machine exits non-zero	gjs kde linux-engines macos
+lanes.none.summary	and the walk says which engines it looked for	gjs kde linux-engines macos
+lanes.none.ran-nothing	a walk that found nothing started nothing	gjs kde linux-engines macos
+lanes.reserved.moves-on	the reserved status moves the walk past a lane that could not start	gjs kde linux-engines macos
+lanes.reserved.status	the lane that did start decides the launch status	gjs kde linux-engines macos
+lanes.appfail.stops	the walk stops at the engine that ran the app	gjs kde linux-engines macos
+lanes.appfail.status	the app's own status is handed back unchanged	gjs kde linux-engines macos
+lanes.dangling.moves-on	a name that cannot be executed moves the walk on	gjs kde linux-engines macos
+lanes.dangling.status	a dangling engine does not become the launch's status	gjs kde linux-engines macos
+lanes.order.gjs-first	gjs is preferred to every other spelling	gjs kde linux-engines macos
+lanes.order.plain-before-console	the plain interpreter name is preferred to the -console one	gjs kde linux-engines macos
+lanes.order.qt-below-osascript	osascript is tried before the Qt lane	gjs kde linux-engines macos
+lanes.order.osascript-first	osascript is tried before python3	gjs kde linux-engines macos
+lanes.order.single-engine	a walk that finds one candidate forks exactly one engine	gjs kde linux-engines macos
+lanes.qt.reached	the Qt lane is reached where osascript does not exist	gjs kde linux-engines macos
+lanes.handoff.no-engine	a lane that cannot hand over its document starts no engine	gjs kde linux-engines macos
+lanes.handoff.keeps-looking	the walk keeps looking past a hand-off refusal	gjs kde linux-engines macos
+lanes.handoff.said	the hand-off refusal is printed rather than silent	gjs kde linux-engines macos
+lanes.handoff.status	a walk that ends in a hand-off refusal still exits non-zero	gjs kde linux-engines macos
+lanes.python.reached	python3 is reached where osascript does not exist	gjs kde linux-engines macos
+
 # The splash window, from netinstall/test/splash.sh -- the first suite in the
 # netinstall tree to speak this vocabulary, and the reason three lanes appear in
 # the grid at all.

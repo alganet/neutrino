@@ -45,16 +45,20 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-FAILURES=0
-report() { echo "report: $*"; }
-fail()   { echo "  FAIL: $*"; FAILURES=$((FAILURES + 1)); }
-eq() {
-    if [ "$2" = "$3" ]; then
-        echo "  PASS: $1"
-    else
-        fail "$1: expected '$3', got '$2'"
-    fi
-}
+# The six words, in place of the three this file declared for itself.
+#
+# `eq` here took (name, actual, expected) and harness.sh's nt_eq takes
+# (id, name, actual, expected), so every call below gains an id at the front and
+# is otherwise the call it already was. The passing line carries the value it
+# compared now, which is the spelling the rest of the tree prints.
+#
+# The exit status is the other half, and it was wrong. This file ended `exit 1`
+# for any number of failures, so a walk that broke six assertions told test/run.sh
+# it had broken one -- and run.sh adds a lane up by summing what its suites exit
+# with, precisely so that nothing has to parse a log. A count that saturates at
+# one is a lane that under-reports every time it has more than a single thing
+# wrong with it. nt_finish exits the count.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
 
 APP_IN="${1:-}"
 if [ -z "$APP_IN" ]; then
@@ -147,10 +151,10 @@ marks() { tr '\n' ' ' < "$MARKS" | sed 's/ $//'; }
 echo "=== lanes: nothing to run is a refusal, and refusals are not zero ==="
 clear_lane
 status="$(run_lane)"
-eq "an engineless machine exits non-zero" "$status" "1"
-eq "and says which engines it looked for" \
+nt_eq lanes.none.status "an engineless machine exits non-zero" "$status" "1"
+nt_eq lanes.none.summary "and says which engines it looked for" \
    "$(grep -c 'no runtime here can open a window' "$WORK/out.log")" "1"
-eq "and ran nothing" "$(marks)" ""
+nt_eq lanes.none.ran-nothing "and ran nothing" "$(marks)" ""
 
 echo ""
 echo "=== lanes: the reserved status moves the walk on ==="
@@ -158,8 +162,8 @@ clear_lane
 stub gjs 69
 stub cjs 0
 status="$(run_lane)"
-eq "a lane that could not start its engine is not the answer" "$(marks)" "gjs cjs"
-eq "and the lane that did start decides the status" "$status" "0"
+nt_eq lanes.reserved.moves-on "a lane that could not start its engine is not the answer" "$(marks)" "gjs cjs"
+nt_eq lanes.reserved.status "and the lane that did start decides the status" "$status" "0"
 
 echo ""
 echo "=== lanes: an app failing on its own is not a lane failing ==="
@@ -167,8 +171,8 @@ clear_lane
 stub gjs 3
 stub cjs 0
 status="$(run_lane)"
-eq "the walk stops at the engine that ran the app" "$(marks)" "gjs"
-eq "and hands back the app's own status" "$status" "3"
+nt_eq lanes.appfail.stops "the walk stops at the engine that ran the app" "$(marks)" "gjs"
+nt_eq lanes.appfail.status "and hands back the app's own status" "$status" "3"
 
 echo ""
 echo "=== lanes: a name that cannot be executed is this lane being unavailable ==="
@@ -176,8 +180,8 @@ clear_lane
 ln -sf /nonexistent-interpreter "$BIN/gjs"
 stub cjs 0
 status="$(run_lane)"
-eq "a dangling engine moves the walk on" "$(marks)" "cjs"
-eq "and does not become the launch's status" "$status" "0"
+nt_eq lanes.dangling.moves-on "a dangling engine moves the walk on" "$(marks)" "cjs"
+nt_eq lanes.dangling.status "and does not become the launch's status" "$status" "0"
 
 echo ""
 echo "=== lanes: the order is upstream, then the fork ==="
@@ -187,13 +191,13 @@ stub gjs-console 0
 stub cjs 0
 stub cjs-console 0
 run_lane > /dev/null
-eq "gjs is preferred to every other spelling" "$(marks)" "gjs"
+nt_eq lanes.order.gjs-first "gjs is preferred to every other spelling" "$(marks)" "gjs"
 
 clear_lane
 stub cjs 0
 stub cjs-console 0
 status="$(run_lane)"
-eq "and the plain name to the -console one" "$(marks)" "cjs"
+nt_eq lanes.order.plain-before-console "and the plain name to the -console one" "$(marks)" "cjs"
 
 echo ""
 echo "=== lanes: Qt sits below osascript too, and for a sharper reason ==="
@@ -209,7 +213,7 @@ clear_lane
 stub qml6 0
 stub osascript 0
 run_lane > /dev/null
-eq "osascript answers before the Qt lane is tried" "$(marks)" "osascript"
+nt_eq lanes.order.qt-below-osascript "osascript answers before the Qt lane is tried" "$(marks)" "osascript"
 
 
 echo ""
@@ -235,20 +239,43 @@ clear_lane
 stub qml6 0
 if handoff_works; then
     run_lane > /dev/null
-    eq "the Qt lane is reached where osascript does not exist" "$(marks)" "qml6"
-    report "this kernel reopens an unlinked descriptor, so there is no refusal to measure"
+    nt_eq lanes.qt.reached "the Qt lane is reached where osascript does not exist" "$(marks)" "qml6"
+    nt_report "this kernel reopens an unlinked descriptor, so there is no refusal to measure"
+    # The four below are the other arm's, and this kernel cannot be asked them:
+    # the hand-off worked, so nothing refused and there is no refusal to read.
+    #
+    # Said rather than passed over, and that is the rule this tree arrived at the
+    # expensive way. A case registered for a lane and not reported there is a
+    # hole in the grid, and a hole cannot be told from a suite that died before
+    # it got this far. A skip carries the reason, which is the thing a reader
+    # actually wants, and it is why the walk below is four calls and not a loop
+    # over four names -- an id built from a variable is an id the registry scan
+    # in test/lib/selftest.sh cannot find.
+    nt_skip lanes.handoff.no-engine \
+        "the hand-off works on this kernel, so the Qt lane never refuses"
+    nt_skip lanes.handoff.keeps-looking \
+        "the hand-off works on this kernel, so there is no refusal for the walk to continue past"
+    nt_skip lanes.handoff.said \
+        "the hand-off works on this kernel, so no refusal is printed to look for"
+    nt_skip lanes.handoff.status \
+        "the hand-off works on this kernel, so this arm reaches an engine rather than the end of the walk"
 else
     status="$(run_lane)"
     # The walk kept looking. Before the reserved status was returned here the
     # refusal was a `return 1`, dispatch took it for the app's own status and
     # exited on the spot -- so the summary line, which is the walk saying what
     # it looked for, was never printed. That line is the assertion.
-    eq "the refusal starts no engine" "$(marks)" ""
-    eq "and the walk keeps looking rather than exiting on it" \
+    nt_eq lanes.handoff.no-engine "the refusal starts no engine" "$(marks)" ""
+    nt_eq lanes.handoff.keeps-looking "and the walk keeps looking rather than exiting on it" \
        "$(grep -c 'no runtime here can open a window' "$WORK/out.log")" "1"
-    eq "and the refusal was said out loud" \
+    nt_eq lanes.handoff.said "and the refusal was said out loud" \
        "$(grep -c 'cannot hand the engine a document without a name here' "$WORK/out.log")" "1"
-    eq "and an engineless machine still exits non-zero" "$status" "1"
+    nt_eq lanes.handoff.status "and an engineless machine still exits non-zero" "$status" "1"
+    # And the reverse of the four above: where the hand-off refuses, the Qt lane
+    # is entered and gives up before it starts an engine, so the case about it
+    # running one cannot be asked here either.
+    nt_skip lanes.qt.reached \
+        "the hand-off cannot work on this kernel, so the Qt lane refuses instead of reaching its engine"
 fi
 
 echo ""
@@ -257,7 +284,7 @@ clear_lane
 stub osascript 0
 stub python3 0
 run_lane > /dev/null
-eq "osascript answers first where it exists" "$(marks)" "osascript"
+nt_eq lanes.order.osascript-first "osascript answers first where it exists" "$(marks)" "osascript"
 
 clear_lane
 stub python3 0
@@ -270,12 +297,12 @@ run_lane > /dev/null
 # walk got here. This assertion asked only the first question until it was run
 # on macOS for the first time, where it had never been able to pass.
 if handoff_works; then
-    eq "and python3 is reached where it does not" "$(marks)" "python3"
+    nt_eq lanes.python.reached "and python3 is reached where it does not" "$(marks)" "python3"
 else
     # Two refusals and not one: clear_lane always leaves a qml6 stub in place,
     # so the Qt lane is entered and refuses on its way past. The second is
     # python3's, and its presence is the reading.
-    eq "and python3 is reached where it does not (refusing before it execs)" \
+    nt_eq lanes.python.reached "and python3 is reached where it does not (refusing before it execs)" \
        "$(grep -c 'cannot hand the engine a document without a name here' "$WORK/out.log")" "2"
 fi
 
@@ -287,12 +314,8 @@ echo "=== lanes: every candidate is a builtin lookup until one is chosen ==="
 clear_lane
 stub cjs 0
 run_lane > /dev/null
-eq "a machine with only the third candidate still runs exactly one engine" \
+nt_eq lanes.order.single-engine "a machine with only the third candidate still runs exactly one engine" \
    "$(marks)" "cjs"
 
 echo ""
-if [ "$FAILURES" -gt 0 ]; then
-    echo "lanes.sh: $FAILURES failure(s)"
-    exit 1
-fi
-echo "lanes.sh: the walk behaved"
+nt_finish
