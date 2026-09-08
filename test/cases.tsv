@@ -177,6 +177,34 @@ attack.forge.refused	a forged title is refused where the title is not the channe
 attack.nav.refused	the hostile navigation is refused	gjs kde macos windows-content
 attack.postnav.channel	a refused navigation leaves the app able to drive its own window	gjs kde macos windows-content
 
+# The exe finding its own document, from test/standalone.ps1 -- windows-launch
+# alone, because the derivation being asserted is windowsLayout's and the
+# variable it refuses to read is one only the Windows batch region ever set.
+#
+# Eleven checks, and every one of them was a `report:` line carrying the reading
+# with an `if (bad) { Fail }` under it -- so on the run where they all held, the
+# file said nothing that any reader downstream could see. selftest.sh has a
+# check for a case that only speaks when it fails; this was that shape as a
+# whole file's structure rather than as one case's slip.
+#
+# The two controls are why the skips matter here. `control release` carried the
+# sentence "nothing below is a reading" and `control testing` carried "the gate
+# below is unmeasured", and both were followed by code that read on regardless:
+# a run where the release build never came up went on to file nine more verdicts
+# about launches that had nothing to launch. Those are skips now, and the
+# release control ends the suite rather than narrating past itself.
+standalone.noset	the batch region names no document	windows-launch
+standalone.control.release	the release build comes up the ordinary way	windows-launch
+standalone.control.testing	the testing build comes up the ordinary way	windows-launch
+standalone.direct	the exe run on its own finds its document	windows-launch
+standalone.ignored	a release build does not read NEUTRINO_SCRIPT_PATH	windows-launch
+standalone.gated	a testing build reads the variable and refuses	windows-launch
+standalone.gated.named	the refusal names the variable	windows-launch
+standalone.derived	with the document moved away there is no window	windows-launch
+standalone.derived.said	the refusal says the document was not found	windows-launch
+standalone.derived.paths	the refusal names both paths it looked for	windows-launch
+standalone.restored	with the document back the exe comes up again	windows-launch
+
 # A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
 # because the failure it provokes is the WebView2 package download 404ing and no
 # other lane has that path to fail on.
