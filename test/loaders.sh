@@ -896,4 +896,9 @@ if [ ${#SHAPED[@]} -gt 0 ]; then
 fi
 
 echo "=== $FAILURES failure(s) ==="
-exit $((FAILURES > 0))
+# The count, and not whether there was one. `$((FAILURES > 0))` is a deliberate
+# spelling of "did anything break", and it predates test/run.sh -- which adds a
+# lane up by summing what its suites exit with, precisely so that nothing has to
+# parse a log. Saturated at 1, this suite reports one broken loader assertion
+# whether one broke or fourteen did.
+exit "$FAILURES"

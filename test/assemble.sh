@@ -1137,7 +1137,10 @@ fi
 echo
 if [ "$FAILURES" = "0" ]; then
     echo "assembler assertions passed"
-    exit 0
+else
+    echo "$FAILURES assertion(s) failed"
 fi
-echo "$FAILURES assertion(s) failed"
-exit 1
+# The count, and not whether there was one. This file makes a hundred and eleven
+# assertions and told test/run.sh about at most one of them, and run.sh adds a
+# lane up by summing what its suites exit with rather than parsing a log.
+exit "$FAILURES"

@@ -1105,6 +1105,46 @@ for l in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$SUITES_TSV" | sort -u); do
 done
 ok "run.sh --dry-run resolves every lane in the manifest"
 
+# Every suite in the manifest can carry a count out.
+#
+# run.sh adds a lane up by summing what its suites exit with, and says so at
+# length: that contract is why it does not have to parse a log, and harness.sh's
+# nt_finish exists to keep it. Five suites did not. appdir.sh ended `exit 0`
+# behind a guard, assemble.sh `exit 1`, loaders.sh `exit $((FAILURES > 0))`, and
+# verify-attack.sh and navrefuse.sh simply ended on `[ "$FAILURES" -eq 0 ]` --
+# every one of them a deliberate spelling of "did anything break", and every one
+# older than the runner that started summing them. assemble.sh makes a hundred
+# and eleven assertions and could report at most one.
+#
+# It is not a failure anybody would see. The lane still goes red, because one is
+# not zero; the number in the summary is just wrong, and it is the number a
+# reader uses to judge how bad a run is.
+#
+# The rule is about the last statement and not about the whole file, because
+# that is what the shell exits with. `nt_finish` passes. So does an exit of
+# something that was counted -- `exit "$FAILURES"`, and the two suites that sum
+# their halves, `exit $((HALF_FAILURES + DIFF_FAILURES))` and
+# `exit $((DIFF_RC + LIVE_RC))`. A constant does not, and neither does a
+# comparison, which is the form that hides best: `$((FAILURES > 0))` mentions
+# the counter and throws it away.
+SATURATE=""
+for f in $(awk -F'\t' '!/^#/ && NF>=4 { print $4 }' "$SUITES_TSV" |
+           grep -oE 'test/[a-z-]+\.sh' | sort -u); do
+    [ -f "$ROOT/$f" ] || continue
+    # The last line that is not blank and not a comment, which is the statement
+    # the shell's exit status comes from.
+    last="$(sed 's/#.*//' "$ROOT/$f" | awk 'NF { keep = $0 } END { print keep }' |
+        sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [ "$last" = "nt_finish" ] && continue
+    if printf '%s' "$last" | grep -qE '^exit "?\$' &&
+       ! printf '%s' "$last" | grep -qE '(-eq|-ne|-gt|-lt|>|<|!=)'; then
+        continue
+    fi
+    SATURATE="$SATURATE $f:$last"
+done
+[ -z "$SATURATE" ] && ok "every suite in the manifest exits its failure count" \
+    || bad "a suite's last statement cannot carry a count:$SATURATE"
+
 # The arithmetic, against a fixture manifest. No display, no app, no artifact:
 # what is under test is that a lane adds up and that a suite cannot hide.
 FIXBIN="$WORK/runbin"; mkdir -p "$FIXBIN"
