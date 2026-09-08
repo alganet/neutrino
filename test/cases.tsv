@@ -412,3 +412,49 @@ confine.lsd.app	it cannot launch a bundle it wrote through open(1)	macos-netinst
 confine.lsd.ws	nor through NSWorkspace	macos-netinstall
 confine.lsd.warm	and the warm doors agree with the cold ones	macos-netinstall
 confine.control.lsd	unconfined, all three launchservices doors do open	macos-netinstall
+
+# The two confinement phases, from netinstall/test/phases.sh.
+#
+# Seventeen of these twenty-four read `skip` on every lane, and that is the
+# finding rather than an accident of the conversion. phases.sh takes five
+# binaries -- the shipped one, a tight tier, a fail-closed build, a session
+# build and an open-session build -- and netinstall/test/run.sh hands it one.
+# So the tight tier, the strict refusal and the whole session half have not been
+# asked anywhere for as long as that has been true, and the suite reported a
+# green tick over the six questions it could still put. Its own comment says so
+# in passing -- "This took five while the tiers existed" -- and nothing else
+# did.
+#
+# They are registered rather than dropped because the ids are in the file and a
+# literal id that is not in this registry fails the scan in test/lib/selftest.sh
+# either way. Registered and skipping, they say which questions are not being
+# asked and why, in the one place that is read across lanes. Dropped, they would
+# say nothing and the suite would look complete.
+#
+# phases.blobjar is windows-launch alone. The other three platforms grant the
+# blobs directory wholesale, so "the payload file was the only write" is not a
+# narrower claim there and there is nothing to read.
+phases.control.jar	unconfined, curl does write the jar the probes look for	gjs bsd windows-launch macos-netinstall
+phases.fetch.home	what the fetch child could write outside the app dir	gjs bsd windows-launch macos-netinstall
+phases.fetch.tmp	and what it could write to the temp dir	gjs bsd windows-launch macos-netinstall
+phases.control.inreach	the fetch child did read the config from inside the confinement	gjs bsd windows-launch macos-netinstall
+phases.blobjar	the fetch grant is the payload file and not the blobs directory	windows-launch
+phases.info.fetch	--info names this platform's fetch mechanism	gjs bsd windows-launch macos-netinstall
+phases.cost.default	curl still works under the run phase's own confinement	gjs bsd windows-launch macos-netinstall
+phases.tight.home	the tight tier's fetch child outside the app dir	gjs bsd windows-launch macos-netinstall
+phases.tight.tmp	and its temp dir	gjs bsd windows-launch macos-netinstall
+phases.tight.blobjar	and nothing else, not even inside blobs	gjs bsd windows-launch macos-netinstall
+phases.info.tight	the tight tier's fetch line names what it applies	gjs bsd windows-launch macos-netinstall
+phases.cost.tight	curl works under the tight tier's run phase too	gjs bsd windows-launch macos-netinstall
+phases.strict.nofetch	a strict build refuses to fetch unconfined	gjs bsd windows-launch macos-netinstall
+phases.strict.said	and says why on stderr	gjs bsd windows-launch macos-netinstall
+phases.strict.nopayload	and does not run the payload	gjs bsd windows-launch macos-netinstall
+phases.strict.both	and fetches and runs when both phases are confined	gjs bsd windows-launch macos-netinstall
+phases.session.baseline	the fully closed session is a baseline that ran	gjs bsd windows-launch macos-netinstall
+phases.session.strict.refused	a strict build refuses a session that did not close	gjs bsd windows-launch macos-netinstall
+phases.session.strict.said	and names which refusal it is	gjs bsd windows-launch macos-netinstall
+phases.session.pid.norun	no build launches into an unfinishable session	gjs bsd windows-launch macos-netinstall
+phases.session.pid.said	and says so as a refusal, not a warning	gjs bsd windows-launch macos-netinstall
+phases.session.normal.ran	the normal build still runs where a step can be repaired	gjs bsd windows-launch macos-netinstall
+phases.session.normal.said	and says what it actually got	gjs bsd windows-launch macos-netinstall
+phases.session.fork	and the app can still fork afterwards	gjs bsd windows-launch macos-netinstall
