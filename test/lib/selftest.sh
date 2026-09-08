@@ -371,12 +371,30 @@ fi
 echo
 # Every id a suite emits has to be in the registry, or the matrix has a column
 # nobody declared and no way to tell a typo from a new case.
-UNREG=""
-while IFS= read -r id; do
-    grep -q "^$id	" "$ROOT/test/cases.tsv" || UNREG="$UNREG $id"
-done < <(awk -F'\t' '{print $3}' "$RESULTS" | sort -u)
-[ -z "$UNREG" ] && ok "every case id emitted is registered in cases.tsv" \
-    || bad "emitted but not in cases.tsv:$UNREG"
+#
+# $RESULTS is the walk fixture's rows, and the walk fixture only runs where there
+# is a GNU grep -oP -- so on macOS this read a variable that was never set. Under
+# `set -u` that kills the process substitution and not the loop around it, which
+# is the worst of the three things it could have done: the loop read nothing, and
+# a check that examined no ids at all reported PASS, in the same green as the
+# lanes where it had examined thirty. The error went to stderr, one line above
+# its own PASS, in a step nobody opens when the step is green.
+#
+# So it is asked only where its subject exists, and says so where it does not.
+# The skip is the same shape as the one the fixture itself files above, and for
+# the same reason: a check that cannot run has to be louder than a check that
+# ran and found nothing.
+if [ "$NT_HAVE_GREP_P" = 1 ]; then
+    UNREG=""
+    while IFS= read -r id; do
+        grep -q "^$id	" "$ROOT/test/cases.tsv" || UNREG="$UNREG $id"
+    done < <(awk -F'\t' '{print $3}' "$RESULTS" | sort -u)
+    [ -z "$UNREG" ] && ok "every case id emitted is registered in cases.tsv" \
+        || bad "emitted but not in cases.tsv:$UNREG"
+else
+    echo "  SKIP: the walk fixture did not run here, so no suite emitted an id"
+    echo "        for this to hold against the registry"
+fi
 
 echo
 echo "### sheet.sh, and the digest the grid reads"
@@ -641,6 +659,35 @@ done
 [ -z "$STRAYLANE" ] && ok "every lane a case applies to is a job in ci.yml" \
     || bad "named in a cases.tsv applies-to and not a job in ci.yml:$STRAYLANE"
 
+# ------------------------------------------- the suites that speak the harness
+
+# Both scans below walk the same list, and until now each built it for itself:
+# the same glob, the same two exclusions, the same `grep -q harness.sh`. It is
+# built once, here, and that is not tidying.
+#
+# The second copy was written inside a command substitution, and bash 3.2 --
+# which is what /bin/bash still is on macOS -- cannot parse a `case` in one. It
+# takes the `)` that closes a case pattern for the `)` that closes the
+# substitution, and reads everything after it as shell that was never meant to
+# be: the run reported a syntax error, then `$1: unbound variable` from the awk
+# below it, then exit 1. So the macos lane did not fail a check. It stopped
+# having a selftest at all, forty passing lines in, on a line that is valid bash
+# in the other nine lanes -- and the checks after it, which include every one
+# that reads the case registry, have never run there.
+#
+# Out here there is no substitution for a `case` to end early, and there is no
+# `case` either.
+NT_SPEAKERS=""
+for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
+    base="$(basename "$suite")"
+    # This file is excluded because it quotes all six words while checking them,
+    # and harness.sh because it defines them rather than calling them.
+    [ "$base" = selftest.sh ] && continue
+    [ "$base" = harness.sh ] && continue
+    grep -q 'harness\.sh' "$suite" 2>/dev/null || continue
+    NT_SPEAKERS="$NT_SPEAKERS $suite"
+done
+
 # Every verdict call is handed an id and not a sentence.
 #
 # This is the shape a half-converted suite has, and it has happened: a call left
@@ -659,9 +706,7 @@ done
 # An id has a dot in it and no spaces. A variable is allowed: five suites hand
 # their id to a wrapper, and the scan above knows those by the assert_ prefix.
 BADARG=""
-for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
-    case "$(basename "$suite")" in selftest.sh|harness.sh) continue ;; esac
-    grep -q 'harness\.sh' "$suite" 2>/dev/null || continue
+for suite in $NT_SPEAKERS; do
     hits="$(sed 's/#.*//' "$suite" |
         grep -oE '\bnt_(pass|fail|skip) +("[^"]*"|[^ ]+)' |
         awk '{ $1 = ""; sub(/^ /, ""); print }' |
@@ -690,9 +735,7 @@ done
 #
 # nt_skip counts as a voice: a case that can only skip or fail is one that says
 # why it could not answer, which is not silence.
-SILENT="$(for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
-    case "$(basename "$suite")" in selftest.sh|harness.sh) continue ;; esac
-    grep -q 'harness\.sh' "$suite" 2>/dev/null || continue
+SILENT="$(for suite in $NT_SPEAKERS; do
     sed 's/#.*//' "$suite" |
         grep -oE '\b(nt_pass|nt_fail|nt_skip|assert_[a-z_]+) +[a-z][a-z0-9.]*\.[a-z0-9.-]+' |
         awk -v f="$(basename "$suite")" '{ print f "\t" $1 "\t" $2 }'
