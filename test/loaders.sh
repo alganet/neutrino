@@ -750,7 +750,19 @@ PREFIX
             nt_skip loaders.effect.rendererprefix "there is no build with the fix removed, so a prefix that does not run says nothing about the fix"
         fi
         ;;
-    osascript)
+    # `macos` and not `osascript`, which is what this arm said until now and is
+    # a value $NT_LANE_KIND never holds: the case above maps the engine name
+    # `osascript` to the kind `macos`, so this arm has never been selected and
+    # the reading below has never been taken. The comment that follows describes
+    # three rounds of measurement the code as written could not have made -- the
+    # arm was presumably renamed with the kinds and this label was left behind.
+    #
+    # It was invisible because the dispatch had no fallback: an unmatched `case`
+    # runs nothing and says nothing, so the macos lane reported no effect
+    # readings and nothing anywhere expected any. Giving the family a `*` arm to
+    # fall into is what turned it up -- six skips claiming no engine came up on a
+    # lane whose engine had come up and been read three sections earlier.
+    macos)
         # macOS asks the same question with the only knob that applies
         # there. Measured across three rounds: osascript takes no insert --
         # an arm64e platform binary and an arm64 dylib the runner just
