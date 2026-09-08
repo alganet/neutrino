@@ -38,7 +38,12 @@
 # tidy would be the registry deciding something it has no business deciding.
 #
 # neutrinoattack is the same story one artifact along: gjs and kde build it
-# release, macos --testing, and both write neutrinoattack.cmd.
+# release, macos --testing, and both write neutrinoattack.cmd. So is
+# neutrinoearly, and there the two tiers are not a preference: the macOS driver
+# has no window a shell can query, so its report reaches test/verify-early.sh
+# through the status file only a testing build writes. gjs and kde read the
+# window and must not be handed a build with test scaffolding in it, because
+# this lane's whole claim is about the shipped configuration.
 #
 # `-` means the artifact is called after its row.
 #
@@ -50,6 +55,8 @@ neutrinotest-release	mkapp	neutrinotest.js	-	neutrinotest.cmd
 neutrinotest-testing	mkapp	neutrinotest.js	--testing	neutrinotest.cmd
 neutrinoattack	mkapp	neutrinoattack.js	-	-
 neutrinoattack-testing	mkapp	neutrinoattack.js	--testing	neutrinoattack.cmd
+neutrinoearly	mkapp	neutrinoearly.js	-	-
+neutrinoearly-testing	mkapp	neutrinoearly.js	--testing	neutrinoearly.cmd
 neutrinonavrefuse	mkapp	neutrinoearly.js	--testing	-
 neutrinolivetheme	mkapp	neutrinolivetheme.js	--testing	-
 neutrinoloaders	mkapp	neutrinoloaders.js	--testing	-
