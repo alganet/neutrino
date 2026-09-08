@@ -58,6 +58,23 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 . "$HERE/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity. probe() and nt_note are lib.sh's and are not
+# shadowed -- this file is very nearly all readings, and they stay readings.
+#
+# One case, and it is the instrument rather than the finding. Everything else
+# here is a `report:` line about other bases, which is what this suite is for;
+# what can be asserted is that the host's own confine line could be read at all,
+# because every userland row below is read the same way and an unreadable one
+# would make them all say the same nothing.
+#
+# The suite still exits 0 whatever happens, which is deliberate -- it is a probe
+# and not a gate. Before this the nt_fail below emitted an annotation into a
+# green lane and nothing else; now it also files a row, so a host whose --info
+# stopped naming a confinement is a red cell in the grid rather than a line
+# somebody has to be looking for.
+. "$(cd "$HERE/../../test/lib" && pwd)/harness.sh"
+NT_ANNOTATE=netinstall
 
 echo "=== landlockfloor: landlock availability across supported bases ==="
 
@@ -67,8 +84,12 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 if ! command -v docker >/dev/null 2>&1; then
     # Not a silent pass: the suite exists to produce rows, and a run that
-    # produced none should say which of the two reasons it was.
+    # produced none should say which of the two reasons it was. Said in the
+    # grid as well as in the log now -- this is a linux lane that was expected
+    # to report and could not, which is a different answer from a lane the
+    # question is not for.
     echo "=== SKIP: no docker here; this probe needs containers to reach other bases ==="
+    nt_skip landlockfloor.host.abi "no docker here; this probe needs containers to reach other bases"
     exit 0
 fi
 
@@ -175,10 +196,13 @@ if [ -n "$APP" ]; then
     HOST_ABI="$(abi_from "$HOST_LINE")"
     probe "report: landlockfloor host kernel=$(uname -r) abi=$HOST_ABI"
     if [ "$HOST_ABI" = "?" ] || [ -z "$HOST_ABI" ]; then
-        nt_fail "could not read a confine line from --info on the host; the userland rows below are unreadable the same way"
+        nt_fail landlockfloor.host.abi "could not read a confine line from --info on the host; the userland rows below are unreadable the same way"
+    else
+        nt_pass landlockfloor.host.abi "the host's confine line reads abi=$HOST_ABI on $(uname -r)"
     fi
 else
     probe "report: landlockfloor host kernel=$(uname -r) abi=NOT-RUN (no musl build)"
+    nt_skip landlockfloor.host.abi "no static musl binary was built here, so there is no --info to read a confine line from"
 fi
 
 # =====================================================================
