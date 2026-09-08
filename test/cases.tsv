@@ -459,6 +459,38 @@ themescheme.reported	the app reported a palette	gjs linux-engines
 themescheme.control.theme-loaded	the palette read is the palette this file wrote	gjs linux-engines
 themescheme.control.dark	the launcher calls that palette dark	gjs linux-engines
 
+# The macOS navigation refusal, from test/navrefuse.sh -- macos alone, because
+# the JXA bridge is the only one with this rule.
+#
+# This is the suite that holds a build against itself with the refusal deleted,
+# and it is why attack.nav.refused is a skip on macos and why verify-nav.ps1's
+# ids are windows-content's alone: the same sentences, three different
+# apparatus. Here the refusal line is edited out of the artifact and the
+# unguarded build is measured taking the window, so `held` on the shipped build
+# means the guard did it rather than the load having failed on its own.
+#
+# navrefuse.old.* is a before-state carried as a build rather than claimed. The
+# spelling this replaced refuses the navigation just as well -- which is why
+# four rounds went by without anyone noticing -- and reports a failure it did
+# not have. Both halves are asserted, so if a future bridge ever makes the
+# parenthesised form work properly the suite goes red and says which half moved.
+#
+# The three gates each ended the run outright: a refusal line that is not there
+# exactly once, a target that will not serve, and a respelled build that came
+# out identical to the shipped one. Each left the six findings below it
+# unreported, which is six cells the grid cannot tell from a suite that never
+# ran -- on the run where the apparatus itself was broken, which is exactly when
+# a reader needs to know that is what happened.
+navrefuse.guard.one-line	the refusal line appears exactly once in the artifact	macos
+navrefuse.target.served	the navigation target answers	macos
+navrefuse.respell	the respelled build differs from the shipped one	macos
+navrefuse.control.unguarded	with the refusal deleted the page takes the window	macos
+navrefuse.app.came-up	the app came up	macos
+navrefuse.held	the navigation was refused and the app kept its document	macos
+navrefuse.said	the driver said it refused the navigation	macos
+navrefuse.old.held	the spelling this replaced refused the navigation too	macos
+navrefuse.old.said	the old spelling reported a failure it did not have	macos
+
 # A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
 # because the failure it provokes is the WebView2 package download 404ing and no
 # other lane has that path to fail on.

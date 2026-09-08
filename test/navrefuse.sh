@@ -63,7 +63,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 WORK="$(mktemp -d)"
-STATUS="${TMPDIR:-/tmp}/neutrino-title.txt"
+STATUS="$NT_STATUS_FILE"
 PAGES="$WORK/pages.log"
 TARGET_PID=""
 STALL_PID=""
@@ -75,12 +75,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
-FAILURES=0
+# The six words. Nine assertions, none of which reached a case id, on the one
+# suite in the tree that holds a build against itself with the refusal deleted
+# -- so the lane could say the macOS navigation guard works and the grid had
+# nothing to show for it.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+
 WAIT=45
 
-report() { echo "report: $*"; }
-pass()   { echo "  PASS: $*"; }
-fail()   { echo "  FAIL: $*"; FAILURES=$((FAILURES + 1)); }
+report() { nt_report "$*"; }
+
+# The three gates each ended the run, and each left the six findings below them
+# unreported.
+skip_findings() {
+    nt_skip navrefuse.control.unguarded "$1"
+    nt_skip navrefuse.app.came-up "$1"
+    nt_skip navrefuse.held "$1"
+    nt_skip navrefuse.said "$1"
+    nt_skip navrefuse.old.held "$1"
+    nt_skip navrefuse.old.said "$1"
+}
 
 # What the control deletes. Matched without the spelling on the end -- neither
 # `;` nor `();` -- on purpose: run against the build before the fix this then
@@ -93,10 +107,13 @@ REFUSE_LINE='webViewRef.stopLoading'
 NOTE_LINE='self.note("refused navigation to " + going);'
 HITS="$(grep -cF "$REFUSE_LINE" "$APP" 2>/dev/null | head -1)"
 if [ "${HITS:-0}" -ne 1 ]; then
-    fail "'$REFUSE_LINE' appears ${HITS:-0} times in this artifact, wanted 1; the guard was rewritten and this suite was not"
-    echo "=== Results: $FAILURES failure(s) ==="
-    exit 1
+    nt_fail navrefuse.guard.one-line "'$REFUSE_LINE' appears ${HITS:-0} times in this artifact, wanted 1; the guard was rewritten and this suite was not"
+    nt_skip navrefuse.target.served "the guard line could not be found, so no build was made to run"
+    nt_skip navrefuse.respell "the guard line could not be found, so there was nothing to replace"
+    skip_findings "the guard line could not be found, so no build was run"
+    nt_finish
 fi
+nt_pass navrefuse.guard.one-line "the refusal line appears exactly once in this artifact"
 
 # =====================================================================
 # The apparatus: the target has to answer, and the load has to stay pending
@@ -109,10 +126,12 @@ echo "=== Bringing up the navigation target and the stall socket ==="
 python3 "$ROOT/test/stall.py" 8099 > "$WORK/stall.log" 2>&1 &
 STALL_PID=$!
 if ! TARGET_PID="$(bash "$ROOT/test/serve-target.sh" "$PAGES")"; then
-    fail "nothing is serving the navigation target; a guard that refused nothing would pass"
-    echo "=== Results: $FAILURES failure(s) ==="
-    exit 1
+    nt_fail navrefuse.target.served "nothing is serving the navigation target; a guard that refused nothing would pass"
+    nt_skip navrefuse.respell "there was no target to navigate at, so no build was run"
+    skip_findings "there was no target to navigate at, so nothing was measured"
+    nt_finish
 fi
+nt_pass navrefuse.target.served "the navigation target answers"
 
 # =====================================================================
 # The two artifacts
@@ -133,9 +152,9 @@ respell() {
     ' "$APP" > "$WORK/navrefuse-$mech.cmd"
     chmod +x "$WORK/navrefuse-$mech.cmd"
     if cmp -s "$APP" "$WORK/navrefuse-$mech.cmd"; then
-        fail "$mech expected=the refusal line replaced actual=identical to the shipped build"
-        echo "=== Results: $FAILURES failure(s) ==="
-        exit 1
+        nt_fail navrefuse.respell "$mech expected=the refusal line replaced actual=identical to the shipped build"
+        skip_findings "the respelled build is the shipped one, so there is nothing to compare against"
+        nt_finish
     fi
 }
 # The success note goes with the refusal, or the control build writes `refused
@@ -238,23 +257,23 @@ AT_OLD="$MEASURED_AT"; SAID_OLD="$MEASURED_SAID"
 # =====================================================================
 echo "=== Results ==="
 if [ "$UP_NOGUARD" = "YES" ] && [ "$AT_NOGUARD" = "none" ] && [ "$NAVOUT_NOGUARD" = "HIT" ]; then
-    pass "control with the refusal deleted the page takes the window"
+    nt_pass navrefuse.control.unguarded "control with the refusal deleted the page takes the window"
 else
-    fail "control expected=up=YES at=none navout=HIT actual=up=$UP_NOGUARD at=$AT_NOGUARD navout=$NAVOUT_NOGUARD"
+    nt_fail navrefuse.control.unguarded "control expected=up=YES at=none navout=HIT actual=up=$UP_NOGUARD at=$AT_NOGUARD navout=$NAVOUT_NOGUARD"
     echo "        the guard is not what is keeping the app's document in that"
     echo "        window, so nothing below this line means anything"
 fi
 
 # The effect.
 if [ "$UP_SHIPPED" = "YES" ]; then
-    pass "the app came up"
+    nt_pass navrefuse.app.came-up "the app came up"
 else
-    fail "the app never came up; a build that renders nothing refuses every navigation"
+    nt_fail navrefuse.app.came-up "the app never came up; a build that renders nothing refuses every navigation"
 fi
 if [ "$AT_SHIPPED" = "held" ]; then
-    pass "the navigation was refused and the app kept its own document (at=held)"
+    nt_pass navrefuse.held "the navigation was refused and the app kept its own document (at=held)"
 else
-    fail "at expected=held actual=$AT_SHIPPED"
+    nt_fail navrefuse.held "at expected=held actual=$AT_SHIPPED"
 fi
 
 # The account, and this is the half that fails before the fix. The message is
@@ -262,14 +281,14 @@ fi
 # all would satisfy "does not say it could not refuse" by saying nothing.
 case "$SAID_SHIPPED" in
     "refused navigation to "*)
-        pass "and the driver said so: $SAID_SHIPPED" ;;
+        nt_pass navrefuse.said "and the driver said so: $SAID_SHIPPED" ;;
     "could not refuse"*)
-        fail "the driver refused the navigation and reported that it could not: $SAID_SHIPPED"
+        nt_fail navrefuse.said "the driver refused the navigation and reported that it could not: $SAID_SHIPPED"
         echo "        this is the PR 6 spelling -- stopLoading() rather than"
         echo "        stopLoading -- refusing the load on the property read and"
         echo "        throwing on the call afterwards" ;;
     *)
-        fail "the driver said nothing about the navigation it refused (${SAID_SHIPPED:-<silent>})" ;;
+        nt_fail navrefuse.said "the driver said nothing about the navigation it refused (${SAID_SHIPPED:-<silent>})" ;;
 esac
 
 # The before-state, measured rather than claimed. Both halves are asserted: the
@@ -278,15 +297,15 @@ esac
 # bridge ever makes the parenthesised form work properly, this goes red and says
 # so, which is the right way to find that out.
 if [ "$AT_OLD" = "held" ]; then
-    pass "the spelling this PR replaced refused the navigation too (at=held)"
+    nt_pass navrefuse.old.held "the spelling this PR replaced refused the navigation too (at=held)"
 else
-    fail "the old spelling expected=held actual=$AT_OLD; the before-state is not what this PR says it was"
+    nt_fail navrefuse.old.held "the old spelling expected=held actual=$AT_OLD; the before-state is not what this PR says it was"
 fi
 case "$SAID_OLD" in
     "could not refuse"*)
-        pass "and reported that it could not, which is the defect: $SAID_OLD" ;;
+        nt_pass navrefuse.old.said "and reported that it could not, which is the defect: $SAID_OLD" ;;
     *)
-        fail "the old spelling was expected to report a failure it did not have, and said: ${SAID_OLD:-<silent>}" ;;
+        nt_fail navrefuse.old.said "the old spelling was expected to report a failure it did not have, and said: ${SAID_OLD:-<silent>}" ;;
 esac
 
 # Recorded and not asserted. PR 6's stated ceiling is that the request has
@@ -296,8 +315,8 @@ esac
 # most often buys a green lane that goes red on someone else's change.
 report "the navigation's own request, on this platform = $NAVOUT_SHIPPED (recorded, not asserted)"
 
-echo "=== Results: $FAILURES failure(s) ==="
 # The count, and not whether there was one. Ending on the test made this script
 # exit 0 or 1, and test/run.sh adds a lane up by summing what its suites exit
-# with -- so every count above one arrived as one.
-exit "$FAILURES"
+# with -- so every count above one arrived as one. nt_finish is where that
+# contract lives.
+nt_finish
