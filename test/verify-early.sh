@@ -60,7 +60,7 @@ case "$(uname -s)" in
     Darwin)
         # No window the shell can query, so the title arrives through the same
         # status file every other macOS check uses.
-        read_title() { sed -n '1p' "${TMPDIR:-/tmp}/neutrino-title.txt" 2>/dev/null || true; }
+        read_title() { sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null || true; }
         ;;
     *)
         if command -v xdotool >/dev/null 2>&1; then

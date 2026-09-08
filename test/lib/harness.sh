@@ -51,6 +51,21 @@ if [ -z "${NT_RESULTS:-}" ] && [ -n "${NT_RESULTS_DIR:-}" ]; then
     NT_RESULTS="$NT_RESULTS_DIR/$NT_SUITE.tsv"
 fi
 
+# Where the macOS driver writes the window title, and the one fact ten files
+# were each spelling out.
+#
+# There is no window a shell can query on macOS, so every check that reads a
+# title there reads this file instead -- and every check that launches an app
+# has to clear it first, because a stale one is the previous suite's last title
+# and reads as this suite's first report before the app has rendered anything.
+#
+# It was `${TMPDIR:-/tmp}/neutrino-title.txt` written out in ten places, against
+# a name assemble.sh separately asserts appears in a testing-tier build and not
+# in a default one. A path that has to agree in eleven files and a test that the
+# name is present is a fact worth having once. The files that do not yet speak
+# the harness still spell it; they pick this up as they convert.
+NT_STATUS_FILE="${NT_STATUS_FILE:-${TMPDIR:-/tmp}/neutrino-title.txt}"
+
 NT_FAILURES=0
 NT_PASSES=0
 NT_SKIPS=0
