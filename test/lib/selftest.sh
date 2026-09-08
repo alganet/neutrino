@@ -502,6 +502,45 @@ done < "$ROOT/test/cases.tsv"
 [ -z "$ORPHAN" ] && ok "every registered case id is emitted by some suite" \
     || bad "in cases.tsv but emitted nowhere:$ORPHAN"
 
+# ------------------------------------------------------------------- reap.sh
+
+echo
+echo "### reap.sh, against the caller it must not kill"
+
+# reap.sh takes its pattern as an argument, so the pattern is in its own command
+# line -- and in the command line of anything that passed it along. It already
+# excluded itself, and its header predicted the rest: "the step that this
+# replaces got away with the same call because its pattern was a literal in a
+# script body, where no argv can see it -- which is luck, and stops being luck
+# the moment anyone parameterises it."
+#
+# test/step.sh parameterised it. `--app .../neutrinoattack.cmd` puts the pattern
+# in step.sh's argv, `pgrep -f neutrinoattack` returned step.sh, and the suite
+# was SIGTERMed and then SIGKILLed by the thing it had just called. It exited 137
+# and the lane read that as 137 failures.
+if command -v pgrep >/dev/null 2>&1 && command -v ps >/dev/null 2>&1; then
+    REAPCALLER="$WORK/reap-caller.sh"
+    # reap.sh's path arrives in the environment and not in argv, which matters:
+    # the older exclusion dropped anything whose command line mentioned
+    # `reap.sh`, so a caller that named the script as an argument was filtered by
+    # accident and this check passed against the very version it exists to
+    # catch. The caller's argv must carry the pattern and nothing else.
+    cat > "$REAPCALLER" <<'CALLEREOF'
+#!/bin/bash
+bash "$NT_REAP_SH" nt-selftest-no-such-process >/dev/null 2>&1
+echo SURVIVED
+CALLEREOF
+    out="$(NT_REAP_SH="$ROOT/test/reap.sh" bash "$REAPCALLER" \
+        --app /tmp/nt-selftest-no-such-process.cmd 2>/dev/null)"
+    if [ "$out" = "SURVIVED" ]; then
+        ok "reap.sh does not kill the process that called it"
+    else
+        bad "reap.sh killed its own caller (argv carried the pattern)"
+    fi
+else
+    echo "  SKIP: no pgrep/ps here, so reap.sh's ancestry check did not run"
+fi
+
 # ------------------------------------------------------------------- walk.sh
 
 echo

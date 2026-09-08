@@ -41,8 +41,32 @@ LIMIT="${NT_REAP_LIMIT:-20}"
 # of this script with the same command line and a pid of its own, so the list
 # came back holding three of us and the wait never ended. Anything whose command
 # line is this script is not the thing being reaped.
+#
+# And anything that *started* this script is not being reaped either, which is
+# the third version and the one the comment above predicted. test/step.sh takes
+# the artifact as `--app .../neutrinoattack.cmd`, so the pattern is in its
+# command line too -- and calling reap.sh from there made `pgrep -f
+# neutrinoattack` return step.sh, which was then SIGTERMed and SIGKILLed by the
+# thing it had just called. The suite exited 137 and the lane read it as 137
+# failures.
+#
+# An ancestor is by construction the caller and not the callee, so the whole
+# chain comes out. Walked once here rather than asked per candidate: ps is a
+# fork apiece and this loop already runs one.
+ANCESTRY=""
+nt_ancestry() {
+    local p="$$" n=0
+    while [ -n "$p" ] && [ "$p" != 0 ] && [ "$p" != 1 ] && [ "$n" -lt 32 ]; do
+        ANCESTRY="$ANCESTRY $p"
+        p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+        n=$((n + 1))
+    done
+}
+nt_ancestry
+
 targets() {
     pgrep -f "$PATTERN" 2>/dev/null | while read -r pid; do
+        case " $ANCESTRY " in *" $pid "*) continue ;; esac
         case "$(ps -o args= -p "$pid" 2>/dev/null)" in
             *reap.sh*) continue ;;
         esac
