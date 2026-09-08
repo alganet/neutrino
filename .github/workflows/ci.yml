@@ -2254,56 +2254,16 @@ jobs:
         run: |
           bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
           bash test/parse.sh test/neutrinostdtheme.cmd
+      # The flip itself is test/themeflip.ps1 now. It was fifty-odd lines of
+      # inline pwsh, which is the one language here a workflow cannot check:
+      # test/psparse.ps1 parses every .ps1 in that directory before any of them
+      # runs, and it cannot see a script that exists only as a `run:` block. A
+      # PowerShell file that does not parse has shipped twice and both times was
+      # found by a runner eighteen minutes in.
       - if: always()
         timeout-minutes: 16
         shell: pwsh
-        run: |
-          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-          function Set-AppsTheme($light) {
-            New-Item -Path $key -Force | Out-Null
-            Set-ItemProperty -Path $key -Name AppsUseLightTheme -Value $light -Type DWord
-            Set-ItemProperty -Path $key -Name SystemUsesLightTheme -Value $light -Type DWord
-          }
-          # What the machine says the knob is at, asked after it was set and
-          # from outside the app -- the same reading themeflip.sh takes on the
-          # unix lanes, and for the same reason. Without it a half reports the
-          # value it *wrote*, and a lane where nothing moved cannot say whether
-          # the registry refused the write or the app never read it. Those are
-          # an apparatus defect and a finding, and they look identical.
-          function Read-Knob($tag) {
-            $apps = (Get-ItemProperty -Path $key -Name AppsUseLightTheme -ErrorAction SilentlyContinue).AppsUseLightTheme
-            $sys  = (Get-ItemProperty -Path $key -Name SystemUsesLightTheme -ErrorAction SilentlyContinue).SystemUsesLightTheme
-            $ctl  = [System.Drawing.SystemColors]::Control
-            # The classic palette is carried too, because on Windows it is the
-            # one thing expected *not* to move: SystemColors stays at its light
-            # values in either scheme, which is why the driver overrides the
-            # surfaces from the registry rather than reading them. A round that
-            # sees it move has found something nobody here predicted.
-            "report: knob $tag AppsUseLightTheme=$(if ($null -eq $apps) {'<absent:light>'} else {$apps}) " +
-              "SystemUsesLightTheme=$(if ($null -eq $sys) {'<absent:light>'} else {$sys}) " +
-              "SystemColors.Control=$($ctl.R),$($ctl.G),$($ctl.B)"
-          }
-          function Run-Half($tag, $shot) {
-            Add-Type -AssemblyName System.Drawing
-            Read-Knob $tag | Tee-Object -FilePath "$HOME\flip-knobs.log" -Append | Write-Host
-            & .\test\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE `
-              -ShotName "theme-$shot" -Launch -Artifact .\test\neutrinostdtheme.cmd *>&1 |
-              Tee-Object -FilePath "$HOME\flip-$tag.log" | Out-Null
-            Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |
-              Stop-Process -Force -ErrorAction SilentlyContinue
-            # The precondition the unix half states out loud: the next launch
-            # must not find this one's window.
-            $n = 0
-            while ($n -lt 60 -and (Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue)) {
-              Start-Sleep -Milliseconds 500; $n++
-            }
-          }
-          Set-AppsTheme 1
-          Run-Half a light
-          Set-AppsTheme 0
-          Run-Half b dark
-          Set-AppsTheme 1
-          exit 0
+        run: .\test\themeflip.ps1
       - if: always()
         shell: bash
         run: |
