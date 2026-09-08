@@ -20,7 +20,7 @@
             // the attribute that would carry the declaration is read as an
             // array literal, so `[GuidAttribute("...")]` is a cast of a String
             // to GuidAttribute and refused as one. Both facts were measured on
-            // a runner by test/evergreen.ps1, which carries them as the reason
+            // a runner by test/suite/evergreen.ps1, which carries them as the reason
             // this file is shaped the way it is.
             //
             // So the types are emitted rather than declared. Reflection.Emit

@@ -7,7 +7,7 @@
 // same on all three platforms: the confinement just applied still lets a
 // webview start and still lets it run the page's script. One title says that.
 //
-// test/neutrinotest.js answers a different question -- neutrino's window
+// test/probe/neutrinotest.js answers a different question -- neutrino's window
 // contract, six states deep -- and it costs eleven seconds before its first
 // one, because a verifier that arrives late has to still see state one. This
 // file has no sequence to be late for: the title is set once and the window is

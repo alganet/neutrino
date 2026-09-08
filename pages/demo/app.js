@@ -30,7 +30,7 @@
  * engine does not offer that by itself. So this reads its own markup on the
  * first line and gets it.
  *
- * An app may not carry a line reading `NeutrinoWebview.run();`: test/parse.sh
+ * An app may not carry a line reading `NeutrinoWebview.run();`: test/build/parse.sh
  * lifts the launcher's object out of a built .cmd with a sed range that ends
  * there, and the app is spliced inside that range.
  */

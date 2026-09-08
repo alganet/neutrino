@@ -111,11 +111,11 @@ so that both builds share whatever the machine is doing — the paired differenc
 is a median of 50ms and a mean of 46ms, nine pairs of ten in the same direction,
 which puts it somewhere around 23ms to 68ms. This machine's readings for one
 artifact wander by more than the effect, so a lone before-and-after on it means
-very little. See `test/vmfloor.py`.
+very little. See `test/apparatus/vmfloor.py`.
 
 There is exactly one spelling left that your app may not contain: `@if` and
 `@end`, the two directives `jsc.exe` keeps scanning for even inside the branch
-it is skipping. A build carrying either is refused by `test/parse.sh`, which
+it is skipping. A build carrying either is refused by `test/build/parse.sh`, which
 says why.
 
 **What your app may not do is `eval`.** The document's content policy is
@@ -192,7 +192,7 @@ An overlay is still how you replace a part. An app that wants a denying content 
 `html/policy.html` — the default is `script-src 'none'`, so tightening it means denying the
 network rather than script, and loosening it is how an app gets `eval` back; one that wants
 `window.open` to stop handing urls to the browser replaces `js/external-allow.js`.
-`test/nav-hermetic/` is a two-file example of the second.
+`test/probe/nav-hermetic/` is a two-file example of the second.
 
 ```bash
 ./neutrino/assemble.sh --overlay myapp myapp.cmd
@@ -836,16 +836,16 @@ The test suite verifies IPC works end-to-end on all platforms:
 ```bash
 # Build the test app. mkapp.sh writes the overlay a one-file app would
 # otherwise be a directory for, and is what this suite builds with.
-bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
+bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinotest.cmd
 
 # Run with verification (Linux, requires xdotool)
-bash test/step.sh --display metacity --gtk --log walk \
-  --app test/neutrinotest.cmd -- bash test/verify-linux.sh screenshots/
+bash test/lib/step.sh --display metacity --gtk --log walk \
+  --app test/neutrinotest.cmd -- bash test/suite/verify-linux.sh screenshots/
 ```
 
 Tests exercise `document.title`, `window.resizeTo` and `window.moveTo` with external scripts that poll window state and assert expected values. CI runs these automatically on all four platforms.
 
-`test/step.sh` is what a lane runs a suite through. It brings up an X server and
+`test/lib/step.sh` is what a lane runs a suite through. It brings up an X server and
 a window manager if the suite needs one and there is not one already, launches
 the artifact under test and reaps its process tree afterwards, keeps the log
 where the sheet step will find it, and still exits with the suite's own status.
@@ -857,7 +857,7 @@ the way.
 A suite sources `test/lib/harness.sh` and speaks six words:
 
 ```bash
-. "$(dirname "$0")/lib/harness.sh"
+. "$(dirname "$0")/../lib/harness.sh"
 
 nt_pass   walk.resize "content = 500x400 (asked 500x400, tolerance 0)"
 nt_fail   walk.resize "content expected 500x400 actual=640x480"
@@ -868,7 +868,7 @@ nt_finish   # totals, and exit the failure count
 ```
 
 The first argument is a **case id**, and it is the point. Before it, an
-assertion's identity was the sentence it printed: `test/sheet.sh` folded every
+assertion's identity was the sentence it printed: `test/report/sheet.sh` folded every
 run of digits to `#` and intersected the results, so two lanes counted as
 asserting the same thing only when two languages emitted the same words to the
 byte. Nobody can hold that by hand, and it had already come apart — the Windows
@@ -945,7 +945,7 @@ registry — in about six seconds, with no display and no app.
 
 ```bash
 bash test/lib/selftest.sh                          # the harness, offline
-bash test/verify-std.sh win shots/ test/lib/records/gjs.win.tsv   # replay one
+bash test/suite/verify-std.sh win shots/ test/lib/records/gjs.win.tsv   # replay one
 ```
 
 ### Running a lane
@@ -962,7 +962,7 @@ suite needs, and the command — and
 [`test/apps.tsv`](test/apps.tsv) is the artifacts, each built once and passed
 through `parse.sh` before anything runs it.
 [`test/run.sh`](test/run.sh) reads both and
-[`test/step.sh`](test/step.sh) runs one row: the display, the app launch and its
+[`test/lib/step.sh`](test/lib/step.sh) runs one row: the display, the app launch and its
 reaping, the leash, and the log where the sheet step will find it.
 
 ```bash
@@ -1008,13 +1008,13 @@ The same grid locally, and the older sentence-keyed reading beside it:
 
 ```bash
 gh run download <run-id> -D /tmp/sheets
-python3 test/matrix.py /tmp/sheets/*/*.html     # every case, every lane
-python3 test/sheetdiff.py /tmp/sheets/*/*.html  # what more than one lane asserts
+python3 test/report/matrix.py /tmp/sheets/*/*.html     # every case, every lane
+python3 test/report/sheetdiff.py /tmp/sheets/*/*.html  # what more than one lane asserts
 ```
 
 `sheetdiff.py` prints candidates, not a verdict: some repetition is the point.
 The engine walk asserts what an exit status means on four lanes deliberately,
-and `test/assemble.sh` runs on three because the three `sed`s are not the same
+and `test/suite/assemble.sh` runs on three because the three `sed`s are not the same
 program.
 
 ---
@@ -1035,13 +1035,28 @@ netinstall to run one.
 
 - `neutrino/`: the launcher, split by language under a polyglot skeleton -- see `neutrino/POLYGLOT.md`
 - `neutrino/assemble.sh`: the assembler (neutrino/ + your overlay -> .cmd)
-- `test/`: the suites, and `test/lib/` the harness they share -- `harness.sh`
-  and `harness.ps1` (the vocabulary, once per language), `analyse.sh` (the
-  standards assertions, one copy for every lane), `display.sh`, `selftest.sh`
-  and the recorded runs it replays.
-  `test/cases.tsv` is the case registry, `test/suites.tsv` and `test/apps.tsv`
-  are what each lane runs and what it builds, and `test/run.sh` and
-  `test/step.sh` are what read them
+- `test/`: `run.sh` is the door and the three `.tsv` are the map --
+  `cases.tsv` is the case registry, `suites.tsv` and `apps.tsv` are what each
+  lane runs and what it builds. Everything else is in a room named for what it
+  is:
+  - `test/suite/`: the things that assert. One file per suite, flat, because
+    `suites.tsv` already says which lane runs which and `cases.tsv` says what
+    each one claims -- a third index in the filesystem would be a third thing
+    to keep in step
+  - `test/lib/`: what they share -- `harness.sh` and `harness.ps1` (the
+    vocabulary, once per language), `title.sh` (the window title), `live.sh`
+    (the shape of a live half), `walk.sh` and `analyse.sh` (the assertions,
+    one copy for every lane), `display.sh`, `step.sh` and `reap.sh` (what runs
+    a row and what cleans up after it), `selftest.sh` and the recorded runs it
+    replays
+  - `test/probe/`: the things under test -- the `.js` each artifact is built
+    from, the pages they navigate at, the QML the Qt control reads
+  - `test/apparatus/`: the room a suite runs in -- servers, a stall socket, the
+    Plasma container, the Wayland session, the macOS shot room, the VM timers
+  - `test/build/`: making an artifact and checking it parses -- `mkapp.sh`,
+    `demoapp.sh`, `parse.sh`, `psparse.ps1`
+  - `test/report/`: turning rows into something to read -- `sheet.sh` per lane,
+    `matrix.py` across them, `sheetdiff.py`
 - `netinstall/`: the name-addressed launcher, and its own suite
 - `pages/`: the demo site published at alganet.github.io/neutrino/
 - `LICENSE`: ISC license

@@ -12,7 +12,7 @@ name: kde image
 on:
   push:
     paths:
-      - test/kde.containerfile
+      - test/apparatus/kde.containerfile
       - .github/workflows/kde-image.yml
   workflow_dispatch:
 
@@ -32,5 +32,5 @@ jobs:
       - id: name
         run: echo "image=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/neutrino-kde:f42" >> "$GITHUB_OUTPUT"
       - run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
-      - run: docker build -t '${{ steps.name.outputs.image }}' -f test/kde.containerfile .
+      - run: docker build -t '${{ steps.name.outputs.image }}' -f test/apparatus/kde.containerfile .
       - run: docker push '${{ steps.name.outputs.image }}'

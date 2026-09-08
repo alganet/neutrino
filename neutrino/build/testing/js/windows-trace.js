@@ -32,7 +32,7 @@
          * title on a runner -- is the part after it. Process.StartTime is when
          * the kernel made this process, so the difference is exactly the .NET
          * half of that prefix. The batch half happens in another process
-         * before this one exists; test/launchtime.ps1 reads it from outside.
+         * before this one exists; test/suite/launchtime.ps1 reads it from outside.
          *
          * Asked before the clock rather than after it, and the asking is
          * reported separately, because it is not free: the first touch of
@@ -79,7 +79,7 @@
             /*
              * And then, once, the machine.
              *
-             * test/launchtime.ps1 asks these questions from outside, which
+             * test/suite/launchtime.ps1 asks these questions from outside, which
              * needs a shell, a checkout and a way to run one -- and the
              * machine whose launch is slow is not always a machine anyone can
              * conveniently do that on. Everything below is answerable from
@@ -141,7 +141,7 @@
      * Two things a reader should not mistake for regressions. This starts
      * programs, which the driver is not allowed to do by name -- so both are
      * absolute paths under %WINDIR%\System32, built here rather than searched
-     * for. And it sets UseShellExecute to false, which test/winexec.ps1 fails
+     * for. And it sets UseShellExecute to false, which test/suite/winexec.ps1 fails
      * the artifact for carrying: that control reads a release build, and none
      * of this is in one.
      *

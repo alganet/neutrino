@@ -21,15 +21,15 @@
 # netinstall/test speak this vocabulary, so bsd carries eight families off the
 # reduced OpenBSD list, macos-netinstall carries eleven, and wayland carries the
 # one it asks for. kde-live is still the only lane with no row anywhere here; it
-# runs test/qtkde.sh and nothing else, and until that suite has a vocabulary it
+# runs test/apparatus/qtkde.sh and nothing else, and until that suite has a vocabulary it
 # is a lane the registry has nothing to say about.
 #
 # A suite absent from here is not always one waiting to be converted, and the
-# manifest is where the difference is written. test/fontflip.sh opens by calling
+# manifest is where the difference is written. test/suite/fontflip.sh opens by calling
 # itself a PROBE and its `fontflip` row carries `soft` on all three lanes that
 # run it, which is test/run.sh's word for a step that reports a reading nobody
 # asserts -- a red one is a lane that measured something, not a lane that failed.
-# test/matrix.py says the other half of it: readings must not become cases,
+# test/report/matrix.py says the other half of it: readings must not become cases,
 # because every row in that grid is supposed to be something that can be true or
 # false. So the empty `fontflip` column is the design and not a gap.
 #
@@ -99,7 +99,7 @@ std.font.fallback	an unset font property reaches the generic beside it	gjs kde l
 std.font.agree	the launcher and the engine read one desktop the same way	gjs kde linux-engines macos windows-content
 std.font.end-observed	the font probe ran to the end	gjs kde linux-engines macos windows-content
 
-# The engine walk, from test/lanes.sh -- which engine is chosen, and what a
+# The engine walk, from test/suite/lanes.sh -- which engine is chosen, and what a
 # status coming back from one means.
 #
 # It runs on four lanes and needs no display on any of them: the candidates are
@@ -138,7 +138,7 @@ lanes.handoff.said	the hand-off refusal is printed rather than silent	gjs kde li
 lanes.handoff.status	a walk that ends in a hand-off refusal still exits non-zero	gjs kde linux-engines macos
 lanes.python.reached	python3 is reached where osascript does not exist	gjs kde linux-engines macos
 
-# The hostile document, from test/verify-attack.sh and test/verify-attack.ps1 --
+# The hostile document, from test/suite/verify-attack.sh and test/suite/verify-attack.ps1 --
 # what a page that is trying to drive the native window gets, on the four lanes
 # that can run one.
 #
@@ -162,7 +162,7 @@ lanes.python.reached	python3 is reached where osascript does not exist	gjs kde l
 # never resolves, so the provisional load fails on its own and every driver
 # reports REFUSED whether it refused anything or not. That was a NOTE nothing
 # read; it is a skip carrying the reason now, so the cell says which of the two
-# it is. test/navrefuse.sh is where that question is asked against a target that
+# it is. test/suite/navrefuse.sh is where that question is asked against a target that
 # answers.
 attack.reported	the attack app reported a settled title	gjs kde macos windows-content
 attack.frame.title-escape	no frame's title reached the native window	gjs kde macos windows-content
@@ -177,7 +177,7 @@ attack.forge.refused	a forged title is refused where the title is not the channe
 attack.nav.refused	the hostile navigation is refused	gjs kde macos windows-content
 attack.postnav.channel	a refused navigation leaves the app able to drive its own window	gjs kde macos windows-content
 
-# The exe finding its own document, from test/standalone.ps1 -- windows-launch
+# The exe finding its own document, from test/suite/standalone.ps1 -- windows-launch
 # alone, because the derivation being asserted is windowsLayout's and the
 # variable it refuses to read is one only the Windows batch region ever set.
 #
@@ -206,7 +206,7 @@ standalone.derived.paths	the refusal names both paths it looked for	windows-laun
 standalone.restored	with the document back the exe comes up again	windows-launch
 
 # The navigation a page makes before its own load has finished, from
-# test/early.sh and test/verify-early.sh -- gjs, kde and macos, the three lanes
+# test/suite/early.sh and test/suite/verify-early.sh -- gjs, kde and macos, the three lanes
 # that run the row.
 #
 # early.target.served is the control and it is the whole reason the rest means
@@ -228,7 +228,7 @@ early.reported	the early-navigation app reported a title	gjs kde macos
 early.load.pending	the load was still pending when the page navigated	gjs kde macos
 early.held	the page that arrived was kept out of the window	gjs kde macos
 
-# The compiled exe, from test/appcache.ps1 -- windows-launch alone, because the
+# The compiled exe, from test/suite/appcache.ps1 -- windows-launch alone, because the
 # thing being asserted is where the Windows launcher keeps the program it built
 # and what it does with one it finds.
 #
@@ -282,7 +282,7 @@ appcache.sealed.untouched	the program in a sealed slot is not rewritten	windows-
 appcache.sealed.comes-up	the app comes up from the sealed slot	windows-launch
 
 # The program the Windows driver runs and the tree it deletes, from
-# test/winexec.ps1 -- windows-launch alone, and six sections named in its header.
+# test/suite/winexec.ps1 -- windows-launch alone, and six sections named in its header.
 #
 # Three of these families carry a before-state as an artifact the suite builds:
 # `search`, `inproc` and `delete` each compile the spelling that was replaced
@@ -325,7 +325,7 @@ winexec.delete.junction-safe	a junction is there for the shipped walk to meet	wi
 winexec.delete.safe-removes	the shipped walk removes the tree it is given	windows-launch
 winexec.delete.safe-spared	the shipped walk spares the junction's target	windows-launch
 
-# The artifact compiling at all, from test/compile.ps1 -- and the only family in
+# The artifact compiling at all, from test/suite/compile.ps1 -- and the only family in
 # this file that both Windows lanes answer, because both run it, each against
 # the artifact its own suites are about.
 #
@@ -339,7 +339,7 @@ compile.jsc	jsc.exe is here to compile with	windows-launch windows-content
 compile.refs	the artifact names its own reference list	windows-launch windows-content
 compile.compiles	the artifact compiles	windows-launch windows-content
 
-# The gap between the compile and the START, from test/exerace.ps1 --
+# The gap between the compile and the START, from test/suite/exerace.ps1 --
 # windows-launch alone, and the suite that says that gap is not winnable.
 #
 # The four race cases are one verdict each over six rounds -- two modes, three
@@ -359,7 +359,7 @@ exerace.race.not-launched	the planted exe never runs	windows-launch
 exerace.race.app-came-up	the real app comes up in every round	windows-launch
 exerace.race.hammered	every round really hammered the window	windows-launch
 
-# The document the driver renders, from test/docswap.ps1 -- windows-content
+# The document the driver renders, from test/suite/docswap.ps1 -- windows-content
 # alone, because the defect was the Windows driver's loadHTML dropping its
 # argument and reading the file again out of NEUTRINO_SCRIPT_PATH hundreds of
 # lines later, inside the event loop. The other three drivers render the first
@@ -398,7 +398,7 @@ docswap.swap.window	a window came up at all three delays	windows-content
 docswap.swap.one-read	both markers came from one read at all three delays	windows-content
 docswap.oldswap.reproduced	the defect reproduces at at least one delay	windows-content
 
-# The program the Qt launch path runs, from test/appdir.sh -- kde alone, which
+# The program the Qt launch path runs, from test/suite/appdir.sh -- kde alone, which
 # is the lane that has a QML runtime and no gijs to take the other branch.
 #
 # This suite had no `pass` at all: a `report` and a `fail` and nothing else, so
@@ -428,7 +428,7 @@ appdir.race.window	the app comes up under a rewriter	kde
 appdir.inject.string	the path is a string and not program text	kde
 appdir.inject.window	the app comes up from a directory with a quote in its name	kde
 
-# The desktop built to make the media query lie, from test/themescheme.sh -- gjs
+# The desktop built to make the media query lie, from test/suite/themescheme.sh -- gjs
 # and linux-engines, the GTK lanes, because the mechanism is WebKitGTK reading
 # `prefers-color-scheme` off the theme's *name* rather than its palette.
 #
@@ -459,7 +459,7 @@ themescheme.reported	the app reported a palette	gjs linux-engines
 themescheme.control.theme-loaded	the palette read is the palette this file wrote	gjs linux-engines
 themescheme.control.dark	the launcher calls that palette dark	gjs linux-engines
 
-# The desktop's fonts, from test/fontflip.sh -- two halves that were one `soft`
+# The desktop's fonts, from test/suite/fontflip.sh -- two halves that were one `soft`
 # row and one that was not.
 #
 # The header above this file used to leave that open: `fontflip` was soft on all
@@ -512,7 +512,7 @@ fontflip.live.ui-knob	control the ui knob reached GtkSettings	gjs linux-engines
 fontflip.live.ui	the running app was told when the desktop's ui font moved	gjs linux-engines
 fontflip.live.mono	and again when only the monospace font moved	gjs linux-engines
 
-# The macOS navigation refusal, from test/navrefuse.sh -- macos alone, because
+# The macOS navigation refusal, from test/suite/navrefuse.sh -- macos alone, because
 # the JXA bridge is the only one with this rule.
 #
 # This is the suite that holds a build against itself with the refusal deleted,
@@ -544,7 +544,7 @@ navrefuse.said	the driver said it refused the navigation	macos
 navrefuse.old.held	the spelling this replaced refused the navigation too	macos
 navrefuse.old.said	the old spelling reported a failure it did not have	macos
 
-# A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
+# A failed initialisation, from test/suite/verify-winerr.ps1 -- windows-launch alone,
 # because the failure it provokes is the WebView2 package download 404ing and no
 # other lane has that path to fail on.
 #
@@ -574,7 +574,7 @@ winerr.recorded	the failure is on disk afterwards	windows-launch
 # page on a real port, which is the difference, and it is why attack.nav.refused
 # carries the comment pointing here.
 #
-# windows-content alone. test/navrefuse.sh asks about a navigation refusal on
+# windows-content alone. test/suite/navrefuse.sh asks about a navigation refusal on
 # macOS and shares two of these sentences, but not the apparatus: it patches the
 # refusal line out of the artifact and compares the guarded build against the
 # unguarded one, where this serves a target and reads what arrived at it. Two
@@ -597,7 +597,7 @@ nav.popup.refused	the new window was refused	windows-content
 nav.no-escape	no document that was navigated to drove the window	windows-content
 nav.one-window	the app owns one window	windows-content
 
-# The app on the download page, from test/demo.sh and test/demo.ps1 -- the one
+# The app on the download page, from test/suite/demo.sh and test/suite/demo.ps1 -- the one
 # artifact in this tree nobody ran, and the second twin pair to answer one set
 # of questions rather than two that happen to agree.
 #
@@ -620,7 +620,7 @@ demo.transport.wired	the launch has a channel to the host	gjs windows-content
 demo.close.bound	the Close button has a handler on it	gjs windows-content
 demo.engine.webview2	WebView2 is what this platform renders through	windows-content
 
-# The loader environment, from test/loaders.sh -- what the standalone launch
+# The loader environment, from test/suite/loaders.sh -- what the standalone launch
 # path hands its engine, and what it must not.
 #
 # The suite is older than this vocabulary and said everything it had to say in
@@ -734,7 +734,7 @@ verify.cache.tampered	a tampered cache is refetched, not trusted	gjs bsd windows
 # four lanes read the grammar the same way. So an id names the question and the
 # sentence keeps the spec, which is what a reader of a red lane actually needs.
 #
-# Nothing is averaged away by that. test/matrix.py resolves a repeated id by
+# Nothing is averaged away by that. test/report/matrix.py resolves a repeated id by
 # letting FAIL win -- it has done since decoflip started reporting one case under
 # two decoration settings -- so a family whose twelfth member broke is a red
 # cell. Measured rather than assumed: asserting that shape 1 is reserved, which

@@ -93,7 +93,7 @@ done
 # default of xcb says the same thing more quietly. What was actually happening
 # is that find_qt_runtime succeeded on any Mac with Homebrew's qt installed,
 # run_qt failed, and the walk exited with its status instead of reaching the
-# lane that works. test/lanes.sh asserts the order.
+# lane that works. test/suite/lanes.sh asserts the order.
 if command -v osascript >/dev/null 2>&1
 then run_macos
 fi

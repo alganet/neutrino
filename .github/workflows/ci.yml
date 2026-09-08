@@ -84,12 +84,12 @@ jobs:
       # root's decision, and a test is the only thing entitled to make it.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       # Before anything runs, so no step can start the machine's browser. See
-      # test/nobrowser.sh: `mayOpenExternal` ends at `xdg-open`, and on this
+      # test/apparatus/nobrowser.sh: `mayOpenExternal` ends at `xdg-open`, and on this
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
-      - run: bash test/nobrowser.sh
-      - run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
-      - run: bash test/parse.sh test/neutrinotest.cmd
+      - run: bash test/apparatus/nobrowser.sh
+      - run: bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinotest.cmd
+      - run: bash test/build/parse.sh test/neutrinotest.cmd
       # The engine walk, asserted with stub interpreters: no display, no
       # toolkit, and it is the only place the meaning of an exit status is
       # checked rather than assumed.
@@ -126,7 +126,7 @@ jobs:
       - timeout-minutes: 25
         run: bash test/run.sh gjs loaders
       # The walk: six states of one window, watched from outside. The root
-      # colour that used to be set here is test/verify-linux.sh's now -- it is
+      # colour that used to be set here is test/suite/verify-linux.sh's now -- it is
       # cosmetic, it exists for the pictures that file takes, and two of the
       # four jobs that ran this were missing it.
       - run: bash test/run.sh gjs walk
@@ -138,7 +138,7 @@ jobs:
       # default tier for the same reason the attack app is: this lane is what
       # says the shipped configuration holds, not a configuration assembled for
       # the test. The stall socket and the navigation target that have to be up
-      # before the app launches are test/early.sh's, which is where the order
+      # before the app launches are test/suite/early.sh's, which is where the order
       # they have to come up in is written down.
       - run: bash test/run.sh gjs early
       - name: netinstall suite
@@ -274,7 +274,7 @@ jobs:
       # it shipped with a Close button that did nothing on Windows. What found
       # that was a person on Windows Home, not this file.
       #
-      # test/demoapp.sh builds the published four files with a reporter
+      # test/build/demoapp.sh builds the published four files with a reporter
       # concatenated onto the end of the app's own script; the app itself is
       # unmodified, because the point is to measure what ships.
       - if: always()
@@ -339,7 +339,7 @@ jobs:
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/sheet.sh gjs ~/sheet/gjs.html \
+          bash test/report/sheet.sh gjs ~/sheet/gjs.html \
             "The suites=$HOME/screenshots" \
             "netinstall=$HOME/netinstall-screenshots" \
             "Logs=$HOME/sheetsrc"
@@ -413,12 +413,12 @@ jobs:
           echo "engine: $(command -v cjs)"
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       # Before anything runs, so no step can start the machine's browser. See
-      # test/nobrowser.sh: `mayOpenExternal` ends at `xdg-open`, and on this
+      # test/apparatus/nobrowser.sh: `mayOpenExternal` ends at `xdg-open`, and on this
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
-      - run: bash test/nobrowser.sh
-      - run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
-      - run: bash test/parse.sh test/neutrinotest.cmd
+      - run: bash test/apparatus/nobrowser.sh
+      - run: bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinotest.cmd
+      - run: bash test/build/parse.sh test/neutrinotest.cmd
       # The walk itself: no display, no toolkit, stub engines. It asserts what a
       # status means, which is the contract the fallthrough rests on.
       - timeout-minutes: 5
@@ -426,7 +426,7 @@ jobs:
       - timeout-minutes: 25
         run: bash test/run.sh linux-engines:cjs loaders
       # The walk. The renderer-sandbox check that used to sit here in four
-      # lines of shell is a case in test/verify-linux.sh now -- it wrote FAIL
+      # lines of shell is a case in test/suite/verify-linux.sh now -- it wrote FAIL
       # to this step's stderr and reached no sheet, so a lane whose renderer
       # stopped being sandboxed and a lane that never asked looked the same in
       # the grid. gjs runs the same WebKitGTK and now asks it too.
@@ -587,9 +587,9 @@ jobs:
       - if: always()
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - if: always()
-        run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
+        run: bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinotest.cmd
       - if: always()
-        run: bash test/parse.sh test/neutrinotest.cmd
+        run: bash test/build/parse.sh test/neutrinotest.cmd
       - if: always()
         timeout-minutes: 5
         run: bash test/run.sh linux-engines:py lanes
@@ -760,7 +760,7 @@ jobs:
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/sheet.sh linux-engines ~/sheet/linux-engines.html \
+          bash test/report/sheet.sh linux-engines ~/sheet/linux-engines.html \
             "cjs=$HOME/shots-cjs" \
             "PyGObject=$HOME/screenshots" \
             "Logs=$HOME/sheetsrc"
@@ -782,7 +782,7 @@ jobs:
   #
   # So this job brings one. The image is built and pushed by the `kde image`
   # workflow when its definition changes; a run here pulls it. If the pull
-  # fails -- a fork with no package published yet -- test/qtkde.sh builds it
+  # fails -- a fork with no package published yet -- test/apparatus/qtkde.sh builds it
   # locally instead, which is slow but not broken.
   # Measured against a complete run rather than guessed: this lane took 2.1 min
   # measured, almost all of it the one step below. Read across five runs, that
@@ -790,7 +790,7 @@ jobs:
   # half.
   #
   # Until now the block above this one belonged to kde and had drifted down into
-  # this job's step list, which is how a lane running test/qtkde.sh alone came to
+  # this job's step list, which is how a lane running test/apparatus/qtkde.sh alone came to
   # be annotated with the ceiling of a netinstall step it does not have. This
   # lane's own numbers were never written down and its one real step had no
   # ceiling at all.
@@ -827,7 +827,7 @@ jobs:
         run: |
           NT_KDE_RUNTIME=docker \
           NT_KDE_IMAGE="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/neutrino-kde:f42" \
-            bash test/qtkde.sh 2>&1 | tee ~/qtkde.log
+            bash test/apparatus/qtkde.sh 2>&1 | tee ~/qtkde.log
           # FAIL first, and that order is the whole point: a run that reached
           # the flip and was handed nothing also prints the note saying which
           # plugin it found, so a skip check asked first would read a real
@@ -852,7 +852,7 @@ jobs:
         run: |
           mkdir -p ~/sheetsrc ~/sheet
           cp ~/qtkde.log ~/sheetsrc/ 2>/dev/null || true
-          bash test/sheet.sh kde-live ~/sheet/kde-live.html "Logs=$HOME/sheetsrc"
+          bash test/report/sheet.sh kde-live ~/sheet/kde-live.html "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -888,12 +888,12 @@ jobs:
           if ! command -v qml6 >/dev/null 2>&1 && ! command -v qml >/dev/null 2>&1 && ! command -v qmlscene6 >/dev/null 2>&1 && ! command -v qmlscene-qt6 >/dev/null 2>&1; then
             sudo apt install -y qml6 || sudo apt install -y qml-qt6 || sudo apt install -y qmlscene-qt6 || true
           fi
-      # test/nobrowser.sh: `mayOpenExternal` ends at `xdg-open`, and on this
+      # test/apparatus/nobrowser.sh: `mayOpenExternal` ends at `xdg-open`, and on this
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
-      - run: bash test/nobrowser.sh
-      - run: bash test/mkapp.sh --testing test/neutrinotest.js test/neutrinotest.cmd
-      - run: bash test/parse.sh test/neutrinotest.cmd
+      - run: bash test/apparatus/nobrowser.sh
+      - run: bash test/build/mkapp.sh --testing test/probe/neutrinotest.js test/neutrinotest.cmd
+      - run: bash test/build/parse.sh test/neutrinotest.cmd
       # The engine walk, asserted with stub interpreters: no display, no
       # toolkit, and it is the only place the meaning of an exit status is
       # checked rather than assumed.
@@ -920,7 +920,7 @@ jobs:
       # its own launch. Neither reaches an app launch: the scrub takes both
       # before any engine starts.
       # QTWEBENGINE_CHROMIUM_FLAGS and QML_XHR_ALLOW_FILE_READ moved into
-      # test/appdir.sh, which is the thing that drives qml directly and so is
+      # test/suite/appdir.sh, which is the thing that drives qml directly and so is
       # the thing that needs them. The first of the two carries a space, and
       # the command column in test/suites.tsv is argv split on whitespace --
       # that was the one thing keeping this step written out by hand.
@@ -1098,7 +1098,7 @@ jobs:
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/sheet.sh kde ~/sheet/kde.html \
+          bash test/report/sheet.sh kde ~/sheet/kde.html \
             "The suites=$HOME/screenshots" \
             "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
@@ -1155,7 +1155,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/nt-results"
           echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       # sway rather than weston, which is also in the archive and is the
-      # reference implementation. See test/wayland-up.sh: the deciding
+      # reference implementation. See test/apparatus/wayland-up.sh: the deciding
       # difference is that this lane has to come away with a picture, and grim
       # takes one through wlr-screencopy without ceremony.
       #
@@ -1180,7 +1180,7 @@ jobs:
           # green having measured nothing -- which is the exact failure this
           # lane exists to notice.
           WL_RC=0
-          bash test/wayland-up.sh ~/wayland.env 1024x768 > ~/wayland-up.log 2>&1 || WL_RC=$?
+          bash test/apparatus/wayland-up.sh ~/wayland.env 1024x768 > ~/wayland-up.log 2>&1 || WL_RC=$?
           cat ~/wayland-up.log
           [ "$WL_RC" = 0 ] || exit "$WL_RC"
           . ~/wayland.env
@@ -1208,7 +1208,7 @@ jobs:
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/sheet.sh wayland ~/sheet/wayland.html \
+          bash test/report/sheet.sh wayland ~/sheet/wayland.html \
             "netinstall=$HOME/netinstall-screenshots" \
             "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
@@ -1403,7 +1403,7 @@ jobs:
           cp openbsd-suite.log ~/sheetsrc/ 2>/dev/null || true
           # Copied back from the guest by the action, not written here.
           cp nt-results/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/sheet.sh bsd ~/sheet/bsd.html "Logs=$HOME/sheetsrc"
+          bash test/report/sheet.sh bsd ~/sheet/bsd.html "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -1460,9 +1460,9 @@ jobs:
         shell: bash
         run: bash test/lib/selftest.sh
       - shell: bash
-        run: bash test/mkapp.sh test/neutrinotest.js test/neutrinotest.cmd
+        run: bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinotest.cmd
       - shell: bash
-        run: bash test/parse.sh test/neutrinotest.cmd
+        run: bash test/build/parse.sh test/neutrinotest.cmd
       # And the suites themselves, which are a sixth language nothing checked.
       # The argument below is the one that applies: a file that does not parse
       # is a suite that never runs, found by running it. `$run:` is a scope and
@@ -1509,7 +1509,7 @@ jobs:
         shell: bash
         run: |
           TEST_EXIT=0
-          bash test/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
+          bash test/suite/assemble.sh > ~/assemble.log 2>&1 || TEST_EXIT=$?
           cat ~/assemble.log
           exit $TEST_EXIT
       # The Windows driver's own file and process I/O. Beside assemble.sh for
@@ -1561,7 +1561,7 @@ jobs:
       # is the state each of those suites was measured in when it had a runner
       # to itself and appcache to warm it.
       - shell: bash
-        run: bash test/mkapp.sh --testing test/neutrinoloaders.js test/neutrinowarm.cmd
+        run: bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinowarm.cmd
       - name: warm the WebView2 runtime
         timeout-minutes: 5
         shell: pwsh
@@ -1649,7 +1649,7 @@ jobs:
       # what the stamp's certutil costs -- are the numbers the launcher's own
       # comment about size and modification time has been waiting for.
       - shell: bash
-        run: bash test/mkapp.sh --testing test/neutrinoloaders.js test/neutrinotime.cmd
+        run: bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinotime.cmd
       - name: launch time
         timeout-minutes: 10
         # continue-on-error, for the reason the sheet step gives: this is a
@@ -1725,7 +1725,7 @@ jobs:
       # here it wrote it once and trusted a stamp beside it afterwards.
       - if: always()
         shell: bash
-        run: bash test/mkapp.sh --testing test/neutrinoloaders.js test/neutrinocache.cmd
+        run: bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinocache.cmd
       - if: always()
         timeout-minutes: 15
         shell: pwsh
@@ -1743,8 +1743,8 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/mkapp.sh test/neutrinoloaders.js test/neutrinostandalone.cmd
-          bash test/mkapp.sh --testing test/neutrinoloaders.js test/neutrinostandalone-testing.cmd
+          bash test/build/mkapp.sh test/probe/neutrinoloaders.js test/neutrinostandalone.cmd
+          bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinostandalone-testing.cmd
       - if: always()
         timeout-minutes: 15
         shell: pwsh
@@ -1760,7 +1760,7 @@ jobs:
       # `if: always()` so it is measured whether or not appcache was.
       - if: always()
         shell: bash
-        run: bash test/mkapp.sh --testing test/neutrinoloaders.js test/neutrinorace.cmd
+        run: bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinorace.cmd
       # The gap between the compile and the START, asserted shut. The batch
       # region MOVEs the freshly compiled exe onto a predictable name in the app
       # folder, writes a manifest, and only then STARTs it -- and appcache.ps1
@@ -1804,7 +1804,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/mkapp.sh test/neutrinotest.js test/neutrinoerr.cmd
+          bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinoerr.cmd
           sed -i 's/\(webView2PinnedVersion[ :=]*\)"[^"]*"/\1"0.0.0-neutrino-does-not-exist"/' test/neutrinoerr.cmd
           grep -q 'webView2PinnedVersion[ :=]*"0.0.0-neutrino-does-not-exist"' test/neutrinoerr.cmd
           sed -i 's/\(evergreenEntryExport[ :=]*\)"[^"]*"/\1"NeutrinoNoSuchExport"/' test/neutrinoerr.cmd
@@ -1885,8 +1885,8 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/mkapp.sh --testing test/neutrinotest.js test/neutrinoload1.cmd
-          bash test/mkapp.sh --testing test/neutrinotest.js test/neutrinoload2.cmd
+          bash test/build/mkapp.sh --testing test/probe/neutrinotest.js test/neutrinoload1.cmd
+          bash test/build/mkapp.sh --testing test/probe/neutrinotest.js test/neutrinoload2.cmd
       - name: launch under load
         if: always()
         timeout-minutes: 15
@@ -1977,7 +1977,7 @@ jobs:
           mkdir -p ~/sheetsrc
           cp ~/*.png ~/*.log ~/sheetsrc/ 2>/dev/null || true
           cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/sheet.sh windows-launch ~/sheet/windows-launch.html \
+          bash test/report/sheet.sh windows-launch ~/sheet/windows-launch.html \
             "The suites=$HOME/sheetsrc" \
             "netinstall=$HOME/netinstall-screenshots" \
             "Under load, replica 1=$HOME/load-shots-1" \
@@ -2019,7 +2019,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/nt-results"
           echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       - shell: bash
-        run: bash test/mkapp.sh test/neutrinoattack.js test/neutrinoattack.cmd
+        run: bash test/build/mkapp.sh test/probe/neutrinoattack.js test/neutrinoattack.cmd
       # The suites this lane is made of, parsed before any of them runs, for
       # the same reason the compile below happens first -- see psparse.ps1.
       - timeout-minutes: 5
@@ -2069,8 +2069,8 @@ jobs:
       # a target that answers, the driver without a guard reported
       # nav_arrived=YES and popup_arrived=YES opened=HANDLE, with the injected
       # API and the app author's own page script both present in the remote
-      # document. test/neutrinoattack.js could never see this -- it aims at a
-      # host that never resolves, which test/early-target.html's own comment
+      # document. test/probe/neutrinoattack.js could never see this -- it aims at a
+      # host that never resolves, which test/probe/early-target.html's own comment
       # calls not a test, because the load fails on its own and a driver with a
       # guard reports the same "held" as one without.
       #
@@ -2082,7 +2082,7 @@ jobs:
       # the four-job split was bought for, kept without the four jobs.
       - if: always()
         shell: bash
-        run: bash test/mkapp.sh --overlay test/nav-hermetic test/neutrinonav.js test/neutrinonav.cmd
+        run: bash test/build/mkapp.sh --overlay test/probe/nav-hermetic test/probe/neutrinonav.js test/neutrinonav.cmd
       - if: always()
         timeout-minutes: 12
         shell: pwsh
@@ -2098,7 +2098,7 @@ jobs:
         run: cat ~/navlogs/nav.log
       - if: always()
         shell: bash
-        run: bash test/mkapp.sh --testing test/neutrinodoc.js test/neutrinodoc.cmd
+        run: bash test/build/mkapp.sh --testing test/probe/neutrinodoc.js test/neutrinodoc.cmd
       - if: always()
         timeout-minutes: 20
         shell: pwsh
@@ -2145,12 +2145,12 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/mkapp.sh --testing test/neutrinostdgeom.js test/neutrinostdgeom.cmd
-          bash test/parse.sh test/neutrinostdgeom.cmd
-          bash test/mkapp.sh --testing --decorations=none test/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
-          bash test/parse.sh test/neutrinostdgeom-none.cmd
-          bash test/mkapp.sh --testing test/neutrinostddoc.js test/neutrinostddoc.cmd
-          bash test/parse.sh test/neutrinostddoc.cmd
+          bash test/build/mkapp.sh --testing test/probe/neutrinostdgeom.js test/neutrinostdgeom.cmd
+          bash test/build/parse.sh test/neutrinostdgeom.cmd
+          bash test/build/mkapp.sh --testing --decorations=none test/probe/neutrinostdgeom.js test/neutrinostdgeom-none.cmd
+          bash test/build/parse.sh test/neutrinostdgeom-none.cmd
+          bash test/build/mkapp.sh --testing test/probe/neutrinostddoc.js test/neutrinostddoc.cmd
+          bash test/build/parse.sh test/neutrinostddoc.cmd
       # Both halves and the differential, in place of the single launch this
       # step used to make -- the decorated half is that launch, it runs first
       # because it is the control, and its verifier exit is carried into this
@@ -2208,10 +2208,10 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/mkapp.sh --testing test/neutrinostdwin.js test/neutrinostdwin.cmd
-          bash test/parse.sh test/neutrinostdwin.cmd
-          bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
-          bash test/parse.sh test/neutrinostdtheme.cmd
+          bash test/build/mkapp.sh --testing test/probe/neutrinostdwin.js test/neutrinostdwin.cmd
+          bash test/build/parse.sh test/neutrinostdwin.cmd
+          bash test/build/mkapp.sh --testing test/probe/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/build/parse.sh test/neutrinostdtheme.cmd
       - if: always()
         timeout-minutes: 12
         shell: pwsh
@@ -2258,11 +2258,11 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd
-          bash test/parse.sh test/neutrinostdtheme.cmd
-      # The flip itself is test/themeflip.ps1 now. It was fifty-odd lines of
+          bash test/build/mkapp.sh --testing test/probe/neutrinostdtheme.js test/neutrinostdtheme.cmd
+          bash test/build/parse.sh test/neutrinostdtheme.cmd
+      # The flip itself is test/suite/themeflip.ps1 now. It was fifty-odd lines of
       # inline pwsh, which is the one language here a workflow cannot check:
-      # test/psparse.ps1 parses every .ps1 in that directory before any of them
+      # test/build/psparse.ps1 parses every .ps1 in that directory before any of them
       # runs, and it cannot see a script that exists only as a `run:` block. A
       # PowerShell file that does not parse has shipped twice and both times was
       # found by a runner eighteen minutes in.
@@ -2277,7 +2277,7 @@ jobs:
           # The knob readings first, so the differential below is read beside
           # the two states it is a differential of.
           cat ~/flip-knobs.log > ~/themediff.log 2>/dev/null || true
-          bash test/themediff.sh ~/flip-a.log ~/flip-b.log >> ~/themediff.log 2>&1 || TEST_EXIT=$?
+          bash test/suite/themediff.sh ~/flip-a.log ~/flip-b.log >> ~/themediff.log 2>&1 || TEST_EXIT=$?
           cat ~/flip-a.log ~/flip-b.log ~/themediff.log 2>/dev/null || true
           exit $TEST_EXIT
       # And the live half, which is the one thing the two above cannot see.
@@ -2293,8 +2293,8 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/mkapp.sh --testing test/neutrinolivetheme.js test/neutrinolivetheme.cmd
-          bash test/parse.sh test/neutrinolivetheme.cmd
+          bash test/build/mkapp.sh --testing test/probe/neutrinolivetheme.js test/neutrinolivetheme.cmd
+          bash test/build/parse.sh test/neutrinolivetheme.cmd
       - if: always()
         timeout-minutes: 10
         shell: pwsh
@@ -2321,8 +2321,8 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/demoapp.sh test/neutrinodemo.cmd
-          bash test/parse.sh test/neutrinodemo.cmd
+          bash test/build/demoapp.sh test/neutrinodemo.cmd
+          bash test/build/parse.sh test/neutrinodemo.cmd
       - if: always()
         name: the app on the download page
         timeout-minutes: 10
@@ -2360,14 +2360,14 @@ jobs:
         timeout-minutes: 8
         shell: pwsh
         run: |
-          powershell -ExecutionPolicy Bypass -File test/fontprobe-windows.ps1 8 2>&1 | Tee-Object -FilePath ~/fontprobe.log
+          powershell -ExecutionPolicy Bypass -File test/probe/fontprobe-windows.ps1 8 2>&1 | Tee-Object -FilePath ~/fontprobe.log
       - name: fonts
         if: always()
         timeout-minutes: 10
         shell: pwsh
         run: |
-          bash test/mkapp.sh --testing test/neutrinostdfont.js test/neutrinostdfont.cmd
-          bash test/parse.sh test/neutrinostdfont.cmd
+          bash test/build/mkapp.sh --testing test/probe/neutrinostdfont.js test/neutrinostdfont.cmd
+          bash test/build/parse.sh test/neutrinostdfont.cmd
           & .\test\verify-std.ps1 -Probe font -ScreenshotDir $env:USERPROFILE `
             -Launch -Artifact .\test\neutrinostdfont.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdfont.log"
@@ -2395,8 +2395,8 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          bash test/mkapp.sh --testing test/neutrinolivefont.js test/neutrinolivefont.cmd
-          bash test/parse.sh test/neutrinolivefont.cmd
+          bash test/build/mkapp.sh --testing test/probe/neutrinolivefont.js test/neutrinolivefont.cmd
+          bash test/build/parse.sh test/neutrinolivefont.cmd
           & .\test\fontlive.ps1 *>&1 | Tee-Object -FilePath "$HOME\fontlive.log"
           exit $LASTEXITCODE
       - name: sheet
@@ -2407,7 +2407,7 @@ jobs:
           mkdir -p ~/sheetsrc
           cp ~/*.png ~/*.log ~/sheetsrc/ 2>/dev/null || true
           cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/sheet.sh windows-content ~/sheet/windows-content.html \
+          bash test/report/sheet.sh windows-content ~/sheet/windows-content.html \
             "The suites=$HOME/sheetsrc" \
             "docswap=$HOME/docswaplogs" \
             "nav=$HOME/navlogs"
@@ -2451,8 +2451,8 @@ jobs:
       # runs on three.
       - timeout-minutes: 5
         run: bash test/lib/selftest.sh
-      - run: bash test/mkapp.sh --testing test/neutrinotest.js test/neutrinotest.cmd
-      - run: bash test/parse.sh test/neutrinotest.cmd
+      - run: bash test/build/mkapp.sh --testing test/probe/neutrinotest.js test/neutrinotest.cmd
+      - run: bash test/build/parse.sh test/neutrinotest.cmd
       # The launcher's own seatbelt profile, asserted as a value: that it can be
       # built inside a profile that denies /tmp, that the text is the same
       # either way, that seatbelt takes it, and that what seatbelt takes
@@ -2467,13 +2467,13 @@ jobs:
       # asserts what shipped, and the `@@include` that puts macos-confine.sh
       # into a build is the step most able to go wrong. Naming it also keeps
       # this step off assemble.sh, which it would otherwise call for itself.
-      - run: bash test/confine-macos.sh test/neutrinotest.cmd
+      - run: bash test/suite/confine-macos.sh test/neutrinotest.cmd
       # The engine walk, on the platform whose order it is now about. lanes.sh
       # is stub-driven and needs no display, and it ran on three Linux lanes and
       # nowhere else -- so the two assertions that name osascript had never
       # executed, and the ordering this lane depends on was asserted only where
       # osascript does not exist.
-      - run: bash test/lanes.sh test/neutrinotest.cmd
+      - run: bash test/suite/lanes.sh test/neutrinotest.cmd
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
       # assembles anything -- once per sed, because the spelling of what it
@@ -2512,7 +2512,7 @@ jobs:
         timeout-minutes: 3
         continue-on-error: true
         run: |
-          bash test/shotroom-macos.sh > ~/shotroom.log 2>&1 || true
+          bash test/apparatus/shotroom-macos.sh > ~/shotroom.log 2>&1 || true
           cat ~/shotroom.log
       # The last step in any lane with no way to be read, and it cost a merge.
       # It went red publishing nothing at all: verify-macos.sh exits before its
@@ -2693,7 +2693,7 @@ jobs:
           mkdir -p ~/sheetsrc
           cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
           cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/sheet.sh macos ~/sheet/macos.html \
+          bash test/report/sheet.sh macos ~/sheet/macos.html \
             "The suites=$HOME/screenshots" \
             "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
@@ -2745,7 +2745,7 @@ jobs:
         timeout-minutes: 3
         continue-on-error: true
         run: |
-          bash test/shotroom-macos.sh > ~/shotroom.log 2>&1 || true
+          bash test/apparatus/shotroom-macos.sh > ~/shotroom.log 2>&1 || true
           cat ~/shotroom.log
       - name: netinstall suite
         timeout-minutes: 30
@@ -2782,7 +2782,7 @@ jobs:
           # used to be named here and was never written on this lane -- that
           # directory belongs to the `macos` job -- so the directory named is
           # the one the suite step above pointed splash.sh at, and no other.
-          bash test/sheet.sh macos-netinstall ~/sheet/macos-netinstall.html \
+          bash test/report/sheet.sh macos-netinstall ~/sheet/macos-netinstall.html \
             "netinstall=$HOME/netinstall-screenshots" \
             "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
@@ -2837,7 +2837,7 @@ jobs:
           {
             echo "## Cases by lane"
             echo
-            python3 test/matrix.py --markdown "$@"
+            python3 test/report/matrix.py --markdown "$@"
           } >> "$GITHUB_STEP_SUMMARY"
           # --strict, so this job has exactly one thing it can go red on.
           #
@@ -2856,9 +2856,9 @@ jobs:
           #
           # Redirected rather than piped: `| tee` would exit with tee's status
           # and this would go back to being a step that cannot fail, which is
-          # the whole defect. Same reason test/step.sh does it that way.
+          # the whole defect. Same reason test/lib/step.sh does it that way.
           MRC=0
-          python3 test/matrix.py --strict "$@" > matrix.txt 2>&1 || MRC=$?
+          python3 test/report/matrix.py --strict "$@" > matrix.txt 2>&1 || MRC=$?
           cat matrix.txt
           exit $MRC
       - uses: actions/upload-artifact@v7

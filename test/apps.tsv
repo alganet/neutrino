@@ -5,7 +5,7 @@
 #
 # name <TAB> builder <TAB> source <TAB> flags <TAB> out
 #
-# `bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd`
+# `bash test/build/mkapp.sh --testing test/probe/neutrinostdtheme.js test/neutrinostdtheme.cmd`
 # appears in .github/workflows/ci.yml fifteen times, and it is one of eighty-four
 # mkapp.sh lines across ten lanes. The artifact is the same artifact every time:
 # the same source, the same flags, built on whichever runner needs it. Eighty-four
@@ -13,8 +13,8 @@
 #
 # `builder` is the column that made this a table rather than a column in
 # suites.tsv. Almost everything here is mkapp.sh, but the app on the download
-# page is not: test/demoapp.sh assembles pages/demo -- the four files that ship --
-# with test/demoprobe.js concatenated onto the app's own script. A `build=` flag
+# page is not: test/build/demoapp.sh assembles pages/demo -- the four files that ship --
+# with test/probe/demoprobe.js concatenated onto the app's own script. A `build=` flag
 # string could not have said that, and a directive per builder would have put the
 # name of a program in the setup column of every row that used it.
 #
@@ -40,14 +40,14 @@
 # neutrinoattack is the same story one artifact along: gjs and kde build it
 # release, macos --testing, and both write neutrinoattack.cmd. So is
 # neutrinoearly, and there the two tiers are not a preference: the macOS driver
-# has no window a shell can query, so its report reaches test/verify-early.sh
+# has no window a shell can query, so its report reaches test/suite/verify-early.sh
 # through the status file only a testing build writes. gjs and kde read the
 # window and must not be handed a build with test scaffolding in it, because
 # this lane's whole claim is about the shipped configuration.
 #
 # `-` means the artifact is called after its row.
 #
-# Every artifact built here is passed through test/parse.sh before it runs. That
+# Every artifact built here is passed through test/build/parse.sh before it runs. That
 # was a per-step choice in fifty-four places and should never have been one: an
 # artifact that does not parse is a suite that measures nothing, and finding out
 # from the suite is finding out late.

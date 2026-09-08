@@ -15,7 +15,7 @@
 # reads as a webview whose renderer died.
 #
 # Two vocabularies of content title, because two callers ask this. job-ui.sh
-# launches test/neutrinotest.js and watches for its steps; nt_app_probe in
+# launches test/probe/neutrinotest.js and watches for its steps; nt_app_probe in
 # lib.sh launches netinstall/test/alive.js, which says one thing and holds it.
 # Either one is a page that ran.
 

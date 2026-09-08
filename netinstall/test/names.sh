@@ -28,7 +28,7 @@ BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 # way.
 #
 # So an id names the question and not the spec. The sentence still carries the
-# spec -- it is what a reader of a red lane needs -- and test/matrix.py resolves
+# spec -- it is what a reader of a red lane needs -- and test/report/matrix.py resolves
 # a repeated id by letting FAIL win, so a family whose twelfth member broke is a
 # red cell and not an averaged one. Nothing is hidden by the grouping; the
 # detail lives one level down, in the log and in the row.
