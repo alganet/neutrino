@@ -47,12 +47,24 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 . "$(dirname "$0")/lib.sh"
+# harness.sh after lib.sh, and the order is the point: both define nt_fail and
+# they do not agree. lib.sh's takes a message; harness.sh's takes a case id and a
+# detail, counts, and files a row. This file speaks the second one, so it is
+# sourced second -- and every nt_fail below carries an id, because a call that
+# did not would file its message as a case name.
+#
+# The other suites here still speak lib.sh's, which is why this is a source in
+# one file rather than a change to lib.sh: the conversion goes one suite at a
+# time, the way harness.sh's own header says it should.
+. "$(cd "$(dirname "$0")/../../test/lib" && pwd)/harness.sh"
+# The annotation lib.sh's nt_fail emitted, kept by name so a red netinstall
+# check still says so on the run page.
+NT_ANNOTATE=netinstall
 
 WORK="$(mktemp -d)"
 SERVE="$WORK/serve"
 mkdir -p "$SERVE" "$WORK/bin"
 
-FAILURES=0
 RESULTS="$WORK/results.log"
 : > "$RESULTS"
 probe() {
@@ -155,10 +167,9 @@ NEUTRINO_TEST_ORIGIN="$SLOW" "$APP" >"$WORK/out1" 2>"$WORK/err1"
 RC=$?
 A="$(armed "$WORK/err1")"; N="$(decisions "$WORK/err1")"
 if [ "$RC" = "0" ] && grep -qa PAYLOAD-RAN "$WORK/out1" && [ "$A" = "1" ] && [ "$N" = "1" ]; then
-    echo "  PASS: $STEP"
+    nt_pass splash.slow.raised "$STEP"
 else
-    nt_fail "$STEP: rc=$RC armed=$A decisions=$N payload=$(grep -ca PAYLOAD-RAN "$WORK/out1") err=$(errtail "$WORK/err1")"
-    FAILURES=$((FAILURES + 1))
+    nt_fail splash.slow.raised "$STEP: rc=$RC armed=$A decisions=$N payload=$(grep -ca PAYLOAD-RAN "$WORK/out1") err=$(errtail "$WORK/err1")"
 fi
 probe "slow download: $(grep -aE 'netinstall: splash: (up|none):' "$WORK/err1" | head -1 | sed 's/^netinstall: //')"
 
@@ -180,12 +191,11 @@ MECHNAME="$(mech_name "$MECH")"
 # the BSD guests, where what draws is a finding rather than a requirement.
 STEP="the mechanism is the one this lane was set up for"
 if [ -z "${NEUTRINO_SPLASH_EXPECT:-}" ]; then
-    echo "  SKIP: $STEP (NEUTRINO_SPLASH_EXPECT is unset; the mechanism is reported, not asserted)"
+    nt_skip splash.mechanism "$STEP (NEUTRINO_SPLASH_EXPECT is unset; the mechanism is reported, not asserted)"
 elif [ "$MECHNAME" = "$NEUTRINO_SPLASH_EXPECT" ]; then
-    echo "  PASS: $STEP ($MECH)"
+    nt_pass splash.mechanism "$STEP ($MECH)"
 else
-    nt_fail "$STEP: expected $NEUTRINO_SPLASH_EXPECT, drew with '${MECH:-nothing at all}'"
-    FAILURES=$((FAILURES + 1))
+    nt_fail splash.mechanism "$STEP: expected $NEUTRINO_SPLASH_EXPECT, drew with '${MECH:-nothing at all}'"
 fi
 
 # --- the quick download: a window was thinkable, and not wanted --------------
@@ -201,15 +211,13 @@ RC=$?
 A="$(armed "$WORK/err2")"; N="$(decisions "$WORK/err2")"
 TOOK="$(sed -n 's/.*splash: unneeded (the download took \([0-9]*\)ms).*/\1/p' "$WORK/err2" | head -1)"
 if [ "$RC" != "0" ] || ! grep -qa PAYLOAD-RAN "$WORK/out2" || [ "$A" != "1" ]; then
-    nt_fail "$STEP: rc=$RC armed=$A payload=$(grep -ca PAYLOAD-RAN "$WORK/out2") err=$(errtail "$WORK/err2")"
-    FAILURES=$((FAILURES + 1))
+    nt_fail splash.quick.silent "$STEP: rc=$RC armed=$A payload=$(grep -ca PAYLOAD-RAN "$WORK/out2") err=$(errtail "$WORK/err2")"
 elif [ "$N" = "0" ] && [ -n "$TOOK" ]; then
-    echo "  PASS: $STEP (the download took ${TOOK}ms)"
+    nt_pass splash.quick.silent "$STEP (the download took ${TOOK}ms)"
 elif [ "$N" = "1" ]; then
-    echo "  SKIP: $STEP (the loopback download outran the delay on this machine; nothing to assert)"
+    nt_skip splash.quick.silent "$STEP (the loopback download outran the delay on this machine; nothing to assert)"
 else
-    nt_fail "$STEP: armed=$A decisions=$N and no unneeded line: err=$(errtail "$WORK/err2")"
-    FAILURES=$((FAILURES + 1))
+    nt_fail splash.quick.silent "$STEP: armed=$A decisions=$N and no unneeded line: err=$(errtail "$WORK/err2")"
 fi
 probe "quick download: $(grep -aE 'netinstall: splash: (unneeded|up|none)' "$WORK/err2" | head -1 | sed 's/^netinstall: //')"
 
@@ -223,10 +231,9 @@ STEP="warm cache raises nothing"
 RC=$?
 A="$(armed "$WORK/err3")"; N="$(decisions "$WORK/err3")"
 if [ "$RC" = "0" ] && grep -qa PAYLOAD-RAN "$WORK/out3" && [ "$A" = "0" ] && [ "$N" = "0" ]; then
-    echo "  PASS: $STEP"
+    nt_pass splash.warm.silent "$STEP"
 else
-    nt_fail "$STEP: rc=$RC armed=$A decisions=$N payload=$(grep -ca PAYLOAD-RAN "$WORK/out3") err=$(errtail "$WORK/err3")"
-    FAILURES=$((FAILURES + 1))
+    nt_fail splash.warm.silent "$STEP: rc=$RC armed=$A decisions=$N payload=$(grep -ca PAYLOAD-RAN "$WORK/out3") err=$(errtail "$WORK/err3")"
 fi
 
 # --- --info and --version: nothing at all ------------------------------------
@@ -235,10 +242,9 @@ for FLAG in --info --version; do
     "$APP" "$FLAG" >/dev/null 2>"$WORK/err-flag"
     A="$(armed "$WORK/err-flag")"; N="$(decisions "$WORK/err-flag")"
     if [ "$A" = "0" ] && [ "$N" = "0" ]; then
-        echo "  PASS: $STEP"
+        nt_pass splash.flags.silent "$STEP"
     else
-        nt_fail "$STEP: armed=$A decisions=$N"
-        FAILURES=$((FAILURES + 1))
+        nt_fail splash.flags.silent "$STEP: armed=$A decisions=$N"
     fi
 done
 
@@ -250,15 +256,20 @@ done
 # nothing draws: there is no hold on a window that does not exist.
 STEP="a window that came up stays for the hold"
 if [ "$MECHNAME" = "none" ] || [ -z "$MECHNAME" ]; then
-    echo "  SKIP: $STEP (nothing draws here)"
+    nt_skip splash.hold "$STEP (nothing draws here)"
+    # The two knob cases live inside the else below, so on a lane that draws
+    # nothing they would report nothing at all -- and a case that never reports
+    # is a hole in the grid, which is what `-` means and is not what happened
+    # here. They are skipped by name instead, with the reason the hold gave.
+    nt_skip splash.hold.lengthen "NEUTRINO_SPLASH_HOLD_MS lengthens the hold (nothing draws here)"
+    nt_skip splash.hold.floor "NEUTRINO_SPLASH_HOLD_MS cannot shorten the hold (nothing draws here)"
     probe "hold: nothing draws, nothing to hold"
 else
     H="$(held "$WORK/err1")"
     if [ -n "$H" ] && [ "$H" -ge "$HOLD" ]; then
-        echo "  PASS: $STEP (held ${H}ms)"
+        nt_pass splash.hold "$STEP (held ${H}ms)"
     else
-        nt_fail "$STEP: held='${H:-none}', wanted at least $HOLD: err=$(errtail "$WORK/err1")"
-        FAILURES=$((FAILURES + 1))
+        nt_fail splash.hold "$STEP: held='${H:-none}', wanted at least $HOLD: err=$(errtail "$WORK/err1")"
     fi
     probe "hold: held ${H:-none}ms against a ${STALL}ms stall"
 
@@ -274,10 +285,9 @@ else
     WALL=$((SECONDS - T0))
     H="$(held "$WORK/err4")"
     if [ "$RC" = "0" ] && grep -qa PAYLOAD-RAN "$WORK/out4" && [ -n "$H" ] && [ "$H" -ge 1500 ] && [ "$WALL" -ge 1 ]; then
-        echo "  PASS: $STEP (held ${H}ms, ${WALL}s on the wall)"
+        nt_pass splash.hold.lengthen "$STEP (held ${H}ms, ${WALL}s on the wall)"
     else
-        nt_fail "$STEP: rc=$RC held='${H:-none}' wall=${WALL}s, wanted at least 1500ms: err=$(errtail "$WORK/err4")"
-        FAILURES=$((FAILURES + 1))
+        nt_fail splash.hold.lengthen "$STEP: rc=$RC held='${H:-none}' wall=${WALL}s, wanted at least 1500ms: err=$(errtail "$WORK/err4")"
     fi
 
     STEP="NEUTRINO_SPLASH_HOLD_MS cannot shorten the hold"
@@ -286,10 +296,9 @@ else
     RC=$?
     H="$(held "$WORK/err5")"
     if [ "$RC" = "0" ] && grep -qa PAYLOAD-RAN "$WORK/out5" && [ -n "$H" ] && [ "$H" -ge "$HOLD" ]; then
-        echo "  PASS: $STEP (held ${H}ms)"
+        nt_pass splash.hold.floor "$STEP (held ${H}ms)"
     else
-        nt_fail "$STEP: rc=$RC held='${H:-none}', wanted at least $HOLD: err=$(errtail "$WORK/err5")"
-        FAILURES=$((FAILURES + 1))
+        nt_fail splash.hold.floor "$STEP: rc=$RC held='${H:-none}', wanted at least $HOLD: err=$(errtail "$WORK/err5")"
     fi
 fi
 
@@ -317,7 +326,7 @@ fi
 # spawn to wait for at all.
 STEP="the window covers the launch on the platform that outlives it"
 if [ "$MECHNAME" = "none" ] || [ -z "$MECHNAME" ]; then
-    echo "  SKIP: $STEP (nothing draws here)"
+    nt_skip splash.handoff "$STEP (nothing draws here)"
 else
     NEUTRINO_TEST_ORIGIN="$SLOW" NEUTRINO_HOME="$WORK/home-order" \
         "$APP" >"$WORK/both" 2>&1
@@ -325,21 +334,18 @@ else
     DOWN_AT="$(grep -an 'splash: down' "$WORK/both" | head -1 | cut -d: -f1)"
     RAN_AT="$(grep -an PAYLOAD-RAN "$WORK/both" | head -1 | cut -d: -f1)"
     if [ "$RC" != "0" ] || [ -z "$DOWN_AT" ] || [ -z "$RAN_AT" ]; then
-        nt_fail "$STEP: rc=$RC down='${DOWN_AT:-none}' payload='${RAN_AT:-none}'; one of the two markers never arrived and there is no order to read"
-        FAILURES=$((FAILURES + 1))
+        nt_fail splash.handoff "$STEP: rc=$RC down='${DOWN_AT:-none}' payload='${RAN_AT:-none}'; one of the two markers never arrived and there is no order to read"
     elif [ "${NT_WINDOWS:-0}" = "1" ]; then
         if [ "$RAN_AT" -lt "$DOWN_AT" ]; then
-            echo "  PASS: $STEP (the payload ran at line $RAN_AT, the window went at $DOWN_AT)"
+            nt_pass splash.handoff "$STEP (the payload ran at line $RAN_AT, the window went at $DOWN_AT)"
         else
-            nt_fail "$STEP: the window went at line $DOWN_AT and the payload ran at $RAN_AT; this platform waits for the .cmd and the window is supposed to cover that wait"
-            FAILURES=$((FAILURES + 1))
+            nt_fail splash.handoff "$STEP: the window went at line $DOWN_AT and the payload ran at $RAN_AT; this platform waits for the .cmd and the window is supposed to cover that wait"
         fi
     else
         if [ "$DOWN_AT" -lt "$RAN_AT" ]; then
-            echo "  PASS: $STEP (the window went at line $DOWN_AT, before the exec at $RAN_AT)"
+            nt_pass splash.handoff "$STEP (the window went at line $DOWN_AT, before the exec at $RAN_AT)"
         else
-            nt_fail "$STEP: the window went at line $DOWN_AT and the payload ran at $RAN_AT; this platform execs, so nothing here can take a window down afterwards and one still up is one nobody holds"
-            FAILURES=$((FAILURES + 1))
+            nt_fail splash.handoff "$STEP: the window went at line $DOWN_AT and the payload ran at $RAN_AT; this platform execs, so nothing here can take a window down afterwards and one still up is one nobody holds"
         fi
     fi
     probe "handoff: payload at line ${RAN_AT:-none}, window down at ${DOWN_AT:-none} (outlives=${NT_WINDOWS:-0})"
@@ -363,19 +369,16 @@ NEUTRINO_TEST_ORIGIN="$SLOW" NEUTRINO_HOME="$WORK/home-bad" "$BADAPP" >/dev/null
 RC=$?
 U="$(ups "$WORK/err6")"; D="$(downs "$WORK/err6")"
 if [ "$RC" = "0" ]; then
-    nt_fail "$STEP: expected a refusal, got rc=0 -- the fixture is not testing anything"
-    FAILURES=$((FAILURES + 1))
+    nt_fail splash.refusal.teardown "$STEP: expected a refusal, got rc=0 -- the fixture is not testing anything"
 elif ! grep -qa "pin mismatch" "$WORK/err6"; then
-    nt_fail "$STEP: expected=pin-mismatch actual=$(errtail "$WORK/err6")"
-    FAILURES=$((FAILURES + 1))
+    nt_fail splash.refusal.teardown "$STEP: expected=pin-mismatch actual=$(errtail "$WORK/err6")"
 elif [ "$U" = "$D" ]; then
     # Vacuously true where nothing draws, which is why the count is reported
     # rather than only the verdict: a lane silently at 0/0 is a lane this case
     # is not covering, and that has to be visible from the run page.
-    echo "  PASS: $STEP (up=$U down=$D)"
+    nt_pass splash.refusal.teardown "$STEP (up=$U down=$D)"
 else
-    nt_fail "$STEP: up=$U down=$D -- a window was raised and not taken away"
-    FAILURES=$((FAILURES + 1))
+    nt_fail splash.refusal.teardown "$STEP: up=$U down=$D -- a window was raised and not taken away"
 fi
 probe "refusal path: up=$U down=$D"
 
@@ -406,32 +409,29 @@ case "$MECHNAME" in
         # fallback, and the only one where the mechanism is expected to change.
         case "$(mech_name "$MECH7")" in
             x11)
-                echo "  PASS: $STEP" ;;
+                nt_pass splash.fallback "$STEP" ;;
             none)
                 # A compositor and no X server at all -- a wayland session with
                 # no XWayland. There is genuinely nothing to fall back to, and
                 # failing that would be asserting the machine should have an X
                 # server rather than asserting anything about this program.
                 if [ -z "${DISPLAY:-}" ]; then
-                    echo "  SKIP: $STEP (wayland only; no X server to fall back to)"
+                    nt_skip splash.fallback "$STEP (wayland only; no X server to fall back to)"
                     probe "fallback: wayland-only machine, nothing behind it"
                 else
-                    nt_fail "$STEP: DISPLAY is set to '$DISPLAY' and the fallback still drew nothing"
-                    FAILURES=$((FAILURES + 1))
+                    nt_fail splash.fallback "$STEP: DISPLAY is set to '$DISPLAY' and the fallback still drew nothing"
                 fi ;;
             *)
-                nt_fail "$STEP: expected x11, got '$MECH7'"
-                FAILURES=$((FAILURES + 1)) ;;
+                nt_fail splash.fallback "$STEP: expected x11, got '$MECH7'" ;;
         esac ;;
     none)
-        echo "  SKIP: $STEP (nothing draws here, so there is nothing to fall back to)"
+        nt_skip splash.fallback "$STEP (nothing draws here, so there is nothing to fall back to)"
         probe "fallback: nothing to fall back to, got '$MECH7'" ;;
     *)
         if [ "$(mech_name "$MECH7")" = "$MECHNAME" ]; then
-            echo "  PASS: $STEP (inert here; still $MECHNAME)"
+            nt_pass splash.fallback "$STEP (inert here; still $MECHNAME)"
         else
-            nt_fail "$STEP: a meaningless WAYLAND_DISPLAY turned $MECHNAME into '$(mech_name "$MECH7")'"
-            FAILURES=$((FAILURES + 1))
+            nt_fail splash.fallback "$STEP: a meaningless WAYLAND_DISPLAY turned $MECHNAME into '$(mech_name "$MECH7")'"
         fi ;;
 esac
 
@@ -445,16 +445,16 @@ for c in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/wayland-*; do
     [ -S "$c" ] && { WLSOCK="$(basename "$c")"; break; }
 done
 if [ -z "$WLSOCK" ]; then
-    echo "  SKIP: $STEP (no compositor on this machine)"
+    nt_skip splash.wayland.preferred "$STEP (no compositor on this machine)"
     probe "preference: no compositor to check against"
 else
     NEUTRINO_TEST_ORIGIN="$SLOW" NEUTRINO_HOME="$WORK/home-wl" WAYLAND_DISPLAY="$WLSOCK" \
         "$APP" >/dev/null 2>"$WORK/err8"
     MECH8="$(mech_of "$WORK/err8")"
     case "$MECH8" in
-        wayland*) echo "  PASS: $STEP"; probe "preference: chose $MECH8 with DISPLAY also set" ;;
-        *) nt_fail "$STEP: a compositor is up at $WLSOCK and the choice was '$MECH8'"
-           FAILURES=$((FAILURES + 1)) ;;
+        wayland*) nt_pass splash.wayland.preferred "$STEP"
+                  probe "preference: chose $MECH8 with DISPLAY also set" ;;
+        *) nt_fail splash.wayland.preferred "$STEP: a compositor is up at $WLSOCK and the choice was '$MECH8'" ;;
     esac
 fi
 
@@ -493,10 +493,10 @@ FRAME_GAP_MS=130
 DISTINCT=0
 BURST=SKIP
 if [ -z "${NEUTRINO_SPLASH_SHOTS:-}" ]; then
-    echo "  SKIP: $STEP (NEUTRINO_SPLASH_SHOTS is unset; no picture wanted)"
+    nt_skip splash.photographed "$STEP (NEUTRINO_SPLASH_SHOTS is unset; no picture wanted)"
     probe "picture: not asked for"
 elif [ "$MECHNAME" = "none" ] || [ -z "$MECHNAME" ]; then
-    echo "  SKIP: $STEP (nothing draws here; nothing to photograph)"
+    nt_skip splash.photographed "$STEP (nothing draws here; nothing to photograph)"
     probe "picture: nothing draws, nothing to photograph"
 else
     SHOT="$NEUTRINO_SPLASH_SHOTS/splash-$MECHNAME.png"
@@ -526,14 +526,11 @@ else
     RC=$?
     D="$(downs "$WORK/err9")"
     if [ "$RAISED" != "YES" ]; then
-        nt_fail "$STEP: the window that came up for every case above did not come up for this one: err=$(errtail "$WORK/err9")"
-        FAILURES=$((FAILURES + 1))
+        nt_fail splash.photographed "$STEP: the window that came up for every case above did not come up for this one: err=$(errtail "$WORK/err9")"
     elif [ "$TAKEN" != "YES" ]; then
-        nt_fail "$STEP: the capture wrote nothing to $SHOT"
-        FAILURES=$((FAILURES + 1))
+        nt_fail splash.photographed "$STEP: the capture wrote nothing to $SHOT"
     elif [ "$RC" != "0" ] || ! grep -qa PAYLOAD-RAN "$WORK/out9"; then
-        nt_fail "$STEP: the run behind the picture did not finish: rc=$RC err=$(errtail "$WORK/err9")"
-        FAILURES=$((FAILURES + 1))
+        nt_fail splash.photographed "$STEP: the run behind the picture did not finish: rc=$RC err=$(errtail "$WORK/err9")"
     else
         # Whether both shutters beat the teardown. The down line is written when
         # the window goes; the captures returned before this check, so a hold
@@ -542,10 +539,9 @@ else
         # than a race with the file.
         H="$(held "$WORK/err9")"
         if [ -n "$H" ] && [ "$H" -ge 20000 ] && [ "$SHUTTER" -lt 20 ]; then
-            echo "  PASS: $STEP ($(wc -c < "$SHOT" | tr -d ' ') bytes, shutter and burst ${SHUTTER}s into an ${H}ms hold)"
+            nt_pass splash.photographed "$STEP ($(wc -c < "$SHOT" | tr -d ' ') bytes, shutter and burst ${SHUTTER}s into an ${H}ms hold)"
         else
-            nt_fail "$STEP: the shutter took ${SHUTTER}s against a hold of ${H:-none}ms -- the pictures may be of an empty desktop"
-            FAILURES=$((FAILURES + 1))
+            nt_fail splash.photographed "$STEP: the shutter took ${SHUTTER}s against a hold of ${H:-none}ms -- the pictures may be of an empty desktop"
         fi
     fi
     probe "picture: raised=$RAISED taken=$TAKEN burst=$BURST frames=$FRAMES distinct=$DISTINCT down=$D at $SHOT"
@@ -567,15 +563,13 @@ fi
 # count so a lane where it starts passing for the wrong reason can be seen.
 STEP="the indicator moved while it was photographed"
 if [ "$BURST" = "SKIP" ]; then
-    echo "  SKIP: $STEP (no burst was taken)"
+    nt_skip splash.indicator.moved "$STEP (no burst was taken)"
 elif [ "$BURST" != "YES" ]; then
-    nt_fail "$STEP: the burst wrote fewer than $FRAMES frames"
-    FAILURES=$((FAILURES + 1))
+    nt_fail splash.indicator.moved "$STEP: the burst wrote fewer than $FRAMES frames"
 elif [ "$DISTINCT" -ge 3 ]; then
-    echo "  PASS: $STEP ($DISTINCT of $FRAMES frames differ)"
+    nt_pass splash.indicator.moved "$STEP ($DISTINCT of $FRAMES frames differ)"
 else
-    nt_fail "$STEP: $DISTINCT of $FRAMES frames differ -- the window is on screen and not moving"
-    FAILURES=$((FAILURES + 1))
+    nt_fail splash.indicator.moved "$STEP: $DISTINCT of $FRAMES frames differ -- the window is on screen and not moving"
 fi
 
 # --- the parent dies without tearing down ------------------------------------
@@ -607,7 +601,7 @@ if [ "$RAISED" != "YES" ]; then
     # reports rather than asserts, and it is said out loud so a lane that
     # silently stopped covering this is visible.
     probe "orphan check: skipped, nothing draws on this display"
-    echo "  SKIP: $STEP (no window on this display)"
+    nt_skip splash.orphan.none "$STEP (no window on this display)"
     kill -9 "$SLOWPID" 2>/dev/null
 else
     # The holder is the child that is not the downloader. There are two now:
@@ -643,12 +637,11 @@ else
         # window cannot outlive the process because it is inside it. Said
         # out loud rather than passed quietly, so that a platform which
         # stops using a child is visible instead of silently uncovered.
-        echo "  SKIP: $STEP (the window is in-process here, so it cannot be orphaned)"
+        nt_skip splash.orphan.none "$STEP (the window is in-process here, so it cannot be orphaned)"
         probe "orphan check: skipped, $MECHNAME holds the window in-process"
         kill -9 "$SLOWPID" 2>/dev/null
     elif [ -z "$HELD" ]; then
-        nt_fail "$STEP: a window is up but no child is holding it -- the control is broken, not the case; children were${KIDS:- none}"
-        FAILURES=$((FAILURES + 1))
+        nt_fail splash.orphan.none "$STEP: a window is up but no child is holding it -- the control is broken, not the case; children were${KIDS:- none}"
         kill -9 "$SLOWPID" 2>/dev/null
     else
         kill -9 "$SLOWPID" 2>/dev/null
@@ -658,10 +651,9 @@ else
             sleep 0.1
         done
         if [ "$GONE" = "YES" ]; then
-            echo "  PASS: $STEP"
+            nt_pass splash.orphan.none "$STEP"
         else
-            nt_fail "$STEP: splash process $HELD ($HELDNAME) outlived a SIGKILLed parent; children were$KIDS"
-            FAILURES=$((FAILURES + 1))
+            nt_fail splash.orphan.none "$STEP: splash process $HELD ($HELDNAME) outlived a SIGKILLed parent; children were$KIDS"
             kill -9 "$HELD" 2>/dev/null
         fi
         probe "orphan check: parent killed, holder $HELD ($HELDNAME) gone=$GONE, children were$KIDS"
@@ -676,5 +668,10 @@ wait "$SLOWPID" 2>/dev/null
 probe "mechanism: ${MECH:-<none reported>}"
 
 cat "$RESULTS"
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts, so the
+# twenty-five `FAILURES=$((FAILURES + 1))` lines that used to follow every call
+# are gone. harness.sh blesses a caller that does its own arithmetic and reads
+# the counter directly, which is what this line is -- the sentence and the exit
+# status are the ones this suite has always had.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+exit $NT_FAILURES

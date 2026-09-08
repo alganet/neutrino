@@ -398,7 +398,13 @@ done
 # the sort of thing that turns out to mean something slightly different on the
 # BSD grep macOS ships -- and the failure mode there is every id reported as an
 # orphan, which reads as a catastrophe rather than as a portability note.
-NT_SUITES="$(ls "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh 2>/dev/null | grep -v 'selftest\.sh$')"
+# netinstall/test/*.sh is in the list now, and it has to be: splash.sh speaks
+# this vocabulary, and a registry that could not see the tree a suite lives in
+# would call every id that suite emits an orphan -- or, worse, let an
+# unregistered one through. The netinstall suites that still speak lib.sh's
+# older words are simply files this scan finds no ids in, which costs nothing.
+NT_SUITES="$(ls "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh \
+    2>/dev/null | grep -v 'selftest\.sh$')"
 
 ORPHAN=""
 while IFS="$(printf '\t')" read -r rid _rest; do

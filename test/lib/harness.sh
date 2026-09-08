@@ -90,6 +90,18 @@ nt_fail() {
     NT_FAILURES=$((NT_FAILURES + 1))
     echo "  FAIL: $2"
     nt_row "$1" FAIL "$2"
+    # The GitHub annotation, which netinstall/test/lib.sh's own nt_fail carried
+    # and which was never a netinstall property: a red check saying what went
+    # wrong on the run page, without opening a log, is worth having on any lane
+    # that asks for it.
+    #
+    # Opt-in, and that is the whole design. GitHub keeps thirty annotations per
+    # job and drops the rest silently, oldest first -- which is why netinstall's
+    # *readings* had to stop emitting them, six of seven lanes having been pinned
+    # at exactly thirty. Failures are rare, so a failure can afford one; a
+    # reporter that annotated by default would refill the bucket it emptied.
+    [ -n "${NT_ANNOTATE:-}" ] && [ -n "${GITHUB_ACTIONS:-}" ] &&
+        echo "::error title=$NT_ANNOTATE::$NT_SUITE: $2"
     return 0
 }
 

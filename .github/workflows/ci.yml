@@ -1487,6 +1487,16 @@ jobs:
       NT_LANE: wayland
     steps:
       - uses: actions/checkout@v7
+      # Where the harness files its rows. This lane runs netinstall/test/run.sh,
+      # and splash.sh speaks the harness now -- so without this the rows it
+      # writes have nowhere to go and the `cp` below copies a directory that was
+      # never created. It was doing exactly that: `${NT_RESULTS_DIR:-/nonexistent}`
+      # with a `|| true` on the end cannot fail, so the lane looked wired and
+      # reported nothing.
+      - shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nt-results"
+          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       # sway rather than weston, which is also in the archive and is the
       # reference implementation. See test/wayland-up.sh: the deciding
       # difference is that this lane has to come away with a picture, and grim
@@ -1659,6 +1669,18 @@ jobs:
           # already lost a log to it. The `exit 0` is what keeps the ssh command
           # successful; the outcome step below is what fails the lane.
           run: |
+            # NT_LANE inside the guest, because the job-level env is the host's
+            # and vmactions does not carry it across the ssh. Without it every
+            # row this suite writes is filed under `local`, which is the honest
+            # default for a workstation and wrong for a lane.
+            #
+            # The rows go into the workspace rather than a temporary, so that
+            # `copyback: true` brings them out the way it brings out the log.
+            # There is no $RUNNER_TEMP in here and nothing else would survive
+            # the guest being torn down.
+            export NT_LANE=bsd
+            export NT_RESULTS_DIR="$PWD/nt-results"
+            mkdir -p "$NT_RESULTS_DIR"
             bash netinstall/test/run.sh > openbsd-suite.log 2>&1 && rc=0 || rc=$?
             echo "$rc" > openbsd-suite.rc
             exit 0
@@ -1722,6 +1744,8 @@ jobs:
         run: |
           mkdir -p ~/sheetsrc ~/sheet
           cp openbsd-suite.log ~/sheetsrc/ 2>/dev/null || true
+          # Copied back from the guest by the action, not written here.
+          cp nt-results/*.tsv ~/sheetsrc/ 2>/dev/null || true
           bash test/sheet.sh bsd ~/sheet/bsd.html "Logs=$HOME/sheetsrc"
       - uses: actions/upload-artifact@v7
         if: always()
@@ -3175,6 +3199,16 @@ jobs:
       NT_LANE: macos-netinstall
     steps:
       - uses: actions/checkout@v7
+      # Where the harness files its rows. This lane runs netinstall/test/run.sh,
+      # and splash.sh speaks the harness now -- so without this the rows it
+      # writes have nowhere to go and the `cp` below copies a directory that was
+      # never created. It was doing exactly that: `${NT_RESULTS_DIR:-/nonexistent}`
+      # with a `|| true` on the end cannot fail, so the lane looked wired and
+      # reported nothing.
+      - shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nt-results"
+          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       - name: the room the picture is taken in
         timeout-minutes: 3
         continue-on-error: true

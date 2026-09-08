@@ -10,11 +10,18 @@
 # never reported there is a hole, and until this file existed there was no way to
 # tell that from a case nobody had written yet.
 #
-# Named lanes and not `*`, because four of the ten run no harness suite at all --
-# bsd, kde-live, wayland and macos-netinstall each run one thing, and none of it
-# is this. With `*` the grid put a `-` in thirty-three cells for each of them,
-# which is noise in the column that is supposed to carry the signal: `-` has to
-# mean a lane that was expected to report and did not.
+# Named lanes and not `*`, because no case here applies to all ten. With `*` the
+# grid put a `-` in thirty-three cells for a lane that runs none of them, which is
+# noise in the column that is supposed to carry the signal: `-` has to mean a lane
+# that was expected to report and did not.
+#
+# That was written when four lanes reported nothing at all -- bsd, kde-live,
+# wayland and macos-netinstall each ran one thing and none of it was this. Three
+# of the four report now: they run netinstall/test/run.sh, and splash.sh speaks
+# this vocabulary, so bsd, wayland and macos-netinstall carry the splash family
+# below. kde-live is still the one lane with no row anywhere here; it runs
+# test/qtkde.sh and nothing else, and until that suite has a vocabulary it is a
+# lane the registry has nothing to say about.
 #
 # windows-launch is absent from the walk for a reason that is still open:
 # verify-windows.ps1 asserts the same facts and has not been brought onto these
@@ -68,3 +75,34 @@ std.font.delivery	the custom properties and neutrino.fonts carry the same fonts	
 std.font.fallback	an unset font property reaches the generic beside it	gjs kde linux-engines macos windows-content
 std.font.agree	the launcher and the engine read one desktop the same way	gjs kde linux-engines macos windows-content
 std.font.end-observed	the font probe ran to the end	gjs kde linux-engines macos windows-content
+
+# The splash window, from netinstall/test/splash.sh -- the first suite in the
+# netinstall tree to speak this vocabulary, and the reason three lanes appear in
+# the grid at all.
+#
+# It is the whole of what the wayland lane runs (NEUTRINO_SUITES=splash) and the
+# headline of macos-netinstall, so converting one file put a Wayland compositor
+# and an AppKit desktop into a column that had been empty. bsd runs it too, in an
+# OpenBSD guest. kde is absent on purpose: it asks the netinstall suite for `env`
+# and `e2e` only, because it shares a kernel with gjs and the rest would be the
+# same measurement taken twice on the same machine.
+#
+# Several of these are skips rather than failures on a lane that draws nothing,
+# which is most of what this suite has to say about a machine with no display:
+# there is no hold on a window that does not exist, and saying so is different
+# from going quiet.
+splash.slow.raised	a slow download raises a window once	gjs wayland bsd windows-launch macos-netinstall
+splash.mechanism	the mechanism is the one this lane was set up for	gjs wayland bsd windows-launch macos-netinstall
+splash.quick.silent	a quick download raises nothing	gjs wayland bsd windows-launch macos-netinstall
+splash.warm.silent	a warm cache raises nothing	gjs wayland bsd windows-launch macos-netinstall
+splash.flags.silent	--info and --version raise nothing	gjs wayland bsd windows-launch macos-netinstall
+splash.hold	a window that came up stays for the hold	gjs wayland bsd windows-launch macos-netinstall
+splash.hold.lengthen	the hold knob lengthens the hold	gjs wayland bsd windows-launch macos-netinstall
+splash.hold.floor	the hold knob cannot shorten the hold	gjs wayland bsd windows-launch macos-netinstall
+splash.handoff	the window covers the launch on the platform that outlives it	gjs wayland bsd windows-launch macos-netinstall
+splash.refusal.teardown	a pin mismatch tears the window down	gjs wayland bsd windows-launch macos-netinstall
+splash.fallback	a WAYLAND_DISPLAY that leads nowhere falls back to X11	gjs wayland bsd windows-launch macos-netinstall
+splash.wayland.preferred	wayland is preferred when both are reachable	gjs wayland bsd windows-launch macos-netinstall
+splash.photographed	the window was photographed while it was up	gjs wayland bsd windows-launch macos-netinstall
+splash.indicator.moved	the indicator moved while it was photographed	gjs wayland bsd windows-launch macos-netinstall
+splash.orphan.none	a killed parent leaves no window behind	gjs wayland bsd windows-launch macos-netinstall
