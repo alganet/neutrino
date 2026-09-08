@@ -1164,6 +1164,46 @@ done
 [ -z "$STRAY" ] && ok "every lane in suites.tsv is a job in ci.yml" \
     || bad "in suites.tsv and not a job in ci.yml:$STRAY"
 
+# A file that walks up to the repo root walks up the right number of times.
+#
+# This is the room move's other defect, and the one a path check cannot see:
+# decoflip.ps1 reached the root with two Split-Path steps, which was right at
+# test/decoflip.ps1 and one short at test/suite/decoflip.ps1. Nothing resolves
+# a path that is only wrong at runtime, and `$root` there is used to build three
+# more -- so the file found neither its artifact nor the verifier nor the
+# differential, and said so three different ways.
+#
+# The invariant is arithmetic and needs no filesystem: a file that means to
+# reach the repo root has to climb exactly as far as it sits below it. So the
+# depth is counted from the path and the climb from the expression, and they
+# have to agree.
+#
+# Only expressions that say they are reaching the root -- ROOT= in shell and
+# $root = in PowerShell. A file walking up to something else is doing something
+# this check has no opinion about, which is why serve-target.sh's $DOCS and
+# verify-nav.ps1's $docs are not in it: those reach *down* into another room,
+# and what makes them right is the room's name and not a count.
+DEPTH=""
+for f in "$ROOT"/test/*/*.sh "$ROOT"/test/*/*.ps1; do
+    [ -f "$f" ] || continue
+    rel="${f#$ROOT/}"
+    # Directories between the repo root and the file: test/suite/x.sh is 2.
+    want="$(printf '%s' "$rel" | awk -F/ '{ print NF - 1 }')"
+    # Shell: ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+    got="$(sed -n 's/^ROOT="\$(cd "\$(dirname "\$0")\([^"]*\)".*/\1/p' "$f" |
+        head -1 | grep -o '\.\.' | wc -l | tr -d ' ')"
+    case "$rel" in
+        *.sh) grep -q '^ROOT="\$(cd "\$(dirname "\$0")' "$f" || continue ;;
+        *.ps1)
+            grep -q '^\$root = Split-Path' "$f" || continue
+            got="$(grep -m1 '^\$root = Split-Path' "$f" |
+                grep -o 'Split-Path' | wc -l | tr -d ' ')" ;;
+    esac
+    [ "$got" = "$want" ] || DEPTH="$DEPTH $(basename "$f"):climbs=$got,depth=$want"
+done
+[ -z "$DEPTH" ] && ok "every file that walks up to the repo root climbs as far as it sits" \
+    || bad "a root walk does not match the file's depth:$DEPTH"
+
 # Every test/ file a workflow names is on disk, in both spellings.
 #
 # This check exists because the room move shipped without it and the Windows
