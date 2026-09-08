@@ -1105,35 +1105,51 @@ for l in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$SUITES_TSV" | sort -u); do
 done
 ok "run.sh --dry-run resolves every lane in the manifest"
 
-# No pattern in the tree spells a word boundary `\b`.
+# No pattern in the tree uses a GNU-only regex operator.
 #
-# `\b` is a GNU extension. POSIX ERE has no word boundary, and a grep whose ERE
-# is the system's takes a backslash before an ordinary character as that
-# character -- so the pattern hunts for a literal `b` and matches nothing.
+# Two of them, and they fail the same way. `\b` is a word boundary POSIX ERE does
+# not have; `\|` is alternation POSIX BRE does not have. A grep or sed whose
+# regex is the system's reads the backslash before an ordinary character as that
+# character, so both patterns go looking for a literal `b` or `|` and match
+# nothing -- and matching nothing is indistinguishable from finding nothing
+# wrong. Every failure of this is silent, and every one is in the direction of a
+# pass.
 #
-# Every failure of this is silent in the same direction. A scan that matches
-# nothing reports nothing, and reporting nothing is what all four of these did to
-# say a tree was clean: three scans in this file, and the reserved-word check in
-# test/parse.sh, which runs on every artifact on every lane and would have been
-# telling macos that the launcher declares no name jsc.exe reserves without
-# having read a line of it.
+# `\|` was found and named on this branch already: a manifest check spelled
+# `sed -n 's/^\(app\|build\)=//p'`, the macos lane matched nothing, and the note
+# on that commit is the one worth keeping -- "an empty list has nothing to fail
+# on". Two more were sitting in the tree. test/assemble.sh asked whether any CSS
+# comment survived the strip with `grep -c 'a\|b\|c'` and asserted the answer was
+# 0, which is what a pattern that cannot match returns for free; that file runs
+# on GNU, MSYS and BSD deliberately. netinstall/test/phases.sh built its marks
+# string the same way, on two BSD lanes, for cases that all skip today.
 #
-# So it is a rule with a check rather than four fixes. The boundary this tree
-# uses instead is a character class -- `([^A-Za-z0-9.-]|$)` in the orphan scan,
-# `([^A-Za-z0-9_$]|$)` in parse.sh, where `$` is part of a JavaScript name and
-# not a boundary around one -- which says what the boundary is made of and works
-# on every grep there is.
+# `\b` was three patterns in this file and one in test/parse.sh, which runs on
+# every artifact on every lane and would have been telling macos the launcher
+# declares no name jsc.exe reserves without reading a line of it.
 #
-# Comments are stripped first: this file discusses `\b` at length and would
-# otherwise be its own worst offender.
-BOUNDARY=""
+# What the tree uses instead is a character class for a boundary --
+# `([^A-Za-z0-9.-]|$)` in the orphan scan, `([^A-Za-z0-9_$]|$)` in parse.sh --
+# and `-E` for alternation, which is one dialect on every userland.
+#
+# Comments are stripped first: this file discusses both at length and would
+# otherwise be its own worst offender. The `\|` half only looks at a grep or sed
+# that was not given -E, because in an ERE a backslashed pipe is a literal pipe
+# and a legitimate thing to want.
+GNUISM=""
 for f in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
     [ -f "$f" ] || continue
-    hits="$(sed 's/#.*//' "$f" | grep -nE '(grep|sed|awk)[^|]*\\b' || true)"
-    [ -z "$hits" ] || BOUNDARY="$BOUNDARY $(basename "$f"):$(printf '%s' "$hits" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')"
+    stripped="$(sed 's/#.*//' "$f")"
+    hits="$(printf '%s\n' "$stripped" | grep -nE '(grep|sed|awk)[^|]*\\b' || true)"
+    alt="$(printf '%s\n' "$stripped" | grep -nE '(grep|sed)' |
+        grep -F '\|' | grep -vE '(grep|sed)[a-zA-Z]* +-[a-zA-Z]*E' || true)"
+    for h in "$hits" "$alt"; do
+        [ -n "$h" ] || continue
+        GNUISM="$GNUISM $(basename "$f"):$(printf '%s' "$h" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')"
+    done
 done
-[ -z "$BOUNDARY" ] && ok "no pattern in the tree spells a word boundary with \\b" \
-    || bad "a GNU-only \\b is in a pattern at:$BOUNDARY"
+[ -z "$GNUISM" ] && ok "no pattern in the tree uses a GNU-only regex operator" \
+    || bad "a GNU-only \\b or \\| is in a pattern at:$GNUISM"
 
 # Every suite in the manifest can carry a count out.
 #
