@@ -587,6 +587,41 @@ done
 [ -z "$STRAYLANE" ] && ok "every lane a case applies to is a job in ci.yml" \
     || bad "named in a cases.tsv applies-to and not a job in ci.yml:$STRAYLANE"
 
+# Every verdict call is handed an id and not a sentence.
+#
+# This is the shape a half-converted suite has, and it has happened: a call left
+# as `nt_fail "the thing did not hold"` files its whole message as the name of a
+# case, so the grid grows a row nobody registered and the case that should have
+# been reported is a hole. Both halves of the registry scan above would catch it
+# eventually -- one as an undeclared id, the other as an orphan -- but they name
+# the registry, and this names the line.
+#
+# It is the check netinstall/test/fetchbound.sh wanted. Two of its calls sat
+# inside a `case` arm rather than at the start of a line, a sweep for leftovers
+# missed them, and with the local helpers deleted they became `ok: command not
+# found` -- silently, because a case arm's status does not reach the exit code.
+# A before-and-after diff of the prose caught that one; this catches the class.
+#
+# An id has a dot in it and no spaces. A variable is allowed: five suites hand
+# their id to a wrapper, and the scan above knows those by the assert_ prefix.
+BADARG=""
+for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
+    case "$(basename "$suite")" in selftest.sh|harness.sh) continue ;; esac
+    grep -q 'harness\.sh' "$suite" 2>/dev/null || continue
+    hits="$(sed 's/#.*//' "$suite" |
+        grep -oE '\bnt_(pass|fail|skip) +("[^"]*"|[^ ]+)' |
+        awk '{ $1 = ""; sub(/^ /, ""); print }' |
+        grep -vE '^"?\$[A-Za-z_{0-9]' |
+        grep -vE '^[a-z][a-z0-9]*(\.[a-z0-9.-]+)+$' || true)"
+    # `command -v nt_pass >/dev/null` is a test for the function, not a call of
+    # it. test/lib/walk.sh opens with one, because it is sourced by three
+    # verifiers and refuses to load where the harness has not been.
+    hits="$(printf '%s' "$hits" | grep -v '^>/dev/null$' || true)"
+    [ -z "$hits" ] || BADARG="$BADARG $(basename "$suite"):$(echo $hits | cut -c1-40)"
+done
+[ -z "$BADARG" ] && ok "every verdict call is handed a case id, not a sentence" \
+    || bad "a verdict call's first argument is not a case id:$BADARG"
+
 # ------------------------------------------------------------------- reap.sh
 
 echo
