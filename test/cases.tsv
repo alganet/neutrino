@@ -228,6 +228,59 @@ early.reported	the early-navigation app reported a title	gjs kde macos
 early.load.pending	the load was still pending when the page navigated	gjs kde macos
 early.held	the page that arrived was kept out of the window	gjs kde macos
 
+# The compiled exe, from test/appcache.ps1 -- windows-launch alone, because the
+# thing being asserted is where the Windows launcher keeps the program it built
+# and what it does with one it finds.
+#
+# The nine sections this file's header names are the nine second segments here.
+# It is worth reading that header for what the suite is: it asserts the opposite
+# of what it used to, because the exe was kept in the one directory netinstall
+# leaves writable and an app could replace it and leave the stamp -- measured on
+# a runner as `poison ran=YES realapp=DOWN stamp_unchanged=YES`.
+#
+# Every one of the twenty-eight was a `report:` line with an `if (bad) { Fail }`
+# under it, so a run where all of that held said nothing a reader downstream
+# could see.
+#
+# Three of these are instruments rather than findings, and they are cases
+# because a suite that cannot tell an instrument from a finding reports the
+# wrong one. appcache.control.poison-live runs the marker exe directly: one that
+# writes nothing would make the refusal it is there to prove indistinguishable
+# from a pass. appcache.sealed.instrument attempts the write before the launch,
+# because `icacls /deny "$env:USERNAME:(W)"` does not survive PowerShell 5.1's
+# native argument parsing -- it answers `Invalid parameter "(W)"`, exits 87 and
+# changes nothing, and piped to Out-Null that is silent. The arm then launched
+# against a still-writable slot, which is a granted slot, which is one the
+# launcher is supposed to rebuild, and failed the product for doing exactly the
+# right thing on two different machines.
+appcache.control.compiled	a first launch leaves an exe beside the script	windows-launch
+appcache.control.launched	the shipped build comes up	windows-launch
+appcache.control.poison-live	the marker exe writes its mark when run directly	windows-launch
+appcache.placement.stamp	the stamp is beside the script	windows-launch
+appcache.placement.appfolder-clean	the writable app folder holds no program	windows-launch
+appcache.stamp.sha256	the stamp is the source's SHA-256	windows-launch
+appcache.cached.reused	a second launch reuses the exe	windows-launch
+appcache.cached.untouched	the kept exe is not rewritten	windows-launch
+appcache.cached.comes-up	the app comes up from the kept exe	windows-launch
+appcache.cached.digest	the digest is taken where a stamp is compared	windows-launch
+appcache.changed.rebuilt	an edited source rebuilds	windows-launch
+appcache.changed.stamp-follows	the stamp follows the new source	windows-launch
+appcache.changed.comes-up	the rebuilt app comes up	windows-launch
+appcache.appfolder.not-launched	an exe planted in the writable folder is never launched	windows-launch
+appcache.appfolder.comes-up	the app comes up regardless of the planted exe	windows-launch
+appcache.adopt.untouched	a file this launcher did not write is left alone	windows-launch
+appcache.adopt.fell-back	the compile falls back into the app folder	windows-launch
+appcache.second.succeeds	a second launch succeeds while the first runs	windows-launch
+appcache.second.instances	two instances are up at once	windows-launch
+appcache.slot.program	the program is in the slot	windows-launch
+appcache.slot.no-exe-beside	no exe is left beside the script	windows-launch
+appcache.slot.no-stamp-beside	no stamp is left beside the script	windows-launch
+appcache.slot.comes-up	the app comes up from the slot	windows-launch
+appcache.sealed.instrument	the harness can close the slot to writes	windows-launch
+appcache.sealed.reused	the kept program in a sealed slot is reused	windows-launch
+appcache.sealed.untouched	the program in a sealed slot is not rewritten	windows-launch
+appcache.sealed.comes-up	the app comes up from the sealed slot	windows-launch
+
 # A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
 # because the failure it provokes is the WebView2 package download 404ing and no
 # other lane has that path to fail on.
