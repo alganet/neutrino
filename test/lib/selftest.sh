@@ -388,6 +388,49 @@ else
     bad "the sheet's digest does not parse, or lost a case -- the grid would drop this lane"
 fi
 
+# The grid's own two checks, against the sheet just built.
+#
+# matrix.py is the only tool that sees every lane at once, and until it grew
+# --strict it reported what it saw to a step that returned 0 regardless. Both of
+# the things it can now fail on had already happened and were caught by hand.
+if command -v "$(nt_python)" >/dev/null 2>&1 && [ -f "$WORK/sheet.html" ]; then
+    MREG="$WORK/registry.tsv"
+
+    # Declared and reported: nothing wrong, and the tool must say so.
+    {
+        printf 'sheet.probe.a\ta control\tselftest\n'
+        printf 'sheet.probe.b\ta control\tselftest\n'
+        printf 'sheet.probe.c\ta control\tselftest\n'
+    } > "$MREG"
+    if "$(nt_python)" "$ROOT/test/matrix.py" --strict --registry "$MREG" \
+        "$WORK/sheet.html" >/dev/null 2>&1; then
+        ok "matrix.py --strict passes a lane that reported what it declared"
+    else
+        bad "matrix.py --strict failed a lane that reported exactly its cases"
+    fi
+
+    # An id in a sheet that the registry does not declare. This is the shape a
+    # record read as rows takes: `500x400` reached the grid that way.
+    printf 'sheet.probe.a\ta control\tselftest\n' > "$MREG"
+    if "$(nt_python)" "$ROOT/test/matrix.py" --strict --registry "$MREG" \
+        "$WORK/sheet.html" >/dev/null 2>&1; then
+        bad "matrix.py --strict passed a sheet carrying undeclared case ids"
+    else
+        ok "matrix.py --strict fails on a case id cases.tsv does not declare"
+    fi
+
+    # A lane the registry expects rows from that reported none of them.
+    printf 'nothing.reported.here\ta case no sheet carries\tselftest\n' > "$MREG"
+    if "$(nt_python)" "$ROOT/test/matrix.py" --strict --registry "$MREG" \
+        "$WORK/sheet.html" >/dev/null 2>&1; then
+        bad "matrix.py --strict passed a lane that reported none of its cases"
+    else
+        ok "matrix.py --strict fails on a lane that went quiet"
+    fi
+else
+    echo "  SKIP: no python3 or no sheet, so matrix.py --strict did not run"
+fi
+
 echo
 echo "### the registry, against every suite that speaks to it"
 

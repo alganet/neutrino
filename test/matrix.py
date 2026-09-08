@@ -192,7 +192,7 @@ def markdown(lanes, grid, reg, holes):
 
 
 def main(argv):
-    fmt, reg_path, paths = "text", "test/cases.tsv", []
+    fmt, reg_path, paths, strict = "text", "test/cases.tsv", [], False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -200,6 +200,8 @@ def main(argv):
             fmt = "markdown"
         elif a == "--text":
             fmt = "text"
+        elif a == "--strict":
+            strict = True
         elif a == "--registry":
             i += 1
             reg_path = argv[i]
@@ -230,6 +232,50 @@ def main(argv):
 
     print(markdown(lanes, grid, reg, holes) if fmt == "markdown"
           else text(lanes, grid, reg, holes))
+
+    # Two things that are wrong with the *run* rather than with the product, and
+    # that only this tool can see because only this tool reads all ten sheets.
+    #
+    # Until now it could see them and say nothing: the matrix job is
+    # `if: always()` and this returned 0 whatever it found, so the grid was a
+    # thing a person had to read and compare by hand. Both of the following have
+    # actually happened, and both were caught by a human diffing two grids.
+    #
+    # A lane that went quiet: it published a sheet, the registry says cases
+    # apply to it, and it reported none of them. That is what four lanes looked
+    # like before the netinstall suites spoke this vocabulary, and it is what a
+    # lane looks like when its results directory is never created -- a `cp` with
+    # `|| true` on the end that copies nothing, which cannot fail on its own.
+    quiet = []
+    for lane in lanes:
+        want = [cid for cid, (_, spec) in reg.items() if applies(spec, lane)]
+        if not want:
+            continue
+        got = [cid for cid in want if lane in grid.get(cid, {})]
+        if not got:
+            quiet.append((lane, len(want)))
+
+    # A case id no registry row declares. cases.tsv is meant to be the list of
+    # every assertion this suite makes, and an id that reaches a sheet without
+    # being in it is either a typo or something that is not an assertion at all:
+    # a walk *record* was once read as rows and put two cases in this grid
+    # called `500x400` and `900x600`.
+    stray = sorted(cid for cid in grid if cid not in reg)
+
+    if quiet:
+        print()
+        print("lanes that published a sheet and reported none of their cases (%d):"
+              % len(quiet))
+        for lane, n in quiet:
+            print("  %-20s %d case(s) apply and none were reported" % (lane, n))
+    if stray:
+        print()
+        print("case ids in a sheet that cases.tsv does not declare (%d):" % len(stray))
+        for cid in stray:
+            print("  %s   on: %s" % (cid, " ".join(sorted(grid[cid]))))
+
+    if strict and (quiet or stray):
+        return 1
     return 0
 
 
