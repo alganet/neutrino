@@ -877,7 +877,9 @@ facts both assert. An id says two lanes asserted one thing whatever either of
 them printed.
 
 Every id belongs in [`test/cases.tsv`](test/cases.tsv), which is also what makes
-a case that *no* lane reported readable as a hole rather than as silence.
+a case a lane did not report readable as a hole rather than as silence — a case
+the registry says applies to four lanes and only three reported is a `-` in the
+grid and a failure under `--strict`, the same as one no lane reported at all.
 
 `nt_skip` is for a lane where the question does not apply — an engine whose
 system-font keywords are not the desktop's cannot be asked whether the two
@@ -905,6 +907,34 @@ registry — in about six seconds, with no display and no app.
 bash test/lib/selftest.sh                          # the harness, offline
 bash test/verify-std.sh win shots/ test/lib/records/gjs.win.tsv   # replay one
 ```
+
+### Running a lane
+
+A lane is a list, and the list is a file rather than a job. Until it was,
+the only way to run a lane the way CI runs it was to be CI: the answer to
+"what does the kde lane do" was thirty steps of
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) held in your head, and
+the difference between two lanes that was there on purpose looked exactly like
+the difference that was there by accident.
+
+[`test/suites.tsv`](test/suites.tsv) is that list — lane, suite, the desktop the
+suite needs, and the command — and
+[`test/apps.tsv`](test/apps.tsv) is the artifacts, each built once and passed
+through `parse.sh` before anything runs it.
+[`test/run.sh`](test/run.sh) reads both and
+[`test/step.sh`](test/step.sh) runs one row: the display, the app launch and its
+reaping, the leash, and the log where the sheet step will find it.
+
+```bash
+bash test/run.sh --list gjs        # what that lane runs, in order
+bash test/run.sh --dry-run gjs     # the argv each row resolves to
+bash test/run.sh gjs stddoc        # one suite, the way CI runs it
+bash test/run.sh gjs               # the whole lane
+```
+
+The exit status is the lane's failure count. Four lanes have no rows and should
+not: `bsd`, `kde-live`, `wayland` and `macos-netinstall` each run one command —
+`netinstall/test/run.sh`, or `qtkde.sh` — inside a VM action or a container.
 
 ### Reading a CI run
 
@@ -968,7 +998,9 @@ netinstall to run one.
 - `test/`: the suites, and `test/lib/` the harness they share -- `harness.sh`
   (the vocabulary), `analyse.sh` (the standards assertions, one copy for every
   lane), `display.sh`, `selftest.sh` and the recorded runs it replays.
-  `test/cases.tsv` is the case registry and `test/step.sh` is how a lane runs one
+  `test/cases.tsv` is the case registry, `test/suites.tsv` and `test/apps.tsv`
+  are what each lane runs and what it builds, and `test/run.sh` and
+  `test/step.sh` are what read them
 - `netinstall/`: the name-addressed launcher, and its own suite
 - `pages/`: the demo site published at alganet.github.io/neutrino/
 - `LICENSE`: ISC license
