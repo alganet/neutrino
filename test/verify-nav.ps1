@@ -66,23 +66,53 @@ $target = "http://127.0.0.1:$port/nav-target.html"
 $work = Join-Path $env:TEMP ("verifynav-" + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 $serverLog = Join-Path $work "server.log"
-$failures = 0
+# The six words. This suite is where `report: PASS:` came from -- Say printed
+# the reading prefix and the verdict prefix on one line, which is why sheet.sh
+# strips a prefix twice and why harness.sh's own header names this file. It also
+# ended `if ($failures -gt 0) { exit 1 }`, so twelve failures and one were the
+# same number to the lane.
+. (Join-Path $PSScriptRoot "lib\harness.ps1")
 
 $lines = New-Object System.Collections.ArrayList
-function Say($m) { Write-Output "report: $m"; [void]$lines.Add("report: $m") }
-function Fail($m) {
-    Write-Output "FAIL: $m"
-    [void]$lines.Add("FAIL: $m")
-    $script:failures++
-}
+function Say($m) { nt_report $m; [void]$lines.Add("report: $m") }
 function Save-Log { Set-Content -Path $log -Value $lines -Encoding ASCII }
 
-function Assert-Is($what, $expected, $actual) {
-    if ($actual -eq $expected) {
-        Say "PASS: $what ($actual)"
-    } else {
-        Fail "$what : expected $expected, got $actual"
+# Every verdict, filed and logged.
+#
+# nav.log is an artifact a person opens: ci.yml cats it in a step of its own and
+# the sheet carries $HOME\navlogs as a source beside the pictures. A verdict that
+# reached stdout and not this list would be missing from the one file somebody
+# reads, so the two channels the harness already writes get a third here.
+#
+# Named assert_* because the id arrives in a variable, which is the one shape
+# selftest.sh's registry scan cannot follow by itself and the prefix it knows.
+function assert_verdict($id, $verdict, $m) {
+    switch ($verdict) {
+        "PASS" { nt_pass $id $m }
+        "FAIL" { nt_fail $id $m }
+        "SKIP" { nt_skip $id $m }
     }
+    [void]$lines.Add("${verdict}: $m")
+}
+
+function assert_is($id, $what, $expected, $actual) {
+    if ($actual -eq $expected) {
+        assert_verdict $id "PASS" "$what ($actual)"
+    } else {
+        assert_verdict $id "FAIL" "$what : expected $expected, got $actual"
+    }
+}
+
+# The seven cases below the target all need a page that answers. Where there is
+# none, each says so rather than going unreported.
+function skip_measurements($why) {
+    assert_verdict nav.reported "SKIP" $why
+    assert_verdict nav.control.window "SKIP" $why
+    assert_verdict nav.control.asked "SKIP" $why
+    assert_verdict nav.refused "SKIP" $why
+    assert_verdict nav.popup.refused "SKIP" $why
+    assert_verdict nav.no-escape "SKIP" $why
+    assert_verdict nav.one-window "SKIP" $why
 }
 
 # Every GET this server saw, in order. python -m http.server logs to stderr,
@@ -113,9 +143,10 @@ function Stop-Apps {
 $python = (Get-Command python -ErrorAction SilentlyContinue)
 if (-not $python) { $python = (Get-Command python3 -ErrorAction SilentlyContinue) }
 if (-not $python) {
-    Fail "no python on this runner; the target cannot be served and nothing below means anything"
+    assert_verdict nav.target.served "FAIL" "no python on this runner; the target cannot be served and nothing below means anything"
+    skip_measurements "there was no target to navigate at, so nothing below was measured"
     Save-Log
-    exit 1
+    nt_finish
 }
 
 $server = Start-Process -FilePath $python.Source `
@@ -132,12 +163,13 @@ for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 1
 }
 if (-not $up) {
-    Fail "nothing answering at $target; a page that navigates into a closed port measures nothing"
+    assert_verdict nav.target.served "FAIL" "nothing answering at $target; a page that navigates into a closed port measures nothing"
+    skip_measurements "there was no target to navigate at, so nothing below was measured"
     if ($server -and -not $server.HasExited) { $server.Kill() }
     Save-Log
-    exit 1
+    nt_finish
 }
-Say "control target=UP url=$target"
+assert_verdict nav.target.served "PASS" "control target=UP url=$target"
 
 # ------------------------------------------------------------------ the app
 
@@ -173,18 +205,20 @@ while ((Get-Date) -lt $deadline) {
 foreach ($t in $titles) { Say "title $t" }
 
 if ($titles.Count -eq 0) {
-    Fail "the app never reported; a build that renders nothing refuses everything by doing nothing"
+    assert_verdict nav.reported "FAIL" "the app never reported; a build that renders nothing refuses everything by doing nothing"
     Say "windows with a title when the wait gave up:"
     Get-Process | Where-Object { $_.MainWindowTitle -ne "" } |
         ForEach-Object { Say "  $($_.ProcessName): $($_.MainWindowTitle)" }
+} else {
+    assert_verdict nav.reported "PASS" "the app reported $($titles.Count) title(s)"
 }
 
 # The controls first, and the run is over if either fails: everything after them
 # is a refusal, and a refusal only means something once the thing that would
 # have been refused is known to have happened.
-Assert-Is "the app came up and drove its own window (control)" $true `
+assert_is nav.control.window "the app came up and drove its own window (control)" $true `
     (@($titles | Where-Object { $_ -like "NAV-READY*" }).Count -gt 0)
-Assert-Is "the page asked for a window (control)" $true `
+assert_is nav.control.asked "the page asked for a window (control)" $true `
     (@($titles | Where-Object { $_ -like "NAV-POPUP*" }).Count -gt 0)
 
 # What window.open returned is reported, not asserted. Handled=true was measured
@@ -195,14 +229,14 @@ Say "popup $(($titles | Where-Object { $_ -like 'NAV-POPUP*' } |
 
 # ------------------------------------------------------------ the refusals
 
-Assert-Is "the navigation was refused" "NO" `
+assert_is nav.refused "the navigation was refused" "NO" `
     $(if ((Beacons "probe%3Dnav&").Count -gt 0) { "YES" } else { "NO" })
 # Neither route may produce a document. `window.open` cannot reach the engine
 # with this url any more, so what this now asserts is the anchor's half: a
 # `<a target=_blank>` must not become a view that fetches. Under the offline
 # tier there is no other way for that url to be requested, which is what keeps
 # the reading unambiguous.
-Assert-Is "the new window was refused" "NO" `
+assert_is nav.popup.refused "the new window was refused" "NO" `
     $(if ((Beacons "probe%3Dpopup&").Count -gt 0) { "YES" } else { "NO" })
 
 # Said whichever way it goes, because "the document that would have arrived was
@@ -220,7 +254,7 @@ Say ("would-have-carried api=" + (Beacon-Field "probe%3Dnav&" "api") +
 # forged record could carry a setTitle; that record is gone and this is what it
 # probed. The title branch reading Source is what answers both.
 $escaped = @($titles | Where-Object { $_ -match "NAV-ESCAPED" })
-Assert-Is "no document that was navigated to drove the window" 0 $escaped.Count
+assert_is nav.no-escape "no document that was navigated to drove the window" 0 $escaped.Count
 foreach ($e in $escaped) { Say "ESCAPE $e" }
 
 # One window, not two. Counted over the browser process as well as the app's:
@@ -264,7 +298,7 @@ function App-Windows {
 
 $wins = App-Windows
 foreach ($w in ($wins | Select-Object -First 6)) { Say "window [$w]" }
-Assert-Is "the app owns one window" 1 $wins.Count
+assert_is nav.one-window "the app owns one window" 1 $wins.Count
 
 Say "server saw $((Beacons 'GET').Count) request(s), $((Beacons 'neutrino-beacon').Count) of them beacons"
 
@@ -272,6 +306,4 @@ Stop-Apps
 if ($server -and -not $server.HasExited) { $server.Kill() }
 Save-Log
 
-Write-Output "=== Results: $failures failure(s) ==="
-if ($failures -gt 0) { exit 1 }
-exit 0
+nt_finish

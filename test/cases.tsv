@@ -177,6 +177,37 @@ attack.forge.refused	a forged title is refused where the title is not the channe
 attack.nav.refused	the hostile navigation is refused	gjs kde macos windows-content
 attack.postnav.channel	a refused navigation leaves the app able to drive its own window	gjs kde macos windows-content
 
+# The hostile navigation against a target that answers, from test/verify-nav.ps1.
+#
+# The attack family above asks this question too and cannot settle it: that page
+# aims at a host that never resolves, so the load fails on its own and a driver
+# with no guard reports the same REFUSED as one with. This suite serves a real
+# page on a real port, which is the difference, and it is why attack.nav.refused
+# carries the comment pointing here.
+#
+# windows-content alone. test/navrefuse.sh asks about a navigation refusal on
+# macOS and shares two of these sentences, but not the apparatus: it patches the
+# refusal line out of the artifact and compares the guarded build against the
+# unguarded one, where this serves a target and reads what arrived at it. Two
+# suites answering differently-shaped questions should not be made to share ids
+# because two of their sentences agree -- that is the thing the ids were
+# introduced to stop.
+#
+# nav.target.served is the control, and it is a case rather than a reading
+# because the run is meaningless without it: a page that navigates into a closed
+# port refuses nothing by having nothing to refuse. The two apparatus exits that
+# used to end this suite -- no python, and nothing answering -- file it as a
+# failure and skip the seven below, where before they exited 1 with no verdict
+# at all.
+nav.target.served	the navigation target was served	windows-content
+nav.reported	the app reported a title	windows-content
+nav.control.window	the app came up and drove its own window	windows-content
+nav.control.asked	the page asked for a window	windows-content
+nav.refused	the hostile navigation was refused	windows-content
+nav.popup.refused	the new window was refused	windows-content
+nav.no-escape	no document that was navigated to drove the window	windows-content
+nav.one-window	the app owns one window	windows-content
+
 # The app on the download page, from test/demo.sh and test/demo.ps1 -- the one
 # artifact in this tree nobody ran, and the second twin pair to answer one set
 # of questions rather than two that happen to agree.
