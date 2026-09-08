@@ -69,6 +69,27 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 . "$(dirname "$0")/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity, so the one sourced second is the one this file
+# speaks. Every call below carries a case id. nt_result is lib.sh's and is not
+# shadowed -- the report lines stay readings.
+#
+# The sixth netinstall suite through the conversion, and the first where a lane
+# can be unable to make a claim rather than merely fail it. Three things gate
+# whole sections here: whether the platform delivers a 300-character name across
+# execv, whether it delivers 259, and whether it is windows -- whose scrub edits
+# the environment block by hand and so shares neither the empty-name trigger nor
+# the assigned-environ question.
+#
+# Every one of those branches reports. A section that cannot run emits nt_skip
+# with the reason, rather than falling through in silence, because the grid
+# reads rows and a lane that is exempt must not look like a lane that stopped
+# reporting. That is the hole writable.sh's fetch sentence had on windows, and
+# this file had five more of them.
+. "$(cd "$(dirname "$0")/../../test/lib" && pwd)/harness.sh"
+# The annotation lib.sh's nt_fail emitted, kept by name so a red netinstall check
+# still says so on the run page.
+NT_ANNOTATE=netinstall
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 WORK="$(mktemp -d)"
@@ -77,7 +98,6 @@ mkdir -p "$SERVE" "$WORK/bin"
 export NEUTRINO_HOME="$WORK/home"
 trap 'kill ${NT_SERVER_PID:-} 2>/dev/null; rm -rf "$WORK"' EXIT
 
-FAILURES=0
 
 # A name of exactly $2 characters, starting with $1 and padded with $3. Doubled
 # rather than appended one at a time: the ceiling probe asks for 65536 and a
@@ -110,10 +130,14 @@ if [ "$PROBE_STATE" != "BUILT" ]; then
     # Every section below reads through it. A suite that cannot build its own
     # instrument has measured nothing and must not report a shape of silence
     # that looks like an answer.
-    nt_fail "envlen-probe did not build: $PROBE_STATE"
+    nt_fail envlen.probe.built "envlen-probe did not build: $PROBE_STATE"
     nt_result "report: envlen probe=$PROBE_STATE -- nothing else in this suite ran"
     exit 1
 fi
+# Said when it holds, and it was not before. A build that worked printed only
+# the heading, so the row that carries "the instrument exists" was filed on
+# exactly the runs where nothing else could be filed either.
+nt_pass envlen.probe.built "the probe built, so everything below has an instrument"
 
 # =====================================================================
 # A -- how long a name this platform delivers across execv
@@ -146,10 +170,9 @@ nt_result "report: envlen ceiling delivered=[${CEIL_OK# }] refused=[${CEIL_NO# }
 # length the old buffer could not express: below that there is nothing here to
 # measure and a green tick would be one earned by a name that never arrived.
 if [ "$CEIL_MAX" -ge 300 ]; then
-    echo "  PASS: this platform delivers the 300-character name the suite uses"
+    nt_pass envlen.ceiling "this platform delivers the 300-character name the suite uses"
 else
-    nt_fail "ceiling expected=>=300 actual=$CEIL_MAX; the rest of this suite cannot run"
-    FAILURES=$((FAILURES + 1))
+    nt_fail envlen.ceiling "ceiling expected=>=300 actual=$CEIL_MAX; the rest of this suite cannot run"
 fi
 
 # The length everything below uses for "a name the drop cannot express". 300 if
@@ -202,9 +225,10 @@ APP="$(nt_as "$BIN" "$SPEC" "$WORK/bin")"
 
 # Ran once here so every reading below is about the scrub and not about a
 # download; the pin is re-checked on every launch either way.
-if ! env NEUTRINO_TEST_BATTERY="$NT_KEEP" "$APP" >/dev/null 2>"$WORK/warm.err"; then
-    nt_fail "the payload did not run at all: $(tr '\n' ' ' < "$WORK/warm.err" | cut -c1-300)"
-    FAILURES=$((FAILURES + 1))
+if env NEUTRINO_TEST_BATTERY="$NT_KEEP" "$APP" >/dev/null 2>"$WORK/warm.err"; then
+    nt_pass envlen.payload.ran "the payload runs at all"
+else
+    nt_fail envlen.payload.ran "the payload did not run at all: $(tr '\n' ' ' < "$WORK/warm.err" | cut -c1-300)"
 fi
 
 # Runs the payload with a battery and an environment, and answers with the
@@ -250,13 +274,19 @@ ran() { grep -qx PROBE_END <<<"$1"; }
 
 # Every reading below was measured before the fix and is asserted to its value
 # after it, so each of these would have failed on the commit before this one.
-check_eq() {
-    local label="$1" want="$2" got="$3"
+# The id first, and the name is assert_eq rather than assert_eq for the reason
+# writable.sh's assert_sentence_names is not says_names: this is the helper that
+# takes its id through a variable, so it is the one the registry scan in
+# test/lib/selftest.sh cannot follow by reading the file. That scan knows
+# assert_[a-z_]+ as the shape of a wrapper handed an id. It is also the name
+# harness.sh already uses for this comparison -- nt_eq -- so the local one
+# reading assert_eq says what it is.
+assert_eq() {
+    local id="$1" label="$2" want="$3" got="$4"
     if [ "$got" = "$want" ]; then
-        echo "  PASS: $label ($got)"
+        nt_pass "$id" "$label ($got)"
     else
-        nt_fail "$label expected=$want actual=$got"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$id" "$label expected=$want actual=$got"
     fi
 }
 
@@ -288,29 +318,26 @@ for label in ctl first last; do
     esac
     [ "$label" != ctl ] && [ "$LONG_REACHABLE" != 1 ] && continue
     if ran "$o"; then
-        echo "  $label: the payload ran"
+        nt_pass envlen.scrub.ran "$label: the payload ran"
     else
-        nt_fail "the $label run's payload never finished: $(tr '\n' ' ' <<<"$o" | cut -c1-200)"
-        FAILURES=$((FAILURES + 1))
+        nt_fail envlen.scrub.ran "the $label run's payload never finished: $(tr '\n' ' ' <<<"$o" | cut -c1-200)"
     fi
 done
 
 CTL_GONE="$(count_gone "$CTL_OUT" "$NT_MARKS")"
 CTL_KEEP="$(seen_state "$CTL_OUT" "$NT_KEEP")"
 if [ "$CTL_GONE" = "9/9" ]; then
-    echo "  PASS: with nothing in the way the scrub removes all nine markers"
+    nt_pass envlen.scrub.control "with nothing in the way the scrub removes all nine markers"
 else
     # The positive control. Without it every reading below is satisfied by a
     # scrub that never ran, and by a payload that reported GONE for names the
     # runner never set.
-    nt_fail "control expected=9/9 markers dropped actual=$CTL_GONE"
-    FAILURES=$((FAILURES + 1))
+    nt_fail envlen.scrub.control "control expected=9/9 markers dropped actual=$CTL_GONE"
 fi
 if [ "$CTL_KEEP" = SEEN ]; then
-    echo "  PASS: the keeper arrived, so the payload can tell SEEN from GONE"
+    nt_pass envlen.scrub.keeper "the keeper arrived, so the payload can tell SEEN from GONE"
 else
-    nt_fail "keeper control expected=SEEN actual=$CTL_KEEP"
-    FAILURES=$((FAILURES + 1))
+    nt_fail envlen.scrub.keeper "keeper control expected=SEEN actual=$CTL_KEEP"
 fi
 
 if [ "$LONG_REACHABLE" = 1 ]; then
@@ -331,13 +358,21 @@ first=$FIRST_GONE(long=$FIRST_LONG survivors=[${SURV_F# }]) \
 last=$LAST_GONE(long=$LAST_LONG survivors=[${SURV_L# }])"
     # Was 0/9 on gjs, kde and openbsd and 1/9 on macOS, with the name itself
     # surviving on all six. The walk it stopped at is gone.
-    check_eq "the markers are dropped with the long name in front" 9/9 "$FIRST_GONE"
-    check_eq "the markers are dropped with the long name behind"   9/9 "$LAST_GONE"
-    check_eq "the long name is dropped too, in front" GONE "$FIRST_LONG"
-    check_eq "the long name is dropped too, behind"   GONE "$LAST_LONG"
+    assert_eq envlen.scrub.long.front "the markers are dropped with the long name in front" 9/9 "$FIRST_GONE"
+    assert_eq envlen.scrub.long.behind "the markers are dropped with the long name behind"   9/9 "$LAST_GONE"
+    assert_eq envlen.scrub.long.dropped.front "the long name is dropped too, in front" GONE "$FIRST_LONG"
+    assert_eq envlen.scrub.long.dropped.behind "the long name is dropped too, behind"   GONE "$LAST_LONG"
 else
     nt_result "report: envlen scrub len=$LONG_LEN UNREACHABLE ctl=$CTL_GONE keeper=$CTL_KEEP \
 -- no name over 255 characters reaches a child here"
+    # Four skips and not four silences. This is the finding's own shape -- a
+    # name the drop cannot express -- so a platform that will not carry one has
+    # nothing to say here, and that is a different answer from a platform that
+    # was asked and did not reply.
+    for c in envlen.scrub.long.front envlen.scrub.long.behind \
+             envlen.scrub.long.dropped.front envlen.scrub.long.dropped.behind; do
+        nt_skip "$c" "no name over 255 characters reaches a child here (max=$CEIL_MAX)"
+    done
 fi
 
 # The order the entries were actually in before netinstall touched them, which
@@ -438,33 +473,42 @@ drop259=$D_259 $D_OWNPAIR"
 plainkeeper=$(seen_state "$D_OUT" "$D_CTLKEEP") control-keep255=$D_CTL255 $D_OWNPAIR"
     fi
     if ran "$D_OUT" && ran "$D_CTL_OUT"; then
-        echo "  $D_STATE"
+        nt_pass envlen.trunc.ran "$D_STATE"
     else
-        nt_fail "the truncation run's payload never finished"
-        FAILURES=$((FAILURES + 1))
+        nt_fail envlen.trunc.ran "the truncation run's payload never finished"
     fi
     # The 259-character name is dropped everywhere, and it is the one thing this
     # section can assert on a platform that keeps no long name.
-    check_eq "the 259-character loader name is dropped" GONE "$D_259"
+    assert_eq envlen.trunc.drop259 "the 259-character loader name is dropped" GONE "$D_259"
     if [ "$D_CTL255" = SEEN ]; then
         # Was keep255=GONE drop259=SEEN on all four POSIX lanes: exactly this
         # pair, the other way round.
-        check_eq "the 255-character keeper is not truncated away" SEEN "$D_255"
-        check_eq "and it still arrives with nothing to truncate onto it" \
+        assert_eq envlen.trunc.keep255 "the 255-character keeper is not truncated away" SEEN "$D_255"
+        assert_eq envlen.trunc.keep255.control "and it still arrives with nothing to truncate onto it" \
             SEEN "$D_CTL255"
     else
         # Windows: nt_env_prefixes is #ifndef _WIN32, so QT_ is not admitted and
         # there is no long keeper to lose. Asserted so a prefix added there
         # later has to answer for it.
-        check_eq "no prefix here admits a long keeper, so neither name is one" \
+        assert_eq envlen.trunc.keep255 "no prefix here admits a long keeper, so neither name is one" \
             GONE "$D_255"
+        # One id, two expectations, and that is right: both branches are reading
+        # $D_255. What differs is what this platform should have done with it,
+        # which is the fact worth carrying. The control beside it has no windows
+        # equivalent -- there is no long keeper to arrive -- so it skips rather
+        # than going quiet.
+        nt_skip envlen.trunc.keep255.control "no prefix here admits a long keeper, so there is no control to take"
     fi
     # An own prefix is kept without the loader test, which is why nothing under
     # one can ever be a truncation's victim. True on every lane, PATH and all.
-    check_eq "an own-prefixed 255-character name arrives" SEEN "$D_OWN255"
-    check_eq "so does the same name with a loader shape in it" SEEN "$D_OWN259"
+    assert_eq envlen.trunc.own255 "an own-prefixed 255-character name arrives" SEEN "$D_OWN255"
+    assert_eq envlen.trunc.own259 "so does the same name with a loader shape in it" SEEN "$D_OWN259"
 else
     D_STATE="UNREACHABLE -- this platform delivers at most $CEIL_MAX characters"
+    for c in envlen.trunc.ran envlen.trunc.drop259 envlen.trunc.keep255 \
+             envlen.trunc.keep255.control envlen.trunc.own255 envlen.trunc.own259; do
+        nt_skip "$c" "$D_STATE"
+    done
 fi
 nt_result "report: envlen truncation $D_STATE"
 # UNREPORTED means the payload said nothing about a name either way, and the two
@@ -492,7 +536,7 @@ for n in 8 255 256 300 4096; do
     # a fix if the platform accepts it. The POSIX lanes no longer depend on
     # this; they are asserted anyway, because it is what says the finding was
     # about the buffer and never about the libc.
-    check_eq "a ${n}-character name can be set and removed" "$n=0/yes/0/gone" "$E_ONE"
+    assert_eq envlen.unsetlen "a ${n}-character name can be set and removed" "$n=0/yes/0/gone" "$E_ONE"
 done
 echo " $E_LINE"
 nt_result "report: envlen unsetlen(len=setrc/present/unsetrc/after)$E_LINE"
@@ -508,6 +552,11 @@ nt_result "report: envlen unsetlen(len=setrc/present/unsetrc/after)$E_LINE"
 echo "=== F: an environ entry with no name ==="
 if [ "$NT_WINDOWS" = "1" ]; then
     F_STATE="SKIP the windows scrub skips '=' entries by name"
+    # A row apiece, because windows-launch is one of the lanes these cases are
+    # expected on. The exemption is real -- the windows scrub edits the block
+    # and never walks environ -- and it now says so where the grid can read it.
+    nt_skip envlen.emptyname.scrub "the windows scrub skips '=' entries by name; there is no walk to stop"
+    nt_skip envlen.emptyname.control "the windows scrub skips '=' entries by name; there is no walk to stop"
 else
     F_OUT="$(nt_timeout 120 env "${MARKSET[@]}" NEUTRINO_TEST_BATTERY="$NT_MARKS $NT_KEEP" \
         "$PROBE" craft empty "$APP" 2>/dev/null)"
@@ -521,8 +570,8 @@ else
     echo "  $F_STATE"
     # Was 0/9 on all four POSIX lanes: unsetenv("") is EINVAL and the walk
     # arrived back at the same entry every pass. There is no walk now.
-    check_eq "an entry with no name does not stop the scrub" 9/9 "$F_EMPTY"
-    check_eq "and the same run without it is still the control" 9/9 "$F_CTLN"
+    assert_eq envlen.emptyname.scrub "an entry with no name does not stop the scrub" 9/9 "$F_EMPTY"
+    assert_eq envlen.emptyname.control "and the same run without it is still the control" 9/9 "$F_CTLN"
 fi
 
 # =====================================================================
@@ -548,6 +597,8 @@ fi
 echo "=== G: the two candidate fixes ==="
 if [ "$NT_WINDOWS" = "1" ]; then
     G_STATE="SKIP no environ to assign; the windows scrub edits the block"
+    nt_skip envlen.replace.setenv "no environ to assign here; the windows scrub edits the block"
+    nt_skip envlen.replace.survived "no environ to assign here; the windows scrub edits the block"
 else
     G_RAW="$(env NT_EL_CONTROL_DROPPED=1 "$PROBE" replace "$PROBE" emit 2>&1)"
     G_SELF="$(grep -o 'getenv-sees=[a-z]* dropped-still-visible=[a-z]*' <<<"$G_RAW")"
@@ -568,18 +619,18 @@ setafter[${G_AFT:-unreported} child=[${G_AFT_CHILD% }]] stability[$G_STAB]"
     # scrubs and then calls setenv_dir five times, so a libc that would not grow
     # an environ this program allocated would cost the app all five XDG
     # directories -- silently, and with the scrub still reporting success.
-    check_eq "setenv works on an environ this program allocated" \
+    assert_eq envlen.replace.setenv "setenv works on an environ this program allocated" \
         "setenv=0/0/0/0 getenv-all=yes base-still=yes" "$G_AFT"
     for n in NT_EL_REPLACED NT_EL_AFTER1 NT_EL_AFTER2 NT_EL_AFTER3 NT_EL_AFTER4; do
         case " $G_AFT_CHILD " in
-            *" $n "*) echo "  PASS: $n survived the exec" ;;
-            *) nt_fail "$n expected=survived the exec actual=absent from the child"
-               FAILURES=$((FAILURES + 1)) ;;
+            *" $n "*) nt_pass envlen.replace.survived "$n survived the exec" ;;
+            *) nt_fail envlen.replace.survived "$n expected=survived the exec actual=absent from the child" ;;
         esac
     done
 fi
 nt_result "report: envlen emptyname $F_STATE | $G_STATE"
 
 echo
-echo "=== envlen: $FAILURES failure(s) ==="
-exit "$FAILURES"
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts.
+echo "=== envlen: $NT_FAILURES failure(s) ==="
+exit "$NT_FAILURES"

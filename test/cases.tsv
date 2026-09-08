@@ -245,3 +245,47 @@ writable.letters	every target is held to what this platform measured	gjs bsd win
 writable.sentence.set	the sentence names the set rather than the first of it	gjs bsd windows-launch macos-netinstall
 writable.fetch.blobs	the fetch sentence names the blobs directory	gjs bsd windows-launch macos-netinstall
 writable.fetch.noreadclaim	the fetch sentence makes no read claim it cannot keep	gjs bsd windows-launch macos-netinstall
+
+# The environment scrub, from netinstall/test/envlen.sh. The same four lanes:
+# the netinstall suite without a shorter list named for it, and envlen is in the
+# reduced OpenBSD one too.
+#
+# This is the first suite here where a lane can be *unable* to make a claim
+# rather than merely fail it, and three things decide that: whether the platform
+# carries a 300-character name across execv, whether it carries 259, and whether
+# it is windows -- whose scrub edits the environment block by hand and so shares
+# neither the empty-name trigger nor the assigned-environ question.
+#
+# Every one of those branches reports. A section that cannot run emits a SKIP
+# with its reason rather than falling through, so no cell here can be a hole,
+# and the exemption is legible instead of being a lane name in an if. Measured
+# both ways: the suite emits the same twenty-one ids on Linux and with the
+# windows branches forced, five of them as skips on the second.
+#
+# envlen.trunc.keep255 is one id with two expectations, which is deliberate.
+# Both branches read the same value; what differs is what the platform should
+# have done with it -- a prefix that admits a long keeper must not truncate it,
+# and windows admits no such prefix so neither name is one. That is one claim
+# about one measurement, and splitting it would make the grid say two lanes
+# tested different things when they tested the same thing.
+envlen.probe.built	the suite built its own instrument	gjs bsd windows-launch macos-netinstall
+envlen.ceiling	the platform delivers the 300-character name the suite uses	gjs bsd windows-launch macos-netinstall
+envlen.payload.ran	the payload runs at all	gjs bsd windows-launch macos-netinstall
+envlen.scrub.ran	every scrub run's payload finished	gjs bsd windows-launch macos-netinstall
+envlen.scrub.control	with nothing in the way the scrub removes all nine markers	gjs bsd windows-launch macos-netinstall
+envlen.scrub.keeper	the keeper arrives, so the payload can tell SEEN from GONE	gjs bsd windows-launch macos-netinstall
+envlen.scrub.long.front	the markers are dropped with the long name in front	gjs bsd windows-launch macos-netinstall
+envlen.scrub.long.behind	the markers are dropped with the long name behind	gjs bsd windows-launch macos-netinstall
+envlen.scrub.long.dropped.front	the long name is dropped too, in front	gjs bsd windows-launch macos-netinstall
+envlen.scrub.long.dropped.behind	the long name is dropped too, behind	gjs bsd windows-launch macos-netinstall
+envlen.trunc.ran	the truncation run's payload finished	gjs bsd windows-launch macos-netinstall
+envlen.trunc.drop259	the 259-character loader name is dropped	gjs bsd windows-launch macos-netinstall
+envlen.trunc.keep255	a 255-character keeper is not truncated away	gjs bsd windows-launch macos-netinstall
+envlen.trunc.keep255.control	and it still arrives with nothing to truncate onto it	gjs bsd windows-launch macos-netinstall
+envlen.trunc.own255	an own-prefixed 255-character name arrives	gjs bsd windows-launch macos-netinstall
+envlen.trunc.own259	so does the same name with a loader shape in it	gjs bsd windows-launch macos-netinstall
+envlen.unsetlen	a name of any length can be set and removed	gjs bsd windows-launch macos-netinstall
+envlen.emptyname.scrub	an entry with no name does not stop the scrub	gjs bsd windows-launch macos-netinstall
+envlen.emptyname.control	and the same run without it is still the control	gjs bsd windows-launch macos-netinstall
+envlen.replace.setenv	setenv works on an environ this program allocated	gjs bsd windows-launch macos-netinstall
+envlen.replace.survived	every name set after the replace survived the exec	gjs bsd windows-launch macos-netinstall
