@@ -15,6 +15,12 @@ set -euo pipefail
 # platform's; the verdicts are not, and were three copies until now.
 . "$(cd "$(dirname "$0")" && pwd)/lib/walk.sh"
 
+# As in verify-linux.sh: the case this file answers after the shared walk, so a
+# walk that stops early skips it rather than leaving it a hole. macOS alone
+# holds it -- it watches a process after the window is gone, and there is
+# nothing in another lane's record to answer it from.
+NT_WALK_EXTRA="walk.close.process-exits"
+
 # Two budgets, because the first window is not like the ones after it. This is
 # the app's first launch on the runner: osascript starting, the bridge coming
 # up, WKWebView creating its content process, all of it before the first title
@@ -229,11 +235,17 @@ if [ -z "$(read_status_title)" ]; then
         nt_fail walk.window.appeared "no status file at $STATUS_FILE"
         echo "      the app writes one only when built with --testing;"
         echo "      a release build is silent here and looks identical to a crash"
+        WHY="there is no status file to read a window from"
     else
         nt_fail walk.window.appeared "window never appeared"
+        WHY="the window never appeared"
     fi
     report_launcher
-    exit 1
+    # The launcher's account first, then the rest of the walk said rather than
+    # left out: this exited 1 with seven cases unreported, and the run where the
+    # app never came up is the one whose grid then claimed the suite had not run.
+    nt_walk_skip_after walk.window.appeared "$WHY, so this was never reached"
+    nt_finish
 fi
 nt_pass walk.window.appeared "the app opened a window"
 echo "Window found"
@@ -243,22 +255,22 @@ echo "=== Step 0: Ready ==="
 # The long budget once more. The window exists from the wait above, but the
 # document and the page script behind it may not, and that stretch is the one
 # that has been slow.
-wait_for_title "STEP0" "$FIRST_TIMEOUT" || { nt_fail walk.step0.reached "STEP0 never reached"; exit 1; }
+wait_for_title "STEP0" "$FIRST_TIMEOUT" || nt_walk_stopped walk.step0.reached "STEP0 never reached"
 assert_title walk.step0.reached "STEP0"
 screenshot "01-step0"
 
 echo "=== Step 1: title ==="
-wait_for_title "STEP1-Test Title" || { nt_fail walk.title "STEP1 never reached"; exit 1; }
+wait_for_title "STEP1-Test Title" || nt_walk_stopped walk.title "STEP1 never reached"
 assert_title walk.title "STEP1-Test Title"
 screenshot "02-step1"
 
 echo "=== Step 2: resize ==="
-wait_for_title "STEP2" || { nt_fail walk.resize "STEP2 never reached"; exit 1; }
+wait_for_title "STEP2" || nt_walk_stopped walk.resize "STEP2 never reached"
 assert_geometry walk.resize 500 400
 screenshot "03-step2"
 
 echo "=== Step 3: move ==="
-wait_for_title "STEP3" || { nt_fail walk.move "STEP3 never reached"; exit 1; }
+wait_for_title "STEP3" || nt_walk_stopped walk.move "STEP3 never reached"
 assert_position walk.move 0 0
 screenshot "04-step3"
 
@@ -283,7 +295,7 @@ else
 fi
 
 echo "=== Waiting for TESTS DONE ==="
-wait_for_title "TESTS DONE" || { nt_fail walk.done "tests never completed"; exit 1; }
+wait_for_title "TESTS DONE" || nt_walk_stopped walk.done "tests never completed"
 nt_pass walk.done "the walk ran to the end"
 screenshot "06-done"
 

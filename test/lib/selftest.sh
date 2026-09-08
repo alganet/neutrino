@@ -287,6 +287,64 @@ wait "$DECOY" 2>/dev/null || true
 [ "$(awk -F'\t' '$3 == "walk.done" { print $4 }' "$BAD")" = "PASS" ] \
     && ok "one failed case does not stop the cases after it" \
     || bad "the walk stopped after the failure; later cases went unreported"
+
+# A walk that *stops*, which is a different path from a case that fails.
+#
+# The check above is a comparator saying no: the title arrived, the window was
+# the wrong size, and the walk carried on. This is a title that never arrives at
+# all, and until nt_walk_stopped it was `nt_fail <id>; exit 1` -- no totals line,
+# an exit status of 1 rather than the failure count test/run.sh adds up, and
+# every case below the stop filing nothing at all.
+#
+# The last of those is what this is really for. An unreported case is a hole,
+# and a hole is what --strict goes red on and what matrix.py cannot tell from a
+# lane that never ran the suite -- so one genuine walk failure produced one FAIL
+# and seven cells claiming the suite had not run, and the run that most needed
+# reading was the one whose grid said the least.
+#
+# The first four titles and no more, with the instrument also reporting the
+# wrong size. So the walk reaches STEP2, fails walk.resize on the geometry, and
+# then waits out its timeout for a STEP3 that never comes -- two failures, one
+# of them the stop.
+#
+# Two and not one on purpose. With a single failure the old shape's `exit 1`
+# and the contract's "exit the failure count" are the same number, and a check
+# that cannot tell them apart is not checking the contract. Here they are 1
+# and 2.
+cp "$STATE/titles" "$STATE/titles.full"
+sed -n '1,4p' "$STATE/titles.full" > "$STATE/titles"
+echo 1 > "$STATE/idx"; echo 0 > "$STATE/seen"
+mkxdotool 640x480
+STOP="$WORK/stop.tsv"
+PATH="$BIN:$PATH" NT_LANE=selftest NT_RESULTS="$STOP" NT_WAIT_TIMEOUT=2 \
+    bash "$ROOT/test/verify-linux.sh" "$WORK/shots-stop" > "$WORK/stop.out" 2>&1
+STOPRC=$?
+cp "$STATE/titles.full" "$STATE/titles"
+
+stopv() { awk -F'\t' -v c="$1" '$3 == c { print $4 }' "$STOP" 2>/dev/null; }
+
+[ "$(stopv walk.move)" = "FAIL" ] \
+    && ok "a walk that never reaches STEP3 fails the case it stopped on" \
+    || bad "walk.move was '$(stopv walk.move)' on a walk that stopped there"
+
+STOPSKIPPED=""
+for c in walk.theme.readable walk.fonts.readable walk.done \
+         walk.renderer.sandboxed; do
+    [ "$(stopv "$c")" = "SKIP" ] || STOPSKIPPED="$STOPSKIPPED $c=$(stopv "$c" | tr -d '\n')"
+done
+[ -z "$STOPSKIPPED" ] \
+    && ok "every case below the stop is skipped by name, not left unreported" \
+    || bad "a stopped walk left these unskipped:$STOPSKIPPED"
+
+# The two halves of the exit contract, which the bare `exit 1` had neither of.
+grep -q '^report: totals ' "$WORK/stop.out" \
+    && ok "a stopped walk still prints its totals line" \
+    || bad "a stopped walk printed no totals line"
+[ "$STOPRC" = "2" ] \
+    && ok "a stopped walk exits its failure count, not 1" \
+    || bad "a stopped walk exited $STOPRC, wanted 2 (one failure before the stop, and the stop)"
+
+echo 1 > "$STATE/idx"; echo 0 > "$STATE/seen"
 mkxdotool 500x400
 
 fi   # NT_HAVE_GREP_P

@@ -130,7 +130,13 @@ nt_walk_replay() {
     first="$(awk -F'\t' 'NR == 1 { print $2; exit }' "$NT_WALK_REC")"
     nt_walk_reached walk.window.appeared "$first" \
         "the app opened a window" "window never appeared"
-    [ -n "$first" ] || return 0
+    # nt_walk_reached has already filed the failure; what was missing is the
+    # seven cases below it, which returned unreported and read as holes.
+    if [ -z "$first" ]; then
+        nt_walk_skip_after walk.window.appeared \
+            "the record's first row named no window, so the walk never started"
+        return 0
+    fi
 
     step0="$(nt_walk_field 2 STEP0)"
     nt_walk_reached walk.step0.reached "$step0" \
@@ -178,6 +184,56 @@ nt_walk_replay() {
         "the walk ran to the end" "tests never completed"
 }
 
+# ---------------------------------------------------------- a walk that stops
+#
+# The walk's cases, in the order the walk reaches them. The order is what makes
+# a stop reportable: everything after the case that failed is a question this
+# run never got to ask, which is a skip.
+NT_WALK_ORDER="walk.window.appeared walk.step0.reached walk.title walk.resize \
+walk.move walk.theme.readable walk.fonts.readable walk.done"
+
+# Cases a particular verifier answers after the shared walk. verify-linux.sh
+# owns walk.renderer.sandboxed and verify-macos.sh owns walk.close.process-exits,
+# and a walk that stops early leaves those unreported too -- but each applies to
+# only some of the five lanes, and matrix.py renders a verdict filed outside a
+# case's applies-to as `.` and drops it. So the suite that owns one names it
+# here, rather than this file skipping cases three of the lanes do not have.
+NT_WALK_EXTRA="${NT_WALK_EXTRA:-}"
+
+# Everything the walk had not reached, said rather than left out.
+nt_walk_skip_after() {
+    at="$1"
+    why="$2"
+    seen=0
+    for id in $NT_WALK_ORDER; do
+        # `if` and not `[ ] && `, because these suites run under `set -e` and an
+        # AND-OR list whose test fails is a failing command in its own right.
+        if [ "$seen" = 1 ]; then nt_skip "$id" "$why"; fi
+        if [ "$id" = "$at" ]; then seen=1; fi
+    done
+    for id in $NT_WALK_EXTRA; do
+        nt_skip "$id" "$why"
+    done
+    return 0
+}
+
+# The walk stopped here: fail the case it stopped on, skip what it never
+# reached, and finish on the totals line.
+#
+# What this replaces is `nt_fail <id> "..."; exit 1`, eleven times across the two
+# verifiers and twice in this file. That shape had three faults at once, and the
+# third is the expensive one: no totals line, an exit status of 1 rather than the
+# failure count test/run.sh adds up without parsing anything, and every case
+# below the stop filing nothing at all. So one genuine walk failure produced one
+# FAIL and up to seven holes -- and a hole is what --strict goes red on, and what
+# matrix.py cannot tell from a lane that never ran the suite. The run that most
+# needed reading was the one whose grid said the least.
+nt_walk_stopped() {
+    nt_fail "$1" "$2"
+    nt_walk_skip_after "$1" "the walk stopped at $1 ($2), so this was never reached"
+    nt_finish
+}
+
 # Run, not sourced.
 #
 # Told apart by BASH_SOURCE rather than by whether an argument arrived, which is
@@ -193,8 +249,7 @@ if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
         exit 2
     fi
     if [ ! -f "$NT_WALK_REC" ]; then
-        nt_fail walk.window.appeared "no record at '$NT_WALK_REC'"
-        exit 1
+        nt_walk_stopped walk.window.appeared "no record at '$NT_WALK_REC'"
     fi
     nt_walk_replay
     exit "$NT_FAILURES"
