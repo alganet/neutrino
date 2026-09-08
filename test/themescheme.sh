@@ -139,7 +139,7 @@ kill "$APP" 2>/dev/null || true
 cat "$VERIFY_LOG"
 
 PAL="$(sed -n 's/^report: self palette //p' "$VERIFY_LOG" | head -1)"
-val() { printf '%s' " $PAL" | sed -n "s/.* $1=\([^ ]*\).*/\1/p"; }
+val() { nt_field "$1" "$PAL"; }
 
 if [ -z "$PAL" ]; then
     nt_fail themescheme.reported "the app never reported a palette; there is no reading here to judge"

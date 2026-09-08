@@ -32,6 +32,11 @@ FAILURES=0
 fail() { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 note() { echo "report: $*"; }
 
+# nt_field, for the ` key=value` reading below -- anchored on the space before
+# the key, so `AccentColor` cannot be matched inside `AccentColorText`. Seven
+# files spelled that sed thirteen times and three of them spelled it wrong.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+
 for f in "$A" "$B"; do
     if [ -z "$f" ] || [ ! -f "$f" ]; then
         fail "no log at '${f:-<none>}'; the differential has one side"
@@ -44,7 +49,6 @@ done
 # that failed a control of its own still wrote the line, and a run that never
 # came up wrote none -- which is a different reading and has to stay different.
 sampler() { sed -n "s/^report: sampler $2 //p" "$1" | head -1; }
-val() { printf '%s' " $1" | sed -n "s/.* $2=\([^ ]*\).*/\1/p"; }
 
 EA="$(sampler "$A" extent)"
 EB="$(sampler "$B" extent)"
@@ -56,7 +60,7 @@ if [ -z "$EA" ] || [ -z "$EB" ]; then
 fi
 
 # The first token is the list of distinct extents; via= is the last field.
-VIA_A="$(val "$EA" via)"; VIA_B="$(val "$EB" via)"
+VIA_A="$(nt_field via "$EA")"; VIA_B="$(nt_field via "$EB")"
 SET_A="${EA%% via=*}"; SET_B="${EB%% via=*}"
 
 note "decorated extent=[$SET_A] via=$VIA_A"

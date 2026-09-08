@@ -86,7 +86,7 @@ nt_pass early.reported "the app reported a title"
 
 echo "  report: $TITLE"
 
-field() { echo "$TITLE" | sed -n "s/.* $1=\([A-Za-z]*\).*/\1/p"; }
+field() { nt_field "$1" "$TITLE"; }
 
 
 TRANSPORT="$(field tx)"

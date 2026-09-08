@@ -125,10 +125,11 @@ nt_pass attack.reported "the attack app reported a settled title"
 
 echo "  report: $TITLE"
 
-# Anchored on the space that separates one field from the next. Without it
-# "nav" also matches the tail of "postnav", and the two are different
-# answers to different questions.
-field() { echo "$TITLE" | sed -n "s/.* $1=\([A-Za-z]*\).*/\1/p"; }
+# The reading this file takes, out of the title it just settled on. The regex
+# was this file's own and it named the hazard it guards -- "nav" matching the
+# tail of "postnav" -- while leaving the subject unanchored, so a key in the
+# first column would have read as absent. The harness carries both halves.
+field() { nt_field "$1" "$TITLE"; }
 
 # assert_*, and named that way for the registry scan: the id arrives in a
 # variable here, and the prefix is the convention that scan knows.

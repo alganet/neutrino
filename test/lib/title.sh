@@ -56,11 +56,11 @@
 # is how a suite run by hand on a desk reads for a window server it does not
 # have.
 
-# Sourced by a file that already has the harness, or reached by one that only
-# wants nt_field and does not. The guard is walk.sh's and analyse.sh's, for the
-# reason those two give: sourcing harness.sh twice resets the counters a live
-# verifier is part-way through filling. NT_STATUS_FILE below is the harness's,
-# which is why this cannot simply assume it.
+# Sourced by a file that already has the harness, or reached by one that does
+# not. The guard is walk.sh's and analyse.sh's, for the reason those two give:
+# sourcing harness.sh twice resets the counters a live verifier is part-way
+# through filling. NT_STATUS_FILE below is the harness's, which is why this
+# cannot simply assume it.
 if ! command -v nt_pass >/dev/null 2>&1; then
     NT_TITLE_LIB="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/harness.sh"
     # shellcheck source=/dev/null
@@ -176,25 +176,3 @@ nt_title_gone() {
     done
     return 1
 }
-
-# One ` key=value` field out of a report, and the six copies of this were the
-# clearest case in the tree of one line being written three ways.
-#
-#   verify-attack.sh  verify-early.sh                 [A-Za-z]*, unanchored
-#   demo.sh                                           [^ ]*,     unanchored
-#   decodiff.sh  themediff.sh  themescheme.sh         [^ ]*,     anchored
-#
-# The space before the key is what separates the fields, and without it `nav`
-# also matches the tail of `postnav` -- two different answers to two different
-# questions, and both of them in the same title. Every copy has that space in
-# its pattern. What only three have is the space *prepended to the subject*,
-# which is what lets the first field on a line match at all: with the subject
-# `nav=held postnav=held` and no leading space there is no ` nav=` to find and
-# the key that is plainly there reads as absent.
-#
-# `[^ ]*` and not `[A-Za-z]*`: the narrow class silently truncates a value with
-# a digit or a dash in it, and a truncated reading compares unequal to itself
-# without saying why. Nothing in the tree relies on the truncation -- the fields
-# the two attack verifiers read are words -- so the difference is a latent
-# defect in the copies that carry it and not a dialect worth keeping.
-nt_field() { printf '%s' " $2" | sed -n "s/.* $1=\([^ ]*\).*/\1/p"; }

@@ -294,7 +294,7 @@ analyse_doc() {
     # have always kept it, because a promise only one verifier checks is a
     # promise the other lanes can lose quietly.
     local body0
-    body0="$(printf '%s' "$rb" | sed -n 's/.* body0=\([^ ]*\).*/\1/p')"
+    body0="$(nt_field body0 "$rb")"
     if [ "$body0" = "yes" ]; then
         ctl_pass std.doc.early-shell "control the early shell was on the page at the app's first statement (body0=yes)"
     else
@@ -385,14 +385,14 @@ analyse_win() {
     if [ -z "$page" ]; then
         ctl_fail std.win.open-noargs "control open: STD-WIN-OPEN-SELF was never observed"
     else
-        on="$(echo "$page" | sed -n 's/.* noargs=\([^ ]*\).*/\1/p')"
+        on="$(nt_field noargs "$page")"
         case "$on" in
             null/same) ctl_pass std.win.open-noargs "control open noargs=$on verdict=NOOP" ;;
             "")        ctl_fail std.win.open-noargs "control open: STD-WIN-OPEN-SELF carried no noargs reading" ;;
             *)         ctl_fail std.win.open-noargs "control open noargs=$on, wanted null/same; window.open() is not the launcher's on this lane" ;;
         esac
         for v in blank self; do
-            ov="$(echo "$page" | sed -n "s/.* $v=\([^ ]*\).*/\1/p")"
+            ov="$(nt_field "$v" "$page")"
             case "$ov" in
                 */CHANGED) ctl_fail "std.win.open-target.$v" "control open $v=$ov; a call meant to open a window took this document somewhere" ;;
                 "")        : ;;
@@ -588,8 +588,8 @@ analyse_theme() {
     # launcher never sets has to fall through to the engine's own system
     # colour; a keyword the engine cannot resolve would leave the declaration
     # alone instead, and the page would style itself from whatever it inherited.
-    fbv="$(echo "$v" | sed -n 's/.* fallback=\([^ ]*\).*/\1/p')"
-    cav="$(echo "$v" | sed -n 's/.* canvas=\([^ ]*\).*/\1/p')"
+    fbv="$(nt_field fallback "$v")"
+    cav="$(nt_field canvas "$v")"
     if [ -z "$fbv" ]; then
         :
     elif [ "$fbv" = "$cav" ] && [ "$fbv" != "UNSUP" ] && [ "$fbv" != "threw" ]; then
@@ -666,7 +666,7 @@ analyse_font() {
     case "$ntb" in
         *fonts=null*)  ctl_skip std.font.delivery "control delivery not_asked: this lane read no fonts" ;;
         *match=15/15*) ctl_pass std.font.delivery "control delivery match=15/15 verdict=DELIVERED" ;;
-        *match=*)      ctl_fail std.font.delivery "control delivery: the custom properties and neutrino.fonts disagree -- $(printf '%s' " $ntb" | sed -n 's/.* \(match=[^ ]*\).*/\1/p') $(printf '%s' " $ntb" | sed -n 's/.* \(first=[^ ]*\).*/\1/p')" ;;
+        *match=*)      ctl_fail std.font.delivery "control delivery: the custom properties and neutrino.fonts disagree -- match=$(nt_field match "$ntb") first=$(nt_field first "$ntb")" ;;
         *)             ctl_fail std.font.delivery "control delivery: STD-FONT-NT-B was never observed" ;;
     esac
 
@@ -674,7 +674,7 @@ analyse_font() {
     # launcher never sets must reach the generic named beside it. The twin of
     # the palette's `var(--neutrino-absent, Canvas)` control.
     local fb
-    fb="$(printf '%s' " $ntb" | sed -n 's/.* fallback=\([^ ]*\).*/\1/p')"
+    fb="$(nt_field fallback "$ntb")"
     case "$fb" in
         monospace)      ctl_pass std.font.fallback "control fallback var(--neutrino-font-nosuchrole, monospace)=monospace verdict=RESOLVED" ;;
         notasked|"")    ctl_skip std.font.fallback "control fallback not_asked" ;;
@@ -692,8 +692,8 @@ analyse_font() {
     # third off; the tolerance is the pixel WebKit truncates and the launcher
     # does not.
     local agree delta src
-    src="$(printf '%s' " $nta" | sed -n 's/.* source=\([^ ]*\).*/\1/p')"
-    agree="$(printf '%s' " $ntb" | sed -n 's/.* agree=\([^ ]*\).*/\1/p')"
+    src="$(nt_field source "$nta")"
+    agree="$(nt_field agree "$ntb")"
     delta="$(printf '%s' "$agree" | sed -n 's/.*delta:\([0-9.]*\).*/\1/p')"
     if [ "$src" != "gtk" ]; then
         ctl_skip std.font.agree "control agree not_asked: this engine's system font keywords are not the desktop's"
@@ -710,7 +710,7 @@ analyse_font() {
     # line rather than left for a reader to find inside it. Reported, never
     # asserted: it is a fact about an engine.
     case "$kwb" in
-        *identical=*) note "self roles $(printf '%s' " $kwb" | sed -n 's/.* \(identical=[^ ]*\).*/\1/p')" ;;
+        *identical=*) note "self roles identical=$(nt_field identical "$kwb")" ;;
         *)            note "self roles unread" ;;
     esac
 

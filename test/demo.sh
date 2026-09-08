@@ -101,7 +101,7 @@ if command -v import >/dev/null 2>&1; then
         nt_report "shot $SHOT_DIR/demo.png"
 fi
 
-field() { printf '%s' "$TITLE" | sed -n "s/.* $1=\([^ ]*\).*/\1/p"; }
+field() { nt_field "$1" "$TITLE"; }
 
 ENG="$(field eng)"
 TX="$(field tx)"

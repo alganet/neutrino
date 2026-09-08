@@ -159,6 +159,35 @@ nt_match() {
     esac
 }
 
+# One ` key=value` field out of a report, and the most-copied line in the tree:
+# twenty-three spellings of it across ten files, in three dialects.
+#
+#   [^ ]*      seventeen, in eight files
+#   [0-9]*     four, in themeflip.sh and fontflip.sh, over a counter
+#   [A-Za-z]*  three, in verify-attack.sh, verify-early.sh and navrefuse.sh
+#
+# Here rather than beside the window-title reader most of them serve, because
+# lib/analyse.sh reads these out of a recorded page state and the two
+# differentials out of a `report:` line -- the shape is a record, not a window
+# -- and because a helper ten files want is one every file should already have
+# when it sources the six words.
+#
+# The space before the key is what separates one field from the next, and every
+# copy has it in the pattern: without it `nav` also matches the tail of
+# `postnav`, and both of those sit in one title answering different questions.
+# What only thirteen of the twenty-three have is the space *prepended to the
+# subject*, and that is what lets the first field on a line match at all -- with
+# the subject `at=held tx=none` and no leading space there is no ` at=` to find,
+# and the key that is plainly there reads as absent. The other ten got away with
+# it by never being handed a subject whose first token was the key.
+#
+# `[^ ]*` for all of them. The narrow classes silently truncate a value with a
+# character they do not list, and a truncated reading compares unequal to itself
+# without saying why. Nothing relied on the truncation: the fields the three
+# `[A-Za-z]*` copies read are words, and the four `[0-9]*` ones read `n=`, which
+# a probe writes as a counter followed by a space.
+nt_field() { printf '%s' " $2" | sed -n "s/.* $1=\([^ ]*\).*/\1/p"; }
+
 # The last line of a suite, and its exit status.
 #
 # The status is the count of failed cases. That contract predates this file --

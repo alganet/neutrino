@@ -38,6 +38,11 @@ FAILURES=0
 fail() { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 note() { echo "report: $*"; }
 
+# nt_field, for the ` key=value` reading below -- anchored on the space before
+# the key, so `AccentColor` cannot be matched inside `AccentColorText`. Seven
+# files spelled that sed thirteen times and three of them spelled it wrong.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+
 for f in "$A" "$B"; do
     if [ -z "$f" ] || [ ! -f "$f" ]; then
         fail "no log at '${f:-<none>}'; the differential has one side"
@@ -50,10 +55,6 @@ done
 # by position: a run that failed a control of its own still wrote them, and a
 # run that never came up wrote neither, which is a different reading.
 line() { sed -n "s/^report: self $2 //p" "$1" | head -1; }
-
-# One `key=value` out of a line, by name. Anchored on the space before it so
-# `AccentColor` cannot be matched inside `AccentColorText`.
-val() { printf '%s' " $1" | sed -n "s/.* $2=\([^ ]*\).*/\1/p"; }
 
 PA="$(line "$A" palette)"; PB="$(line "$B" palette)"
 CA="$(line "$A" cssnames)"; CB="$(line "$B" cssnames)"
@@ -90,7 +91,7 @@ done
 
 moved_nt=0; moved_nt_names=""
 for k in $NT_KEYS; do
-    va="$(val "$PA" "n:$k")"; vb="$(val "$PB" "n:$k")"
+    va="$(nt_field "n:$k" "$PA")"; vb="$(nt_field "n:$k" "$PB")"
     if [ -n "$va" ] && [ "$va" != "$vb" ]; then
         moved_nt=$((moved_nt + 1)); moved_nt_names="$moved_nt_names $k"
     fi
@@ -111,7 +112,7 @@ fi
 
 moved_css=0; moved_css_names=""; unsup=0
 for k in $CSS_KEYS; do
-    va="$(val "$CA" "$k")"; vb="$(val "$CB" "$k")"
+    va="$(nt_field "$k" "$CA")"; vb="$(nt_field "$k" "$CB")"
     if [ "$va" = "UNSUP" ] && [ "$vb" = "UNSUP" ]; then
         unsup=$((unsup + 1))
     elif [ -n "$va" ] && [ "$va" != "$vb" ]; then
@@ -119,9 +120,9 @@ for k in $CSS_KEYS; do
     fi
 done
 
-MQA="$(val "$PA" mq)"; MQB="$(val "$PB" mq)"
-SCA="$(val "$PA" nscheme)"; SCB="$(val "$PB" nscheme)"
-SRC="$(val "$PA" nsrc)"
+MQA="$(nt_field mq "$PA")"; MQB="$(nt_field mq "$PB")"
+SCA="$(nt_field nscheme "$PA")"; SCB="$(nt_field nscheme "$PB")"
+SRC="$(nt_field nsrc "$PA")"
 
 note "themediff source=$SRC toolkit_moved=$moved_nt/7 css_moved=$moved_css/15 css_unsupported=$unsup"
 note "themediff toolkit moved:$moved_nt_names"
@@ -146,7 +147,7 @@ note "themediff scheme mq=$MQA->$MQB neutrino=$SCA->$SCB"
 # Qt 6.8. This is where that was measured -- the readings under `themediff B`
 # below are the ones the exemption is written from -- so the note here prints
 # the disagreement rather than swallowing it.
-SRA="$(val "$PA" nsrc)"; SRB="$(val "$PB" nsrc)"
+SRA="$(nt_field nsrc "$PA")"; SRB="$(nt_field nsrc "$PB")"
 for half in "A:$MQA:$SCA:$SRA" "B:$MQB:$SCB:$SRB"; do
     tag="${half%%:*}"; rest="${half#*:}"
     mq="${rest%%:*}"; rest="${rest#*:}"
