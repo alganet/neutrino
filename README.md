@@ -884,7 +884,27 @@ grid and a failure under `--strict`, the same as one no lane reported at all.
 `nt_skip` is for a lane where the question does not apply — an engine whose
 system-font keywords are not the desktop's cannot be asked whether the two
 agree. That is a different fact from the question going unanswered, and until
-there was a word for it the two looked identical.
+there was a word for it the two looked identical. Which of the two a branch
+deserves is not a matter of taste: a case that files a skip on a lane its
+`applies-to` omits is an undeclared id, and one that files nothing on a lane its
+`applies-to` names is a hole. Both fail `--strict`, so where a case emits is
+what decides whether a divergence belongs in the lane list or in a skip.
+
+The suites under `netinstall/test/` speak it too, and there the source line has
+to come *after* `lib.sh`:
+
+```bash
+. "$(dirname "$0")/lib.sh"
+. "$(cd "$(dirname "$0")/../../test/lib" && pwd)/harness.sh"
+NT_ANNOTATE=netinstall
+```
+
+Both files define `nt_fail` and they do not agree — `lib.sh`'s takes a message,
+this one takes a case id and a detail — so the order is the mechanism and not a
+convention. A local `pass`/`fail`/`check` wrapper is worth deleting rather than
+keeping: a helper handed its id through a variable is the one thing the registry
+scan in `selftest.sh` cannot follow, so anything that must stay is named
+`assert_*`, which that scan knows.
 
 Each call writes twice: the line it always wrote, so job logs and everything
 reading them are unchanged, and a row to `$NT_RESULTS` carrying the id.
