@@ -32,15 +32,27 @@
 
 set -uo pipefail
 
+# The six words. Every green branch below used to be a `note`, so on a run where
+# the demo worked this suite filed nothing at all -- the shape 720ec92 called
+# the most common defect this conversion turns up, and a bad one here: the whole
+# point of the file is that the app on the download page shipped broken and
+# nothing in CI could say so.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+
 SHOT_DIR="${1:-$HOME/screenshots}"
 TIMEOUT=180
 POLL=0.5
-FAILURES=0
 
 mkdir -p "$SHOT_DIR"
 
-fail() { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
-note() { echo "report: $*"; }
+# The three cases below the title all read one field out of it. Where there is
+# no title, each says so rather than going unreported: a case that files nothing
+# is a hole the grid cannot tell from a suite that never ran.
+skip_fields() {
+    nt_skip demo.engine.named "$1"
+    nt_skip demo.transport.wired "$1"
+    nt_skip demo.close.bound "$1"
+}
 
 # The same two readers verify-early.sh uses, and in the same order.
 if command -v xdotool >/dev/null 2>&1; then
@@ -55,8 +67,13 @@ elif command -v wmctrl >/dev/null 2>&1; then
             sed -n 's/^[^ ]* *[^ ]* *[^ ]* *\(DEMOPROBE .*\)$/\1/p' | tail -1
     }
 else
-    echo "FAIL: neither xdotool nor wmctrl is here, so nothing can read a title"
-    exit 1
+    # An instrument that is not here, which is not the app failing. Every case
+    # this suite has is read out of a window title, so with nothing that can
+    # read one there is no question here that can be answered.
+    WHY="neither xdotool nor wmctrl is here, so nothing can read a title"
+    nt_skip demo.reported "$WHY"
+    skip_fields "$WHY"
+    nt_finish
 fi
 
 echo "=== Waiting for the demo to report ==="
@@ -70,26 +87,26 @@ while [ "$WAITED" -lt "$TIMEOUT" ]; do
 done
 
 if [ -z "$TITLE" ]; then
-    fail "no DEMOPROBE title in ${TIMEOUT}s; the app's own script did not reach the reporter"
+    nt_fail demo.reported "no DEMOPROBE title in ${TIMEOUT}s; the app's own script did not reach the reporter"
     # What did come up, because "no window with this name" and "no window at
     # all" want different fixes.
     if command -v wmctrl >/dev/null 2>&1; then
-        note "windows up right now:"
+        nt_report "windows up right now:"
         wmctrl -l 2>/dev/null | sed 's/^/  /' || true
     fi
-    echo ""
-    echo "=== Results: $FAILURES failure(s) ==="
-    exit "$FAILURES"
+    skip_fields "nothing reported, so there were no fields to read"
+    nt_finish
 fi
 
-note "title [$TITLE]"
+nt_pass demo.reported "the demo reported a title"
+nt_report "title [$TITLE]"
 
 # A picture of the app as it ships, which is the other half of what this step
 # is for: every field below is a string, and nobody reviewing a sheet can see
 # from a string that the window is legible.
 if command -v import >/dev/null 2>&1; then
     import -window root "$SHOT_DIR/demo.png" 2>/dev/null &&
-        note "shot $SHOT_DIR/demo.png"
+        nt_report "shot $SHOT_DIR/demo.png"
 fi
 
 field() { printf '%s' "$TITLE" | sed -n "s/.* $1=\([^ ]*\).*/\1/p"; }
@@ -105,22 +122,22 @@ BOUND="$(field bound)"
 # nothing.
 case "$ENG" in
     WebView2|QtWebEngine|Chromium|WebKit)
-        note "engine $ENG -- the app read its own markup and named the engine" ;;
+        nt_pass demo.engine.named "engine $ENG -- the app read its own markup and named the engine" ;;
     UNREADABLE)
-        fail "eng=UNREADABLE: document.getElementById answered null in the app's own script, so the early shell was not on the page when it ran" ;;
+        nt_fail demo.engine.named "eng=UNREADABLE: document.getElementById answered null in the app's own script, so the early shell was not on the page when it ran" ;;
     UNFILLED|"")
-        fail "eng=${ENG:-<absent>}: the app ran and never filled its own page in" ;;
+        nt_fail demo.engine.named "eng=${ENG:-<absent>}: the app ran and never filled its own page in" ;;
     *)
-        fail "eng=$ENG is not an engine this app knows how to name" ;;
+        nt_fail demo.engine.named "eng=$ENG is not an engine this app knows how to name" ;;
 esac
 
 case "$TX" in
     scriptmessage|wkscriptmessage|console|webmessage|title)
-        note "transport $TX" ;;
+        nt_pass demo.transport.wired "transport $TX" ;;
     unwired)
-        fail "tx=unwired: this launch has no channel to the host, so none of the window verbs on the page can work" ;;
+        nt_fail demo.transport.wired "tx=unwired: this launch has no channel to the host, so none of the window verbs on the page can work" ;;
     *)
-        fail "tx=${TX:-<absent>} is not a transport this launcher offers" ;;
+        nt_fail demo.transport.wired "tx=${TX:-<absent>} is not a transport this launcher offers" ;;
 esac
 
 # Against the app's own config rather than a number written here, for the reason
@@ -128,23 +145,21 @@ esac
 WANT_W="$(sed -n 's/.*"width"[^0-9]*\([0-9]*\).*/\1/p' "$(dirname "$0")/../pages/demo/config.json")"
 WANT_H="$(sed -n 's/.*"height"[^0-9]*\([0-9]*\).*/\1/p' "$(dirname "$0")/../pages/demo/config.json")"
 if [ "$SIZE" = "${WANT_W}_x_${WANT_H}" ]; then
-    note "size $SIZE agrees with config.json"
+    nt_report "size $SIZE agrees with config.json"
 else
     # A reading and not a control. innerWidth is the content area and a window
     # manager may hand back less than was asked for; what would be a defect is
     # the app failing to read a size at all, and that is the case above.
-    note "size $SIZE against config ${WANT_W}x${WANT_H} -- the window manager had the last word"
+    nt_report "size $SIZE against config ${WANT_W}x${WANT_H} -- the window manager had the last word"
 fi
 
-note "desktop $DESKTOP"
+nt_report "desktop $DESKTOP"
 
 # The button, which is the whole of what the person on Windows Home reported.
 if [ "$BOUND" = "yes" ]; then
-    note "the Close button has a handler on it"
+    nt_pass demo.close.bound "the Close button has a handler on it"
 else
-    fail "bound=$BOUND: the Close button on the published demo has no handler, which is exactly the defect this file was written for"
+    nt_fail demo.close.bound "bound=$BOUND: the Close button on the published demo has no handler, which is exactly the defect this file was written for"
 fi
 
-echo ""
-echo "=== Results: $FAILURES failure(s) ==="
-exit "$FAILURES"
+nt_finish

@@ -177,6 +177,29 @@ attack.forge.refused	a forged title is refused where the title is not the channe
 attack.nav.refused	the hostile navigation is refused	gjs kde macos windows-content
 attack.postnav.channel	a refused navigation leaves the app able to drive its own window	gjs kde macos windows-content
 
+# The app on the download page, from test/demo.sh and test/demo.ps1 -- the one
+# artifact in this tree nobody ran, and the second twin pair to answer one set
+# of questions rather than two that happen to agree.
+#
+# It is here because of how the defect it was written for was found. The
+# published demo's Close button did nothing on Windows, because WebView2's only
+# pre-navigation hook ran the app's script before the parser had produced
+# anything; a person on Windows Home reported it, and nothing in CI could have.
+# The suite that closed that hole then had the shape that hides the next one:
+# every passing branch was a `note`, so a green run filed nothing, and a lane
+# that stopped asking would have looked exactly like a lane that asked and was
+# satisfied.
+#
+# Four of the five are shared. `demo.engine.webview2` is windows-content's
+# alone: the engine list the other case checks is deliberately the same on both
+# lanes, and which engine *this* platform is allowed to be is the one question
+# that is not.
+demo.reported	the demo reported a title	gjs windows-content
+demo.engine.named	the app read its own markup and named the engine	gjs windows-content
+demo.transport.wired	the launch has a channel to the host	gjs windows-content
+demo.close.bound	the Close button has a handler on it	gjs windows-content
+demo.engine.webview2	WebView2 is what this platform renders through	windows-content
+
 # The loader environment, from test/loaders.sh -- what the standalone launch
 # path hands its engine, and what it must not.
 #
