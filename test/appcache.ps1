@@ -56,9 +56,14 @@ if (-not $src -or -not (Test-Path $src)) {
     exit 2
 }
 
-$failures = 0
-function Report($m) { Write-Output "report: $m" }
-function Fail($m) { Write-Output "FAIL: $m"; $script:failures++ }
+# The six words. Twenty-eight checks, every one of them a `report:` line
+# carrying the reading with an `if (bad) { Fail }` under it -- so on the run
+# where the exe is compiled once, kept, and kept out of reach, this file said
+# nothing any reader downstream could see. The nine sections its header names
+# are the families below.
+. (Join-Path $PSScriptRoot "lib\harness.ps1")
+
+function Report($m) { nt_report $m }
 
 $work = Join-Path $env:TEMP ("appcache-" + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $work -Force | Out-Null
@@ -120,13 +125,29 @@ Write-Output "=== appcache: the exe is compiled once and kept ==="
 # =====================================================================
 # WebView2 is fetched on a first run, so the first window wait is the long one.
 $r1 = Launch 180
-if (-not (Test-Path $exe)) { Fail "no exe beside the script after a first launch; nothing below is a reading" }
+if (-not (Test-Path $exe)) {
+    nt_fail appcache.control.compiled "no exe beside the script after a first launch; nothing below is a reading"
+} else {
+    nt_pass appcache.control.compiled "a first launch left an exe beside the script"
+}
 Report "control window=$($r1.window) build_ms=$($r1.ms) launcher_exited=$($r1.exited)"
-if ($r1.window -ne "UP") { Fail "the shipped build did not come up; every reading below is unmeasured" }
+if ($r1.window -ne "UP") {
+    nt_fail appcache.control.launched "the shipped build did not come up; every reading below is unmeasured"
+} else {
+    nt_pass appcache.control.launched "the shipped build comes up"
+}
 
 Report "placement exe=$(Test-Path $exe) stamp=$(Test-Path $stamp) manifest=$(Test-Path $manifest) app_folder_exe=$(Test-Path $folderExe)"
-if (-not (Test-Path $stamp)) { Fail "placement expected=a stamp beside the script actual=none" }
-if (Test-Path $folderExe) { Fail "placement expected=no program in the writable app folder actual=$folderExe" }
+if (-not (Test-Path $stamp)) {
+    nt_fail appcache.placement.stamp "placement expected=a stamp beside the script actual=none"
+} else {
+    nt_pass appcache.placement.stamp "the stamp is beside the script"
+}
+if (Test-Path $folderExe) {
+    nt_fail appcache.placement.appfolder-clean "placement expected=no program in the writable app folder actual=$folderExe"
+} else {
+    nt_pass appcache.placement.appfolder-clean "the writable app folder holds no program"
+}
 
 # What the two directories' own permissions say about who is in this threat
 # model. The app folder's writers are the reason the program is not in it.
@@ -142,7 +163,11 @@ $srcHash = (Get-FileHash $lane -Algorithm SHA256).Hash
 $stamped = ""
 if (Test-Path $stamp) { $stamped = (Get-Content $stamp -Raw).Trim() }
 Report "stamp matches_source=$($stamped -eq $srcHash) length=$($stamped.Length)"
-if ($stamped -ne $srcHash) { Fail "stamp expected=the source's SHA-256 actual='$stamped'" }
+if ($stamped -ne $srcHash) {
+    nt_fail appcache.stamp.sha256 "stamp expected=the source's SHA-256 actual='$stamped'"
+} else {
+    nt_pass appcache.stamp.sha256 "the stamp is the source's SHA-256"
+}
 
 # =====================================================================
 # cached: a second launch does not rebuild
@@ -153,9 +178,21 @@ $r2 = Launch 90
 $hash2 = Exe-Hash
 $mtime2 = (Get-Item $exe -ErrorAction SilentlyContinue).LastWriteTimeUtc
 Report "cached rebuilt=$(if ($hash1 -ne $hash2) { 'YES' } else { 'NO' }) mtime_moved=$(if ($mtime1 -ne $mtime2) { 'YES' } else { 'NO' }) window=$($r2.window) launch_ms=$($r2.ms)"
-if ($hash1 -ne $hash2) { Fail "cached expected=the second launch reuses the exe actual=it was rebuilt" }
-if ($mtime1 -ne $mtime2) { Fail "cached expected=the exe is not rewritten actual=its mtime moved" }
-if ($r2.window -ne "UP") { Fail "cached expected=the app comes up from the kept exe actual=DOWN" }
+if ($hash1 -ne $hash2) {
+    nt_fail appcache.cached.reused "cached expected=the second launch reuses the exe actual=it was rebuilt"
+} else {
+    nt_pass appcache.cached.reused "a second launch reuses the exe"
+}
+if ($mtime1 -ne $mtime2) {
+    nt_fail appcache.cached.untouched "cached expected=the exe is not rewritten actual=its mtime moved"
+} else {
+    nt_pass appcache.cached.untouched "the kept exe is not rewritten"
+}
+if ($r2.window -ne "UP") {
+    nt_fail appcache.cached.comes-up "cached expected=the app comes up from the kept exe actual=DOWN"
+} else {
+    nt_pass appcache.cached.comes-up "the app comes up from the kept exe"
+}
 
 # And the digest was taken, because here it is read. This is the other half of
 # the assertion netinstall/test/e2e.sh makes: there the script sits above the
@@ -167,7 +204,9 @@ if ($r2.window -ne "UP") { Fail "cached expected=the app comes up from the kept 
 $hashFile = Join-Path $folder "launcher.hash"
 Report "cached digest=$(if (Test-Path $hashFile) { 'taken' } else { 'not taken' })"
 if (-not (Test-Path $hashFile)) {
-    Fail "cached expected=the digest is taken where a stamp is compared actual=no launcher.hash"
+    nt_fail appcache.cached.digest "cached expected=the digest is taken where a stamp is compared actual=no launcher.hash"
+} else {
+    nt_pass appcache.cached.digest "the digest is taken where a stamp is compared"
 }
 
 # =====================================================================
@@ -187,9 +226,21 @@ $srcHash3 = (Get-FileHash $lane -Algorithm SHA256).Hash
 $stamped3 = ""
 if (Test-Path $stamp) { $stamped3 = (Get-Content $stamp -Raw).Trim() }
 Report "changed rebuilt=$(if ($hash3 -ne $hash2) { 'YES' } else { 'NO' }) stamp_follows=$($stamped3 -eq $srcHash3) window=$($r3.window)"
-if ($hash3 -eq $hash2) { Fail "changed expected=an edited source rebuilds actual=the old exe was reused" }
-if ($stamped3 -ne $srcHash3) { Fail "changed expected=the stamp names the new source actual='$stamped3'" }
-if ($r3.window -ne "UP") { Fail "changed expected=the rebuilt app comes up actual=DOWN" }
+if ($hash3 -eq $hash2) {
+    nt_fail appcache.changed.rebuilt "changed expected=an edited source rebuilds actual=the old exe was reused"
+} else {
+    nt_pass appcache.changed.rebuilt "an edited source rebuilds"
+}
+if ($stamped3 -ne $srcHash3) {
+    nt_fail appcache.changed.stamp-follows "changed expected=the stamp names the new source actual='$stamped3'"
+} else {
+    nt_pass appcache.changed.stamp-follows "the stamp follows the new source"
+}
+if ($r3.window -ne "UP") {
+    nt_fail appcache.changed.comes-up "changed expected=the rebuilt app comes up actual=DOWN"
+} else {
+    nt_pass appcache.changed.comes-up "the rebuilt app comes up"
+}
 
 # =====================================================================
 # appfolder: nothing launches out of the writable directory any more
@@ -206,7 +257,14 @@ File.WriteAllText("$markEscaped", "poisoned " + DateTime.UtcNow.ToString("o"));
 $poisonExe = Join-Path $work "poison.exe"
 & $jsc /nologo /t:exe "/out:$poisonExe" $poisonSrc 2>&1 | Out-Null
 if (-not (Test-Path $poisonExe)) {
-    Fail "could not build the marker exe with jsc; the appfolder section is unmeasured"
+    # "unmeasured" is the word this line already used, and it is what a skip is
+    # for. The marker is not the thing under test -- it is the instrument that
+    # makes the refusal below distinguishable from a pass -- so a jsc that will
+    # not build it leaves three questions unanswerable rather than false.
+    $why = "the marker exe would not build with jsc, so the appfolder section had no instrument"
+    nt_skip appcache.control.poison-live $why
+    nt_skip appcache.appfolder.not-launched $why
+    nt_skip appcache.appfolder.comes-up $why
 } else {
     # Proven against a program that is not under test: an exe that writes
     # nothing would make the refusal below indistinguishable from a pass.
@@ -214,7 +272,11 @@ if (-not (Test-Path $poisonExe)) {
     & $poisonExe 2>&1 | Out-Null
     $live = Test-Path $mark
     Report "control poison live=$(if ($live) { 'YES' } else { 'NO' })"
-    if (-not $live) { Fail "control expected=the marker exe writes its mark when run actual=silent" }
+    if (-not $live) {
+        nt_fail appcache.control.poison-live "control expected=the marker exe writes its mark when run actual=silent"
+    } else {
+        nt_pass appcache.control.poison-live "the marker exe writes its mark when run directly"
+    }
 
     # Where the program used to live, and where a confined app can still write.
     Stop-App
@@ -224,8 +286,16 @@ if (-not (Test-Path $poisonExe)) {
     $r4 = Launch 90
     $ran = Test-Path $mark
     Report ("appfolder ran=" + $(if ($ran) { "YES" } else { "NO" }) + " realapp=$($r4.window)")
-    if ($ran) { Fail "appfolder expected=nothing is launched out of the writable folder actual=the planted exe ran" }
-    if ($r4.window -ne "UP") { Fail "appfolder expected=the app comes up regardless actual=DOWN" }
+    if ($ran) {
+        nt_fail appcache.appfolder.not-launched "appfolder expected=nothing is launched out of the writable folder actual=the planted exe ran"
+    } else {
+        nt_pass appcache.appfolder.not-launched "an exe planted in the writable folder is never launched"
+    }
+    if ($r4.window -ne "UP") {
+        nt_fail appcache.appfolder.comes-up "appfolder expected=the app comes up regardless actual=DOWN"
+    } else {
+        nt_pass appcache.appfolder.comes-up "the app comes up regardless of the planted exe"
+    }
     Remove-Item $folderExe -Force -ErrorAction SilentlyContinue
 }
 
@@ -249,8 +319,16 @@ $up2 = Window-Up 180
 $stillForeign = ((Get-FileHash $foreign -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash -eq $foreignHash)
 $fellBack = Test-Path (Join-Path $work2 "neutrinocache\neutrinocache.exe")
 Report "adopt foreign_untouched=$stillForeign fell_back=$fellBack window=$up2"
-if (-not $stillForeign) { Fail "adopt expected=a file this launcher did not write is left alone actual=it was overwritten" }
-if (-not $fellBack) { Fail "adopt expected=the compile falls back into the app folder actual=no exe there" }
+if (-not $stillForeign) {
+    nt_fail appcache.adopt.untouched "adopt expected=a file this launcher did not write is left alone actual=it was overwritten"
+} else {
+    nt_pass appcache.adopt.untouched "a file this launcher did not write is left alone"
+}
+if (-not $fellBack) {
+    nt_fail appcache.adopt.fell-back "adopt expected=the compile falls back into the app folder actual=no exe there"
+} else {
+    nt_pass appcache.adopt.fell-back "the compile falls back into the app folder"
+}
 Stop-App
 
 # =====================================================================
@@ -269,8 +347,16 @@ if (-not $p3Exited) { $p3.Kill() }
 Start-Sleep -Seconds 10
 $instances = @(Get-Process -Name "neutrinocache" -ErrorAction SilentlyContinue).Count
 Report "second first=$firstUp launcher_exited=$p3Exited instances=$instances exit=$($p3.ExitCode)"
-if ($p3.ExitCode -ne 0) { Fail "second expected=a second launch succeeds while the first runs actual=exit $($p3.ExitCode)" }
-if ($instances -lt 2) { Fail "second expected=two instances actual=$instances" }
+if ($p3.ExitCode -ne 0) {
+    nt_fail appcache.second.succeeds "second expected=a second launch succeeds while the first runs actual=exit $($p3.ExitCode)"
+} else {
+    nt_pass appcache.second.succeeds "a second launch succeeds while the first runs"
+}
+if ($instances -lt 2) {
+    nt_fail appcache.second.instances "second expected=two instances actual=$instances"
+} else {
+    nt_pass appcache.second.instances "two instances are up at once"
+}
 
 # =====================================================================
 # slot: a <name>.build directory beside the script is where the program goes
@@ -301,10 +387,26 @@ $up4 = Window-Up 180
 $besideExe = Test-Path (Join-Path $work3 "neutrinocache.exe")
 $besideStamp = Test-Path (Join-Path $work3 "neutrinocache.stamp")
 Report "slot exe=$(Test-Path $slotExe) beside_exe=$besideExe beside_stamp=$besideStamp window=$up4"
-if (-not (Test-Path $slotExe)) { Fail "slot expected=the program in the slot actual=none" }
-if ($besideExe) { Fail "slot expected=nothing beside the script actual=an exe" }
-if ($besideStamp) { Fail "slot expected=no stamp beside the script actual=one" }
-if ($up4 -ne "UP") { Fail "slot expected=the app comes up from the slot actual=DOWN" }
+if (-not (Test-Path $slotExe)) {
+    nt_fail appcache.slot.program "slot expected=the program in the slot actual=none"
+} else {
+    nt_pass appcache.slot.program "the program is in the slot"
+}
+if ($besideExe) {
+    nt_fail appcache.slot.no-exe-beside "slot expected=nothing beside the script actual=an exe"
+} else {
+    nt_pass appcache.slot.no-exe-beside "no exe is left beside the script"
+}
+if ($besideStamp) {
+    nt_fail appcache.slot.no-stamp-beside "slot expected=no stamp beside the script actual=one"
+} else {
+    nt_pass appcache.slot.no-stamp-beside "no stamp is left beside the script"
+}
+if ($up4 -ne "UP") {
+    nt_fail appcache.slot.comes-up "slot expected=the app comes up from the slot actual=DOWN"
+} else {
+    nt_pass appcache.slot.comes-up "the app comes up from the slot"
+}
 
 # =====================================================================
 # sealed: a slot this launch cannot write is one it runs and does not rebuild
@@ -328,7 +430,17 @@ if ($up4 -ne "UP") { Fail "slot expected=the app comes up from the slot actual=D
 # So the write is attempted before the launch is. A seal that did not take is a
 # broken instrument and says so, rather than being reported as a launcher that
 # will not use its cache.
-if (Test-Path $slotExe) {
+if (-not (Test-Path $slotExe)) {
+    # The slot section above did not leave a program to seal, so there is
+    # nothing here to run rather than rebuild. Said, rather than left out: the
+    # three cases below applied to this lane and would otherwise have been
+    # three cells the grid could not tell from a suite that never ran.
+    $why = "the slot section left no program, so there was nothing to seal and run"
+    nt_skip appcache.sealed.instrument $why
+    nt_skip appcache.sealed.reused $why
+    nt_skip appcache.sealed.untouched $why
+    nt_skip appcache.sealed.comes-up $why
+} else {
     Stop-App
     $slotHash1 = (Get-FileHash $slotExe -Algorithm SHA256).Hash
     $slotMt1 = (Get-Item $slotExe).LastWriteTimeUtc
@@ -344,20 +456,43 @@ if (Test-Path $slotExe) {
     }
     Report "sealed seal_rc=$sealRc slot_writable=$(-not $sealed)"
     if (-not $sealed) {
-        Fail "sealed expected=the harness can close the slot actual=it stayed writable (icacls rc=$sealRc)"
+        # A broken instrument and not a launcher finding, which is the whole
+        # point of attempting the write before the launch: a slot that stayed
+        # writable is a *granted* slot, and one the launcher is supposed to
+        # rebuild. Reported as a launcher failure it failed the product for
+        # doing exactly the right thing, twice, on two different machines.
+        nt_fail appcache.sealed.instrument "sealed expected=the harness can close the slot actual=it stayed writable (icacls rc=$sealRc)"
+        $why = "the slot could not be sealed, so what a launcher does with one was never asked"
+        nt_skip appcache.sealed.reused $why
+        nt_skip appcache.sealed.untouched $why
+        nt_skip appcache.sealed.comes-up $why
+    } else {
+        nt_pass appcache.sealed.instrument "the harness closed the slot to writes"
+        $p5 = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $lane3 -PassThru -WindowStyle Hidden
+        if (-not $p5.WaitForExit(180000)) { $p5.Kill() }
+        $up5 = Window-Up 180
+        $slotHash2 = (Get-FileHash $slotExe -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
+        $slotMt2 = (Get-Item $slotExe -ErrorAction SilentlyContinue).LastWriteTimeUtc
+        & icacls $slot3 /remove:d $env:USERNAME *>&1 | Out-Null
+        Report ("sealed rebuilt=" + $(if ($slotHash1 -ne $slotHash2) { "YES" } else { "NO" }) +
+                " mtime_moved=" + $(if ($slotMt1 -ne $slotMt2) { "YES" } else { "NO" }) +
+                " window=$up5")
+        if ($slotHash1 -ne $slotHash2) {
+            nt_fail appcache.sealed.reused "sealed expected=the kept program is reused actual=it was rebuilt"
+        } else {
+            nt_pass appcache.sealed.reused "the kept program in a sealed slot is reused"
+        }
+        if ($slotMt1 -ne $slotMt2) {
+            nt_fail appcache.sealed.untouched "sealed expected=the program is not rewritten actual=its mtime moved"
+        } else {
+            nt_pass appcache.sealed.untouched "the program in a sealed slot is not rewritten"
+        }
+        if ($up5 -ne "UP") {
+            nt_fail appcache.sealed.comes-up "sealed expected=the app comes up from the sealed slot actual=DOWN"
+        } else {
+            nt_pass appcache.sealed.comes-up "the app comes up from the sealed slot"
+        }
     }
-    $p5 = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $lane3 -PassThru -WindowStyle Hidden
-    if (-not $p5.WaitForExit(180000)) { $p5.Kill() }
-    $up5 = Window-Up 180
-    $slotHash2 = (Get-FileHash $slotExe -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
-    $slotMt2 = (Get-Item $slotExe -ErrorAction SilentlyContinue).LastWriteTimeUtc
-    & icacls $slot3 /remove:d $env:USERNAME *>&1 | Out-Null
-    Report ("sealed rebuilt=" + $(if ($slotHash1 -ne $slotHash2) { "YES" } else { "NO" }) +
-            " mtime_moved=" + $(if ($slotMt1 -ne $slotMt2) { "YES" } else { "NO" }) +
-            " window=$up5")
-    if ($slotHash1 -ne $slotHash2) { Fail "sealed expected=the kept program is reused actual=it was rebuilt" }
-    if ($slotMt1 -ne $slotMt2) { Fail "sealed expected=the program is not rewritten actual=its mtime moved" }
-    if ($up5 -ne "UP") { Fail "sealed expected=the app comes up from the sealed slot actual=DOWN" }
 }
 Stop-App
 Remove-Item $work3 -Recurse -Force -ErrorAction SilentlyContinue
@@ -375,6 +510,4 @@ Report "cost kept_launch_ms=$($times -join ',')"
 Report "left $(@(Get-ChildItem $work -Filter 'neutrinocache*' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ',')"
 
 Stop-App
-Write-Output "=== appcache: $failures failure(s) ==="
-if ($failures -gt 0) { exit 1 }
-exit 0
+nt_finish
