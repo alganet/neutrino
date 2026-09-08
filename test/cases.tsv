@@ -24,6 +24,21 @@
 # runs test/qtkde.sh and nothing else, and until that suite has a vocabulary it
 # is a lane the registry has nothing to say about.
 #
+# A suite absent from here is not always one waiting to be converted, and the
+# manifest is where the difference is written. test/fontflip.sh opens by calling
+# itself a PROBE and its `fontflip` row carries `soft` on all three lanes that
+# run it, which is test/run.sh's word for a step that reports a reading nobody
+# asserts -- a red one is a lane that measured something, not a lane that failed.
+# test/matrix.py says the other half of it: readings must not become cases,
+# because every row in that grid is supposed to be something that can be true or
+# false. So the empty `fontflip` column is the design and not a gap.
+#
+# Its `fontlive` row is a different matter: same script, `NT_FONTFLIP_LIVE_ONLY`
+# set, and not soft, so what it exits with does reach the lane. Anyone converting
+# that file has to decide what the soft row's rows would mean here first -- both
+# rows run on gjs, and a probe filing a FAIL would redden a cell for a lane that
+# deliberately does not count it.
+#
 # windows-launch was absent from the walk for a long time, because
 # verify-windows.ps1 asserted the same facts in its own sentences and reported
 # none of these ids. It is on them now: it writes the samples it was already
