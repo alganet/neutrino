@@ -459,6 +459,59 @@ themescheme.reported	the app reported a palette	gjs linux-engines
 themescheme.control.theme-loaded	the palette read is the palette this file wrote	gjs linux-engines
 themescheme.control.dark	the launcher calls that palette dark	gjs linux-engines
 
+# The desktop's fonts, from test/fontflip.sh -- two halves that were one `soft`
+# row and one that was not.
+#
+# The header above this file used to leave that open: `fontflip` was soft on all
+# three lanes that ran it and `fontlive` -- the same script, one environment
+# variable apart -- was not, so a probe filing anything at all would redden a
+# cell for a lane that deliberately did not count it. That is settled now. Both
+# halves file, `soft` is gone from the fontflip rows, and NT_FONTFLIP_HALF names
+# which half a row is instead of one row saying "not the other one".
+#
+# The rule that stays is the one the header states: readings must not become
+# cases. What a probe *measured* -- a family, a size, a weight -- is a `report:`
+# line and is not here. What is here is whether the probe could take the reading
+# at all, which is a question with two answers, and it is worth having because
+# the failure it catches is the one this suite has already had: fontprobe-macos
+# raised on its first line, the grep that lifted its readings found none, and an
+# empty reading read exactly like a lane with no fonts.
+#
+# probe.watched is the one the backgrounded run could never report. It runs
+# under the flip, so it was launched with `&` and counted its own failure into a
+# $FAILURES the parent never saw -- a probe that died mid-watch was a step that
+# passed.
+#
+# macOS holds the first and skips the other two, and that is the header's
+# argument rather than a gap: there is no user setting for the UI font there, so
+# nothing can move under a running probe and nothing has to be put back.
+fontflip.probe.baseline	the probe read the desktop's fonts before anything moved	gjs linux-engines macos
+fontflip.probe.watched	the probe read them again while they moved under it	gjs linux-engines macos
+fontflip.probe.restored	the desktop's font is back where this suite found it	gjs linux-engines macos
+
+# And the live half, on the two lanes with a knob that reaches a running
+# process. This is the question a launch-and-compare pair cannot ask, and the
+# palette round paid for the difference once already.
+#
+# ui-knob is the control and it is a separate case on purpose. `ui` is read off
+# GtkSettings, and a GSettings write that never reaches GtkSettings moves
+# nothing a page could be told about -- so on a runner with no settings daemon
+# the rendered font holds still, the launcher correctly delivers nothing, and
+# asserting the delivery there blames a lane for a knob that did nothing. With
+# the control beside it, "no knob here" and "the watcher did not fire" stay two
+# readings. It passes, or it skips saying which of the two it could not do; it
+# never fails, because a desktop that does not carry a knob is not a defect.
+#
+# `mono` is the one the file exists for. `monospace-font-name` moves neither
+# gtk-font-name nor the window's computed style, so nothing the first flip
+# exercised can carry it -- and its passing reading is a font name rather than
+# `moved=yes`, because after the first flip the title already says moved=yes and
+# a check on the word alone would pass on a watcher that never fired again.
+fontflip.live.reported	the live probe came up and read a toolkit	gjs linux-engines
+fontflip.live.ui-knob	control the ui knob reached GtkSettings	gjs linux-engines
+fontflip.live.ui	the running app was told when the desktop's ui font moved	gjs linux-engines
+fontflip.live.mono	and again when only the monospace font moved	gjs linux-engines
+
 # The macOS navigation refusal, from test/navrefuse.sh -- macos alone, because
 # the JXA bridge is the only one with this rule.
 #
