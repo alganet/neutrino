@@ -46,6 +46,17 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 . "$(dirname "$0")/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity, so the one sourced second is the one this file
+# speaks. Every call below carries a case id.
+#
+# nt_note and nt_result are lib.sh's and are not shadowed. The notes stay notes
+# -- "this target is not on this lane" is a remark about the instrument, not a
+# verdict about the build -- and the report lines at the bottom stay readings.
+. "$(cd "$(dirname "$0")/../../test/lib" && pwd)/harness.sh"
+# The annotation lib.sh's nt_fail emitted, kept by name so a red netinstall check
+# still says so on the run page.
+NT_ANNOTATE=netinstall
 
 WORK="$(mktemp -d)"
 SERVE="$WORK/serve"
@@ -53,7 +64,6 @@ FAKEHOME="$HOME/.netinstall-writable-$$"
 mkdir -p "$SERVE" "$WORK/bin" "$FAKEHOME"
 export NEUTRINO_HOME="$WORK/home"
 
-FAILURES=0
 DROPPED=""
 PLANTED=""
 
@@ -383,10 +393,9 @@ echo "=== Controls ==="
 for pair in "default:$OUT_DEFAULT" "noconf:$OUT_NOCONF"; do
     tag="${pair%%:*}"
     if ran "${pair#*:}"; then
-        echo "  PASS: the $tag payload ran to the end"
+        nt_pass writable.payload.ran "the $tag payload ran to the end"
     else
-        nt_fail "the $tag payload did not finish: $(printf '%s' "${pair#*:}" | tr '\n' ' ' | cut -c1-160)"
-        FAILURES=$((FAILURES + 1))
+        nt_fail writable.payload.ran "the $tag payload did not finish: $(printf '%s' "${pair#*:}" | tr '\n' ' ' | cut -c1-160)"
     fi
 done
 
@@ -402,10 +411,9 @@ for pair in default noconf; do
     v="$(printf '%s\n' "$out" | tr -d '\r' | sed -n 's/^devnull=//p' | tail -1)"
     DEVNULL="$DEVNULL $pair=${v:-??}"
     if [ "$v" = "OK" ]; then
-        echo "  PASS: the $pair run can still write /dev/null"
+        nt_pass writable.devnull "the $pair run can still write /dev/null"
     else
-        nt_fail "the $pair run's /dev/null expected=OK actual=${v:-<absent>}"
-        FAILURES=$((FAILURES + 1))
+        nt_fail writable.devnull "the $pair run's /dev/null expected=OK actual=${v:-<absent>}"
     fi
 done
 
@@ -421,10 +429,9 @@ for l in $(labels_of); do
     [ "$v" = "$want" ] || BAD="$BAD $l=$v(want $want)"
 done
 if [ -z "$BAD" ]; then
-    echo "  PASS: an unconfined payload reaches every target"
+    nt_pass writable.control.unconfined "an unconfined payload reaches every target"
 else
-    nt_fail "unconfined control could not reach:$BAD"
-    FAILURES=$((FAILURES + 1))
+    nt_fail writable.control.unconfined "unconfined control could not reach:$BAD"
 fi
 
 # And the two the whole design rests on, in every run that applied something.
@@ -440,10 +447,9 @@ check_run() {
     local run="$1" set_str="$2" says="$3"
 
     case " $set_str " in
-        *" appdir=CT"*) echo "  PASS: the $run run keeps its own dir writable" ;;
+        *" appdir=CT"*) nt_pass writable.appdir "the $run run keeps its own dir writable" ;;
         *)
-            nt_fail "the $run run app dir expected=writable actual=$(printf '%s' "$set_str" | grep -o 'appdir=[A-Z?-]*')"
-            FAILURES=$((FAILURES + 1)) ;;
+            nt_fail writable.appdir "the $run run app dir expected=writable actual=$(printf '%s' "$set_str" | grep -o 'appdir=[A-Z?-]*')" ;;
     esac
     # A platform that applied nothing is not a platform that failed to confine:
     # it is the one whose sentence is already true, and the letters above are
@@ -451,15 +457,19 @@ check_run() {
     # list of platforms, because the sentence is what this suite is about --
     # a platform that confines no writes says so in its sentence
     # and FreeBSD says "none", and both mean it.
+    #
+    # A skip and not a note, which is the difference between saying it in prose
+    # and saying it in a row. This case is one a platform can be exempt from, and
+    # an exemption that reaches only the log is indistinguishable in the grid
+    # from a lane that went quiet -- which is the hole nt_skip was added for.
     if ! confines_writes "$says"; then
-        nt_note "the $run run confines no writes here ($says); the letters above are that, not a failure"
+        nt_skip writable.outside "the $run run confines no writes here ($says); the letters above are that, not a failure"
         return 0
     fi
     case " $set_str " in
-        *" home=--- "*) echo "  PASS: the $run run still refuses a directory outside the app dir" ;;
+        *" home=--- "*) nt_pass writable.outside "the $run run still refuses a directory outside the app dir" ;;
         *)
-            nt_fail "the $run run outside-write expected=home=--- actual=$(printf '%s' "$set_str" | grep -o 'home=[A-Z?-]*')"
-            FAILURES=$((FAILURES + 1)) ;;
+            nt_fail writable.outside "the $run run outside-write expected=home=--- actual=$(printf '%s' "$set_str" | grep -o 'home=[A-Z?-]*')" ;;
     esac
 }
 
@@ -548,23 +558,33 @@ expect_set() {
             *) nt_note "$run: $l is not a target on this lane"; continue ;;
         esac
         v="$(letters "$out" "$l")"
+        # One id for every letter, the way names.sh groups: the sentence carries
+        # the target and the id carries the claim. FAIL wins over a repeated id,
+        # so one letter that moved is a red cell.
         if [ "$v" = "$w" ]; then
-            echo "  PASS: $run $l=$v"
+            nt_pass writable.letters "$run $l=$v"
         else
-            nt_fail "$run $l expected=$w actual=$v"
-            FAILURES=$((FAILURES + 1))
+            nt_fail writable.letters "$run $l expected=$w actual=$v"
         fi
     done
 }
 
-says_names() {
-    local run="$1" says="$2" needle="$3"
+# The id first: this is called for two different claims -- the default
+# sentence and the fetch sentence -- and they are two cases, not one.
+#
+# Named assert_* rather than says_*, and the rename is not cosmetic. It is the
+# one helper here that takes its id through a variable -- expect_set and
+# check_run both carry theirs as literals -- so it is the one the registry scan
+# in test/lib/selftest.sh cannot follow by reading the file. That scan knows
+# assert_[a-z_]+ as the shape of a wrapper that is handed an id, alongside
+# nt_walk_* and ctl_*, and this is that shape. It also reads better: it asserts.
+assert_sentence_names() {
+    local id="$1" run="$2" says="$3" needle="$4"
 
     case "$says" in
-        *"$needle"*) echo "  PASS: the $run sentence names $needle" ;;
+        *"$needle"*) nt_pass "$id" "the $run sentence names $needle" ;;
         *)
-            nt_fail "$run sentence expected to name '$needle' actual='$says'"
-            FAILURES=$((FAILURES + 1)) ;;
+            nt_fail "$id" "$run sentence expected to name '$needle' actual='$says'" ;;
     esac
 }
 
@@ -572,7 +592,7 @@ echo "=== Every letter, held to what it measured ==="
 ran "$OUT_DEFAULT" && expect_set default "$OUT_DEFAULT" "$WANT_DEFAULT"
 
 echo "=== And the sentence names the set rather than the first of it ==="
-says_names default "$SAYS_DEFAULT" "$SAY_DEFAULT"
+assert_sentence_names writable.sentence.set default "$SAYS_DEFAULT" "$SAY_DEFAULT"
 
 # The fetch line, and both halves of what round 1 found wrong with it on macOS
 # and OpenBSD: it named the cache root rather than the blobs directory inside
@@ -589,17 +609,23 @@ case "$SAYS_FETCH_DEFAULT" in
     none*|"no filesystem confinement"*) NT_FETCH_NAMES_A_DIR=0 ;;
     *)                                  NT_FETCH_NAMES_A_DIR=1 ;;
 esac
+#
+# Three branches and all three report, which the two that existed did not. The
+# windows path fell through saying nothing at all, so a lane that is exempt from
+# this case and a lane that went quiet looked the same in the grid -- and
+# windows-launch is one of the four lanes this case is expected on.
 if [ "$NT_WINDOWS" != "1" ] && [ "$NT_FETCH_NAMES_A_DIR" = "1" ]; then
-    says_names "fetch default" "$SAYS_FETCH_DEFAULT" "blobs"
+    assert_sentence_names writable.fetch.blobs "fetch default" "$SAYS_FETCH_DEFAULT" "blobs"
 elif [ "$NT_WINDOWS" != "1" ]; then
-    nt_note "the fetch phase confines nothing here ($SAYS_FETCH_DEFAULT); there is no directory for it to name"
+    nt_skip writable.fetch.blobs "the fetch phase confines nothing here ($SAYS_FETCH_DEFAULT); there is no directory for it to name"
+else
+    nt_skip writable.fetch.blobs "the fetch phase confines no filesystem on windows; there is no directory for it to name"
 fi
 for pair in "fetch default:$SAYS_FETCH_DEFAULT"; do
     case "${pair#*:}" in
         *"reads and writes confined to"*)
-            nt_fail "${pair%%:*} claims reads are confined: '${pair#*:}'"
-            FAILURES=$((FAILURES + 1)) ;;
-        *) echo "  PASS: the ${pair%%:*} sentence makes no read claim it cannot keep" ;;
+            nt_fail writable.fetch.noreadclaim "${pair%%:*} claims reads are confined: '${pair#*:}'" ;;
+        *) nt_pass writable.fetch.noreadclaim "the ${pair%%:*} sentence makes no read claim it cannot keep" ;;
     esac
 done
 
@@ -628,5 +654,6 @@ if [ "$NT_WINDOWS" = "1" ]; then
     reg delete "HKCU\\Software\\AppDataLow\\NeutrinoWritableProbe" /f >/dev/null 2>&1
 fi
 
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+exit $NT_FAILURES

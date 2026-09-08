@@ -217,3 +217,31 @@ pinfloor.cause.length	a below-floor pin is refused by length, and told which	gjs
 pinfloor.cause.mismatch	a wrong pin is still refused by comparison	gjs bsd windows-launch macos-netinstall
 pinfloor.cause.distinct	those two refusals are not one refusal	gjs bsd windows-launch macos-netinstall
 pinfloor.path.none	no pin appears in a path netinstall creates	gjs bsd windows-launch macos-netinstall
+
+# What each platform leaves writable, from netinstall/test/writable.sh. The same
+# four lanes again -- the netinstall suite without a shorter list named for it,
+# and writable is in the reduced OpenBSD one too.
+#
+# writable.letters is one id for every target the payload plants into, grouped
+# the way names.sh and pinfloor.sh group: the sentence carries the target and
+# the id carries the claim. The expected set is per-platform and each lane holds
+# its own, so this cell going red means one letter moved somewhere -- measured
+# by flipping the Linux set's `home` to writable, which turns it red on one of
+# six and leaves the rest green.
+#
+# Two of these can be skipped rather than failed, and both are exemptions that
+# used to reach the log and not the grid. A platform whose sentence says it
+# confines no writes has nothing for writable.outside to assert, and windows
+# confines no filesystem in the fetch phase so there is no directory for
+# writable.fetch.blobs to look for. The second of those had no branch at all --
+# it fell through in silence on a lane the case is expected on, which is a hole
+# that reads exactly like a lane that went quiet.
+writable.payload.ran	both control payloads ran to the end	gjs bsd windows-launch macos-netinstall
+writable.devnull	every run can still write /dev/null	gjs bsd windows-launch macos-netinstall
+writable.control.unconfined	an unconfined payload reaches every target	gjs bsd windows-launch macos-netinstall
+writable.appdir	the run keeps its own app dir writable	gjs bsd windows-launch macos-netinstall
+writable.outside	the run refuses a directory outside the app dir	gjs bsd windows-launch macos-netinstall
+writable.letters	every target is held to what this platform measured	gjs bsd windows-launch macos-netinstall
+writable.sentence.set	the sentence names the set rather than the first of it	gjs bsd windows-launch macos-netinstall
+writable.fetch.blobs	the fetch sentence names the blobs directory	gjs bsd windows-launch macos-netinstall
+writable.fetch.noreadclaim	the fetch sentence makes no read claim it cannot keep	gjs bsd windows-launch macos-netinstall
