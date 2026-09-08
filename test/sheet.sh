@@ -120,6 +120,12 @@ is_png() {
 # but a lane that knows why it is handing over two directories should say so:
 # "netinstall" and "the suites" is a distinction a reader can use, and
 # `/home/runner/netinstall-screenshots` is not.
+# Only the lines that are harness rows: five fields, the fourth a verdict. See
+# the long comment in the loop below for the record that was read as two cases.
+nt_rows_only() {
+    awk -F'\t' 'NF == 5 && ($4 == "PASS" || $4 == "FAIL" || $4 == "SKIP")' "$1"
+}
+
 SHOTS="$(mktemp)"; LOGS="$(mktemp)"; ROWS="$(mktemp)"
 trap 'rm -f "$SHOTS" "$LOGS" "$ROWS"' EXIT
 for arg in "$@"; do
@@ -132,17 +138,30 @@ for arg in "$@"; do
         find "$src" -type f -name '*.png' 2>/dev/null | sort |
             while IFS= read -r f; do printf '%s\t%s\n' "$label" "$f"; done >> "$SHOTS"
         find "$src" -type f -name '*.log' 2>/dev/null | sort >> "$LOGS"
-        # The harness's rows. A `.tsv` here is never a log and never a picture:
-        # it is what a suite asserted, already keyed by case id, and the section
-        # it feeds below is the only one on this page that does not have to
-        # recover its structure from prose.
+        # The harness's rows: what a suite asserted, already keyed by case id,
+        # feeding the one section on this page that does not have to recover its
+        # structure from prose.
+        #
+        # Filtered rather than taken whole, and the reason is a defect this
+        # already caused. A `.tsv` here used to be assumed to be rows, on the
+        # grounds that it was "never a log and never a picture" -- true until an
+        # instrument started writing a *record* beside its screenshots.
+        # verify-windows.ps1 writes the walk record it hands to walk.sh into its
+        # ScreenshotDir; the two load replicas point that at a directory this
+        # page is built from; and a record's six columns line up so that its
+        # `inner` reads as a case id and its `pos` reads as a verdict. The grid
+        # grew two cases called `500x400` and `900x600`, each holding `54,40`.
+        #
+        # So the shape is checked instead of the extension. A harness row is five
+        # fields whose fourth is one of three words, which no record can be
+        # mistaken for and no future record has to remember to avoid.
         find "$src" -type f -name '*.tsv' 2>/dev/null | sort |
-            while IFS= read -r f; do cat "$f"; done >> "$ROWS"
+            while IFS= read -r f; do nt_rows_only "$f"; done >> "$ROWS"
     else
         case "$src" in
             *.png) printf '%s\t%s\n' "$label" "$src" >> "$SHOTS" ;;
             *.log) echo "$src" >> "$LOGS" ;;
-            *.tsv) cat "$src" >> "$ROWS" ;;
+            *.tsv) nt_rows_only "$src" >> "$ROWS" ;;
         esac
     fi
 done

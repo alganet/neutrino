@@ -359,6 +359,13 @@ SHEETSRC="$WORK/sheetsrc"; mkdir -p "$SHEETSRC"
     nt_fail sheet.probe.c "a control that did not hold"
 ) >/dev/null 2>&1
 printf '  PASS: a prose assertion 12 times\n  FAIL: a prose failure\n' > "$SHEETSRC/old.log"
+# A *record* beside the rows, which is not the same kind of file and used to be
+# read as though it were. sheet.sh took any .tsv in a source directory for
+# harness rows, and a record's six columns line up so that `inner` reads as a
+# case id and `pos` as a verdict -- so the grid grew cases called `500x400` and
+# `900x600`, each holding `54,40`, off the windows-launch load replicas. The
+# three cases below must survive and nothing from this file may join them.
+cp "$ROOT/test/lib/records/windows-launch.walk.tsv" "$SHEETSRC/a-record.tsv" 2>/dev/null || true
 bash "$ROOT/test/sheet.sh" selftest "$WORK/sheet.html" "Logs=$SHEETSRC" >/dev/null 2>&1
 
 if "$(nt_python 2>/dev/null || echo python3)" - "$WORK/sheet.html" <<'PYEOF' 2>/dev/null
