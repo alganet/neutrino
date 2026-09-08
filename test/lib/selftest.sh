@@ -549,116 +549,6 @@ echo "### the registry, against every suite that speaks to it"
 # correctly-spelled one being emitted nowhere, which names the registry rather
 # than the typo. The `harness.sh` guard means the suites still speaking lib.sh's
 # older words cost nothing here.
-UNKNOWN=""
-for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
-    case "$(basename "$suite")" in selftest.sh) continue ;; esac
-    grep -q 'harness\.sh' "$suite" 2>/dev/null || continue
-    for id in $(sed 's/#.*//' "$suite" |
-                grep -oE '\b(nt_(pass|fail|skip|walk_[a-z_]+)|assert_[a-z_]+) "?[a-z][a-z0-9.-]*' |
-                awk '{print $2}' | tr -d '"' | sort -u); do
-        # An id has a dot in it. A bare word is a variable or a fragment.
-        case "$id" in *.*) ;; *) continue ;; esac
-        grep -q "^$id	" "$ROOT/test/cases.tsv" ||
-            UNKNOWN="$UNKNOWN $(basename "$suite"):$id"
-    done
-done
-[ -z "$UNKNOWN" ] && ok "every literal case id in every suite is registered" \
-    || bad "emitted but not in cases.tsv:$UNKNOWN"
-
-# And the other direction. A registry that accumulates ids nothing emits stops
-# being able to tell a hole from a leftover, which is the one thing it is for.
-# The suites, listed once. `grep -r --include` would do it in one line and is
-# the sort of thing that turns out to mean something slightly different on the
-# BSD grep macOS ships -- and the failure mode there is every id reported as an
-# orphan, which reads as a catastrophe rather than as a portability note.
-# netinstall/test/*.sh is in the list now, and it has to be: splash.sh speaks
-# this vocabulary, and a registry that could not see the tree a suite lives in
-# would call every id that suite emits an orphan -- or, worse, let an
-# unregistered one through. The netinstall suites that still speak lib.sh's
-# older words are simply files this scan finds no ids in, which costs nothing.
-NT_SUITES="$(ls "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh \
-    2>/dev/null | grep -v 'selftest\.sh$')"
-
-ORPHAN=""
-while IFS="$(printf '\t')" read -r rid _rest; do
-    # The carriage return is stripped before the guard, not after it. On a
-    # Windows checkout cases.tsv arrives CRLF, so a blank line reads as a lone
-    # \r -- which is neither empty nor a comment, and went through as an id
-    # whose whole name is invisible. The report read
-    # "in cases.tsv but emitted nowhere: " with nothing after the colon, which
-    # is the least actionable failure this file could produce.
-    rid="$(printf '%s' "$rid" | tr -d '\r')"
-    case "$rid" in ''|'#'*) continue ;; esac
-    # An id whose last segment is built at runtime -- `std.win.open-target.$v`
-    # is one call site and two ids -- cannot be found by its whole name, so the
-    # stem followed by a variable counts as emitting it.
-    stem="${rid%.*}"
-    found=0
-    for suite in $NT_SUITES; do
-        # nt_walk_* counts as emitting. test/lib/walk.sh names its ids as
-        # arguments to the walk's own comparators -- `nt_walk_geometry
-        # walk.resize ...` -- rather than to nt_pass directly, and a scan that
-        # only knew the three verdict words would call every one of them an
-        # orphan the moment the verifiers stop carrying the literals too.
-        #
-        # And assert_*, which is the same thing arrived at from the other side.
-        # A suite whose assertions differ only in their fixture writes one
-        # wrapper and hands it the id -- netinstall/test/verify.sh has five
-        # rejections that differ in nothing else -- and inside that wrapper the
-        # id is `$id`, which no literal scan can resolve. This is the shape and
-        # not a file: the next converted suite that writes `assert_something` is
-        # covered without this line being touched again. It is the same
-        # allowance the `$stem\.\$` escape above makes for an id whose last
-        # segment is built at runtime.
-        #
-        # $rid is followed by a boundary, and without it this scan reports a
-        # false pass. The match was unanchored, so an id that is a *prefix* of
-        # another was found by the longer one: registering envlen.trunc.keep255
-        # beside envlen.trunc.keep255.control made the first one look emitted
-        # whether anything emitted it or not. An orphan check that can be
-        # satisfied by a different case is not checking the thing it is for.
-        #
-        # The boundary goes on that alternative only. The other one ends in a
-        # literal `$` -- it is how an id whose last segment is built at runtime
-        # is matched, `std.win.open-target.$v` -- and a boundary after it would
-        # refuse the variable that has to follow.
-        if grep -qE "(nt_(pass|fail|skip|walk_[a-z_]+)|ctl_(pass|fail|skip)|assert_[a-z_]+) \"?($rid([^A-Za-z0-9.-]|\$)|$stem\.\\\$)" "$suite" 2>/dev/null; then
-            found=1; break
-        fi
-    done
-    [ "$found" = 1 ] || ORPHAN="$ORPHAN $rid"
-done < "$ROOT/test/cases.tsv"
-[ -z "$ORPHAN" ] && ok "every registered case id is emitted by some suite" \
-    || bad "in cases.tsv but emitted nowhere:$ORPHAN"
-
-# The registry checked as a file, which nothing did. Both of these are silent
-# failures rather than loud ones, which is why they need a check at all: the
-# grid goes on rendering and says something confident and wrong.
-
-# No id twice. test/matrix.py builds the registry as a dict keyed on the id, so
-# a second row with the same id replaces the first -- its title and, the part
-# that matters, its lane list. A case quietly expected on a different set of
-# lanes turns real holes into `.` and back, and nothing anywhere says so.
-DUPID="$(awk -F'\t' '!/^#/ && NF { print $1 }' "$ROOT/test/cases.tsv" | sort | uniq -d)"
-[ -z "$DUPID" ] && ok "no case id is registered twice" \
-    || bad "registered more than once in cases.tsv:$(echo $DUPID)"
-
-# Every lane an applies-to names is a real job. A typo here does not fail, it
-# disables: `applies()` matches no lane, every cell in that row reads `.`, and
-# --strict has nothing to complain about because no lane was ever expected to
-# report it. A case switched off by a misspelling looks exactly like a case that
-# applies to nothing on purpose.
-STRAYLANE=""
-for l in $(awk -F'\t' '!/^#/ && NF { print $3 }' "$ROOT/test/cases.tsv" |
-           tr ' ' '\n' | sort -u); do
-    [ -n "$l" ] || continue
-    [ "$l" = "*" ] && continue
-    grep -qE "^  $l:\$" "$ROOT/.github/workflows/ci.yml" ||
-        STRAYLANE="$STRAYLANE $l"
-done
-[ -z "$STRAYLANE" ] && ok "every lane a case applies to is a job in ci.yml" \
-    || bad "named in a cases.tsv applies-to and not a job in ci.yml:$STRAYLANE"
-
 # ------------------------------------------- the suites that speak the harness
 
 # Both scans below walk the same list, and until now each built it for itself:
@@ -724,7 +614,7 @@ for suite in $NT_SPEAKERS; do
                 # ctl_skip and the walk verifiers through walk.sh nt_walk_*
                 # comparators. A definition -- `ctl_pass() {` -- is a different
                 # token and does not match.
-                if (verb !~ /^(nt_pass|nt_fail|nt_skip|ctl_pass|ctl_fail|ctl_skip|nt_walk_[a-z_]+|assert_[a-z_]+)$/) continue
+                if (verb !~ /^(nt_pass|nt_fail|nt_skip|nt_eq|nt_match|ctl_pass|ctl_fail|ctl_skip|nt_walk_[a-z_]+|assert_[a-z_]+)$/) continue
                 arg = $(i + 1)
                 gsub(/"/, "", arg)
                 if (arg ~ /^[a-z][a-z0-9]*(\.[a-z0-9.-]+)+$/) { print "id\t" f "\t" verb "\t" arg; continue }
@@ -740,7 +630,7 @@ for suite in $NT_SPEAKERS; do
                 # assert_*, ctl_* and nt_walk_* are handed one in a variable as
                 # a matter of course, which is why they are read for ids above
                 # and not judged for the want of one here.
-                if (verb !~ /^nt_(pass|fail|skip)$/) continue
+                if (verb !~ /^nt_(pass|fail|skip|eq|match)$/) continue
                 call = ""
                 for (j = i; j <= NF && j < i + 7; j++) call = call (call == "" ? "" : " ") $j
                 print "bad\t" f "\t" verb "\t" call
@@ -770,6 +660,115 @@ NSPK="$(awk -F'\t' '{ print $2 }' "$CALLS" | sort -u | wc -l | tr -d ' ')"
 [ -z "$MUTE" ] \
     && ok "the verdict-call scan reads the tree ($NCALLS calls in $NSPK suites)" \
     || bad "the verdict-call scan found no$MUTE anywhere, so the checks below prove nothing"
+
+# Every literal id a suite hands a verdict word is in the registry.
+#
+# This walked the tree for itself until the table above existed, with its own
+# copy of the glob, the exclusions and a `\b` of its own -- so it was the third
+# scan in this section reading the same files three ways, and the third one that
+# would have been reading none of them wherever `\b` is not a word boundary.
+UNKNOWN=""
+while IFS="$(printf '\t')" read -r _kind ufile _uverb uid; do
+    [ -n "$uid" ] || continue
+    grep -q "^$uid	" "$ROOT/test/cases.tsv" || UNKNOWN="$UNKNOWN $ufile:$uid"
+done < "$CALLS"
+UNKNOWN="$(printf '%s' "$UNKNOWN" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ *//;s/ *$//')"
+[ -z "$UNKNOWN" ] && ok "every literal case id in every suite is registered" \
+    || bad "emitted but not in cases.tsv: $UNKNOWN"
+
+# And the other direction. A registry that accumulates ids nothing emits stops
+# being able to tell a hole from a leftover, which is the one thing it is for.
+# The suites, listed once. `grep -r --include` would do it in one line and is
+# the sort of thing that turns out to mean something slightly different on the
+# BSD grep macOS ships -- and the failure mode there is every id reported as an
+# orphan, which reads as a catastrophe rather than as a portability note.
+# netinstall/test/*.sh is in the list now, and it has to be: splash.sh speaks
+# this vocabulary, and a registry that could not see the tree a suite lives in
+# would call every id that suite emits an orphan -- or, worse, let an
+# unregistered one through. The netinstall suites that still speak lib.sh's
+# older words are simply files this scan finds no ids in, which costs nothing.
+NT_SUITES="$(ls "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh \
+    2>/dev/null | grep -v 'selftest\.sh$')"
+
+ORPHAN=""
+while IFS="$(printf '\t')" read -r rid _rest; do
+    # The carriage return is stripped before the guard, not after it. On a
+    # Windows checkout cases.tsv arrives CRLF, so a blank line reads as a lone
+    # \r -- which is neither empty nor a comment, and went through as an id
+    # whose whole name is invisible. The report read
+    # "in cases.tsv but emitted nowhere: " with nothing after the colon, which
+    # is the least actionable failure this file could produce.
+    rid="$(printf '%s' "$rid" | tr -d '\r')"
+    case "$rid" in ''|'#'*) continue ;; esac
+    # An id whose last segment is built at runtime -- `std.win.open-target.$v`
+    # is one call site and two ids -- cannot be found by its whole name, so the
+    # stem followed by a variable counts as emitting it.
+    stem="${rid%.*}"
+    found=0
+    for suite in $NT_SUITES; do
+        # nt_walk_* counts as emitting. test/lib/walk.sh names its ids as
+        # arguments to the walk's own comparators -- `nt_walk_geometry
+        # walk.resize ...` -- rather than to nt_pass directly, and a scan that
+        # only knew the three verdict words would call every one of them an
+        # orphan the moment the verifiers stop carrying the literals too.
+        #
+        # And assert_*, which is the same thing arrived at from the other side.
+        # A suite whose assertions differ only in their fixture writes one
+        # wrapper and hands it the id -- netinstall/test/verify.sh has five
+        # rejections that differ in nothing else -- and inside that wrapper the
+        # id is `$id`, which no literal scan can resolve. This is the shape and
+        # not a file: the next converted suite that writes `assert_something` is
+        # covered without this line being touched again. It is the same
+        # allowance the `$stem\.\$` escape above makes for an id whose last
+        # segment is built at runtime.
+        #
+        # $rid is followed by a boundary, and without it this scan reports a
+        # false pass. The match was unanchored, so an id that is a *prefix* of
+        # another was found by the longer one: registering envlen.trunc.keep255
+        # beside envlen.trunc.keep255.control made the first one look emitted
+        # whether anything emitted it or not. An orphan check that can be
+        # satisfied by a different case is not checking the thing it is for.
+        #
+        # The boundary goes on that alternative only. The other one ends in a
+        # literal `$` -- it is how an id whose last segment is built at runtime
+        # is matched, `std.win.open-target.$v` -- and a boundary after it would
+        # refuse the variable that has to follow.
+        if grep -qE "(nt_(pass|fail|skip|eq|match|walk_[a-z_]+)|ctl_(pass|fail|skip)|assert_[a-z_]+) \"?($rid([^A-Za-z0-9.-]|\$)|$stem\.\\\$)" "$suite" 2>/dev/null; then
+            found=1; break
+        fi
+    done
+    [ "$found" = 1 ] || ORPHAN="$ORPHAN $rid"
+done < "$ROOT/test/cases.tsv"
+[ -z "$ORPHAN" ] && ok "every registered case id is emitted by some suite" \
+    || bad "in cases.tsv but emitted nowhere:$ORPHAN"
+
+# The registry checked as a file, which nothing did. Both of these are silent
+# failures rather than loud ones, which is why they need a check at all: the
+# grid goes on rendering and says something confident and wrong.
+
+# No id twice. test/matrix.py builds the registry as a dict keyed on the id, so
+# a second row with the same id replaces the first -- its title and, the part
+# that matters, its lane list. A case quietly expected on a different set of
+# lanes turns real holes into `.` and back, and nothing anywhere says so.
+DUPID="$(awk -F'\t' '!/^#/ && NF { print $1 }' "$ROOT/test/cases.tsv" | sort | uniq -d)"
+[ -z "$DUPID" ] && ok "no case id is registered twice" \
+    || bad "registered more than once in cases.tsv:$(echo $DUPID)"
+
+# Every lane an applies-to names is a real job. A typo here does not fail, it
+# disables: `applies()` matches no lane, every cell in that row reads `.`, and
+# --strict has nothing to complain about because no lane was ever expected to
+# report it. A case switched off by a misspelling looks exactly like a case that
+# applies to nothing on purpose.
+STRAYLANE=""
+for l in $(awk -F'\t' '!/^#/ && NF { print $3 }' "$ROOT/test/cases.tsv" |
+           tr ' ' '\n' | sort -u); do
+    [ -n "$l" ] || continue
+    [ "$l" = "*" ] && continue
+    grep -qE "^  $l:\$" "$ROOT/.github/workflows/ci.yml" ||
+        STRAYLANE="$STRAYLANE $l"
+done
+[ -z "$STRAYLANE" ] && ok "every lane a case applies to is a job in ci.yml" \
+    || bad "named in a cases.tsv applies-to and not a job in ci.yml:$STRAYLANE"
 
 # Every verdict call is handed an id and not a sentence.
 #
