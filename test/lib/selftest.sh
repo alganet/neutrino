@@ -738,6 +738,28 @@ HANDLAID="$(awk '
 [ -z "$HANDLAID" ] && ok "no workflow step brings up the stall socket or the navigation target by hand" \
     || bad "the early-navigation apparatus is spelled in a workflow step at:$(echo $HANDLAID)"
 
+# Every lane's ceiling block sits above the lane it is about.
+#
+# Seven jobs carry the same five-line comment, each opening with what that lane
+# was measured at, and it is the file's account of why the number below it is
+# the number. One of them had drifted several steps down the file and was
+# sitting inside the *previous* job's step list -- so kde's block, naming a
+# netinstall step that may take 35 minutes, appeared to annotate kde-live, which
+# runs test/qtkde.sh alone and has no netinstall step at all. A reader following
+# it would have been reading about the wrong lane, and kde-live, whose ceilings
+# it looked like it explained, had none of its own.
+#
+# A comment attached to the wrong thing is worse than no comment, and it is
+# exactly what this project keeps its memory in. So: past the block, the next
+# line that is not a comment must be a job key.
+STRAYCEIL="$(awk '
+    /this lane took/ { want = 1; at = FNR; next }
+    want && /^[ \t]*#/ { next }
+    want { if ($0 !~ /^  [a-z0-9-]+:$/) print at; want = 0 }
+' "$ROOT/.github/workflows/ci.yml")"
+[ -z "$STRAYCEIL" ] && ok "every lane ceiling comment sits above the job it names" \
+    || bad "a ceiling comment is not above a job key, at ci.yml:$(echo $STRAYCEIL)"
+
 # --dry-run resolves for every lane, and what it prints parses back through
 # step.sh's own option loop. A directive that produced a flag step.sh does not
 # take would otherwise be found by a runner.

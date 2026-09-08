@@ -822,6 +822,21 @@ jobs:
   # workflow when its definition changes; a run here pulls it. If the pull
   # fails -- a fork with no package published yet -- test/qtkde.sh builds it
   # locally instead, which is slow but not broken.
+  # Measured against a complete run rather than guessed: this lane took 2.1 min
+  # measured, almost all of it the one step below. Read across five runs, that
+  # step is 62s, 73s, 75s, 75s and 121s -- the spread is the image pull, not the
+  # half.
+  #
+  # Until now the block above this one belonged to kde and had drifted down into
+  # this job's step list, which is how a lane running test/qtkde.sh alone came to
+  # be annotated with the ceiling of a netinstall step it does not have. This
+  # lane's own numbers were never written down and its one real step had no
+  # ceiling at all.
+  #
+  # Without a job ceiling the default is six hours, which is what a wedged step
+  # spends before anyone finds out -- a run that hangs reports nothing, and
+  # nothing is the one result no round can act on. A lane that exceeds this has
+  # not got slower, it has stopped.
   kde-live:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -840,7 +855,13 @@ jobs:
       # checked here rather than left to an exit status: qtkde.sh exits 0 both
       # when the half passed and when there was no desktop to run it on, and
       # those are not the same result to a reader.
+      # Six times the slowest of five readings, and well under the job's 40, so
+      # a step that wedges is stopped by its own ceiling and the failure names
+      # the step rather than the lane. That is the whole reason a step ceiling
+      # is worth having under a job ceiling: `timeout-minutes` on the job says
+      # only that the lane stopped somewhere.
       - shell: bash
+        timeout-minutes: 12
         run: |
           NT_KDE_RUNTIME=docker \
           NT_KDE_IMAGE="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/neutrino-kde:f42" \
@@ -862,11 +883,6 @@ jobs:
           echo "kde-live: no PASS, no FAIL and no reason given"
           exit 1
 
-  # Measured against a complete run rather than guessed: this lane took 12.6 min measured, and a netinstall step that may take 35.
-  # Without a job ceiling the default is six hours, which is what a wedged step
-  # spends before anyone finds out -- a run that hangs reports nothing, and
-  # nothing is the one result no round can act on. A lane that exceeds this has
-  # not got slower, it has stopped.
       # Same as bsd: one log, and until now no way to read it but the job page.
       - name: sheet
         if: always()
@@ -880,6 +896,12 @@ jobs:
         with:
           name: kde-live-sheet
           path: ~/sheet/kde-live.html
+
+  # Measured against a complete run rather than guessed: this lane took 12.6 min measured, and a netinstall step that may take 35.
+  # Without a job ceiling the default is six hours, which is what a wedged step
+  # spends before anyone finds out -- a run that hangs reports nothing, and
+  # nothing is the one result no round can act on. A lane that exceeds this has
+  # not got slower, it has stopped.
   kde:
     runs-on: ubuntu-latest
     timeout-minutes: 40
