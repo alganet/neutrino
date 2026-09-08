@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
 # SPDX-License-Identifier: ISC
 #
-# name <TAB> builder <TAB> source <TAB> flags
+# name <TAB> builder <TAB> source <TAB> flags <TAB> out
 #
 # `bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd`
 # appears in .github/workflows/ci.yml fifteen times, and it is one of eighty-four
@@ -28,12 +28,35 @@
 # source are two rows here on purpose, because which one a lane runs is a fact
 # about that lane and has been invisible in the YAML until now.
 #
+# `out` is the artifact's filename, and it exists for a case this table would
+# otherwise have to lie about. gjs and windows-launch build neutrinotest.js
+# release; kde and macos build the same source --testing. Same output file,
+# different build -- a difference the workflow carries as two spellings of an
+# mkapp line in jobs a thousand lines apart, where nothing can see them
+# together. Naming it needs two rows that both write `neutrinotest.cmd`, because
+# half the tree refers to that path by name and renaming it to make a registry
+# tidy would be the registry deciding something it has no business deciding.
+#
+# Only the release half is here today: kde and macos have not been migrated, and
+# an artifact no suite builds is a row nobody reads -- which selftest.sh refuses,
+# in the same both-directions spirit as the case registry. The second row lands
+# with the lane that needs it.
+#
+# `-` means the artifact is called after its row.
+#
 # Every artifact built here is passed through test/parse.sh before it runs. That
 # was a per-step choice in fifty-four places and should never have been one: an
 # artifact that does not parse is a suite that measures nothing, and finding out
 # from the suite is finding out late.
-neutrinostddoc	mkapp	neutrinostddoc.js	--testing
-neutrinostdwin	mkapp	neutrinostdwin.js	--testing
-neutrinostdtheme	mkapp	neutrinostdtheme.js	--testing
-neutrinostdfont	mkapp	neutrinostdfont.js	--testing
-neutrinodemo	demoapp	-	-
+neutrinotest-release	mkapp	neutrinotest.js	-	neutrinotest.cmd
+neutrinoattack	mkapp	neutrinoattack.js	-	-
+neutrinoloaders	mkapp	neutrinoloaders.js	--testing	-
+neutrinoloaders-default	mkapp	neutrinoloaders.js	-	-
+neutrinostdgeom	mkapp	neutrinostdgeom.js	--testing	-
+neutrinostdgeom-none	mkapp	neutrinostdgeom.js	--testing --decorations=none	-
+neutrinostddoc	mkapp	neutrinostddoc.js	--testing	-
+neutrinostdwin	mkapp	neutrinostdwin.js	--testing	-
+neutrinostdtheme	mkapp	neutrinostdtheme.js	--testing	-
+neutrinostdfont	mkapp	neutrinostdfont.js	--testing	-
+neutrinolivefont	mkapp	neutrinolivefont.js	--testing	-
+neutrinodemo	demoapp	-	-	-
