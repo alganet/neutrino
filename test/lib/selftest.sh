@@ -262,14 +262,26 @@ echo 1 > "$STATE/idx"; echo 0 > "$STATE/seen"
 mkxdotool 500x400
 bash -c 'exec -a WebKitWebProcess sleep 30' >/dev/null 2>&1 &
 DECOY=$!
-SBX="$WORK/sandbox.tsv"
-PATH="$BIN:$PATH" NT_LANE=selftest NT_RESULTS="$SBX" NT_WAIT_TIMEOUT=5 \
-    APP_PID=$$ bash "$ROOT/test/verify-linux.sh" "$WORK/shots-sbx" > "$WORK/sbx.out" 2>&1
+# The decoy has to be visible before it can stand in for anything, and on MSYS
+# it is not: `exec -a` renames the process for the kernel that has argv, and the
+# `pgrep` there does not report it. A fixture that cannot plant its own subject
+# is not measuring the verifier, so it says so rather than failing the run --
+# the same shape as the grep -oP guard above, and the same reason. windows-launch
+# found this by going red on it; the case itself is registered for gjs, kde and
+# linux-engines and never runs there at all.
+if pgrep -f WebKitWebProcess >/dev/null 2>&1; then
+    SBX="$WORK/sandbox.tsv"
+    PATH="$BIN:$PATH" NT_LANE=selftest NT_RESULTS="$SBX" NT_WAIT_TIMEOUT=5 \
+        APP_PID=$$ bash "$ROOT/test/verify-linux.sh" "$WORK/shots-sbx" > "$WORK/sbx.out" 2>&1
+    [ "$(awk -F'\t' '$3 == "walk.renderer.sandboxed" { print $4 }' "$SBX")" = "FAIL" ] \
+        && ok "walk.renderer.sandboxed reports FAIL for a web process with no bwrap over it" \
+        || bad "walk.renderer.sandboxed did not fail on an unsandboxed web process"
+else
+    echo "  SKIP: this platform's pgrep cannot see an 'exec -a' decoy, so the"
+    echo "        renderer-sandbox case has no subject to be planted for it"
+fi
 kill "$DECOY" 2>/dev/null || true
 wait "$DECOY" 2>/dev/null || true
-[ "$(awk -F'\t' '$3 == "walk.renderer.sandboxed" { print $4 }' "$SBX")" = "FAIL" ] \
-    && ok "walk.renderer.sandboxed reports FAIL for a web process with no bwrap over it" \
-    || bad "walk.renderer.sandboxed did not fail on an unsandboxed web process"
 # The rest of the walk still has to be reported. A suite that stops at its first
 # failure tells you one thing was wrong and nothing about what else was.
 [ "$(awk -F'\t' '$3 == "walk.done" { print $4 }' "$BAD")" = "PASS" ] \
@@ -663,6 +675,33 @@ for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.s
 done
 [ -z "$BADARG" ] && ok "every verdict call is handed a case id, not a sentence" \
     || bad "a verdict call's first argument is not a case id:$BADARG"
+
+# No case speaks only when it fails.
+#
+# A case whose every emission is an nt_fail files nothing on a good run, so its
+# cell is a hole -- and a hole was drawn as a `-` and exited green until
+# matrix.py --strict started counting one. Two arrived that way in the last push
+# and the grid caught them; this catches the shape at a desk instead.
+#
+# It is the single most common defect this whole conversion turned up. A dozen
+# assertions across the netinstall tree spoke only on failure, which meant the
+# row saying "the instrument exists" was filed on exactly the runs where nothing
+# else could be. Given a passing voice, they say so on every run.
+#
+# nt_skip counts as a voice: a case that can only skip or fail is one that says
+# why it could not answer, which is not silence.
+SILENT="$(for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
+    case "$(basename "$suite")" in selftest.sh|harness.sh) continue ;; esac
+    grep -q 'harness\.sh' "$suite" 2>/dev/null || continue
+    sed 's/#.*//' "$suite" |
+        grep -oE '\b(nt_pass|nt_fail|nt_skip|assert_[a-z_]+) +[a-z][a-z0-9.]*\.[a-z0-9.-]+' |
+        awk -v f="$(basename "$suite")" '{ print f "\t" $1 "\t" $2 }'
+done | awk -F'\t' '
+    { seen[$3 "\t" $1] = 1; if ($2 != "nt_fail") voiced[$3] = 1 }
+    END { for (k in seen) { split(k, a, "\t"); if (!(a[1] in voiced)) print a[2] ":" a[1] } }
+' | sort -u | tr '\n' ' ')"
+[ -z "$SILENT" ] && ok "no case speaks only when it fails" \
+    || bad "these cases file nothing on a good run:$SILENT"
 
 # ------------------------------------------------------------------- reap.sh
 
