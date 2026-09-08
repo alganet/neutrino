@@ -609,6 +609,21 @@ if [ -n "$NT_KNOB_TAGS" ]; then
 elif [ "$UNAME" = "Darwin" ]; then
     NT_TOOLKIT="skipped: the macos driver is osascript and its loader knob is DYLD_*, already dropped"
     NT_TOOLKIT_CTL="$NT_TOOLKIT"
+    # And said as rows, not only as a variable that reaches a report line. This
+    # arm set the two strings and filed nothing, so the three toolkit cases were
+    # holes on macos-netinstall -- a lane they are expected on, and a hole reads
+    # exactly like a lane that stopped reporting. Caught by the grid diff and not
+    # by --strict, which sees a lane reporting none of its cases but not a lane
+    # missing three of them.
+    for c in env.toolkit.control env.toolkit.silent env.toolkit.window; do
+        nt_skip "$c" "the macos driver is osascript and its loader knob is DYLD_*, already dropped"
+    done
+else
+    # Neither a linux lane with a knob nor Darwin: there is no toolkit question
+    # here at all, and it says so rather than leaving three cells empty.
+    for c in env.toolkit.control env.toolkit.silent env.toolkit.window; do
+        nt_skip "$c" "no toolkit knob is defined for this platform"
+    done
 fi
 
 # =====================================================================
