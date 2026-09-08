@@ -458,3 +458,39 @@ phases.session.pid.said	and says so as a refusal, not a warning	gjs bsd windows-
 phases.session.normal.ran	the normal build still runs where a step can be repaired	gjs bsd windows-launch macos-netinstall
 phases.session.normal.said	and says what it actually got	gjs bsd windows-launch macos-netinstall
 phases.session.fork	and the app can still fork afterwards	gjs bsd windows-launch macos-netinstall
+
+# The environment allowlist, from netinstall/test/env.sh, and the first family
+# the kde lane appears in. kde asks the netinstall runner for `env e2e` and
+# nothing else -- it shares a kernel with gjs, so the rest would be the same
+# measurement taken twice on one machine -- so this file is the whole of what
+# that lane has to say here, and until now it said it in prose only.
+#
+# Three lanes and not four: env.sh exits 0 on windows, where sh payloads do not
+# run and privs.sh asks the reach question instead, and `env` is not in the
+# reduced OpenBSD list.
+#
+# The five env.tight.* cases skip everywhere, for the same reason seventeen of
+# phases.sh's do: netinstall/test/run.sh hands this suite one binary, so
+# $APP_TIGHT is empty and the tier that would be measured on a library rather
+# than a program is never built. Registered and skipping rather than dropped,
+# so the gap is visible in the grid instead of only in the argument list.
+#
+# The skips inside the other families are a different thing: a knob that never
+# arrived even without netinstall in the way cannot say the scrub dropped it,
+# and saying that is not the same as saying nothing.
+env.payload.ran	the probe payload ran	gjs kde macos-netinstall
+env.control.dropped	a name outside the allowlist is dropped	gjs kde macos-netinstall
+env.control.kept	a NEUTRINO_ name arrives, so the battery was set	gjs kde macos-netinstall
+env.claims.dropped	the names env.c says are absent by construction are	gjs kde macos-netinstall
+env.knobs.dropped	every loader knob a prefix used to admit is dropped	gjs kde macos-netinstall
+env.knobs.kept	and what a prefix still has to admit arrives	gjs kde macos-netinstall
+env.module.instrument	the module's constructor ran somewhere, so silence is a denial	gjs kde macos-netinstall
+env.polyglot.scrub	the launcher's own loader scrub is out of the file under test	gjs kde macos-netinstall
+env.toolkit.control	the engine still honours one of these knobs unconfined	gjs kde macos-netinstall
+env.toolkit.silent	and none of them loads through netinstall	gjs kde macos-netinstall
+env.toolkit.window	and the app still came up with the knobs denied	gjs kde macos-netinstall
+env.tight.exec	the tight tier does not refuse execve in the app dir	gjs kde macos-netinstall
+env.tight.dlopen	the same directory's library maps anyway	gjs kde macos-netinstall
+env.tight.ctor	and its constructor runs	gjs kde macos-netinstall
+env.tight.home	a library under $HOME is in reach	gjs kde macos-netinstall
+env.tight.home.ctor	and it runs	gjs kde macos-netinstall

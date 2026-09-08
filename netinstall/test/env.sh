@@ -47,6 +47,19 @@ BIN_TIGHT="${2:-}"
 [ -n "$BIN_TIGHT" ] && [ -x "$BIN_TIGHT" ] &&
     BIN_TIGHT="$(cd "$(dirname "$BIN_TIGHT")" && pwd)/$(basename "$BIN_TIGHT")"
 . "$(dirname "$0")/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity, so the one sourced second is the one this file
+# speaks. nt_note and nt_result are lib.sh's and are not shadowed.
+#
+# The eleventh netinstall suite through the conversion, and the one that puts
+# the kde lane into these families for the first time: kde asks the netinstall
+# runner for `env e2e` and nothing else, because it shares a kernel with gjs and
+# the rest would be the same measurement twice. So this file is what kde has to
+# say here, and until now it said it in prose only.
+. "$(cd "$(dirname "$0")/../../test/lib" && pwd)/harness.sh"
+# The annotation lib.sh's nt_fail emitted, kept by name so a red netinstall check
+# still says so on the run page.
+NT_ANNOTATE=netinstall
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 if [ "$NT_WINDOWS" = "1" ]; then
@@ -62,7 +75,6 @@ SERVE="$WORK/serve"
 mkdir -p "$SERVE" "$WORK/bin" "$WORK/bin-tight" "$WORK/mod" "$WORK/marks"
 export NEUTRINO_HOME="$WORK/home"
 
-FAILURES=0
 UNAME="$(uname -s)"
 
 # =====================================================================
@@ -308,42 +320,43 @@ fi
 
 nt_seen() { grep -qx "env $1 SEEN" <<<"$2"; }
 
-check() {
-    local label="$1" want="$2"
+# assert_line rather than check, the rename four suites before this one needed:
+# it takes its id through a variable, so it is the one the registry scan in
+# test/lib/selftest.sh cannot follow, and assert_[a-z_]+ is the shape it knows.
+assert_line() {
+    local id="$1" label="$2" want="$3"
     if grep -qx "$want" <<<"$OUT"; then
-        echo "  PASS: $label ($want)"
+        nt_pass "$id" "$label ($want)"
     else
-        nt_fail "$label expected=$want actual=$(tr '\n' ' ' <<<"$OUT" | cut -c1-400)"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$id" "$label expected=$want actual=$(tr '\n' ' ' <<<"$OUT" | cut -c1-400)"
     fi
 }
 
 # --- controls first: nothing below means anything without them ---
 NT_RAN=1
 if grep -qx PROBE_END <<<"$OUT"; then
-    echo "  PASS: the payload ran"
+    nt_pass env.payload.ran "the payload ran"
 else
     NT_RAN=0
-    nt_fail "payload expected=ran actual=$(tr '\n' ' ' <<<"$OUT" | cut -c1-200) err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
-    FAILURES=$((FAILURES + 1))
+    nt_fail env.payload.ran "payload expected=ran actual=$(tr '\n' ' ' <<<"$OUT" | cut -c1-200) err=$(tr '\n' ' ' < "$WORK/err" | cut -c1-200)"
 fi
-check "a name outside the allowlist is dropped"        "env NT_ENV_CONTROL_DROPPED GONE"
-check "a NEUTRINO_ name arrives, so the battery was set" "env NEUTRINO_ENV_CONTROL_KEPT SEEN"
+assert_line env.control.dropped "a name outside the allowlist is dropped"        "env NT_ENV_CONTROL_DROPPED GONE"
+assert_line env.control.kept "a NEUTRINO_ name arrives, so the battery was set" "env NEUTRINO_ENV_CONTROL_KEPT SEEN"
 
 # --- the three claims env.c already makes ---
 echo "=== The names env.c says are absent by construction ==="
 NT_PREEMPTED=""
 for n in $NT_CLAIMS; do
     if nt_seen "$n" "$OUT"; then
-        nt_fail "$n expected=dropped actual=reached the payload"
-        FAILURES=$((FAILURES + 1))
+        nt_fail env.claims.dropped "$n expected=dropped actual=reached the payload"
     elif ! nt_seen "$n" "$BARE_OUT"; then
         # Gone without netinstall too, so this run cannot say the scrub is what
         # removed it. Recorded rather than counted, in either direction.
         NT_PREEMPTED="$NT_PREEMPTED $n"
         echo "  NOTE: $n is already absent with no netinstall in the way"
+        nt_skip env.claims.dropped "$n is already absent with no netinstall in the way, so this run cannot say the scrub removed it"
     else
-        echo "  PASS: $n is dropped by the scrub"
+        nt_pass env.claims.dropped "$n is dropped by the scrub"
     fi
 done
 [ -n "$NT_PREEMPTED" ] &&
@@ -359,18 +372,18 @@ done
 echo "=== The loader knobs a prefix used to admit ==="
 for n in $NT_LOADERS; do
     if ! nt_seen "$n" "$BARE_OUT"; then
-        nt_note "$n never arrived even without netinstall; unmeasured here"
+        nt_skip env.knobs.dropped "$n never arrived even without netinstall, so this run cannot say the scrub dropped it"
     else
-        check "$n is dropped" "env $n GONE"
+        assert_line env.knobs.dropped "$n is dropped" "env $n GONE"
     fi
 done
 
 echo "=== And what a prefix still has to admit ==="
 for n in $NT_KEEPERS; do
     if ! nt_seen "$n" "$BARE_OUT"; then
-        nt_note "$n never arrived even without netinstall; unmeasured here"
+        nt_skip env.knobs.kept "$n never arrived even without netinstall, so there is nothing here to keep"
     else
-        check "$n still arrives" "env $n SEEN"
+        assert_line env.knobs.kept "$n still arrives" "env $n SEEN"
     fi
 done
 
@@ -417,13 +430,16 @@ echo "  unconfined: $NT_DL_CTL"
 # The instrument has to work somewhere or its silence means nothing.
 if [ "$NT_MOD_BUILT" = "1" ]; then
     if grep -q 'MODCTOR_[A-Z]*_RAN' <<<"$NT_DL_CTL$NT_DL"; then
-        echo "  PASS: the module's constructor ran at least once, so silence elsewhere is a denial"
+        nt_pass env.module.instrument "the module's constructor ran at least once, so silence elsewhere is a denial"
     else
-        nt_fail "instrument expected=MODCTOR_*_RAN somewhere actual=confined[$NT_DL] unconfined[$NT_DL_CTL]"
-        FAILURES=$((FAILURES + 1))
+        nt_fail env.module.instrument "instrument expected=MODCTOR_*_RAN somewhere actual=confined[$NT_DL] unconfined[$NT_DL_CTL]"
     fi
 else
     nt_note "no module built ($NT_CC unavailable or failed); the effect half is unmeasured here"
+    nt_skip env.module.instrument "no module built ($NT_CC unavailable or failed)"
+    for c in env.tight.exec env.tight.dlopen env.tight.ctor env.tight.home env.tight.home.ctor; do
+        nt_skip "$c" "no module built ($NT_CC unavailable or failed)"
+    done
 fi
 
 # =====================================================================
@@ -472,9 +488,15 @@ if [ "$NT_HAVE_APP" = "1" ]; then
         awk '/^nt_scrub_loaders$/ { next } { print }' \
             "$SERVE/alive.cmd" > "$SERVE/alive.patched" &&
             mv "$SERVE/alive.patched" "$SERVE/alive.cmd"
+        # Said either way. This spoke only when the cut had failed, so the run
+        # where it worked filed nothing -- and what it guards is the whole
+        # meaning of the toolkit half below: with the launcher's own scrub still
+        # in the file, both launches are denied twice and this suite goes on
+        # passing after an env.c regression.
         if grep -q '^nt_scrub_loaders$' "$SERVE/alive.cmd"; then
-            nt_fail "the polyglot's loader scrub is still in the file under test; the toolkit half measures two rules"
-            FAILURES=$((FAILURES + 1))
+            nt_fail env.polyglot.scrub "the polyglot's loader scrub is still in the file under test; the toolkit half measures two rules"
+        else
+            nt_pass env.polyglot.scrub "the launcher's own loader scrub is out of the file under test"
         fi
         ASPEC="alive-example-com-1$(nt_pin "$SERVE/alive.cmd")"
         AAPP="$(nt_as "$BIN" "$ASPEC" "$WORK/bin")"
@@ -484,6 +506,7 @@ if [ "$NT_HAVE_APP" = "1" ]; then
         # Not a failure of this suite: the polyglot build is e2e.sh's gate, and
         # a second red line here would only point at the same thing.
         nt_note "the polyglot did not build here; the toolkit and cost halves are unmeasured"
+        nt_skip env.polyglot.scrub "the polyglot did not build here, so there was no file to cut the launcher's scrub from"
         NT_HAVE_APP=0
     fi
 fi
@@ -562,25 +585,26 @@ if [ -n "$NT_KNOB_TAGS" ]; then
     # way, the engine changed or the module is broken, and every SILENT below
     # is a refusal that rendered nothing.
     if grep -q '=LOADED' <<<"$NT_TOOLKIT_CTL"; then
-        echo "  PASS: the engine still honours at least one of these knobs unconfined"
+        nt_pass env.toolkit.control "the engine still honours at least one of these knobs unconfined"
         for t in $NT_KNOB_TAGS; do
             if grep -q "$t=SILENT" <<<"$NT_TOOLKIT"; then
-                echo "  PASS: $t did not load through netinstall"
+                nt_pass env.toolkit.silent "$t did not load through netinstall"
             else
-                nt_fail "$t expected=SILENT through netinstall actual=$NT_TOOLKIT"
-                FAILURES=$((FAILURES + 1))
+                nt_fail env.toolkit.silent "$t expected=SILENT through netinstall actual=$NT_TOOLKIT"
             fi
         done
         # And the app is still an app. A denial that took the window with it
         # would report every tag SILENT and pass the three lines above.
         if grep -q 'window=UP' <<<"$NT_TOOLKIT"; then
-            echo "  PASS: the app still came up with the knobs denied"
+            nt_pass env.toolkit.window "the app still came up with the knobs denied"
         else
-            nt_fail "window expected=UP with the knobs denied actual=$NT_TOOLKIT"
-            FAILURES=$((FAILURES + 1))
+            nt_fail env.toolkit.window "window expected=UP with the knobs denied actual=$NT_TOOLKIT"
         fi
     else
         nt_note "no knob loaded even unconfined; the toolkit half is unmeasured: $NT_TOOLKIT_CTL"
+        for c in env.toolkit.control env.toolkit.silent env.toolkit.window; do
+            nt_skip "$c" "no knob loaded even unconfined; there is nothing for a denial to have refused"
+        done
     fi
 elif [ "$UNAME" = "Darwin" ]; then
     NT_TOOLKIT="skipped: the macos driver is osascript and its loader knob is DYLD_*, already dropped"
@@ -609,21 +633,25 @@ fi
 # code of the caller's choosing in the process that renders the page. A kernel
 # or a profile that closes any of this again should fail here and be read
 # about, not pass quietly.
+if [ -z "$NT_DL_TIGHT" ] && [ "$NT_MOD_BUILT" = "1" ]; then
+    for c in env.tight.exec env.tight.dlopen env.tight.ctor env.tight.home env.tight.home.ctor; do
+        nt_skip "$c" "the tight tier reported nothing to read (${NT_DL_TIGHT:-not measured})"
+    done
+fi
 if [ -n "$NT_DL_TIGHT" ] && [ "$NT_MOD_BUILT" = "1" ]; then
     echo "=== The tight tier, on a library rather than a program ==="
-    tight_check() {
-        if grep -q "$2" <<<"$NT_DL_TIGHT"; then
-            echo "  PASS: $1 ($2)"
+    assert_tight() {
+        if grep -q "$3" <<<"$NT_DL_TIGHT"; then
+            nt_pass "$1" "$2 ($3)"
         else
-            nt_fail "$1 expected=$2 actual=$NT_DL_TIGHT"
-            FAILURES=$((FAILURES + 1))
+            nt_fail "$1" "$2 expected=$3 actual=$NT_DL_TIGHT"
         fi
     }
-    tight_check "execve of a file in the app dir is not refused"  EXEC_OWN_DIR
-    tight_check "the same directory's library maps anyway"        DLOPEN_OWNDIR_OK
-    tight_check "and its constructor runs"                        MODCTOR_OWNDIR_RAN
-    tight_check "a library under \$HOME is in reach"              DLOPEN_HOME_OK
-    tight_check "and it runs"                                     MODCTOR_HOME_RAN
+    assert_tight env.tight.exec "execve of a file in the app dir is not refused"  EXEC_OWN_DIR
+    assert_tight env.tight.dlopen "the same directory's library maps anyway"        DLOPEN_OWNDIR_OK
+    assert_tight env.tight.ctor "and its constructor runs"                        MODCTOR_OWNDIR_RAN
+    assert_tight env.tight.home "a library under \$HOME is in reach"              DLOPEN_HOME_OK
+    assert_tight env.tight.home.ctor "and it runs"                                     MODCTOR_HOME_RAN
 fi
 
 # =====================================================================
@@ -715,5 +743,6 @@ webkit sandbox available: confined=$(nt_tok 'BWRAP_[A-Z]+' "$OUT" | sed 's/ $//;
 bare=$NT_BWRAP_BARE"
 nt_result "env strip cost [$NT_LANE]: $NT_COST; present before the strip:$NT_PRESENT"
 
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+exit $NT_FAILURES
