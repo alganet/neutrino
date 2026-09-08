@@ -62,9 +62,17 @@ LOGDIR="${NT_SCHEME_LOGDIR:-$HOME}"
 # reuse.
 VERIFY_LOG="$LOGDIR/themescheme-verify.log"
 
-FAILURES=0
-fail() { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
-note() { echo "report: $*"; }
+# The six words. This file had no `pass`: its two controls each had a counted
+# `fail` branch and a `note` branch, so the run where both held said nothing at
+# all -- and they are the two readings that stop a green from being an accident.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+
+note() { nt_report "$*"; }
+
+skip_controls() {
+    nt_skip themescheme.control.theme-loaded "$1"
+    nt_skip themescheme.control.dark "$1"
+}
 
 # The name, and it is the whole apparatus. No `-dark` suffix and no `:dark`
 # variant, because a name carrying either is a name the engine reads instead of
@@ -101,10 +109,12 @@ echo "themescheme.sh: artifact=$ART theme=$THEME_NAME bg=$BG"
 # same name, and a window that outlived an earlier step is one the verifier
 # would attach to and report about. themeflip.sh lost a round to exactly this.
 if [ -n "$(xdotool search --name '^STD-THEME-' 2>/dev/null | head -1)" ]; then
-    fail "a STD-THEME- window was already up before this launch; it would be read instead"
-    note "totals themescheme failures=$FAILURES"
-    exit "$FAILURES"
+    nt_fail themescheme.clean-start "a STD-THEME- window was already up before this launch; it would be read instead"
+    nt_skip themescheme.reported "an older window would have been read, so this launch was not made"
+    skip_controls "an older window would have been read, so this launch was not made"
+    nt_finish
 fi
+nt_pass themescheme.clean-start "no STD-THEME- window was up before this launch"
 
 # Prepended, never replacing: the runner's own data dirs carry the icon themes
 # and the schemas GTK needs to come up at all, and a launcher that cannot open a
@@ -129,26 +139,33 @@ PAL="$(sed -n 's/^report: self palette //p' "$VERIFY_LOG" | head -1)"
 val() { printf '%s' " $PAL" | sed -n "s/.* $1=\([^ ]*\).*/\1/p"; }
 
 if [ -z "$PAL" ]; then
-    fail "the app never reported a palette; there is no reading here to judge"
-    note "totals themescheme failures=$FAILURES"
-    exit "$FAILURES"
+    nt_fail themescheme.reported "the app never reported a palette; there is no reading here to judge"
+    skip_controls "no palette was reported, so there was nothing to hold against what this file wrote"
+    nt_finish
 fi
+nt_pass themescheme.reported "the app reported a palette"
 
 GOT_BG="$(val 'n:background')"
 WANT_BG="${BG#\#}"
 if [ "$GOT_BG" = "$WANT_BG" ]; then
-    note "control theme loaded background=$GOT_BG verdict=TOOK"
+    nt_pass themescheme.control.theme-loaded "control theme loaded background=$GOT_BG verdict=TOOK"
 else
-    fail "control theme did not load: the launcher read background=$GOT_BG where this file wrote $WANT_BG -- GTK_THEME never reached the app, so the desktop below is the runner's and not this one's"
+    nt_fail themescheme.control.theme-loaded "control theme did not load: the launcher read background=$GOT_BG where this file wrote $WANT_BG -- GTK_THEME never reached the app, so the desktop below is the runner's and not this one's"
 fi
 
 GOT_SCHEME="$(val nscheme)"
 if [ "$GOT_SCHEME" = dark ]; then
-    note "control palette dark nscheme=dark verdict=DARK"
+    nt_pass themescheme.control.dark "control palette dark nscheme=dark verdict=DARK"
 else
-    fail "control palette: the launcher called $WANT_BG '$GOT_SCHEME'; the luminance rule and this file's idea of a dark colour disagree, and nothing below is about the media query"
+    nt_fail themescheme.control.dark "control palette: the launcher called $WANT_BG '$GOT_SCHEME'; the luminance rule and this file's idea of a dark colour disagree, and nothing below is about the media query"
 fi
 
 note "themescheme mq=$(val mq) neutrino=$GOT_SCHEME verifier=$VERIFY"
-note "totals themescheme failures=$((FAILURES + VERIFY))"
-exit "$((FAILURES + VERIFY))"
+
+# The verifier's own count, carried. nt_finish exits $NT_FAILURES and this file
+# has a second half to add to it -- the media-query assertion is verify-std.sh's
+# and is filed there as std.theme.*, so what comes back here is a status and not
+# a case. harness.sh names this shape: a caller with arithmetic of its own reads
+# NT_FAILURES and calls nothing.
+nt_report "totals themescheme passes=$NT_PASSES failures=$((NT_FAILURES + VERIFY)) skips=$NT_SKIPS"
+exit "$((NT_FAILURES + VERIFY))"

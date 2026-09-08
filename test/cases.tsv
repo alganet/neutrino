@@ -428,6 +428,37 @@ appdir.race.window	the app comes up under a rewriter	kde
 appdir.inject.string	the path is a string and not program text	kde
 appdir.inject.window	the app comes up from a directory with a quote in its name	kde
 
+# The desktop built to make the media query lie, from test/themescheme.sh -- gjs
+# and linux-engines, the GTK lanes, because the mechanism is WebKitGTK reading
+# `prefers-color-scheme` off the theme's *name* rather than its palette.
+#
+# Three assertions and only two of them are here. The third -- that the query
+# agrees, which is the one the round exists for -- is verify-std.sh's own and is
+# filed as std.theme.*, so this file runs the verifier and carries its status
+# rather than repeating the assertion. What it adds are the two preconditions
+# the verifier cannot know about, because they are about the desktop it was
+# pointed at:
+#
+#   the theme loaded    the palette the launcher read is the palette this file
+#                       wrote. Without it, a run whose GTK_THEME never took
+#                       reads the runner's own light desktop, agrees with a
+#                       light media query, and passes.
+#   the palette is dark the launcher's luminance rule applied to that colour.
+#                       A derived number and its input are two readings.
+#
+# Both were a `note` on the branch where they held, so the run where the whole
+# apparatus worked filed nothing -- on the two cases whose entire job is to stop
+# a green from being an accident.
+#
+# themescheme.clean-start is the other precondition, and it is one themeflip.sh
+# lost a round to: every STD-THEME- step in the lane answers to the same name,
+# so a window that outlived an earlier step is one the verifier would attach to
+# and report about.
+themescheme.clean-start	no STD-THEME- window was up before this launch	gjs linux-engines
+themescheme.reported	the app reported a palette	gjs linux-engines
+themescheme.control.theme-loaded	the palette read is the palette this file wrote	gjs linux-engines
+themescheme.control.dark	the launcher calls that palette dark	gjs linux-engines
+
 # A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
 # because the failure it provokes is the WebView2 package download 404ing and no
 # other lane has that path to fail on.
