@@ -186,3 +186,34 @@ names.duplicate.charset.reason	an unrecognised suffix names the character and th
 names.duplicate.safari.reason	a "-1" refusal blames the suffix, not the digest	gjs bsd windows-launch macos-netinstall
 names.duplicate.sibling	the sibling it points at keeps its extension	gjs bsd windows-launch macos-netinstall
 names.symlink.real	a symlink resolves to the real name, never the link	gjs bsd windows-launch macos-netinstall
+
+# The pin floor, from netinstall/test/pinfloor.sh. Same lanes again: the suite
+# runs first in the netinstall list, and it is in the reduced OpenBSD one too,
+# because a floor is a question about a parser and needs no webview.
+#
+# pinfloor.boundary is fourteen pin lengths under one id, for the reason
+# names.sh groups: the sentence carries the length and the id carries the claim.
+# 0, 1, 8, 15, 16, 17, 24, 31 and 65 and 80 must refuse; 32 through 64 must
+# resolve. Both ends, so a floor that went up cannot pass by rejecting more than
+# it was asked to -- measured by moving the expected floor to 33, which turns
+# the cell red on the one length that changed.
+#
+# pinfloor.cause.distinct is the case this file is really about and it had no
+# row at all before the conversion, because it spoke only when it failed. Before
+# the floor moved, a pin below it was fetched and then failed the comparison --
+# the same sentence a wrong pin produces -- so a suite asserting "this was
+# refused" could not say which refusal it got. That it is now two refusals is
+# what verify.pin.reason and names.pin.floor.reason rest on.
+#
+# The six `report:` lines this suite ends on stay readings and get no id. They
+# say what the floor is rather than whether it held, and a reading in the grid
+# would be a row that cannot be true or false.
+pinfloor.boundary	the floor accepts 32 through 64 and refuses both sides	gjs bsd windows-launch macos-netinstall
+pinfloor.control.accept	the control name still resolves	gjs bsd windows-launch macos-netinstall
+pinfloor.control.reject	the control reject still rejects	gjs bsd windows-launch macos-netinstall
+pinfloor.help.example	the name in --help is one this binary accepts	gjs bsd windows-launch macos-netinstall
+pinfloor.tree.none-short	no spec-shaped name written down in this tree is below the floor	gjs bsd windows-launch macos-netinstall
+pinfloor.cause.length	a below-floor pin is refused by length, and told which	gjs bsd windows-launch macos-netinstall
+pinfloor.cause.mismatch	a wrong pin is still refused by comparison	gjs bsd windows-launch macos-netinstall
+pinfloor.cause.distinct	those two refusals are not one refusal	gjs bsd windows-launch macos-netinstall
+pinfloor.path.none	no pin appears in a path netinstall creates	gjs bsd windows-launch macos-netinstall

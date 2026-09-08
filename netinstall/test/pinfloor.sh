@@ -24,14 +24,24 @@ fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity, so the one sourced second is the one this file
+# speaks. Every call below carries a case id.
+#
+# nt_result is lib.sh's and is not shadowed, which is the point of sourcing
+# rather than replacing. The six report lines at the bottom stay readings: they
+# say what the floor *is*, and a reading is not a verdict and must not reach the
+# grid, where every row is supposed to be something that can be true or false.
+. "$(cd "$HERE/../../test/lib" && pwd)/harness.sh"
+# The annotation lib.sh's nt_fail emitted, kept by name so a red netinstall check
+# still says so on the run page.
+NT_ANNOTATE=netinstall
 
 WORK="$(mktemp -d)"
 SERVE="$WORK/serve"
 mkdir -p "$SERVE" "$WORK/bin"
 export NEUTRINO_HOME="$WORK/home"
 trap 'kill ${NT_SERVER_PID:-} 2>/dev/null; rm -rf "$WORK"' EXIT
-
-FAILURES=0
 
 # Eighty hex characters, so a pin one past the 64 cap can be asked for too.
 PIN="$(printf 'a1b2c3d4e5f60718%.0s' 1 2 3 4 5)"
@@ -93,11 +103,15 @@ for n in 0 1 8 15 16 17 24 31 32 33 63 64 65 80; do
         got=rejected
         REJECT="$REJECT,$n"
     fi
+    # One id for fourteen lengths. The sentence carries the length, which is
+    # what a reader of a red lane needs; the id says "the floor holds", which is
+    # the one thing four lanes are agreeing about. test/matrix.py lets FAIL win
+    # over a repeated id, so a boundary that moved is a red cell and not an
+    # averaged one.
     if [ "$got" = "$want" ]; then
-        echo "  PASS: n=$n $got"
+        nt_pass pinfloor.boundary "n=$n $got"
     else
-        nt_fail "pin length $n expected=$want actual=$got"
-        FAILURES=$((FAILURES + 1))
+        nt_fail pinfloor.boundary "pin length $n expected=$want actual=$got"
     fi
 done
 
@@ -107,16 +121,14 @@ echo "=== Controls ==="
 OK="app-example-com-1$(pin_of 32)"
 URL="$("$(as "$OK")" --info 2>/dev/null | awk '$1 == "url" { print $2 }')"
 if [ "$URL" = "https://example.com/app.cmd" ]; then
-    echo "  PASS: control name resolves (url=$URL)"
+    nt_pass pinfloor.control.accept "control name resolves (url=$URL)"
 else
-    nt_fail "control name expected=https://example.com/app.cmd actual=${URL:-<none>}"
-    FAILURES=$((FAILURES + 1))
+    nt_fail pinfloor.control.accept "control name expected=https://example.com/app.cmd actual=${URL:-<none>}"
 fi
 if parses "app-example-com"; then
-    nt_fail "control reject expected=rejected actual=accepted (a tokenless name parsed)"
-    FAILURES=$((FAILURES + 1))
+    nt_fail pinfloor.control.reject "control reject expected=rejected actual=accepted (a tokenless name parsed)"
 else
-    echo "  PASS: control reject still rejects"
+    nt_pass pinfloor.control.reject "control reject still rejects"
 fi
 
 echo "=== What the shipped help offers as an example ==="
@@ -137,10 +149,9 @@ echo "  help example: ${HELPNAME:-<none>} pin=$HELPLEN $HELPSTATE"
 # floor made this binary ship a name it refuses. Whatever the help says next has
 # to be something the parser beside it will take.
 if [ "$HELPSTATE" = "PARSES" ]; then
-    echo "  PASS: the name in --help is one this binary accepts"
+    nt_pass pinfloor.help.example "the name in --help is one this binary accepts"
 else
-    nt_fail "help example expected=PARSES actual=$HELPSTATE (${HELPNAME:-<none>}, pin=$HELPLEN)"
-    FAILURES=$((FAILURES + 1))
+    nt_fail pinfloor.help.example "help example expected=PARSES actual=$HELPSTATE (${HELPNAME:-<none>}, pin=$HELPLEN)"
 fi
 
 echo "=== Every spec-shaped name written down in this tree ==="
@@ -188,10 +199,9 @@ done
 # the floor is an assertion that stopped meaning what it says, and a doc below
 # it is an instruction that does not work.
 if [ "$SHORT" -eq 0 ]; then
-    echo "  PASS: none of the $TOTAL names written down here is below the floor"
+    nt_pass pinfloor.tree.none-short "none of the $TOTAL names written down here is below the floor"
 else
-    nt_fail "names below the floor expected=0 actual=$SHORT of $TOTAL in [$WHERE]"
-    FAILURES=$((FAILURES + 1))
+    nt_fail pinfloor.tree.none-short "names below the floor expected=0 actual=$SHORT of $TOTAL in [$WHERE]"
 fi
 
 echo "=== What a refusal says, and whether the cause is in it ==="
@@ -225,20 +235,24 @@ echo "  bad(15)   rc=$BADRC names-the-cause=$(says "$BADMSG"): $BADMSG"
 # wrong pin does. They have to be told apart now, or a suite that asserts a
 # refusal cannot say which refusal it got.
 case "$SHORTMSG" in
-    *"minimum is 32"*) echo "  PASS: a below-floor pin is refused by length, and told which" ;;
+    *"minimum is 32"*) nt_pass pinfloor.cause.length "a below-floor pin is refused by length, and told which" ;;
     *)
-        nt_fail "short pin expected=refused-by-length actual='$SHORTMSG'"
-        FAILURES=$((FAILURES + 1)) ;;
+        nt_fail pinfloor.cause.length "short pin expected=refused-by-length actual='$SHORTMSG'" ;;
 esac
 case "$MISMSG" in
-    *"pin mismatch"*) echo "  PASS: a wrong pin is still refused by comparison" ;;
+    *"pin mismatch"*) nt_pass pinfloor.cause.mismatch "a wrong pin is still refused by comparison" ;;
     *)
-        nt_fail "wrong pin expected=pin-mismatch actual='$MISMSG'"
-        FAILURES=$((FAILURES + 1)) ;;
+        nt_fail pinfloor.cause.mismatch "wrong pin expected=pin-mismatch actual='$MISMSG'" ;;
 esac
+# Said either way, and it did not used to be. This spoke only when the two
+# refusals had collapsed back into one, so the run where they were distinct
+# printed nothing at all -- and the grid, which reads rows, saw a hole where the
+# most interesting assertion in this block is. It is the whole reason the two
+# cases above can be told apart, and it now has a row saying so.
 if [ "$SHORTRC" = "$MISRC" ] && [ "$SHORTMSG" = "$MISMSG" ]; then
-    nt_fail "the two refusals are still one refusal: rc=$SHORTRC '$SHORTMSG'"
-    FAILURES=$((FAILURES + 1))
+    nt_fail pinfloor.cause.distinct "the two refusals are still one refusal: rc=$SHORTRC '$SHORTMSG'"
+else
+    nt_pass pinfloor.cause.distinct "the two refusals are distinct (rc $SHORTRC vs $MISRC)"
 fi
 
 echo "=== Where a pin does and does not appear in a path ==="
@@ -255,10 +269,9 @@ echo "  pin in the script path: $INPATH"
 # Measured NO on three filesystems, which is why raising the floor needed no
 # migration and why the README's front block no longer draws one there.
 if [ "$INPATH" = "NO" ]; then
-    echo "  PASS: no pin in the path, so a longer one moves nothing"
+    nt_pass pinfloor.path.none "no pin in the path, so a longer one moves nothing"
 else
-    nt_fail "pin in path expected=NO actual=$INPATH ($ISCRIPT)"
-    FAILURES=$((FAILURES + 1))
+    nt_fail pinfloor.path.none "pin in path expected=NO actual=$INPATH ($ISCRIPT)"
 fi
 
 # Six lines out. They go first in the suite order for a reason: GitHub keeps
@@ -271,5 +284,8 @@ nt_result "report: pinfloor cause mismatch=$MISRC/$(says "$MISMSG")/'$MISMSG'"
 nt_result "report: pinfloor cause bad15=$BADRC/$(says "$BADMSG")/'$BADMSG'"
 nt_result "report: pinfloor paths app=$IAPP script=$ISCRIPT pin-in-path=$INPATH"
 
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts, so the
+# nine `FAILURES=$((FAILURES + 1))` lines that used to follow every call are
+# gone. The sentence and the exit status are the ones this suite has always had.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+exit $NT_FAILURES
