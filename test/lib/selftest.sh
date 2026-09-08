@@ -567,14 +567,31 @@ echo "### the registry, against every suite that speaks to it"
 #
 # Out here there is no substitution for a `case` to end early, and there is no
 # `case` either.
+# test/*.ps1 is in the glob, and that is the whole of what this file needed in
+# order to read the Windows suites. The six words are spelled the same in
+# PowerShell -- `nt_pass attack.reported "..."` is the same sequence of
+# whitespace-separated tokens in both languages -- so the awk below, the canary
+# under it and the orphan scan further down all read a converted .ps1 without
+# knowing that they are doing it. That is the reason harness.ps1 kept the six
+# words rather than taking Verb-Noun names: a second vocabulary would have
+# meant a second scan, and a second scan is a second thing that can quietly
+# read nothing.
 NT_SPEAKERS=""
-for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
+for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/test/*.ps1 \
+        "$ROOT"/netinstall/test/*.sh; do
+    [ -f "$suite" ] || continue
     base="$(basename "$suite")"
     # This file is excluded because it quotes all six words while checking them,
-    # and harness.sh because it defines them rather than calling them.
+    # and harness.sh -- and now harness.ps1 -- because they define them rather
+    # than calling them.
     [ "$base" = selftest.sh ] && continue
     [ "$base" = harness.sh ] && continue
-    grep -q 'harness\.sh' "$suite" 2>/dev/null || continue
+    [ "$base" = harness.ps1 ] && continue
+    # A suite speaks the harness by sourcing one of the two files that define
+    # it. The .sh spelling is `. lib/harness.sh` and the .ps1 spelling is
+    # `. (Join-Path $PSScriptRoot "lib\harness.ps1")`, so the pattern matches
+    # the filename and not the sourcing syntax, which the two do not share.
+    grep -qE 'harness\.(sh|ps1)' "$suite" 2>/dev/null || continue
     NT_SPEAKERS="$NT_SPEAKERS $suite"
 done
 
@@ -687,7 +704,12 @@ UNKNOWN="$(printf '%s' "$UNKNOWN" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's
 # would call every id that suite emits an orphan -- or, worse, let an
 # unregistered one through. The netinstall suites that still speak lib.sh's
 # older words are simply files this scan finds no ids in, which costs nothing.
-NT_SUITES="$(ls "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh \
+# test/*.ps1 for the same reason it is in the speaker list above: an id emitted
+# only from PowerShell is emitted, and a scan that could not see the file it
+# lives in would report it as registered-but-never-emitted -- which reads as a
+# stale registry entry and would get the id deleted rather than the glob fixed.
+NT_SUITES="$(ls "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/test/*.ps1 \
+    "$ROOT"/netinstall/test/*.sh \
     2>/dev/null | grep -v 'selftest\.sh$')"
 
 ORPHAN=""
@@ -704,40 +726,53 @@ while IFS="$(printf '\t')" read -r rid _rest; do
     # is one call site and two ids -- cannot be found by its whole name, so the
     # stem followed by a variable counts as emitting it.
     stem="${rid%.*}"
-    found=0
-    for suite in $NT_SUITES; do
-        # nt_walk_* counts as emitting. test/lib/walk.sh names its ids as
-        # arguments to the walk's own comparators -- `nt_walk_geometry
-        # walk.resize ...` -- rather than to nt_pass directly, and a scan that
-        # only knew the three verdict words would call every one of them an
-        # orphan the moment the verifiers stop carrying the literals too.
-        #
-        # And assert_*, which is the same thing arrived at from the other side.
-        # A suite whose assertions differ only in their fixture writes one
-        # wrapper and hands it the id -- netinstall/test/verify.sh has five
-        # rejections that differ in nothing else -- and inside that wrapper the
-        # id is `$id`, which no literal scan can resolve. This is the shape and
-        # not a file: the next converted suite that writes `assert_something` is
-        # covered without this line being touched again. It is the same
-        # allowance the `$stem\.\$` escape above makes for an id whose last
-        # segment is built at runtime.
-        #
-        # $rid is followed by a boundary, and without it this scan reports a
-        # false pass. The match was unanchored, so an id that is a *prefix* of
-        # another was found by the longer one: registering envlen.trunc.keep255
-        # beside envlen.trunc.keep255.control made the first one look emitted
-        # whether anything emitted it or not. An orphan check that can be
-        # satisfied by a different case is not checking the thing it is for.
-        #
-        # The boundary goes on that alternative only. The other one ends in a
-        # literal `$` -- it is how an id whose last segment is built at runtime
-        # is matched, `std.win.open-target.$v` -- and a boundary after it would
-        # refuse the variable that has to follow.
-        if grep -qE "(nt_(pass|fail|skip|eq|match|walk_[a-z_]+)|ctl_(pass|fail|skip)|assert_[a-z_]+) \"?($rid([^A-Za-z0-9.-]|\$)|$stem\.\\\$)" "$suite" 2>/dev/null; then
-            found=1; break
-        fi
-    done
-    [ "$found" = 1 ] || ORPHAN="$ORPHAN $rid"
+    # nt_walk_* counts as emitting. test/lib/walk.sh names its ids as
+    # arguments to the walk's own comparators -- `nt_walk_geometry
+    # walk.resize ...` -- rather than to nt_pass directly, and a scan that
+    # only knew the three verdict words would call every one of them an
+    # orphan the moment the verifiers stop carrying the literals too.
+    #
+    # And assert_*, which is the same thing arrived at from the other side.
+    # A suite whose assertions differ only in their fixture writes one
+    # wrapper and hands it the id -- netinstall/test/verify.sh has five
+    # rejections that differ in nothing else -- and inside that wrapper the
+    # id is `$id`, which no literal scan can resolve. This is the shape and
+    # not a file: the next converted suite that writes `assert_something` is
+    # covered without this line being touched again. It is the same
+    # allowance the `$stem\.\$` escape above makes for an id whose last
+    # segment is built at runtime.
+    #
+    # $rid is followed by a boundary, and without it this scan reports a
+    # false pass. The match was unanchored, so an id that is a *prefix* of
+    # another was found by the longer one: registering envlen.trunc.keep255
+    # beside envlen.trunc.keep255.control made the first one look emitted
+    # whether anything emitted it or not. An orphan check that can be
+    # satisfied by a different case is not checking the thing it is for.
+    #
+    # The boundary goes on that alternative only. The other one ends in a
+    # literal `$` -- it is how an id whose last segment is built at runtime
+    # is matched, `std.win.open-target.$v` -- and a boundary after it would
+    # refuse the variable that has to follow.
+    # One grep over every suite at once, and not one grep per suite.
+    #
+    # This asks only whether the id is emitted anywhere -- the file it was
+    # found in was never used -- but the loop spawned a process per suite
+    # per case to find that out. At 318 cases over 51 files that is sixteen
+    # thousand greps, which is nothing here and most of five minutes under
+    # the MSYS bash on windows-launch, where starting a process costs a
+    # hundred times what it costs on Linux. Adding the .ps1 suites to the
+    # list took it to twenty-five thousand and the step hit its five-minute
+    # ceiling: the scan did not fail, it did not finish, and a check that
+    # cannot finish is a check that is not run.
+    #
+    # `grep -q` over a file list stops at the first match exactly as the
+    # loop's `break` did, so this is the same question asked once rather
+    # than seventy-one times.
+    if grep -qE "(nt_(pass|fail|skip|eq|match|walk_[a-z_]+)|ctl_(pass|fail|skip)|assert_[a-z_]+) \"?($rid([^A-Za-z0-9.-]|\$)|$stem\.\\\$)" $NT_SUITES 2>/dev/null; then
+        :
+    else
+        ORPHAN="$ORPHAN $rid"
+    fi
 done < "$ROOT/test/cases.tsv"
 [ -z "$ORPHAN" ] && ok "every registered case id is emitted by some suite" \
     || bad "in cases.tsv but emitted nowhere:$ORPHAN"
