@@ -49,9 +49,32 @@ if (-not $srcDefault -or -not (Test-Path $srcDefault) -or
     exit 2
 }
 
-$failures = 0
-function Report($m) { Write-Output "report: $m" }
-function Fail($m) { Write-Output "FAIL: $m"; $script:failures++ }
+# The six words. Every check here was a `Report` line carrying the reading and
+# an `if (bad) { Fail }` under it, so eleven assertions filed nothing whenever
+# they held -- the shape selftest.sh checks for one case at a time, here as the
+# whole file's structure.
+. (Join-Path $PSScriptRoot "lib\harness.ps1")
+
+function Report($m) { nt_report $m }
+
+# What the controls' own comments already said, said to the grid. `control
+# release` carries "nothing below is a reading" and `control testing` carries
+# "the gate below is unmeasured", and both were followed by code that read on
+# regardless -- so a run where the release build never came up filed nine more
+# verdicts about launches that had nothing to launch. A prose sentence saying a
+# reading is worthless is survivable; an `ok` in a grid cell saying it held is
+# not.
+function skip_below($why) {
+    nt_skip standalone.control.testing $why
+    nt_skip standalone.direct $why
+    nt_skip standalone.ignored $why
+    nt_skip standalone.gated $why
+    nt_skip standalone.gated.named $why
+    nt_skip standalone.derived $why
+    nt_skip standalone.derived.said $why
+    nt_skip standalone.derived.paths $why
+    nt_skip standalone.restored $why
+}
 
 $work = Join-Path $env:TEMP ("standalone-" + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $work -Force | Out-Null
@@ -145,7 +168,11 @@ Write-Output "=== standalone: the exe finds its own document ==="
 # whether the derivation is the live path or a fallback the tier builds skip.
 $setsIt = Select-String -Path $laneRel -Pattern 'SET "NEUTRINO_SCRIPT_PATH=' -Quiet -ErrorAction SilentlyContinue
 Report "noset batch_sets_it=$(if ($setsIt) { 'YES' } else { 'NO' })"
-if ($setsIt) { Fail "noset expected=the batch region names no document actual=it still SETs NEUTRINO_SCRIPT_PATH" }
+if ($setsIt) {
+    nt_fail standalone.noset "noset expected=the batch region names no document actual=it still SETs NEUTRINO_SCRIPT_PATH"
+} else {
+    nt_pass standalone.noset "the batch region names no document"
+}
 
 # =====================================================================
 # control: both builds come up the ordinary way
@@ -153,7 +180,12 @@ if ($setsIt) { Fail "noset expected=the batch region names no document actual=it
 # WebView2 is fetched on a first run, so this is the long wait.
 $ctlRel = Launch-Cmd $laneRel 240
 Report "control release window=$ctlRel exe=$(Test-Path $exeRel)"
-if ($ctlRel -ne "UP") { Fail "control expected=the release build comes up actual=$ctlRel; nothing below is a reading" }
+if ($ctlRel -ne "UP") {
+    nt_fail standalone.control.release "control expected=the release build comes up actual=$ctlRel; nothing below is a reading"
+    skip_below "the release build never came up, so nothing below was launched"
+    nt_finish
+}
+nt_pass standalone.control.release "the release build comes up the ordinary way"
 
 # The testing build gets the package copied rather than downloaded again: 45 MiB
 # and a second cold fetch buy nothing here, and firstBadWebView2Member re-hashes
@@ -166,7 +198,12 @@ if (Test-Path $pkg) {
 }
 $ctlTest = Launch-Cmd $laneTest 240
 Report "control testing window=$ctlTest exe=$(Test-Path $exeTest)"
-if ($ctlTest -ne "UP") { Fail "control expected=the testing build comes up actual=$ctlTest; the gate below is unmeasured" }
+$testingUp = $ctlTest -eq "UP"
+if ($testingUp) {
+    nt_pass standalone.control.testing "the testing build comes up the ordinary way"
+} else {
+    nt_fail standalone.control.testing "control expected=the testing build comes up actual=$ctlTest; the gate below is unmeasured"
+}
 
 # =====================================================================
 # direct: the exe on its own, nothing naming a document
@@ -175,7 +212,9 @@ Clear-Error-Log $folderRel
 $direct = Launch-Exe $exeRel $null 120
 Report "direct window=$direct cwd=$elsewhere"
 if ($direct -ne "UP") {
-    Fail "direct expected=the exe run on its own comes up actual=$direct :: $(Error-Log $folderRel)"
+    nt_fail standalone.direct "direct expected=the exe run on its own comes up actual=$direct :: $(Error-Log $folderRel)"
+} else {
+    nt_pass standalone.direct "the exe run on its own finds its document and comes up"
 }
 
 # =====================================================================
@@ -186,7 +225,9 @@ Clear-Error-Log $folderRel
 $ignored = Launch-Exe $exeRel $bogus 120
 Report "ignored window=$ignored value=$bogus"
 if ($ignored -ne "UP") {
-    Fail "ignored expected=a release build comes up with NEUTRINO_SCRIPT_PATH set to a file that does not exist actual=$ignored :: $(Error-Log $folderRel)"
+    nt_fail standalone.ignored "ignored expected=a release build comes up with NEUTRINO_SCRIPT_PATH set to a file that does not exist actual=$ignored :: $(Error-Log $folderRel)"
+} else {
+    nt_pass standalone.ignored "a release build does not read NEUTRINO_SCRIPT_PATH"
 }
 
 # =====================================================================
@@ -200,9 +241,21 @@ $gated = Launch-Exe $exeTest $bogus 60
 $gatedLog = Error-Log $folderTest
 Report ("testing window=$gated named_the_variable=" +
         $(if ($gatedLog -match "NEUTRINO_SCRIPT_PATH names no file") { "YES" } else { "NO" }))
-if ($gated -ne "DOWN") { Fail "testing expected=a testing build reads the variable and refuses actual=window $gated" }
-if ($gatedLog -notmatch "NEUTRINO_SCRIPT_PATH names no file") {
-    Fail "testing expected=the refusal names the variable actual=$gatedLog"
+if (-not $testingUp) {
+    $why = "the testing build never came up, so the gate was never reached"
+    nt_skip standalone.gated $why
+    nt_skip standalone.gated.named $why
+} else {
+    if ($gated -ne "DOWN") {
+        nt_fail standalone.gated "testing expected=a testing build reads the variable and refuses actual=window $gated"
+    } else {
+        nt_pass standalone.gated "a testing build reads the variable and refuses"
+    }
+    if ($gatedLog -notmatch "NEUTRINO_SCRIPT_PATH names no file") {
+        nt_fail standalone.gated.named "testing expected=the refusal names the variable actual=$gatedLog"
+    } else {
+        nt_pass standalone.gated.named "the refusal names the variable"
+    }
 }
 
 # =====================================================================
@@ -220,21 +273,31 @@ $derivedLog = Error-Log $folderRel
 Move-Item $moved $laneRel -Force
 Report ("derived window=$derived named_both_paths=" +
         $(if (($derivedLog -match "ntrelease\.cmd") -and ($derivedLog -match "ntrelease\.bat")) { "YES" } else { "NO" }))
-if ($derived -ne "DOWN") { Fail "derived expected=no document, no window actual=window $derived" }
+if ($derived -ne "DOWN") {
+    nt_fail standalone.derived "derived expected=no document, no window actual=window $derived"
+} else {
+    nt_pass standalone.derived "with the document moved away there is no window"
+}
 if ($derivedLog -notmatch "could not find the document") {
-    Fail "derived expected=the refusal says the document was not found actual=$derivedLog"
+    nt_fail standalone.derived.said "derived expected=the refusal says the document was not found actual=$derivedLog"
+} else {
+    nt_pass standalone.derived.said "the refusal says the document was not found"
 }
 if (($derivedLog -notmatch "ntrelease\.cmd") -or ($derivedLog -notmatch "ntrelease\.bat")) {
-    Fail "derived expected=the refusal names both paths it looked for actual=$derivedLog"
+    nt_fail standalone.derived.paths "derived expected=the refusal names both paths it looked for actual=$derivedLog"
+} else {
+    nt_pass standalone.derived.paths "the refusal names both paths it looked for"
 }
 
 # And back up again, which is what says the refusal was about the document and
 # not about anything the four launches above left behind in the app folder.
 $again = Launch-Exe $exeRel $null 120
 Report "derived restored=$again"
-if ($again -ne "UP") { Fail "derived expected=the document back, the exe comes up again actual=$again" }
+if ($again -ne "UP") {
+    nt_fail standalone.restored "derived expected=the document back, the exe comes up again actual=$again"
+} else {
+    nt_pass standalone.restored "with the document back the exe comes up again"
+}
 
 Stop-Apps
-Write-Output "=== standalone: $failures failure(s) ==="
-if ($failures -gt 0) { exit 1 }
-exit 0
+nt_finish
