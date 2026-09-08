@@ -33,6 +33,15 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 . "$(dirname "$0")/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity. nt_result and nt_note are lib.sh's and are not
+# shadowed -- the two reach surveys at the bottom stay readings.
+#
+# windows-launch alone: this file exits before it reports anything anywhere else,
+# because a token privilege is a windows question and confine.sh asks the
+# containment one on the three platforms that have an answer to it.
+. "$(cd "$(dirname "$0")/../../test/lib" && pwd)/harness.sh"
+NT_ANNOTATE=netinstall
 
 if [ "$NT_WINDOWS" != "1" ]; then
     echo "=== SKIP: token privileges are a windows question ==="
@@ -44,7 +53,6 @@ SERVE="$WORK/serve"
 mkdir -p "$SERVE" "$WORK/bin" "$WORK/trav/leaf" "$WORK/ctl"
 export NEUTRINO_HOME="$WORK/home"
 
-FAILURES=0
 
 # "SeFooPrivilege  Some description  Enabled" becomes "SeFoo=E", so a whole
 # privilege set fits in one annotation -- which is the only channel out of CI
@@ -107,10 +115,9 @@ trap cleanup EXIT
 echo "=== Denying traverse on $TRAV_DIR_W ==="
 echo "$LOCK_OUT" | sed 's/^/  /'
 if grep -q 'LOCK_RC=0' <<<"$LOCK_OUT"; then
-    echo "  PASS: the deny ACE was applied"
+    nt_pass privs.deny.applied "the deny ACE was applied"
 else
-    nt_fail "icacls /deny expected=LOCK_RC=0 actual=$(nt_raw <<<"$LOCK_OUT")"
-    FAILURES=$((FAILURES + 1))
+    nt_fail privs.deny.applied "icacls /deny expected=LOCK_RC=0 actual=$(nt_raw <<<"$LOCK_OUT")"
 fi
 
 # =====================================================================
@@ -210,45 +217,47 @@ CONFINED_CTL="$(grep -o 'CONTROL_[A-Z]*' <<<"$OUT" | head -1)"
 echo "  $CONFINED_N privilege(s): $CONFINED"
 echo "  $CONFINED_CTL $CONFINED_TRAV"
 
-pass() { echo "  PASS: $1"; }
-fail() { nt_fail "$1"; FAILURES=$((FAILURES + 1)); }
+# pass() and fail() are gone rather than given an id parameter, the same as in
+# fetchbound.sh and fetchconf.sh: they were two-word aliases for nt_pass and
+# nt_fail, and a wrapper is the one thing that hides an id from the registry
+# scan in test/lib/selftest.sh.
 
 # --- the controls, first: nothing below means anything without them ---
 #
 # A payload that never ran measures nothing, and an empty privilege list is
 # exactly what that looks like.
 if grep -q PROBE_END <<<"$OUT"; then
-    pass "the payload ran under the adjusted token"
+    nt_pass privs.payload.ran "the payload ran under the adjusted token"
 else
-    fail "payload expected=ran actual=$(nt_raw <<<"$OUT") err=$(nt_raw < "$WORK/err")"
+    nt_fail privs.payload.ran "payload expected=ran actual=$(nt_raw <<<"$OUT") err=$(nt_raw < "$WORK/err")"
 fi
 # An empty list reads the same whether every privilege was removed or whoami
 # never answered, and SeChangeNotify has to have been enabled beforehand for
 # anything said about it afterwards to be about netinstall rather than the
 # runner.
 if [ "$CONTROL_N" -gt 0 ]; then
-    pass "the unconfined token had privileges to strip ($CONTROL_N)"
+    nt_pass privs.control.some "the unconfined token had privileges to strip ($CONTROL_N)"
 else
-    fail "control expected=some privileges actual=none; whoami /priv did not answer"
+    nt_fail privs.control.some "control expected=some privileges actual=none; whoami /priv did not answer"
 fi
 if grep -q 'SeChangeNotify=E' <<<"$CONTROL"; then
-    pass "SeChangeNotifyPrivilege was enabled before netinstall ran"
+    nt_pass privs.control.changenotify "SeChangeNotifyPrivilege was enabled before netinstall ran"
 else
-    fail "control expected=SeChangeNotify=E actual=$CONTROL"
+    nt_fail privs.control.changenotify "control expected=SeChangeNotify=E actual=$CONTROL"
 fi
 # The instrument's own two controls. Without the first, a blanket TRAVERSE_DENIED
 # could be "type" failing for reasons of its own; without the second, it could be
 # an ACE that denies more than traverse, and either way the assertion below would
 # be measuring something other than the privilege.
 if [ "$CONFINED_CTL" = "CONTROL_OK" ]; then
-    pass "the confined payload can read a file nothing denies"
+    nt_pass privs.control.read "the confined payload can read a file nothing denies"
 else
-    fail "control read expected=CONTROL_OK actual=$CONFINED_CTL"
+    nt_fail privs.control.read "control read expected=CONTROL_OK actual=$CONFINED_CTL"
 fi
 if [ "$CONTROL_TRAV" = "TRAVERSE_OK" ]; then
-    pass "the unconfined token walks the denied path"
+    nt_pass privs.control.traverse "the unconfined token walks the denied path"
 else
-    fail "instrument expected=TRAVERSE_OK unconfined actual=$CONTROL_TRAV; \
+    nt_fail privs.control.traverse "instrument expected=TRAVERSE_OK unconfined actual=$CONTROL_TRAV; \
 the ACE denies more than traverse and the assertion below is void"
 fi
 
@@ -257,19 +266,19 @@ fi
 # Both of these read the other way before the attribute was fixed: the privilege
 # came out Disabled, and the walk was refused.
 if grep -q 'SeChangeNotify=E' <<<"$CONFINED"; then
-    pass "SeChangeNotifyPrivilege survives and stays enabled (CHANGENOTIFY_ENABLED)"
+    nt_pass privs.kept.changenotify "SeChangeNotifyPrivilege survives and stays enabled (CHANGENOTIFY_ENABLED)"
 else
-    fail "CHANGENOTIFY_ENABLED expected=SeChangeNotify=E actual=$CONFINED"
+    nt_fail privs.kept.changenotify "CHANGENOTIFY_ENABLED expected=SeChangeNotify=E actual=$CONFINED"
 fi
 if [ "$CONFINED_N" = "1" ]; then
-    pass "every other privilege is removed (OTHERS_REMOVED)"
+    nt_pass privs.others.removed "every other privilege is removed (OTHERS_REMOVED)"
 else
-    fail "OTHERS_REMOVED expected=1 privilege actual=$CONFINED_N [$CONFINED]"
+    nt_fail privs.others.removed "OTHERS_REMOVED expected=1 privilege actual=$CONFINED_N [$CONFINED]"
 fi
 if [ "$CONFINED_TRAV" = "TRAVERSE_OK" ]; then
-    pass "the kept privilege still bypasses traverse checking"
+    nt_pass privs.kept.traverse "the kept privilege still bypasses traverse checking"
 else
-    fail "traverse expected=TRAVERSE_OK actual=$CONFINED_TRAV; \
+    nt_fail privs.kept.traverse "traverse expected=TRAVERSE_OK actual=$CONFINED_TRAV; \
 SeChangeNotifyPrivilege is present but not doing what it is kept for"
 fi
 
@@ -287,9 +296,9 @@ grep -q 'privileges stripped' <<<"$INFO" && CLAIMS=yes
 WANT=no
 [ "$CONFINED_N" = "1" ] && WANT=yes
 if [ "$CLAIMS" = "$WANT" ]; then
-    pass "--info claims a stripping exactly when one happened ($CLAIMS)"
+    nt_pass privs.info.claims "--info claims a stripping exactly when one happened ($CLAIMS)"
 else
-    fail "--info claims-stripped=$CLAIMS but OTHERS_REMOVED=$WANT; desc=$INFO"
+    nt_fail privs.info.claims "--info claims-stripped=$CLAIMS but OTHERS_REMOVED=$WANT; desc=$INFO"
 fi
 
 nt_result "PR4 token: control n=$CONTROL_N -> confined n=$CONFINED_N \
@@ -313,14 +322,14 @@ for n in $NEUTRINO_TEST_BATTERY; do
     fi
 done
 if grep -qx "env NEUTRINO_ENV_CONTROL_KEPT SEEN" <<<"$OUT"; then
-    pass "the battery reached the payload (NEUTRINO_ENV_CONTROL_KEPT)"
+    nt_pass privs.env.control.kept "the battery reached the payload (NEUTRINO_ENV_CONTROL_KEPT)"
 else
-    fail "battery control expected=NEUTRINO_ENV_CONTROL_KEPT SEEN actual=$(nt_raw <<<"$OUT")"
+    nt_fail privs.env.control.kept "battery control expected=NEUTRINO_ENV_CONTROL_KEPT SEEN actual=$(nt_raw <<<"$OUT")"
 fi
 if grep -qx "env NT_ENV_CONTROL_DROPPED GONE" <<<"$OUT"; then
-    pass "a name outside the allowlist is dropped (NT_ENV_CONTROL_DROPPED)"
+    nt_pass privs.env.control.dropped "a name outside the allowlist is dropped (NT_ENV_CONTROL_DROPPED)"
 else
-    fail "battery control expected=NT_ENV_CONTROL_DROPPED GONE actual=$(nt_raw <<<"$OUT")"
+    nt_fail privs.env.control.dropped "battery control expected=NT_ENV_CONTROL_DROPPED GONE actual=$(nt_raw <<<"$OUT")"
 fi
 
 # The names themselves. A run where the control never set one of these says so
@@ -333,21 +342,22 @@ for n in WEBVIEW2_BROWSER_EXECUTABLE_FOLDER WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENT
     if ! grep -qx "env $n SEEN" <<<"$CONTROL_RAW"; then
         nt_note "$n was never set on this runner; unmeasured here"
     elif grep -qx "env $n GONE" <<<"$OUT"; then
-        pass "$n does not reach the app"
+        nt_pass privs.env.dropped "$n does not reach the app"
     else
-        fail "$n expected=GONE actual=reached the app"
+        nt_fail privs.env.dropped "$n expected=GONE actual=reached the app"
     fi
 done
 for n in PATH PROCESSOR_ARCHITECTURE; do
     if grep -qx "env $n SEEN" <<<"$OUT"; then
-        pass "$n still arrives"
+        nt_pass privs.env.kept "$n still arrives"
     else
-        fail "$n expected=SEEN actual=dropped; cmd.exe and the CRT need it"
+        nt_fail privs.env.kept "$n expected=SEEN actual=dropped; cmd.exe and the CRT need it"
     fi
 done
 nt_result "env reach [windows]: reached:$NT_ENV_REACHED | stopped:$NT_ENV_STOPPED | \
 never set on this runner:$NT_ENV_UNSET_BEFORE | --info says: \
 $("$APP" --info 2>/dev/null | tr -d '\r' | awk '$1 == "env" { $1 = ""; sub(/^ +/, ""); print }')"
 
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+exit $NT_FAILURES

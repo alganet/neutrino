@@ -52,6 +52,19 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 . "$HERE/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity. probe() and nt_note are lib.sh's and are not
+# shadowed -- like landlockfloor.sh this file is very nearly all readings, and
+# they stay readings.
+#
+# Two cases, and both are the instrument rather than the finding. Everything the
+# suite is for -- which directory a crash dump lands in, at which integrity, with
+# and without a LocalDumps key -- is a `report:` line, because what it produces
+# is a survey of a channel rather than something that can be true or false. What
+# can be false is whether the probe was built and whether it actually reached low
+# integrity, and every reading below rests on both.
+. "$(cd "$HERE/../../test/lib" && pwd)/harness.sh"
+NT_ANNOTATE=netinstall
 
 echo "=== crashdump: the windows crash-write channel ==="
 
@@ -68,7 +81,6 @@ APPTMP="$APPDIR/tmp"
 DUMPDIR="$WORK/dumps"
 mkdir -p "$APPDIR" "$APPTMP" "$DUMPDIR"
 
-FAILURES=0
 
 probe() {
     echo "  $*"
@@ -90,11 +102,15 @@ $NT_CC -o "$PROBE" "$ROOT/netinstall/test/crash-probe.c" -ladvapi32 \
 [ -x "$PROBE" ] || PROBE_STATE="${PROBE_STATE%%:*}: no output"
 echo "=== crash-probe: $PROBE_STATE ==="
 if [ "$PROBE_STATE" != "BUILT" ]; then
-    nt_fail "crash-probe did not build: $PROBE_STATE"
+    nt_fail crashdump.probe.built "crash-probe did not build: $PROBE_STATE"
+    # Before the exit, not after it: the case below never runs on this path, and
+    # a case that never runs is a hole in the grid rather than an answer.
+    nt_skip crashdump.probe.lowered "the probe did not build, so nothing was lowered"
     probe "report: crashdump probe=$PROBE_STATE -- nothing else in this suite ran"
     rm -rf "$WORK"
     exit 1
 fi
+nt_pass crashdump.probe.built "the crash probe built, so everything below has an instrument"
 
 # The app dir carries the same Low label nt_label_low applies, or a lowered
 # process cannot write its own redirected %TEMP% and the measurement below is of
@@ -218,9 +234,13 @@ PLAIN_IL="$(il_of plain)"
 LOW_IL="$(il_of lowrep)"
 probe "report: crashdump default_il=${PLAIN_IL:-NONE} lowered_il=${LOW_IL:-NONE}"
 
-if [ "$LOW_IL" != "0x1000" ]; then
-    nt_fail "the probe did not reach low integrity (got ${LOW_IL:-nothing}); every reading below is of a process that was never lowered"
-    FAILURES=$((FAILURES + 1))
+# Said either way. This spoke only when the lowering had failed, so a run where
+# it worked filed nothing -- and it is the premise of every reading under it:
+# without it they are all measurements of a process that was never lowered.
+if [ "$LOW_IL" = "0x1000" ]; then
+    nt_pass crashdump.probe.lowered "the probe reached low integrity (${LOW_IL})"
+else
+    nt_fail crashdump.probe.lowered "the probe did not reach low integrity (got ${LOW_IL:-nothing}); every reading below is of a process that was never lowered"
 fi
 
 # =====================================================================
@@ -291,5 +311,8 @@ else
     probe "report: crashdump CLOSED_BY=nothing -- the shipping combination still writes to $DEFAULT_SHIP"
 fi
 
-echo "=== crashdump: $FAILURES failure(s) ==="
-exit $((FAILURES > 0))
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts. The
+# exit is still "one if anything failed" rather than the count, which is this
+# suite's own contract and not the harness's.
+echo "=== crashdump: $NT_FAILURES failure(s) ==="
+exit $((NT_FAILURES > 0))
