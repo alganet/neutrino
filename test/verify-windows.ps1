@@ -671,105 +671,6 @@ function Watch-Sequence($proc, $seconds) {
     }
 }
 
-function Find-Sample($record, $title) {
-    foreach ($s in $record.Samples) {
-        if ($s.Title -eq $title) { return $s }
-    }
-    return $null
-}
-
-# A title that was never observed and a step that never ran are different
-# readings, and this used to report both as the second one.
-#
-# The record starts when the sequence loop starts, which is after the window
-# exists and after `00-initial` has been taken. That used to be an encode --
-# about 1.4 s on a busy runner -- and is a blit now, because Grab-Frame defers
-# every PNG to the end of the walk; the gap is smaller than this paragraph was
-# written against, and it is not zero. An app that got through two titles inside
-# it leaves a record whose *first* entry is already past the one being asked
-# about, and "never observed 'STEP0'" then reads as the app having failed to do
-# something it did before anyone was looking. So when the missing title is
-# behind the first thing recorded, this says which of the two it is. The app now
-# holds three seconds before its first step, so the case should not arise; if it
-# does, the sentence names the instrument instead of accusing the app.
-function Assert-Reached($record, $title) {
-    $s = Find-Sample $record $title
-    if ($s) {
-        Write-Host "  PASS: reached '$title' at $($s.At)ms"
-    } else {
-        $first = $null
-        if ($record -and $record.Samples -and $record.Samples.Count -gt 0) {
-            $first = $record.Samples[0]
-        }
-        if ($first) {
-            Write-Host "  FAIL: never observed the title '$title'; the record opens on '$($first.Title)' at $($first.At)ms, so the watch may have started after this step"
-        } else {
-            Write-Host "  FAIL: never observed the title '$title'; the record is empty"
-        }
-        $script:Failures++
-    }
-    return $s
-}
-
-# The requested size, exactly, unless a caller asks for slack -- which is the
-# rule verify-linux.sh's own comment already sets out, arrived at here by the
-# same route and about a year late.
-#
-# `resizeTo` sets ClientSize on this lane, so the client area is the quantity
-# that was asked for and the quantity this reads. While it read GetWindowRect
-# the numbers it compared were a frame against a client request, and the eighty
-# pixels below were what let the two look equal: a caption and two borders fit
-# inside eighty with room to spare, so this passed whichever rect the driver
-# was setting, and would have gone on passing if the driver had got it
-# backwards. The sampler still records the frame, and the difference between
-# them is printed on every turn as `extent`; nothing here says the frame is
-# uninteresting, only that it is not what resizeTo was asked for.
-#
-# Zero, and `-eq 0` rather than `-not` on the parameter, because a caller
-# asking for a tolerance of zero and a caller asking for none are the same
-# request and PowerShell reads both as falsy.
-function Assert-GeometryAt($sample, $title, $expectedW, $expectedH, $tolerance) {
-    if (-not $sample) { return }
-    if (-not $tolerance) { $tolerance = 0 }
-    $dw = [Math]::Abs($sample.Width - $expectedW)
-    $dh = [Math]::Abs($sample.Height - $expectedH)
-    if ($dw -le $tolerance -and $dh -le $tolerance) {
-        Write-Host "  PASS: geometry at '$title' ~= ${expectedW}x${expectedH} (actual: $($sample.Width)x$($sample.Height))"
-    } else {
-        Write-Host "  FAIL: geometry at '$title' expected ~= ${expectedW}x${expectedH} actual=$($sample.Width)x$($sample.Height)"
-        $script:Failures++
-    }
-}
-
-# Frame against frame, which is the half of this that was always right:
-# GetWindowRect's Left/Top is the frame's outside corner and `move` sets
-# Form.Location, which is the same corner. So a decoration cannot move this
-# number and the ten pixels were never paying for a title bar.
-#
-# Nor for anything else. Measured across three runs of this suite in one job --
-# windows-test and both windows-load replicas -- `moveTo(0,0)` put the frame at
-# `0,0` every time, and the per-state `seq` lines this file already printed had
-# been carrying that reading since before the tolerance was questioned. Zero,
-# and `-eq 0` rather than `-not`, because a caller asking for a tolerance of
-# zero and a caller asking for none are the same request and PowerShell reads
-# both as falsy.
-#
-# Windows is the platform where this is simply exact. macOS clamps a move to
-# the work area and the two x11 window managers disagree with each other about
-# what a move means at all; here the request is honoured.
-function Assert-PositionAt($sample, $title, $expectedX, $expectedY, $tolerance) {
-    if (-not $sample) { return }
-    if (-not $tolerance) { $tolerance = 0 }
-    $dx = [Math]::Abs($sample.Left - $expectedX)
-    $dy = [Math]::Abs($sample.Top - $expectedY)
-    if ($dx -le $tolerance -and $dy -le $tolerance) {
-        Write-Host "  PASS: position at '$title' ~= ${expectedX},${expectedY} (actual: $($sample.Left),$($sample.Top))"
-    } else {
-        Write-Host "  FAIL: position at '$title' expected ~= ${expectedX},${expectedY} actual=$($sample.Left),$($sample.Top)"
-        $script:Failures++
-    }
-}
-
 # --- Test steps ---
 
 # Last thing before the watch, which is the whole point of it being here at all.
@@ -860,27 +761,61 @@ if ($record.MaxGap -lt $dwell) {
     $script:Failures++
 }
 
+# The walk, judged by the copy every lane runs.
+#
+# This is the hole test/cases.tsv has named in its own header since the registry
+# was written: "verify-windows.ps1 asserts the same facts and has not been
+# brought onto these ids yet, so it reports none of them." It asserted them in
+# PowerShell, in its own sentences, and nothing it said reached the grid -- so
+# the one lane that launches through jsc.exe and WebView2 was absent from every
+# walk row while three others held.
+#
+# The shape is verify-std.ps1's, unchanged: record here, judge in bash. The
+# samples this file has always taken are already the record -- Watch-Sequence
+# builds one row per title change with both rects -- so what was missing was a
+# file and a call, not an instrument.
+#
+# WriteAllText and an explicit "`n", for the two defects verify-std.ps1's own
+# comment records: Set-Content writes CRLF and a \r riding the last field is a
+# sixth column awk cannot read, and -Encoding utf8 on Windows PowerShell
+# prepends a BOM that lands in the first field of the first row.
+$walkRec = Join-Path $ScreenshotDir "walk-record.tsv"
+if (-not (Test-Path -LiteralPath $ScreenshotDir)) {
+    New-Item -ItemType Directory -Force -Path $ScreenshotDir | Out-Null
+}
+$walkLines = foreach ($s in $record.Samples) {
+    # Column four is the frame's outside corner, which is what walk.sh's
+    # position rule is defined against. GetWindowRect gives that directly here;
+    # it is the other two platforms that have to derive it.
+    "$($s.At)`t$($s.Title)`t$($s.Width)x$($s.Height)`t$($s.Left),$($s.Top)`t$($s.OuterW)x$($s.OuterH)`t-"
+}
+[System.IO.File]::WriteAllText(
+    $walkRec,
+    (($walkLines -join "`n") + "`n"),
+    (New-Object System.Text.UTF8Encoding($false)))
+
 Write-Host "=== Every step the app reported ==="
-$null = Assert-Reached $record "STEP0"
-$null = Assert-Reached $record "STEP1-Test Title"
-$step2 = Assert-Reached $record "STEP2"
-$step3 = Assert-Reached $record "STEP3"
-# The app checks its own palette and reports a verdict, because it is the only
-# side that can see one. A lane that reached no toolkit reports null and titles
-# itself THEMEBAD, which this does not find -- and the sample log above carries
-# the reading either way.
-$null = Assert-Reached $record "THEMEOK"
-# And the fonts, which this lane reads from SystemFonts rather than from a
-# registry value -- the one thing only a real launch can say about that
-# delivery is whether the read answered at all.
-$null = Assert-Reached $record "FONTOK"
-$null = Assert-Reached $record "TESTS DONE"
-
-Write-Host "=== Step 2: resize ==="
-Assert-GeometryAt $step2 "STEP2" 500 400
-
-Write-Host "=== Step 3: move ==="
-Assert-PositionAt $step3 "STEP3" 0 0
+# Named, so the rows land under the suite a reader knows rather than under
+# `walk` -- harness.sh takes the suite from $0, and $0 there is walk.sh.
+#
+# Per replica, because this lane runs this file three times in one job: the core
+# launch and two under load. matrix.py folds repeats for one lane FAIL-over-PASS,
+# so the grid is right either way, but the sheet's suite column can only tell the
+# three apart if they are named apart. $AppName is what already differs between
+# them -- neutrinotest, neutrinoload1, neutrinoload2 -- so it is what names them,
+# rather than a parameter added to carry a name the caller already passes.
+$env:NT_SUITE = "verify-windows-$AppName"
+& bash (Join-Path $PSScriptRoot "lib/walk.sh") $walkRec
+$walked = $LASTEXITCODE
+if ($null -eq $walked) { $walked = 0 }
+# 127 is the shell's own "command not found" and would otherwise read as 127
+# failures, which is at least loud. Anything below is counted as what it says.
+if ($walked -eq 127) {
+    Write-Host "  FAIL: could not run test/lib/walk.sh; bash is not on PATH for this step"
+    $script:Failures++
+} else {
+    $script:Failures += $walked
+}
 
 Write-Host "=== WebView2 package: pinned, and nothing else unpacked ==="
 Assert-WebView2Package $Artifact (Join-Path $AppDir "Microsoft.Web.WebView2")

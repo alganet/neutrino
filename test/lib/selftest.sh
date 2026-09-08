@@ -270,9 +270,25 @@ if [ -d "$RECDIR" ]; then
         [ -f "$rec" ] || continue
         base="$(basename "$rec" .tsv)"; probe="${base##*.}"
         rrows="$WORK/rec-$base.tsv"
-        NT_LANE="${base%%.*}" NT_SUITE=verify-std NT_RESULTS="$rrows" \
-            bash "$ROOT/test/verify-std.sh" "$probe" "$WORK/shots-rec" "$rec" \
-            > "$WORK/rec-$base.out" 2>&1
+        # `walk` is not one of verify-std.sh's probes. It is the launcher's walk,
+        # analysed by test/lib/walk.sh, and it shares this directory and this
+        # naming because it is the same kind of thing: a real record off a real
+        # lane, replayed with no display. Routed by name rather than by a second
+        # directory, so that adding the next analyser's records is adding files.
+        #
+        # It cost a round to find out that it had to be routed at all: dropping
+        # windows-launch.walk.tsv in here handed it to verify-std.sh as a probe
+        # called "walk", which reported eight failures about a probe that does
+        # not exist.
+        if [ "$probe" = "walk" ]; then
+            NT_LANE="${base%%.*}" NT_SUITE=verify-windows NT_RESULTS="$rrows" \
+                bash "$ROOT/test/lib/walk.sh" "$rec" \
+                > "$WORK/rec-$base.out" 2>&1
+        else
+            NT_LANE="${base%%.*}" NT_SUITE=verify-std NT_RESULTS="$rrows" \
+                bash "$ROOT/test/verify-std.sh" "$probe" "$WORK/shots-rec" "$rec" \
+                > "$WORK/rec-$base.out" 2>&1
+        fi
         rrc=$?
         NREC=$((NREC + 1))
         [ "$rrc" = "0" ] || { bad "$base replayed with rc=$rrc"; BADREC=$((BADREC + 1)); }
@@ -381,7 +397,7 @@ for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh; do
     case "$(basename "$suite")" in selftest.sh) continue ;; esac
     grep -q 'harness\.sh' "$suite" 2>/dev/null || continue
     for id in $(sed 's/#.*//' "$suite" |
-                grep -oE '\bnt_(pass|fail|skip) "?[a-z][a-z0-9.-]*' |
+                grep -oE '\bnt_(pass|fail|skip|walk_[a-z_]+) "?[a-z][a-z0-9.-]*' |
                 awk '{print $2}' | tr -d '"' | sort -u); do
         # An id has a dot in it. A bare word is a variable or a fragment.
         case "$id" in *.*) ;; *) continue ;; esac
@@ -422,7 +438,12 @@ while IFS="$(printf '\t')" read -r rid _rest; do
     stem="${rid%.*}"
     found=0
     for suite in $NT_SUITES; do
-        if grep -qE "(nt|ctl)_(pass|fail|skip) \"?($rid|$stem\.\\\$)" "$suite" 2>/dev/null; then
+        # nt_walk_* counts as emitting. test/lib/walk.sh names its ids as
+        # arguments to the walk's own comparators -- `nt_walk_geometry
+        # walk.resize ...` -- rather than to nt_pass directly, and a scan that
+        # only knew the three verdict words would call every one of them an
+        # orphan the moment the verifiers stop carrying the literals too.
+        if grep -qE "(nt_(pass|fail|skip|walk_[a-z_]+)|ctl_(pass|fail|skip)) \"?($rid|$stem\.\\\$)" "$suite" 2>/dev/null; then
             found=1; break
         fi
     done
@@ -430,6 +451,58 @@ while IFS="$(printf '\t')" read -r rid _rest; do
 done < "$ROOT/test/cases.tsv"
 [ -z "$ORPHAN" ] && ok "every registered case id is emitted by some suite" \
     || bad "in cases.tsv but emitted nowhere:$ORPHAN"
+
+# ------------------------------------------------------------------- walk.sh
+
+echo
+echo "### walk.sh, against a walk that should not pass"
+
+# The replay above proves walk.sh can say PASS. This proves it can say FAIL,
+# which is the half that a deleted assertion would still satisfy. Same argument
+# as the 640x480 stub walk in the verify-linux.sh section above.
+WALKREC="$ROOT/test/lib/records/windows-launch.walk.tsv"
+if [ -f "$WALKREC" ]; then
+    # A window that never resized, and a move that never happened.
+    sed 's/500x400/900x600/' "$WALKREC" | grep -v '	STEP3	' > "$WORK/walk-bad.tsv"
+    WBROWS="$WORK/walk-bad-rows.tsv"
+    NT_LANE=selftest NT_SUITE=verify-windows NT_RESULTS="$WBROWS" \
+        bash "$ROOT/test/lib/walk.sh" "$WORK/walk-bad.tsv" > "$WORK/walk-bad.out" 2>&1
+    wbrc=$?
+    [ "$wbrc" = 2 ] && ok "a walk that did not resize or move fails twice" \
+        || bad "a broken walk exited $wbrc, wanted 2"
+    # Column three is the case id and four the verdict -- the row is
+    # lane/suite/id/verdict/detail, which an anchored grep gets wrong.
+    nt_verdict() { awk -F'\t' -v id="$1" '$3 == id { print $4; exit }' "$WBROWS"; }
+    [ "$(nt_verdict walk.resize)" = FAIL ] &&
+        ok "walk.resize failed on a window that stayed 900x600" ||
+        bad "walk.resize did not fail on a window that never resized"
+    [ "$(nt_verdict walk.move)" = FAIL ] &&
+        ok "walk.move failed on a state that never arrived" ||
+        bad "walk.move did not fail on a missing STEP3"
+    # And the cases behind the two failures still reported. A replay that
+    # stopped at the first red would take every later reading with it, which is
+    # the defect the live verifiers have `exit 1` for and this one must not.
+    [ "$(nt_verdict walk.done)" = PASS ] &&
+        ok "the cases behind a failure still reported" ||
+        bad "walk.sh stopped at the first failing case"
+
+    # Sourced, it must not replay. It sees the caller's positional parameters,
+    # and verify-linux.sh is called with a screenshots directory -- which this
+    # file caught being read as a record path the first time walk.sh was written.
+    ( set -- "$WORK/not-a-record-just-a-dir"
+      # shellcheck source=/dev/null
+      . "$ROOT/test/lib/walk.sh"
+      command -v nt_walk_title >/dev/null 2>&1 || exit 3
+    ) > "$WORK/walk-src.out" 2>&1
+    srrc=$?
+    if [ "$srrc" = 0 ] && ! grep -q 'no record at' "$WORK/walk-src.out"; then
+        ok "sourcing walk.sh defines the comparators and replays nothing"
+    else
+        bad "sourcing walk.sh with a caller's arguments tried to replay them"
+    fi
+else
+    echo "  SKIP: no windows-launch.walk record to replay"
+fi
 
 # --------------------------------------------------------------------- run.sh
 

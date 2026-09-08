@@ -10,6 +10,10 @@
 set -euo pipefail
 
 . "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+# The walk's comparators, shared with verify-macos.sh and -- through a
+# recorded replay -- with verify-windows.ps1. The instrument below is this
+# platform's; the verdicts are not, and were three copies until now.
+. "$(cd "$(dirname "$0")" && pwd)/lib/walk.sh"
 
 # Two budgets, because the first window is not like the ones after it. This is
 # the app's first launch on the runner: osascript starting, the bridge coming
@@ -138,11 +142,7 @@ assert_title() {
     local case="$1" expected="$2"
     local actual
     actual=$(read_status_title)
-    if [ "$actual" = "$expected" ]; then
-        nt_pass "$case" "title = '$expected'"
-    else
-        nt_fail "$case" "title expected='$expected' actual='$actual'"
-    fi
+    nt_walk_title "$case" "$actual" "$expected"
 }
 
 assert_geometry() {
@@ -154,13 +154,7 @@ assert_geometry() {
         nt_fail "$case" "could not read geometry"
         return
     fi
-    local dw=$(( actual_w - expected_w )); dw=${dw#-}
-    local dh=$(( actual_h - expected_h )); dh=${dh#-}
-    if [ "$dw" -le "$tolerance" ] && [ "$dh" -le "$tolerance" ]; then
-        nt_pass "$case" "content = ${actual_w}x${actual_h} (asked ${expected_w}x${expected_h}, tolerance ${tolerance})"
-    else
-        nt_fail "$case" "content expected ${expected_w}x${expected_h} actual=${actual_w}x${actual_h}, off by ${dw}x${dh} (tolerance ${tolerance})"
-    fi
+    nt_walk_geometry "$case" "$actual_w" "$actual_h" "$expected_w" "$expected_h" "$tolerance"
 }
 
 # The requested position, clamped to the work area, exactly.

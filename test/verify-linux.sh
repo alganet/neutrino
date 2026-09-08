@@ -7,6 +7,10 @@
 set -euo pipefail
 
 . "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+# The walk's comparators, shared with verify-macos.sh and -- through a
+# recorded replay -- with verify-windows.ps1. The instrument below is this
+# platform's; the verdicts are not, and were three copies until now.
+. "$(cd "$(dirname "$0")" && pwd)/lib/walk.sh"
 
 # Overridable so a run against stub instruments does not wait out a real
 # minute per state; every lane leaves it alone and gets the sixty seconds a
@@ -92,11 +96,7 @@ assert_title() {
     local case="$1" wid="$2" expected="$3"
     local actual
     actual=$(xdotool getwindowname "$wid" 2>/dev/null) || true
-    if [ "$actual" = "$expected" ]; then
-        nt_pass "$case" "title = '$expected'"
-    else
-        nt_fail "$case" "title expected='$expected' actual='$actual'"
-    fi
+    nt_walk_title "$case" "$actual" "$expected"
 }
 
 # The requested size, exactly, unless a caller asks for slack.
@@ -118,13 +118,7 @@ assert_geometry() {
     info=$(xdotool getwindowgeometry "$wid" 2>/dev/null) || true
     size=$(echo "$info" | grep -oP 'Geometry: \K[0-9]+x[0-9]+') || true
     actual_w="${size%x*}"; actual_h="${size#*x}"
-    local dw=$(( actual_w - expected_w )); dw=${dw#-}
-    local dh=$(( actual_h - expected_h )); dh=${dh#-}
-    if [ "$dw" -le "$tolerance" ] && [ "$dh" -le "$tolerance" ]; then
-        nt_pass "$case" "content = ${actual_w}x${actual_h} (asked ${expected_w}x${expected_h}, tolerance ${tolerance})"
-    else
-        nt_fail "$case" "content expected ${expected_w}x${expected_h} actual=${actual_w}x${actual_h}, off by ${dw}x${dh} (tolerance ${tolerance})"
-    fi
+    nt_walk_geometry "$case" "$actual_w" "$actual_h" "$expected_w" "$expected_h" "$tolerance"
 }
 
 # The decoration's thickness, as the window manager publishes it: left, right,
