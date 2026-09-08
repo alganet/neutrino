@@ -81,4 +81,22 @@ Run-Half a light
 Set-AppsTheme 0
 Run-Half b dark
 Set-AppsTheme 1
+
+# `exit 0`, on purpose, and it is the one thing about this file a reader should
+# not have to guess at.
+#
+# Run-Half discards each half's $LASTEXITCODE, which for every other suite in
+# this tree would be a defect: test/run.sh adds a lane up by summing exit codes
+# and never parsing, so a step that always exits 0 is a step that can never
+# redden its lane. What makes it right here is that this file asserts nothing.
+# It sets a knob, runs the verifier twice and keeps two logs -- and the verifier
+# it runs is verify-std.ps1, which files the std.theme.* rows through
+# lib/analyse.sh on its own account. Those rows are the signal; a second exit
+# code carrying the same failures would double-count them in the lane total.
+#
+# So this is the sequencer and not the judge, which is the same division the
+# header states for the analysis. The thing it would be worth failing on is a
+# half that never ran at all, and that is not visible from an exit code either:
+# it looks like a verifier that ran and found nothing, which is exactly what a
+# hole in the grid is for.
 exit 0
