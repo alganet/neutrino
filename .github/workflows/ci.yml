@@ -919,22 +919,12 @@ jobs:
       # sections that drive qml directly and so do not get what run_qt sets for
       # its own launch. Neither reaches an app launch: the scrub takes both
       # before any engine starts.
-      - timeout-minutes: 25
-        run: |
-          export DISPLAY=:99
-          export QT_QPA_PLATFORM=xcb
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QTWEBENGINE_DISABLE_SANDBOX=1
-          export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage"
-          export QML_XHR_ALLOW_FILE_READ=1
-          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
-          mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          bash test/mkapp.sh --testing test/neutrinoloaders.js test/neutrinoappdir.cmd
-          TEST_EXIT=0
-          bash test/appdir.sh test/neutrinoappdir.cmd > ~/appdir.log 2>&1 || TEST_EXIT=$?
-          cat ~/appdir.log
-          exit $TEST_EXIT
+      # QTWEBENGINE_CHROMIUM_FLAGS and QML_XHR_ALLOW_FILE_READ moved into
+      # test/appdir.sh, which is the thing that drives qml directly and so is
+      # the thing that needs them. The first of the two carries a space, and
+      # the command column in test/suites.tsv is argv split on whitespace --
+      # that was the one thing keeping this step written out by hand.
+      - run: bash test/run.sh kde appdir
       # The loader environment the standalone launch path hands its engine.
       # Every check here is against the same build with the fix cut out of it,
       # so "it would have failed before" is measured in this run rather than

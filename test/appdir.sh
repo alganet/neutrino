@@ -55,6 +55,26 @@ trap 'chmod -R u+w "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 FAILURES=0
 UP_WAIT=25
 
+# The two knobs this file needs for the qml it drives itself.
+#
+# They were exported by the workflow step, and the comment there said why: the
+# sections below run the QML runtime directly rather than through the launcher,
+# so they do not get what run_qt sets for its own launch. Neither reaches an app
+# launch either way -- the scrub takes both before any engine starts.
+#
+# Here rather than in the lane's setup for two reasons. It is a property of what
+# this suite does and not of the machine it runs on, the same way the root colour
+# belongs to the file that takes the pictures. And QTWEBENGINE_CHROMIUM_FLAGS
+# carries a space, which the command column in test/suites.tsv cannot: that
+# column is argv split on whitespace, so a value with a space in it would arrive
+# as two arguments. It was the one thing keeping this step hand-written.
+#
+# Set and not defaulted, because this is the suite that knows it needs
+# --no-sandbox; test/lib/display.sh's nt_qt_env defaults the same name to the
+# narrower value every other kde suite runs with, and runs before this.
+export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage"
+export QML_XHR_ALLOW_FILE_READ=1
+
 report() { echo "report: $*"; }
 fail()   { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 
