@@ -113,3 +113,35 @@ splash.wayland.preferred	wayland is preferred when both are reachable	gjs waylan
 splash.photographed	the window was photographed while it was up	gjs wayland bsd windows-launch macos-netinstall
 splash.indicator.moved	the indicator moved while it was photographed	gjs wayland bsd windows-launch macos-netinstall
 splash.orphan.none	a killed parent leaves no window behind	gjs wayland bsd windows-launch macos-netinstall
+
+# The pin and the payload, from netinstall/test/verify.sh -- the second suite in
+# the netinstall tree to speak this vocabulary.
+#
+# The lane list is splash's minus wayland, and the difference is not a judgement
+# about the check: wayland asks the netinstall suite for `splash` and nothing
+# else, because what is being measured on that lane is a compositor. bsd runs
+# these, in an OpenBSD guest, off the reduced suite list that drops the two
+# suites needing a webview -- which is why converting this file deepens a column
+# that until now carried one family.
+#
+# Nothing here skips. Every case is a question about a hash or a file, answerable
+# on any machine with a compiler, so a `-` in one of these cells is a lane that
+# went quiet rather than a lane that could not answer.
+#
+# verify.fixture.oversized is a guard rather than a claim about the binary, and
+# it earns a row for the reason it exists: the oversized payload is seventeen
+# megabytes of `a`, and when the fixture was silently not created -- which
+# happened, on windows, where nt_python cannot open an MSYS /tmp path -- the
+# rejection below it passed against a file that was not there. Measured again
+# here: emptying the fixture turns both this and verify.payload.oversized red.
+verify.fixture.oversized	the oversized fixture was actually created	gjs bsd windows-launch macos-netinstall
+verify.pin.accept	a payload matching its pin is accepted and cached	gjs bsd windows-launch macos-netinstall
+verify.sha256.agrees	the binary's sha256 agrees with the system tool	gjs bsd windows-launch macos-netinstall
+verify.pin.reject	a payload not matching its pin is refused	gjs bsd windows-launch macos-netinstall
+verify.pin.reason	the mismatch is refused for being a mismatch, not for its name	gjs bsd windows-launch macos-netinstall
+verify.payload.binary	an ELF payload is refused	gjs bsd windows-launch macos-netinstall
+verify.payload.nul	a payload with an embedded nul is refused	gjs bsd windows-launch macos-netinstall
+verify.payload.oversized	an oversized payload is refused	gjs bsd windows-launch macos-netinstall
+verify.name.missing	a spec naming a file the server does not have is refused	gjs bsd windows-launch macos-netinstall
+verify.cache.offline	a cached app resolves with the server down	gjs bsd windows-launch macos-netinstall
+verify.cache.tampered	a tampered cache is refetched, not trusted	gjs bsd windows-launch macos-netinstall
