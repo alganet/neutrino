@@ -38,6 +38,10 @@ set -uo pipefail
 # point of the file is that the app on the download page shipped broken and
 # nothing in CI could say so.
 . "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+# And the reader. This copy was verify-early.sh's, and it arrived without the
+# `|| true` that file carries -- correct only because this suite has no `set -e`
+# to be killed by, which is a fact about a line at the top of a different file.
+. "$(cd "$(dirname "$0")" && pwd)/lib/title.sh"
 
 SHOT_DIR="${1:-$HOME/screenshots}"
 TIMEOUT=180
@@ -54,22 +58,10 @@ skip_fields() {
     nt_skip demo.close.bound "$1"
 }
 
-# The same two readers verify-early.sh uses, and in the same order.
-if command -v xdotool >/dev/null 2>&1; then
-    read_title() {
-        local wid
-        wid=$(xdotool search --name "^DEMOPROBE " 2>/dev/null | head -1) || true
-        [ -n "$wid" ] && xdotool getwindowname "$wid" 2>/dev/null || true
-    }
-elif command -v wmctrl >/dev/null 2>&1; then
-    read_title() {
-        wmctrl -l 2>/dev/null |
-            sed -n 's/^[^ ]* *[^ ]* *[^ ]* *\(DEMOPROBE .*\)$/\1/p' | tail -1
-    }
-else
-    # An instrument that is not here, which is not the app failing. Every case
-    # this suite has is read out of a window title, so with nothing that can
-    # read one there is no question here that can be answered.
+# An instrument that is not here, which is not the app failing. Every case this
+# suite has is read out of a window title, so with nothing that can read one
+# there is no question here that can be answered.
+if [ "$NT_TITLE_HOW" = none ]; then
     WHY="neither xdotool nor wmctrl is here, so nothing can read a title"
     nt_skip demo.reported "$WHY"
     skip_fields "$WHY"
@@ -80,7 +72,7 @@ echo "=== Waiting for the demo to report ==="
 TITLE=""
 WAITED=0
 while [ "$WAITED" -lt "$TIMEOUT" ]; do
-    TITLE="$(read_title)"
+    TITLE="$(nt_title "DEMOPROBE ")"
     [ -n "$TITLE" ] && break
     sleep "$POLL"
     WAITED=$((WAITED + 1))

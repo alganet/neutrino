@@ -17,6 +17,9 @@ set -euo pipefail
 # `[ "$FAILURES" -eq 0 ]` -- so three failures and one were the same 1 to the
 # lane, and three of its four exits left with no verdict counted at all.
 . "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+# And the reader, which was three branches here and the same three in four other
+# suites; verify-attack.sh's copy is the one this was taken from.
+. "$(cd "$(dirname "$0")" && pwd)/lib/title.sh"
 
 # What this run has left to answer. Its three early exits each left the cases
 # below them unreported, and an unreported case is a hole the grid cannot tell
@@ -56,44 +59,17 @@ else
     nt_finish
 fi
 
-case "$(uname -s)" in
-    Darwin)
-        # No window the shell can query, so the title arrives through the same
-        # status file every other macOS check uses.
-        read_title() { sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null || true; }
-        ;;
-    *)
-        if command -v xdotool >/dev/null 2>&1; then
-            read_title() {
-                local wid
-                wid=$(xdotool search --name "^EARLY " 2>/dev/null | head -1) || true
-                [ -n "$wid" ] && xdotool getwindowname "$wid" 2>/dev/null || true
-            }
-        elif command -v wmctrl >/dev/null 2>&1; then
-            read_title() {
-                # `|| true`, the way the xdotool branch above has it and for
-                # the reason verify-attack.sh spells out where it carries the
-                # same line: this file runs under `set -euo pipefail`, so a
-                # wmctrl that cannot open the display takes the pipeline
-                # non-zero and set -e ends the suite inside the wait loop --
-                # before the "never reported" branch that exists to say so.
-                # Latent rather than live, because both Linux lanes install
-                # xdotool and take the branch above.
-                wmctrl -l 2>/dev/null | sed -n 's/^[^ ]* *[^ ]* *[^ ]* *\(EARLY .*\)$/\1/p' | tail -1 || true
-            }
-        else
-            nt_skip early.target.served "no xdotool or wmctrl here to read a window title with"
-            skip_rest "there is no way to read a window title on this machine"
-            nt_finish
-        fi
-        ;;
-esac
+if [ "$NT_TITLE_HOW" = none ]; then
+    nt_skip early.target.served "no xdotool or wmctrl here to read a window title with"
+    skip_rest "there is no way to read a window title on this machine"
+    nt_finish
+fi
 
 echo "=== Waiting for the early-navigation app to report ==="
 deadline=$((SECONDS + TIMEOUT))
 TITLE=""
 while [ $SECONDS -lt $deadline ]; do
-    TITLE="$(read_title)"
+    TITLE="$(nt_title "EARLY ")"
     case "$TITLE" in *"EARLY "*) break ;; esac
     TITLE=""
     sleep $POLL_INTERVAL

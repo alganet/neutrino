@@ -31,6 +31,10 @@
 
 set -uo pipefail
 
+# The window title, by whichever reader this machine has -- the fifth copy of
+# that cascade lived here. See lib/title.sh.
+. "$(cd "$(dirname "$0")" && pwd)/lib/title.sh"
+
 MODE="${1:-gtk}"
 WATCH="${2:-8}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -241,16 +245,7 @@ run_windows() {
 LIVE_ART="${3:-$ROOT/test/neutrinolivefont.cmd}"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 
-live_title() {
-    if command -v xdotool >/dev/null 2>&1; then
-        local w
-        w="$(xdotool search --name '^STD-LIVEFONT' 2>/dev/null | head -1)"
-        [ -n "$w" ] && xdotool getwindowname "$w" 2>/dev/null
-        return 0
-    fi
-    wmctrl -l 2>/dev/null |
-        sed -n 's/^[^ ]* *[^ ]* *[^ ]* *\(STD-LIVEFONT .*\)$/\1/p' | tail -1
-}
+live_title() { nt_title 'STD-LIVEFONT'; }
 
 live_stop() {
     [ -n "${LIVE_PID:-}" ] || return 0
@@ -311,7 +306,7 @@ live_half_gtk() {
         note "live half: no gsettings here; nothing to flip live"
         return 0
     }
-    command -v xdotool >/dev/null 2>&1 || command -v wmctrl >/dev/null 2>&1 || {
+    [ "$NT_TITLE_HOW" = none ] && {
         note "live half: neither xdotool nor wmctrl is here, so nothing can read a title"
         return 0
     }
