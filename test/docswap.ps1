@@ -60,11 +60,46 @@ if (-not $src -or -not (Test-Path $src) -or -not $outDir) {
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $log = Join-Path $outDir "docswap.log"
 
-$failures = 0
+# The six words. Nine checks, none of which said anything when it held, on the
+# suite that says the document this driver renders is the one boot gave it.
+. (Join-Path $PSScriptRoot "lib\harness.ps1")
+
 $lines = New-Object System.Collections.ArrayList
-function Say($m) { Write-Output "report: $m"; [void]$lines.Add("report: $m") }
-function Fail($m) { Write-Output "FAIL: $m"; [void]$lines.Add("FAIL: $m"); $script:failures++ }
+function Say($m) { nt_report $m; [void]$lines.Add("report: $m") }
 function Save-Log { Set-Content -Path $log -Value $lines -Encoding ASCII }
+
+# Every verdict, filed and logged. docswap.log is an artifact a person opens --
+# ci.yml cats it in a step of its own and the sheet carries $HOME\docswaplogs as
+# a source -- so a verdict that reached stdout and not this list would be
+# missing from the one file somebody reads. Named assert_* because the id
+# arrives in a variable, which is the shape the registry scan cannot follow.
+function assert_verdict($id, $verdict, $m) {
+    switch ($verdict) {
+        "PASS" { nt_pass $id $m }
+        "FAIL" { nt_fail $id $m }
+        "SKIP" { nt_skip $id $m }
+    }
+    [void]$lines.Add("${verdict}: $m")
+}
+
+# Run-Phase's two preconditions fire per phase, and there are ten phases. A case
+# is a question, not an occurrence, so they are collected and filed once after
+# the last phase -- six rows carrying one id would fold to a single verdict in
+# the grid anyway, and the phase that failed is exactly what the fold discards.
+$script:phaseDirty = @()
+$script:phaseHeld = @()
+
+# Everything below the build derivation, for the gate that cannot get past it.
+function skip_all($why) {
+    assert_verdict docswap.old-differs "SKIP" $why
+    assert_verdict docswap.phase.clean-start "SKIP" $why
+    assert_verdict docswap.phase.launcher-exited "SKIP" $why
+    assert_verdict docswap.control "SKIP" $why
+    assert_verdict docswap.oldcontrol "SKIP" $why
+    assert_verdict docswap.swap.window "SKIP" $why
+    assert_verdict docswap.swap.one-read "SKIP" $why
+    assert_verdict docswap.oldswap.reproduced "SKIP" $why
+}
 
 $work = Join-Path $env:TEMP ("docswap-" + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $work -Force | Out-Null
@@ -167,15 +202,17 @@ function Markers-In($path) {
 
 Write-Output "=== docswap: the document this driver renders ==="
 if ($missing.Count) {
-    foreach ($m in $missing) { Fail "a build could not be derived: $m" }
-    Say "nothing below is a reading"
+    assert_verdict docswap.builds "FAIL" "a build could not be derived: $($missing -join '; ')"
+    skip_all "the builds this suite compares could not be derived, so nothing was run"
     Save-Log
-    Write-Output "=== docswap: $failures failure(s) ==="
-    exit 1
+    nt_finish
 }
+assert_verdict docswap.builds "PASS" "all three builds derived"
 Say "builds: a[$(Markers-In $appA)] b[$(Markers-In $appB)] old[$(Markers-In $appOld)]"
 if ((Get-FileHash $appA).Hash -eq (Get-FileHash $appOld).Hash) {
-    Fail "the old-spelling build is byte-identical to the shipped one; its readings are the shipped one's"
+    assert_verdict docswap.old-differs "FAIL" "the old-spelling build is byte-identical to the shipped one; its readings are the shipped one's"
+} else {
+    assert_verdict docswap.old-differs "PASS" "the old-spelling build differs from the shipped one"
 }
 
 function Stop-App {
@@ -211,7 +248,7 @@ function Run-Phase($label, $build, $delayMs, $act, $waitSeconds) {
     $waited = 0
     while ($waited -lt 30 -and (Title-Now)) { Stop-App; $waited += 3 }
     if (Title-Now) {
-        Fail "$label : a window from the previous phase would not go; the reading below is its"
+        $script:phaseDirty += $label
     }
     Copy-Item $build $lane -Force
     $t0 = [System.Diagnostics.Stopwatch]::StartNew()
@@ -240,7 +277,7 @@ function Run-Phase($label, $build, $delayMs, $act, $waitSeconds) {
         # of this probe could not tell a delete that never happened from a
         # document that had already been read.
         $after = Markers-In $lane
-        if (-not $launcherGone) { Fail "$label : the launcher was still running when the file was touched" }
+        if (-not $launcherGone) { $script:phaseHeld += $label }
     }
 
     if (-not $launch.WaitForExit(240000)) { $launch.Kill() }
@@ -280,7 +317,9 @@ Run-Phase "control" $appA 0 $null 45
 $control = Read-Markers $settledTitle
 Say "control = $control"
 if ($control -ne "script=A doc=A") {
-    Fail "control expected=script=A doc=A actual=$control -- nothing below is a reading"
+    assert_verdict docswap.control "FAIL" "control expected=script=A doc=A actual=$control -- nothing below is a reading"
+} else {
+    assert_verdict docswap.control "PASS" "the shipped build comes up and reads its own markers"
 }
 
 # The before-state's own control. Without it, the old build rendering the wrong
@@ -289,7 +328,9 @@ Run-Phase "oldcontrol" $appOld 0 $null 45
 $oldControl = Read-Markers $settledTitle
 Say "oldcontrol = $oldControl"
 if ($oldControl -ne "script=A doc=A") {
-    Fail "oldcontrol expected=script=A doc=A actual=$oldControl -- the old spelling does not run, so nothing below compares to it"
+    assert_verdict docswap.oldcontrol "FAIL" "oldcontrol expected=script=A doc=A actual=$oldControl -- the old spelling does not run, so nothing below compares to it"
+} else {
+    assert_verdict docswap.oldcontrol "PASS" "the pre-fix spelling comes up and reads its own markers"
 }
 
 # Three delays, because the gap between the two reads is a few hundred
@@ -303,15 +344,27 @@ $delays = @(300, 400, 500)
 # The shipped build's property, and it holds at every delay because there is
 # only one read: whatever file that read found, both markers come from it. A
 # disagreement is impossible here and is exactly what the old spelling produces.
+$swapNoWindow = @()
+$swapSplit = @()
 foreach ($d in $delays) {
     Run-Phase "swap$d" $appA $d $swapB 45
     $got = Read-Markers $settledTitle
     Say "swap$d = $got"
     if ($got -eq "none") {
-        Fail "swap$d expected=a window actual=none"
+        $swapNoWindow += "${d}ms"
     } elseif ($got -ne "script=A doc=A" -and $got -ne "script=B doc=B") {
-        Fail "swap$d expected=both markers from one read actual=$got"
+        $swapSplit += "${d}ms=$got"
     }
+}
+if ($swapNoWindow.Count -gt 0) {
+    assert_verdict docswap.swap.window "FAIL" "swap expected=a window at every delay actual=none at $($swapNoWindow -join ',')"
+} else {
+    assert_verdict docswap.swap.window "PASS" "a window came up at all three delays"
+}
+if ($swapSplit.Count -gt 0) {
+    assert_verdict docswap.swap.one-read "FAIL" "swap expected=both markers from one read actual=$($swapSplit -join '; ')"
+} else {
+    assert_verdict docswap.swap.one-read "PASS" "both markers came from one read at all three delays"
 }
 
 # The same three delays against the spelling this PR replaced. Each one on its
@@ -330,7 +383,9 @@ foreach ($d in $delays) {
 Say ("the old spelling rendered the second read at: " +
      $(if ($reproduced) { $reproduced.Trim() } else { "none of the delays tried" }))
 if (-not $reproduced) {
-    Fail "the defect did not reproduce at any of $($delays -join ',') ms; the swap assertions above have nothing to compare to"
+    assert_verdict docswap.oldswap.reproduced "FAIL" "the defect did not reproduce at any of $($delays -join ',') ms; the swap assertions above have nothing to compare to"
+} else {
+    assert_verdict docswap.oldswap.reproduced "PASS" "the old spelling rendered the second read at$reproduced ms"
 }
 
 # Recorded and not asserted, and this round is why. Removing the file cannot
@@ -346,7 +401,18 @@ Run-Phase "oldgone" $appOld 500 $remove 45
 Say "NOTE: oldgone = $(Read-Markers $settledTitle) (recorded, not asserted)"
 
 Stop-App
+
+# The two preconditions, once, after every phase has run.
+if ($script:phaseDirty.Count -gt 0) {
+    assert_verdict docswap.phase.clean-start "FAIL" "a window from the previous phase would not go, so these readings are its: $($script:phaseDirty -join ',')"
+} else {
+    assert_verdict docswap.phase.clean-start "PASS" "every phase began with no window left from the last one"
+}
+if ($script:phaseHeld.Count -gt 0) {
+    assert_verdict docswap.phase.launcher-exited "FAIL" "the launcher was still running when the file was touched: $($script:phaseHeld -join ',')"
+} else {
+    assert_verdict docswap.phase.launcher-exited "PASS" "the launcher had exited before the file was touched, in every phase that touched it"
+}
+
 Save-Log
-Write-Output "=== docswap: $failures failure(s) ==="
-if ($failures -gt 0) { exit 1 }
-exit 0
+nt_finish
