@@ -159,6 +159,24 @@ echo "=== Every spec-shaped name written down in this tree ==="
 # these is a name some file hands to this parser, and one carrying a pin the
 # new floor rejects is either a doc that lies or a test that passes for the
 # wrong reason.
+#
+# This counted nothing at all for an unknown number of rounds, and reported that
+# nothing cheerfully: "none of the 0 names written down here is below the floor",
+# green, on every lane. The pattern asked for shape 0 -- `-0[0-9a-z]{8,}` -- and
+# for at least three dashes before the token, and the tree holds exactly one
+# shape-0 name, which has two. Shapes 1, 2 and 3 are forty-two names between
+# them and none of them was ever looked at. Its own comment says thirteen were
+# found when this was first measured, so it did work once and stopped, which is
+# the failure this whole file is written about happening to the file itself.
+#
+# `[0-3]` is every shape the parser assigns, and one dash is the shortest real
+# name (`localhost-0<pin>` is a spec). The token stays loose -- `[0-9a-z]` and
+# not `[0-9a-f]` -- for the reason the comment below says: a case about a
+# non-hex digit has to come out whole, or `...6071g` is counted as a 31 and this
+# reports a below-floor name that is not one.
+#
+# Twenty-five names now, none below the floor. It says something true instead of
+# nothing.
 SHORT=0
 TOTAL=0
 WHERE=""
@@ -168,7 +186,7 @@ for f in "$HERE"/*.sh "$HERE"/../README.md "$HERE"/../*.c; do
     # a name written at it -- names.sh has to be able to refuse a short pin
     # without that refusal reading as a fixture nobody updated.
     hits="$(grep -v 'short on purpose' "$f" 2>/dev/null \
-        | grep -ohE '[a-z][a-z0-9_]*(-[a-z0-9_]+){2,}-0[0-9a-z]{8,}' | sort -u)"
+        | grep -ohE '[a-z][a-z0-9_]*(-[a-z0-9_]+){1,}-[0-3][0-9a-z]{8,}' | sort -u)"
     [ -n "$hits" ] || continue
     for name in $hits; do
         tok="${name##*-}"
@@ -177,7 +195,7 @@ for f in "$HERE"/*.sh "$HERE"/../README.md "$HERE"/../*.c; do
         # is what a strict pattern did, and it counted `...6071g` as a 31.
         # Anything that is not a pin is not this suite's business.
         case "$tok" in
-            0*) ;;
+            [0-3]*) ;;
             *) continue ;;
         esac
         case "${tok#0}" in
