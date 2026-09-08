@@ -1183,6 +1183,39 @@ printf '%s' "$FIXOUT" | grep -q 'unknown setup directive' &&
     bad "a row with an empty setup column was misread as a directive" ||
     ok "a row with an empty setup column keeps its command"
 
+# The row's name is what the harness files under.
+#
+# harness.sh derives $NT_SUITE from `basename "${0%.sh}"` when nothing sets it,
+# which names a suite after the script that implements it. That is one name for
+# four rows wherever a script serves more than one: stddoc, stdwin, stdtheme and
+# stdfont are all test/verify-std.sh, and every row they filed said `verify-std`.
+# run.sh exports the manifest's name over it, and this is what says so.
+#
+# The stub is deliberately not a .sh, so the two answers cannot be confused: left
+# to itself the harness would call this suite `ntspeak`.
+NAMETSV="$WORK/fixture-name.tsv"
+NAMEDIR="$WORK/nameresults"
+mkdir -p "$NAMEDIR"
+cat > "$FIXBIN/ntspeak" <<NTSPEAK
+#!/bin/bash
+. "$ROOT/test/lib/harness.sh"
+nt_pass fixture.named "a row that says which row asked for it"
+NTSPEAK
+chmod +x "$FIXBIN/ntspeak"
+printf 'fixture\tthe-row-name\ttimeout=20\tntspeak\n' > "$NAMETSV"
+PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$NAMETSV" NT_RESULTS_DIR="$NAMEDIR" \
+    bash "$RUNSH" fixture >/dev/null 2>&1
+[ -f "$NAMEDIR/the-row-name.tsv" ] \
+    && ok "the harness files a row under the manifest's name for it" \
+    || bad "a row filed as $(ls "$NAMEDIR" 2>/dev/null | tr '\n' ' ')rather than the-row-name.tsv"
+# The filename and the column are set from the same variable, but they are read
+# by different things -- sheet.sh globs the directory, and its digest carries the
+# column -- so a change that moved one and not the other would be found here.
+NAMECOL="$(awk -F'\t' '{ print $2 }' "$NAMEDIR/the-row-name.tsv" 2>/dev/null | sort -u | tr '\n' ' ')"
+[ "$NAMECOL" = "the-row-name " ] \
+    && ok "and names it in the row's own suite column" \
+    || bad "the suite column says '$NAMECOL' and not the-row-name"
+
 # ------------------------------------------------- the workflow lint, which ran nowhere
 
 echo

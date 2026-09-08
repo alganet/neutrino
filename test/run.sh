@@ -31,19 +31,11 @@
 #               not parse is a suite that measures nothing, and hearing it from
 #               the suite is hearing it late.
 #
-# What it deliberately does not do is set $NT_SUITE per row. It would be an
-# improvement: verify-std.sh serves four rows and all four file under
-# `verify-std`, so the sheet's per-case table cannot say which of them a row came
-# from.
-#
-# It was left out on the reasoning that it renames every .tsv a lane writes and
-# would therefore destroy the baseline grid comparison that proves each change
-# safe. That reason does not survive being checked. test/sheet.sh builds the
-# digest from (id, verdict, suite) triples but test/matrix.py reads only the id
-# and the verdict, so the suite name reaches the sheet's own table and never the
-# grid: renaming the files moves no cell. The change is still a follow-up rather
-# than a freebie -- it wants its own commit and its own probe -- but the thing
-# that was thought to block it does not.
+#   the name    Every row exports its own $NT_SUITE, so the harness files under
+#               the name the manifest gave the row rather than under the script
+#               that implements it. This was the one thing the first draft of
+#               this file said it deliberately did not do; the note at the call
+#               site says what changed and what it cost to check.
 
 set -uo pipefail
 
@@ -278,6 +270,43 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     echo "### $suite"
     SUITE_T0=$SECONDS
     RC=0
+
+    # The row's name, for the harness to file under.
+    #
+    # Without this a suite is named by the script that implements it, because
+    # that is all harness.sh has to go on -- `basename "${0%.sh}"`. Four rows on
+    # every desktop lane run test/verify-std.sh, so stddoc, stdwin, stdtheme and
+    # stdfont all filed as `verify-std`, appending to one file; the sheet's
+    # per-case table then had a suite column that could not say which of the four
+    # a row came from, and neither could a reader. fontflip and fontlive are the
+    # same script twice, and the halves of the geometry and theme flips reach
+    # verify-std.sh through decoflip.sh and themeflip.sh, so their rows landed in
+    # that same pile as well.
+    #
+    # It moves no cell in the grid, and that is worth saying because it was the
+    # stated reason for not doing it. test/sheet.sh builds its digest from
+    # (id, verdict, suite) triples, but test/matrix.py reads the id and the
+    # verdict and never the suite -- so the name reaches the sheet's own table
+    # and stops there. Nothing globs these files by name either: sheet.sh takes
+    # `*.tsv` from the directory it is pointed at.
+    #
+    # Exported and not passed, for the reason harness.sh derives it in the first
+    # place: a call site that had to repeat its own name is a call site that can
+    # come to disagree with the manifest. A row whose suite runs another suite
+    # hands the name down, which is the right answer -- the manifest's row is
+    # what the lane was asked for, and the script underneath it is an
+    # implementation detail the grid has never had a use for.
+    #
+    # Two PowerShell suites set $env:NT_SUITE for themselves, and they are the
+    # thing to look at when windows-content and windows-launch migrate. They do
+    # it for this exact defect one level down -- they hand a record to bash, and
+    # $0 there is analyse.sh or walk.sh -- but they assign rather than default,
+    # so an inherited name loses. verify-windows.ps1 is right to: it runs three
+    # times in one job and names the three apart, which is finer than a row can.
+    # verify-std.ps1 spells the literal `verify-std`, which is the name this
+    # line exists to stop using, and it will quietly win over the manifest on
+    # the day that row is written.
+    export NT_SUITE="$suite"
 
     for a in $BUILD_NAMES; do
         nt_build "$a" || { RC=1; break; }
