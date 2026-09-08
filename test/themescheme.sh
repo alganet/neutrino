@@ -66,6 +66,9 @@ VERIFY_LOG="$LOGDIR/themescheme-verify.log"
 # `fail` branch and a `note` branch, so the run where both held said nothing at
 # all -- and they are the two readings that stop a green from being an accident.
 . "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+# And the question themeflip.sh and decoflip.sh ask ahead of their own launches,
+# in the words all three now share.
+. "$(cd "$(dirname "$0")" && pwd)/lib/title.sh"
 
 note() { nt_report "$*"; }
 
@@ -108,7 +111,7 @@ echo "themescheme.sh: artifact=$ART theme=$THEME_NAME bg=$BG"
 # it: both this suite and every other STD-THEME- step in the lane answer to the
 # same name, and a window that outlived an earlier step is one the verifier
 # would attach to and report about. themeflip.sh lost a round to exactly this.
-if [ -n "$(xdotool search --name '^STD-THEME-' 2>/dev/null | head -1)" ]; then
+if nt_title_live 'STD-THEME-'; then
     nt_fail themescheme.clean-start "a STD-THEME- window was already up before this launch; it would be read instead"
     nt_skip themescheme.reported "an older window would have been read, so this launch was not made"
     skip_controls "an older window would have been read, so this launch was not made"

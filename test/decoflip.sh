@@ -37,6 +37,10 @@ LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 
 note() { echo "report: $*"; }
 
+# The two window questions this file shares with themeflip.sh, and the harness
+# that NT_STATUS_FILE comes from.
+. "$ROOT/test/lib/title.sh"
+
 # Each half's own verifier exit, carried and added to the differential's at the
 # end. themeflip.sh does not do this and is right not to: the theme step it
 # runs beside still launches the probe standalone, so the probe's own controls
@@ -46,39 +50,19 @@ note() { echo "report: $*"; }
 # to whatever the differential happens to ask.
 HALF_FAILURES=0
 
+# It said so itself: "Lifted from themeflip.sh unchanged in meaning". Both
+# copies are lib/title.sh's now, and what is left here is the prefix, which is
+# the only thing either of them ever meant to say.
+prefix_up() { nt_title_live 'STD-GEOM-'; }
+wait_gone() { nt_title_gone 'STD-GEOM-'; }
+
+# Still named, because the opening line of this suite reports which machine it
+# ran on and that is a reading worth keeping. It is no longer a fork in the
+# code: NT_TITLE_HOW is what decides how a window is looked for.
 case "$(uname -s)" in
     Darwin) PLATFORM=macos ;;
     *)      PLATFORM=x11 ;;
 esac
-
-STATUS="${TMPDIR:-/tmp}/neutrino-title.txt"
-
-# Lifted from themeflip.sh unchanged in meaning: x11 asks the server, macOS
-# asks the status file the other way round, because a dead app leaves its last
-# line behind forever and only a line that comes *back* means a live window.
-prefix_up() {
-    case "$PLATFORM" in
-        macos)
-            rm -f "$STATUS"
-            sleep 1
-            sed -n '1p' "$STATUS" 2>/dev/null | grep -q '^STD-GEOM-'
-            ;;
-        *)
-            [ -n "$(xdotool search --name '^STD-GEOM-' 2>/dev/null | head -1)" ]
-            ;;
-    esac
-}
-
-wait_gone() {
-    local n=0 limit=60
-    [ "$PLATFORM" = macos ] && limit=30
-    while [ "$n" -lt "$limit" ]; do
-        prefix_up || return 0
-        n=$((n + 1))
-        [ "$PLATFORM" = macos ] || sleep 0.5
-    done
-    return 1
-}
 
 # The third argument is what the picture is called. It is passed rather than
 # derived from the tag because `deco-b` says nothing to a reader looking at a
@@ -90,7 +74,7 @@ run_half() {
         echo "FAIL: no artifact at '$art'; the $tag half cannot run"
         return 1
     fi
-    [ "$PLATFORM" = macos ] && rm -f "$STATUS"
+    [ "$PLATFORM" = macos ] && rm -f "$NT_STATUS_FILE"
     bash "$art" > "$LOGDIR/deco-$tag-app.log" 2>&1 &
     pid=$!
     NT_SHOT_NAME="frame-$shot" \

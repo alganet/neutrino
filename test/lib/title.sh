@@ -134,14 +134,27 @@ nt_title() {
 #
 # That destroys the reading, which is why callers take it before a launch and
 # never during one.
+#
+# All three copies of this asked xdotool whatever the machine had, so on a desk
+# with wmctrl and no xdotool they answered "no window is up" by not being able
+# to look. That is the dangerous direction for a precondition, and it is what
+# the wmctrl branch is here to stop. With no reader at all the answer is still
+# "no window is up", because there is nothing else it can be -- a suite that
+# reaches this line with NT_TITLE_HOW=none has already lost the run.
 nt_title_live() {
-    if [ "$NT_TITLE_HOW" = status ]; then
-        rm -f "$NT_STATUS_FILE"
-        sleep 1
-        sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null | grep -q "^$1"
-    else
-        [ -n "$(xdotool search --name "^$1" 2>/dev/null | head -1)" ]
-    fi
+    case "$NT_TITLE_HOW" in
+        status)
+            rm -f "$NT_STATUS_FILE"
+            sleep 1
+            sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null | grep -q "^$1"
+            ;;
+        xdotool)
+            [ -n "$(xdotool search --name "^$1" 2>/dev/null | head -1)" ]
+            ;;
+        *)
+            [ -n "$(nt_title "$1")" ]
+            ;;
+    esac
 }
 
 # The precondition two flips share: the previous half's window is off the
