@@ -455,8 +455,13 @@ BADCOLS="$(awk -F'\t' '!/^#/ && NF && NF != 4 { print FILENAME ":" FNR }' "$APPS
 # an artifact nobody builds is a row nobody reads, and an artifact nobody
 # declared is a lane that fails at the point it was supposed to start measuring.
 APPNAMES="$(awk -F'\t' '!/^#/ && NF { print $1 }' "$APPS_TSV")"
+# awk and not `sed -n 's/^\(app\|build\)=//p'`: `\|` is GNU's alternation and
+# BSD sed reads it as a literal, so on macOS that expression matched nothing and
+# this list came back empty -- which made the next check report all five
+# artifacts as unused. The first thing the macos lane caught.
 WANTED_APPS="$(awk -F'\t' '!/^#/ && NF { print $3 }' "$SUITES_TSV" |
-    tr ' ' '\n' | sed -n 's/^\(app\|build\)=//p' | sort -u)"
+    tr ' ' '\n' |
+    awk '/^(app|build)=/ { sub(/^(app|build)=/, ""); print }' | sort -u)"
 
 MISSING=""
 for a in $WANTED_APPS; do
@@ -504,12 +509,12 @@ for l in $LANES; do
         awk -v lane="$l" -v s="$sname" '
             /^  [a-z0-9-]+:$/ { j = $1; sub(/:$/, "", j) }
             j == lane && /test\/run\.sh/ { print }
-        ' "$ROOT/.github/workflows/ci.yml" | grep -q "[ ]$sname\([ ]\|$\)" || continue
+        ' "$ROOT/.github/workflows/ci.yml" | grep -qE "[ ]$sname([ ]|$)" || continue
         # It is migrated. It must not also appear as a bare step.sh line.
         awk -v lane="$l" '
             /^  [a-z0-9-]+:$/ { j = $1; sub(/:$/, "", j) }
             j == lane && /test\/step\.sh/ { print }
-        ' "$ROOT/.github/workflows/ci.yml" | grep -q -- "--log $sname\([ ]\|$\)" &&
+        ' "$ROOT/.github/workflows/ci.yml" | grep -qE -- "--log $sname([ ]|$)" &&
             DOUBLED="$DOUBLED $l/$sname"
     done
 done
