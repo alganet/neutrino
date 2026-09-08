@@ -2238,7 +2238,7 @@ jobs:
       # Adwaita:dark the desktop's accent moved and Highlight did not.
       #
       # So this launches twice with the desktop flipped between and asks one
-      # question of each value: did it move. themeflip.sh owns the sequencing
+      # question of each value: did it move. themeflip.ps1 owns the sequencing
       # because two parts of it are easy to get wrong and invisible in YAML --
       # the knob is cleared before it is set, each half, and the second half
       # refuses to start while the first half's window is still up, since both

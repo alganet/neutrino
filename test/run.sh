@@ -32,10 +32,18 @@
 #               the suite is hearing it late.
 #
 # What it deliberately does not do is set $NT_SUITE per row. It would be an
-# improvement -- linux-engines runs its list twice and both halves file their
-# rows under one name -- but it would also rename every .tsv this lane writes,
-# and this round is the one where the arithmetic has to be shown not to have
-# changed anything. It is a follow-up, not a freebie.
+# improvement: verify-std.sh serves four rows and all four file under
+# `verify-std`, so the sheet's per-case table cannot say which of them a row came
+# from.
+#
+# It was left out on the reasoning that it renames every .tsv a lane writes and
+# would therefore destroy the baseline grid comparison that proves each change
+# safe. That reason does not survive being checked. test/sheet.sh builds the
+# digest from (id, verdict, suite) triples but test/matrix.py reads only the id
+# and the verdict, so the suite name reaches the sheet's own table and never the
+# grid: renaming the files moves no cell. The change is still a follow-up rather
+# than a freebie -- it wants its own commit and its own probe -- but the thing
+# that was thought to block it does not.
 
 set -uo pipefail
 

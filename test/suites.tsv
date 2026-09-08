@@ -74,9 +74,21 @@
 # A lane moves onto this file one suite at a time. `run.sh <lane> a b c` runs
 # only the rows it names, so a row that exists here and is not yet named by the
 # workflow does not run, and a step the workflow still spells by hand is not
-# duplicated. The rows below are the twenty steps that were already one-liners
+# duplicated. That began with the twenty steps already written as one-liners
 # through step.sh -- the safest thing to move first, and the set whose arithmetic
-# this runner has to get right before anything harder is put through it.
+# this runner had to get right before anything harder went through it.
+#
+# The four unix lanes are on it now, including the steps that were not one-liners
+# and had to be argued about first: the walk, which was eleven to nineteen lines
+# on four jobs and had drifted five ways between them; the early-navigation
+# suite, whose apparatus is test/early.sh because the order it comes up in is
+# the whole content of it; and kde's appdir, which was said to need a quoted
+# value in the command column and turned out to need its two knobs to live in
+# the file that drives qml instead.
+#
+# What is left is the two windows lanes. Their steps are `shell: pwsh` and this
+# runner is bash, which is a design question rather than a paste -- see the
+# `dbus` directive below for the shape the answer would take.
 #
 # The leashes are the `timeout-minutes` those steps carried, in seconds. They
 # were a ceiling GitHub enforced per step; a lane is fewer steps now, so the leash

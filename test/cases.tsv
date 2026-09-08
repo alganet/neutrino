@@ -17,11 +17,12 @@
 #
 # That was written when four lanes reported nothing at all -- bsd, kde-live,
 # wayland and macos-netinstall each ran one thing and none of it was this. Three
-# of the four report now: they run netinstall/test/run.sh, and splash.sh speaks
-# this vocabulary, so bsd, wayland and macos-netinstall carry the splash family
-# below. kde-live is still the one lane with no row anywhere here; it runs
-# test/qtkde.sh and nothing else, and until that suite has a vocabulary it is a
-# lane the registry has nothing to say about.
+# of the four report now, and rather more than they did: all sixteen suites in
+# netinstall/test speak this vocabulary, so bsd carries eight families off the
+# reduced OpenBSD list, macos-netinstall carries eleven, and wayland carries the
+# one it asks for. kde-live is still the only lane with no row anywhere here; it
+# runs test/qtkde.sh and nothing else, and until that suite has a vocabulary it
+# is a lane the registry has nothing to say about.
 #
 # windows-launch was absent from the walk for a long time, because
 # verify-windows.ps1 asserted the same facts in its own sentences and reported
@@ -90,9 +91,11 @@ std.font.end-observed	the font probe ran to the end	gjs kde linux-engines macos 
 # It is the whole of what the wayland lane runs (NEUTRINO_SUITES=splash) and the
 # headline of macos-netinstall, so converting one file put a Wayland compositor
 # and an AppKit desktop into a column that had been empty. bsd runs it too, in an
-# OpenBSD guest. kde is absent on purpose: it asks the netinstall suite for `env`
-# and `e2e` only, because it shares a kernel with gjs and the rest would be the
-# same measurement taken twice on the same machine.
+# OpenBSD guest. kde is absent from *this* family on purpose: it asks the
+# netinstall suite for `env` and `e2e` only, because it shares a kernel with gjs
+# and the rest would be the same measurement taken twice on the same machine. It
+# is not absent from the registry any more -- see the env and e2e families
+# below, which are exactly the two it asks for.
 #
 # Several of these are skips rather than failures on a lane that draws nothing,
 # which is most of what this suite has to say about a machine with no display:
