@@ -34,11 +34,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 NT_WM=""; NT_QT=0; NT_GTK=0; NT_LOG=""; NT_TIMEOUT=""; NT_APP=""
-NT_CAT=""; NT_REAP=""
+NT_CAT=""; NT_REAP=""; NT_DBUS=0
 
 usage() {
     echo "usage: step.sh [--display WM|none] [--qt] [--gtk] [--log NAME]" >&2
-    echo "               [--app ARTIFACT] [--cat NAME]... [--reap PAT[:PREFIX]]" >&2
+    echo "               [--app ARTIFACT] [--dbus] [--cat NAME]... [--reap PAT[:PREFIX]]" >&2
     echo "               [--timeout SECS] -- <command> [args...]" >&2
     exit 2
 }
@@ -51,6 +51,7 @@ while [ $# -gt 0 ]; do
         --gtk) NT_GTK=1; shift ;;
         --log) NT_LOG="${2:-}"; shift 2 ;;
         --log=*) NT_LOG="${1#--log=}"; shift ;;
+        --dbus) NT_DBUS=1; shift ;;
         --app) NT_APP="${2:-}"; shift 2 ;;
         --app=*) NT_APP="${1#--app=}"; shift ;;
         --cat) NT_CAT="$NT_CAT ${2:-}"; shift 2 ;;
@@ -125,7 +126,20 @@ if [ -n "$NT_APP" ]; then
     # gathers ~/*.log, so the launcher's account of itself lands in the artifact
     # next to the verifier's -- which is where it already went, under this name.
     NT_APP_LOG="$HOME/$(basename "${NT_APP%.cmd}")-app.log"
-    bash "$NT_APP" > "$NT_APP_LOG" 2>&1 &
+    # A session bus around the artifact, where the lane asks for one.
+    #
+    # Only kde does, and it is not a preference: QtWebEngine wants a session bus
+    # and the container has no desktop to inherit one from, so the walk there was
+    # written `dbus-run-session -- bash test/neutrinotest.cmd` in the workflow
+    # while the other three lanes launched the same artifact bare. That is a
+    # difference between lanes, which is what the setup column is for -- and it
+    # cannot go in the command column, because the command is the verifier and
+    # the artifact is launched by this file.
+    if [ "$NT_DBUS" = 1 ] && command -v dbus-run-session >/dev/null 2>&1; then
+        dbus-run-session -- bash "$NT_APP" > "$NT_APP_LOG" 2>&1 &
+    else
+        bash "$NT_APP" > "$NT_APP_LOG" 2>&1 &
+    fi
     NT_APP_PID=$!
     # The pid, to the suite that is about to watch it.
     #

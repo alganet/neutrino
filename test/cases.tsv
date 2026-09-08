@@ -511,3 +511,4 @@ env.tight.home.ctor	and it runs	gjs kde macos-netinstall
 # row, so a host whose --info stopped naming a confinement shows red in the grid
 # instead of emitting an annotation into a green lane.
 landlockfloor.host.abi	the host's own confine line can be read	gjs
+walk.renderer.sandboxed	the web process runs under bwrap	gjs kde linux-engines

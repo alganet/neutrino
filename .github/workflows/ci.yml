@@ -125,20 +125,11 @@ jobs:
       # line. Neither tier touches the environment.
       - timeout-minutes: 25
         run: bash test/run.sh gjs loaders
-      - run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          Xvfb :99 -screen 0 1024x768x24 &
-          sleep 3
-          metacity &
-          sleep 2
-          xsetroot -solid "#112233"
-          bash test/neutrinotest.cmd &
-          APP_PID=$!
-          bash test/verify-linux.sh ~/screenshots
-          TEST_EXIT=$?
-          kill "$APP_PID" 2>/dev/null || true
-          exit $TEST_EXIT
+      # The walk: six states of one window, watched from outside. The root
+      # colour that used to be set here is test/verify-linux.sh's now -- it is
+      # cosmetic, it exists for the pictures that file takes, and two of the
+      # four jobs that ran this were missing it.
+      - run: bash test/run.sh gjs walk
       # The app under test here is hostile page content. Built at the default
       # tier on purpose: this lane is what says the shipped configuration
       # refuses these, not a configuration assembled for the test.
@@ -434,26 +425,12 @@ jobs:
         run: bash test/run.sh linux-engines:cjs lanes
       - timeout-minutes: 25
         run: bash test/run.sh linux-engines:cjs loaders
-      - run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          Xvfb :99 -screen 0 1024x768x24 &
-          sleep 3
-          metacity &
-          sleep 2
-          bash test/neutrinotest.cmd &
-          sleep 5
-          bash test/verify-linux.sh ~/screenshots
-          TEST_EXIT=$?
-          # The renderer sandbox, read off the process table rather than off a
-          # variable. A window is not the assertion: a lane that came up with
-          # nothing around the process holding page content looks identical
-          # from outside to one that did it right.
-          if pgrep -f WebKitWebProcess >/dev/null 2>&1; then
-            pgrep -a bwrap | grep -q WebKitWebProcess ||
-              { echo "FAIL: the web process is not under bwrap on this lane" >&2; TEST_EXIT=1; }
-          fi
-          exit $TEST_EXIT
+      # The walk. The renderer-sandbox check that used to sit here in four
+      # lines of shell is a case in test/verify-linux.sh now -- it wrote FAIL
+      # to this step's stderr and reached no sheet, so a lane whose renderer
+      # stopped being sandboxed and a lane that never asked looked the same in
+      # the grid. gjs runs the same WebKitGTK and now asks it too.
+      - run: bash test/run.sh linux-engines:cjs walk
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
       # Two questions were opened here. Whether an app can be written against
@@ -620,22 +597,7 @@ jobs:
         timeout-minutes: 12
         run: bash test/run.sh linux-engines:py loaders
       - if: always()
-        run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          Xvfb :99 -screen 0 1024x768x24 &
-          sleep 3
-          metacity &
-          sleep 2
-          bash test/neutrinotest.cmd &
-          sleep 5
-          bash test/verify-linux.sh ~/screenshots
-          TEST_EXIT=$?
-          if pgrep -f WebKitWebProcess >/dev/null 2>&1; then
-            pgrep -a bwrap | grep -q WebKitWebProcess ||
-              { echo "FAIL: the web process is not under bwrap on this lane" >&2; TEST_EXIT=1; }
-          fi
-          exit $TEST_EXIT
+        run: bash test/run.sh linux-engines:py walk
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
       # Two questions were opened here. Whether an app can be written against
@@ -985,26 +947,10 @@ jobs:
       # line. Neither tier touches the environment.
       - timeout-minutes: 25
         run: bash test/run.sh kde loaders
-      - run: |
-          export DISPLAY=:99
-          export QT_QPA_PLATFORM=xcb
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
-          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
-          mkdir -p "$XDG_RUNTIME_DIR"
-          chmod 700 "$XDG_RUNTIME_DIR"
-
-          Xvfb :99 -screen 0 1024x768x24 &
-          sleep 3
-          openbox &
-          sleep 2
-          xsetroot -solid "#112233"
-          dbus-run-session -- bash test/neutrinotest.cmd &
-          APP_PID=$!
-          bash test/verify-linux.sh ~/screenshots
-          TEST_EXIT=$?
-          kill "$APP_PID" 2>/dev/null || true
-          exit $TEST_EXIT
+      # The walk. This is the one lane that launches the artifact under a
+      # session bus -- QtWebEngine wants one and the container has no desktop
+      # to inherit it from -- which is what the row's `dbus` directive says.
+      - run: bash test/run.sh kde walk
       # The app under test here is hostile page content. Built at the default
       # tier on purpose: this lane is what says the shipped configuration
       # refuses these, not a configuration assembled for the test.
