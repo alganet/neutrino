@@ -479,7 +479,7 @@ live_half_gtk() {
     after="$(live_title)"
     note "live after: ${after:-<nothing>}"
 
-    n="$(printf '%s' " $after" | sed -n 's/.* n=\([0-9]*\).*/\1/p')"
+    n="$(nt_field n "$after")"
     case "$after" in
         *"moved=yes"*)
             echo "PASS: the running app was handed a new palette when the desktop's accent moved"
@@ -634,7 +634,7 @@ live_half_qt() {
             qt_live_restore; return 1 ;;
         *src=qt*) ;;
         *)
-            note "live half: the probe came up on $(printf '%s' "$before" | sed -n 's/.* src=\([^ ]*\).*/\1/p') and not qt; nothing here to judge the Qt lane by"
+            note "live half: the probe came up on $(nt_field src "$before") and not qt; nothing here to judge the Qt lane by"
             qt_live_restore; return 0 ;;
     esac
 
@@ -656,7 +656,7 @@ live_half_qt() {
     after="$(live_title)"
     note "live after: ${after:-<nothing>}"
 
-    n="$(printf '%s' " $after" | sed -n 's/.* n=\([0-9]*\).*/\1/p')"
+    n="$(nt_field n "$after")"
     case "$after" in
         *"moved=yes"*)
             echo "PASS: the running app was handed a new palette when the desktop's colour scheme moved"
@@ -771,7 +771,7 @@ live_half() {
     after="$(sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null)"
     note "live after: ${after:-<nothing>}"
 
-    n="$(printf '%s' " $after" | sed -n 's/.* n=\([0-9]*\).*/\1/p')"
+    n="$(nt_field n "$after")"
     case "$after" in
         *"moved=yes"*)
             echo "PASS: the running app was handed a new palette when the desktop flipped"

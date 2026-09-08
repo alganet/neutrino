@@ -110,10 +110,7 @@ if (-not $title) {
 nt_pass demo.reported "the demo reported a title"
 nt_report "title [$title]"
 
-function Field($name) {
-    if ($title -match " $name=(\S+)") { return $Matches[1] }
-    return ""
-}
+function Field($name) { nt_field $name $title }
 
 $eng = Field "eng"
 $tx = Field "tx"

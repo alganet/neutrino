@@ -214,6 +214,35 @@ function nt_match($id, $name, $value, $pattern) {
     }
 }
 
+# One ` key=value` field out of a report, the way harness.sh spells it. Three
+# copies on this side -- verify-attack.ps1, demo.ps1 and themelive.ps1 -- in
+# three dialects, against twenty-three copies and three dialects in bash. Two of
+# them take this; themelive.ps1 does not dot-source the harness yet and keeps
+# its own until it does.
+#
+# `\S+` is `[^ ]*`: the narrower classes the other two carried truncate a value
+# with a character they do not list, and a truncated reading compares unequal to
+# itself without saying why.
+#
+# The space is prepended to the subject as well as written into the pattern, and
+# both halves matter. In the pattern it is what separates one field from the
+# next: without it `nav` also matches the tail of `postnav`, and both of those
+# sit in one attack title answering different questions. Prepended, it is what
+# lets the first field on a line match at all.
+#
+# One difference from the bash word, and it cannot be removed: -match takes the
+# leftmost match where sed's greedy `.*` takes the rightmost, so a subject
+# carrying one key twice would answer differently in the two languages. Nothing
+# in this tree writes one, and the anchor above is what makes the distinct-key
+# case agree.
+#
+# Empty for absent, which is harness.sh's answer too. The suites that want a
+# word there say so themselves: verify-attack.ps1 asserts against MISSING.
+function nt_field($name, $text) {
+    if (" $text" -match " $name=(\S+)") { return $Matches[1] }
+    return ""
+}
+
 # The last line of a suite, and its exit status.
 #
 # The status is the count of failed cases, which is the contract verify-std.sh

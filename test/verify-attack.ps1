@@ -126,12 +126,15 @@ nt_pass attack.reported "the attack app reported a settled title"
 
 Write-Host "  report: $title"
 
+# The reading this file takes, out of the title it settled on. The regex was
+# this file's own and it named the hazard it guards -- an unanchored "nav"
+# reading the tail of "postnav" -- while leaving the subject unanchored, so a
+# key in the first column would have read as MISSING. The harness carries both
+# halves; what stays here is the word this file asserts against for an absent
+# field.
 function Get-Field($name) {
-    # Anchored on the space that separates one field from the next.
-    # -match takes the leftmost match, so an unanchored "nav" reads the
-    # tail of "postnav" instead -- a different question whose answer is
-    # the same often enough to go unnoticed.
-    if ($title -match " $name=([A-Za-z]+)") { return $Matches[1] }
+    $v = nt_field $name $title
+    if ($v) { return $v }
     return "MISSING"
 }
 

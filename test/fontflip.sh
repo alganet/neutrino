@@ -263,7 +263,7 @@ live_await() {
     local want="$1" waited=0 t n
     while [ "$waited" -lt 30 ]; do
         t="$(live_title)"
-        n="$(printf '%s' " $t" | sed -n 's/.* n=\([0-9]*\).*/\1/p')"
+        n="$(nt_field n "$t")"
         case "$t" in
             *moved=yes*) [ -n "$n" ] && [ "$n" -ge "$want" ] && { printf '%s' "$t"; return 0; } ;;
         esac

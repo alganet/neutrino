@@ -239,7 +239,7 @@ measure() {
     # `${MEASURED_AT:-none}` and the assertions compared the raw value, so a
     # control that read exactly what it wanted failed against its own message:
     # `expected=at=none actual=at=none`. One value, one spelling, one place.
-    MEASURED_AT="$(echo "$title" | sed -n 's/.* at=\([A-Za-z]*\).*/\1/p')"
+    MEASURED_AT="$(nt_field at "$title")"
     [ -n "$MEASURED_AT" ] || MEASURED_AT=none
     [ -n "$snap" ] && MEASURED_UP=YES || MEASURED_UP=NO
     [ "$after" -gt "$before" ] && MEASURED_NAVOUT=HIT || MEASURED_NAVOUT=MISS
