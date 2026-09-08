@@ -191,4 +191,7 @@ else
 fi
 
 echo "=== Results: $FAILURES failure(s) ==="
-[ "$FAILURES" -eq 0 ]
+# The count, and not whether there was one. Ending on the test made this script
+# exit 0 or 1, and test/run.sh adds a lane up by summing what its suites exit
+# with -- so every count above one arrived as one.
+exit "$FAILURES"

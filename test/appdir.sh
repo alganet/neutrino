@@ -342,5 +342,8 @@ fi
 
 app_down
 echo "=== appdir: $FAILURES failure(s) ==="
-[ "$FAILURES" -eq 0 ] || exit 1
-exit 0
+# The count, and not whether there was one. test/run.sh adds a lane up by summing
+# what its suites exit with, which is the whole reason it does not have to parse a
+# log -- so a suite that saturates at 1 tells it that a lane with five broken
+# assertions has one thing wrong with it.
+exit "$FAILURES"
