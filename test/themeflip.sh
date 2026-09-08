@@ -136,39 +136,10 @@ case "$MODE" in
 esac
 
 # A window carrying this prefix, from anywhere. Between halves it can only be
-# the previous half's, which is the thing being waited out.
-#
-# x11 asks the server. macOS has no window a shell can query, so it asks the
-# status file -- and the question there has to be posed the other way round: the
-# file is not a window, it is a thing the app *writes*, and a dead app leaves
-# its last line behind forever. Removing it and watching whether it comes back
-# is what distinguishes an app that has gone from a title that has stopped
-# changing. The ticker rewrites every 200 ms, so a second is generous.
-STATUS="${TMPDIR:-/tmp}/neutrino-title.txt"
-
-prefix_up() {
-    case "$MODE" in
-        macos)
-            rm -f "$STATUS"
-            sleep 1
-            sed -n '1p' "$STATUS" 2>/dev/null | grep -q '^STD-THEME-'
-            ;;
-        *)
-            [ -n "$(xdotool search --name '^STD-THEME-' 2>/dev/null | head -1)" ]
-            ;;
-    esac
-}
-
-wait_gone() {
-    local n=0 limit=60
-    [ "$MODE" = macos ] && limit=30
-    while [ "$n" -lt "$limit" ]; do
-        prefix_up || return 0
-        n=$((n + 1))
-        [ "$MODE" = macos ] || sleep 0.5
-    done
-    return 1
-}
+# the previous half's, which is the thing being waited out. lib/title.sh holds
+# both questions and says why the macOS one has to be posed the other way round.
+prefix_up() { nt_title_live 'STD-THEME-'; }
+wait_gone() { nt_title_gone 'STD-THEME-'; }
 
 # The third argument is what the picture is called. `flip-b` is not a thing a
 # reader can check; `theme-dark` is. Both halves wrote one filename until this
@@ -180,7 +151,7 @@ run_half() {
     note "knob $tag requested='$state' readback=[$(knob_read)]"
     # macOS reads its title through one fixed path, and a line left by the
     # other half is a reading attributed to this one.
-    [ "$MODE" = macos ] && rm -f "$STATUS"
+    [ "$MODE" = macos ] && rm -f "$NT_STATUS_FILE"
     bash "$ART" > "$LOGDIR/flip-$tag-app.log" 2>&1 &
     pid=$!
     NT_SHOT_NAME="theme-$shot" \
@@ -730,7 +701,7 @@ live_half() {
     fi
 
     knob_clear
-    rm -f "$STATUS"
+    rm -f "$NT_STATUS_FILE"
     bash "$LIVE_ART" > "$LOGDIR/flip-live-app.log" 2>&1 &
     LIVE_PID=$!
     # Every way out of this function goes through here, including the two that
@@ -748,7 +719,7 @@ live_half() {
     # platform: osascript starting, the bridge coming up, WKWebView creating
     # its content process.
     while [ "$waited" -lt 180 ]; do
-        before="$(sed -n '1p' "$STATUS" 2>/dev/null)"
+        before="$(sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null)"
         case "$before" in STD-LIVE*) break ;; esac
         sleep 1
         waited=$((waited + 1))
@@ -792,12 +763,12 @@ live_half() {
     # notification, a re-read, a diff and one script evaluation.
     waited=0
     while [ "$waited" -lt 20 ]; do
-        after="$(sed -n '1p' "$STATUS" 2>/dev/null)"
+        after="$(sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null)"
         case "$after" in *"moved=yes"*) break ;; esac
         sleep 0.5
         waited=$((waited + 1))
     done
-    after="$(sed -n '1p' "$STATUS" 2>/dev/null)"
+    after="$(sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null)"
     note "live after: ${after:-<nothing>}"
 
     n="$(printf '%s' " $after" | sed -n 's/.* n=\([0-9]*\).*/\1/p')"
