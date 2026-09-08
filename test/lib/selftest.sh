@@ -1556,6 +1556,82 @@ NAMECOL="$(awk -F'\t' '{ print $2 }' "$NAMEDIR/the-row-name.tsv" 2>/dev/null | s
 # ------------------------------------------------- the workflow lint, which ran nowhere
 
 echo
+echo "### every artifact a lane runs comes out of the registry"
+
+# Two rules, and both of them are things this tree did until now.
+#
+# The first: a workflow may not build an artifact. test/apps.tsv is the table of
+# what exists and test/run.sh is what builds it, and the whole reason for both is
+# that eighty-four mkapp.sh lines across ten lanes were a test framework kept in
+# YAML. Eleven artifacts were still built by hand here, none of them passed
+# through parse.sh, and nothing could see that they were the exception.
+#
+# The second: nothing rewrites an assembled artifact. neutrino/assemble.sh
+# performs no substitution -- that is the property build.sh was deleted for --
+# and a `sed -i` over a built .cmd puts it back one lane at a time, with a
+# read-back after it standing in for the failure path a substitution does not
+# have. The windows-launch lane did exactly this to two constants, and the
+# artifact it measured was the one artifact in the tree that no single
+# assemble.sh run had produced.
+#
+# netinstall/ is not scanned for either. That suite fetches, verifies and slots
+# opaque bytes: its payloads are written by hand on purpose, several of them are
+# deliberately malformed, and one appends to a .cmd to make a second version.
+NT_WF="$(ls "$ROOT"/.github/workflows/*.yml 2>/dev/null)"
+BUILDERS=""
+for wf in $NT_WF; do
+    # The builders by their paths, and not by their basenames: `assemble.sh` is
+    # also the name of the suite that asserts the assembler, which this lane
+    # runs on purpose and which is not a build of anything a lane then runs.
+    grep -nE 'test/build/(mkapp|demoapp)\.sh|neutrino/assemble\.sh' "$wf" \
+        | grep -v '^[0-9]*: *#' \
+        | while IFS= read -r hit; do echo "$(basename "$wf"):${hit%%:*}"; done
+done > "$WORK/wfbuild.txt"
+BUILDERS="$(tr '\n' ' ' < "$WORK/wfbuild.txt" | sed 's/ *$//')"
+[ -z "$BUILDERS" ] \
+    && ok "no workflow builds an artifact for itself" \
+    || bad "a workflow calls a builder directly; it belongs in test/apps.tsv: $BUILDERS"
+
+# The canary. A scan whose glob has stopped matching reports the same green as a
+# workflow with nothing wrong in it, which is the shape this file has been caught
+# in four times -- so it says how much it read.
+NWF="$(printf '%s\n' $NT_WF | grep -c . || true)"
+NBUILD="$(grep -c 'run\.sh --build' "$ROOT"/.github/workflows/ci.yml 2>/dev/null || echo 0)"
+if [ "$NWF" -gt 0 ] && [ "$NBUILD" -gt 0 ]; then
+    ok "the workflow scan reads the tree ($NWF workflows, $NBUILD registry builds in ci.yml)"
+else
+    bad "the workflow scan read $NWF workflows and found $NBUILD registry builds, so the check above proves nothing"
+fi
+
+# And nothing rewrites a built artifact, anywhere the launcher's own suites live.
+PATCHED=""
+for f in "$ROOT"/.github/workflows/*.yml "$ROOT"/test/*.tsv \
+         "$ROOT"/test/*.sh "$ROOT"/test/suite/* "$ROOT"/test/lib/* \
+         "$ROOT"/test/build/* "$ROOT"/test/report/* "$ROOT"/test/apparatus/*; do
+    [ -f "$f" ] || continue
+    [ "$(basename "$f")" = selftest.sh ] && continue
+    # Comment lines first, and the same limitation the verdict scan documents:
+    # a `#` inside a string is a comment to this and is not one to the shell.
+    # The price is the right way round -- a file that explains the practice it
+    # replaced reads as clean, and the practice itself does not. Both languages
+    # scanned here spell a comment `#`, which is why one strip serves.
+    #
+    # The match is taken as text and not with `grep -q`, and that is this
+    # file's own hazard rather than a style. `set -o pipefail` is on, `grep -q`
+    # exits at its first hit, and the strip upstream of it then dies of SIGPIPE
+    # -- so the pipeline returned 141, the `if` was false for every file in the
+    # tree, and the scan reported the same green whether or not anything in the
+    # tree patched an artifact. Written that way, caught by putting a `sed -i`
+    # back and watching this pass. That is the fifth time in this file.
+    nt_hit="$(grep -vE '^[[:space:]]*#' "$f" 2>/dev/null |
+              grep -E "sed -i.*\.cmd|-i(\.bak)?[ ']+.*\.cmd" || true)"
+    [ -z "$nt_hit" ] || PATCHED="$PATCHED $(basename "$f")"
+done
+[ -z "$PATCHED" ] \
+    && ok "nothing rewrites an assembled .cmd in place" \
+    || bad "an assembled artifact is patched after it is built:$PATCHED"
+
+echo
 echo "### workflow-lint.py"
 
 if command -v "$(nt_python)" >/dev/null 2>&1; then
