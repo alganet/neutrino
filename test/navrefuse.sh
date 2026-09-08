@@ -185,6 +185,14 @@ chmod +x "$WORK/navrefuse-noguard.cmd"
 # the fixed one does, and tells the log it could not.
 respell oldspelling 'webViewRef.stopLoading();'
 
+# Both builds differ from the shipped one, said once rather than by each respell.
+# A failing respell ends the run where it happens, so reaching here is the whole
+# of what this case asserts -- and without it the case had no passing voice at
+# all: it could fail, and it could be skipped by a gate above, and on the run
+# where the apparatus worked it filed nothing. matrix.py --strict called that a
+# hole on macos, which is what it is.
+nt_pass navrefuse.respell "both respelled builds differ from the shipped one"
+
 # Launch, wait for the settled report, and read four things that are four
 # different questions.
 #
