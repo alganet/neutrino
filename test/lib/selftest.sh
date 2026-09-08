@@ -530,6 +530,34 @@ done < "$ROOT/test/cases.tsv"
 [ -z "$ORPHAN" ] && ok "every registered case id is emitted by some suite" \
     || bad "in cases.tsv but emitted nowhere:$ORPHAN"
 
+# The registry checked as a file, which nothing did. Both of these are silent
+# failures rather than loud ones, which is why they need a check at all: the
+# grid goes on rendering and says something confident and wrong.
+
+# No id twice. test/matrix.py builds the registry as a dict keyed on the id, so
+# a second row with the same id replaces the first -- its title and, the part
+# that matters, its lane list. A case quietly expected on a different set of
+# lanes turns real holes into `.` and back, and nothing anywhere says so.
+DUPID="$(awk -F'\t' '!/^#/ && NF { print $1 }' "$ROOT/test/cases.tsv" | sort | uniq -d)"
+[ -z "$DUPID" ] && ok "no case id is registered twice" \
+    || bad "registered more than once in cases.tsv:$(echo $DUPID)"
+
+# Every lane an applies-to names is a real job. A typo here does not fail, it
+# disables: `applies()` matches no lane, every cell in that row reads `.`, and
+# --strict has nothing to complain about because no lane was ever expected to
+# report it. A case switched off by a misspelling looks exactly like a case that
+# applies to nothing on purpose.
+STRAYLANE=""
+for l in $(awk -F'\t' '!/^#/ && NF { print $3 }' "$ROOT/test/cases.tsv" |
+           tr ' ' '\n' | sort -u); do
+    [ -n "$l" ] || continue
+    [ "$l" = "*" ] && continue
+    grep -qE "^  $l:\$" "$ROOT/.github/workflows/ci.yml" ||
+        STRAYLANE="$STRAYLANE $l"
+done
+[ -z "$STRAYLANE" ] && ok "every lane a case applies to is a job in ci.yml" \
+    || bad "named in a cases.tsv applies-to and not a job in ci.yml:$STRAYLANE"
+
 # ------------------------------------------------------------------- reap.sh
 
 echo
