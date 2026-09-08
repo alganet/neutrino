@@ -1471,7 +1471,7 @@ jobs:
       - timeout-minutes: 5
         shell: pwsh
         run: |
-          & .\test\psparse.ps1 *>&1 | Tee-Object -FilePath "$HOME\psparse.log"
+          & .\test\build\psparse.ps1 *>&1 | Tee-Object -FilePath "$HOME\psparse.log"
           exit $LASTEXITCODE
       # Before anything is launched, because an artifact that does not compile
       # is an app that never appears -- and every suite that waits for a window
@@ -1487,7 +1487,7 @@ jobs:
       - timeout-minutes: 5
         shell: pwsh
         run: |
-          & .\test\compile.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
+          & .\test\suite\compile.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
           exit $LASTEXITCODE
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
@@ -1528,7 +1528,7 @@ jobs:
       - timeout-minutes: 10
         shell: pwsh
         run: |
-          & .\test\winexec.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\winexec.log"
+          & .\test\suite\winexec.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\winexec.log"
           exit $LASTEXITCODE
       # Whether the 20 MB the Windows lane downloads on first run has to be
       # downloaded at all. What renders is the Evergreen Runtime, which is
@@ -1548,7 +1548,7 @@ jobs:
       - timeout-minutes: 15
         shell: pwsh
         run: |
-          & .\test\evergreen.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\evergreen.log"
+          & .\test\suite\evergreen.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\evergreen.log"
           exit $LASTEXITCODE
       # The monolith launched a webview (appcache) before the neutrinotest
       # verify, so the WebView2 runtime's one-time cold init was already done.
@@ -1659,7 +1659,7 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          & .\test\launchtime.ps1 -Artifact test\neutrinotime.cmd -Runs 5 -Fresh *>&1 |
+          & .\test\suite\launchtime.ps1 -Artifact test\neutrinotime.cmd -Runs 5 -Fresh *>&1 |
             Tee-Object -FilePath "$HOME\launchtime.log"
           exit 0
       # The netinstall step below has had a timeout all along and this one has
@@ -1698,7 +1698,7 @@ jobs:
           # timeout; this is here for the ones nobody has thought of.
           $testExit = 0
           try {
-              & .\test\verify-windows.ps1 -Launch *>&1 | Tee-Object -FilePath "$HOME\windows-verify.log"
+              & .\test\suite\verify-windows.ps1 -Launch *>&1 | Tee-Object -FilePath "$HOME\windows-verify.log"
               $testExit = $LASTEXITCODE
           } catch {
               "FAIL: verify-windows.ps1 ended by exception: $($_.Exception.Message)" |
@@ -1730,7 +1730,7 @@ jobs:
         timeout-minutes: 15
         shell: pwsh
         run: |
-          & .\test\appcache.ps1 .\test\neutrinocache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
+          & .\test\suite\appcache.ps1 .\test\neutrinocache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
           exit $LASTEXITCODE
       # The document the exe renders, and who gets to name it. It used to come
       # from NEUTRINO_SCRIPT_PATH, which the batch region set and netinstall's
@@ -1749,7 +1749,7 @@ jobs:
         timeout-minutes: 15
         shell: pwsh
         run: |
-          & .\test\standalone.ps1 .\test\neutrinostandalone.cmd .\test\neutrinostandalone-testing.cmd *>&1 |
+          & .\test\suite\standalone.ps1 .\test\neutrinostandalone.cmd .\test\neutrinostandalone-testing.cmd *>&1 |
               Tee-Object -FilePath "$HOME\standalone.log"
           exit $LASTEXITCODE
       # It launches the app some forty times over three probing modes, and the
@@ -1775,7 +1775,7 @@ jobs:
         timeout-minutes: 15
         shell: pwsh
         run: |
-          & .\test\exerace.ps1 .\test\neutrinorace.cmd *>&1 | Tee-Object -FilePath "$HOME\exerace.log"
+          & .\test\suite\exerace.ps1 .\test\neutrinorace.cmd *>&1 | Tee-Object -FilePath "$HOME\exerace.log"
           $raceExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } |
             Stop-Process -Force -ErrorAction SilentlyContinue
@@ -1813,7 +1813,7 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          & .\test\verify-winerr.ps1 .\test\neutrinoerr.cmd *>&1 | Tee-Object -FilePath "$HOME\winerr-verify.log"
+          & .\test\suite\verify-winerr.ps1 .\test\neutrinoerr.cmd *>&1 | Tee-Object -FilePath "$HOME\winerr-verify.log"
           $testExit = $LASTEXITCODE
           Get-Process -Name "neutrinoerr" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
@@ -1922,7 +1922,7 @@ jobs:
               -ArgumentList "/c", $artifact -WindowStyle Hidden | Out-Null
             $r = 0
             try {
-                & .\test\verify-windows.ps1 -Artifact $artifact -AppDir $appdir `
+                & .\test\suite\verify-windows.ps1 -Artifact $artifact -AppDir $appdir `
                     -ScreenshotDir $shots *>&1 |
                     Tee-Object -FilePath $log
                 $r = $LASTEXITCODE
@@ -2025,7 +2025,7 @@ jobs:
       - timeout-minutes: 5
         shell: pwsh
         run: |
-          & .\test\psparse.ps1 *>&1 | Tee-Object -FilePath "$HOME\psparse.log"
+          & .\test\build\psparse.ps1 *>&1 | Tee-Object -FilePath "$HOME\psparse.log"
           exit $LASTEXITCODE
       # Before anything is launched, because an artifact that does not compile
       # is an app that never appears -- and every suite that waits for a window
@@ -2041,7 +2041,7 @@ jobs:
       - timeout-minutes: 5
         shell: pwsh
         run: |
-          & .\test\compile.ps1 test\neutrinoattack.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
+          & .\test\suite\compile.ps1 test\neutrinoattack.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
           exit $LASTEXITCODE
       - timeout-minutes: 15
         shell: pwsh
@@ -2053,7 +2053,7 @@ jobs:
           # suites.tsv -- and so the day this lane joins the manifest, the
           # manifest's name is already the one in the file.
           $env:NT_SUITE = "attack"
-          & .\test\verify-attack.ps1 *>&1 | Tee-Object -FilePath "$HOME\attack-verify.log"
+          & .\test\suite\verify-attack.ps1 *>&1 | Tee-Object -FilePath "$HOME\attack-verify.log"
           $testExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "ATTACK *" } | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
@@ -2087,7 +2087,7 @@ jobs:
         timeout-minutes: 12
         shell: pwsh
         run: |
-          & .\test\verify-nav.ps1 .\test\neutrinonav.cmd "$HOME\navlogs" *>&1 |
+          & .\test\suite\verify-nav.ps1 .\test\neutrinonav.cmd "$HOME\navlogs" *>&1 |
             Tee-Object -FilePath "$HOME\navlogs-full.log"
           $navExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "NAV-*" } |
@@ -2103,7 +2103,7 @@ jobs:
         timeout-minutes: 20
         shell: pwsh
         run: |
-          & .\test\docswap.ps1 .\test\neutrinodoc.cmd "$HOME\docswaplogs" *>&1 |
+          & .\test\suite\docswap.ps1 .\test\neutrinodoc.cmd "$HOME\docswaplogs" *>&1 |
             Tee-Object -FilePath "$HOME\docswap-full.log"
           $swapExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "DOCSWAP*" } |
@@ -2168,7 +2168,7 @@ jobs:
         timeout-minutes: 14
         shell: pwsh
         run: |
-          & .\test\decoflip.ps1 -Decorated neutrinostdgeom -Chromeless neutrinostdgeom-none `
+          & .\test\suite\decoflip.ps1 -Decorated neutrinostdgeom -Chromeless neutrinostdgeom-none `
             -ScreenshotDir $env:USERPROFILE *>&1 |
             Tee-Object -FilePath "$HOME\stdgeom.log"
           $e = $LASTEXITCODE
@@ -2182,7 +2182,7 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          & .\test\verify-std.ps1 -Probe doc -ScreenshotDir $env:USERPROFILE `
+          & .\test\suite\verify-std.ps1 -Probe doc -ScreenshotDir $env:USERPROFILE `
             -Launch -Artifact .\test\neutrinostddoc.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stddoc.log"
           $e = $LASTEXITCODE
@@ -2216,7 +2216,7 @@ jobs:
         timeout-minutes: 12
         shell: pwsh
         run: |
-          & .\test\verify-std.ps1 -Probe win -ScreenshotDir $env:USERPROFILE `
+          & .\test\suite\verify-std.ps1 -Probe win -ScreenshotDir $env:USERPROFILE `
             -Launch -Artifact .\test\neutrinostdwin.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdwin.log"
           $e = $LASTEXITCODE
@@ -2227,7 +2227,7 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          & .\test\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE `
+          & .\test\suite\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE `
             -Launch -Artifact .\test\neutrinostdtheme.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdtheme.log"
           $e = $LASTEXITCODE
@@ -2269,7 +2269,7 @@ jobs:
       - if: always()
         timeout-minutes: 16
         shell: pwsh
-        run: .\test\themeflip.ps1
+        run: .\test\suite\themeflip.ps1
       - if: always()
         shell: bash
         run: |
@@ -2300,7 +2300,7 @@ jobs:
         shell: pwsh
         run: |
           $testExit = 0
-          & .\test\themelive.ps1 -Artifact .\test\neutrinolivetheme.cmd *>&1 |
+          & .\test\suite\themelive.ps1 -Artifact .\test\neutrinolivetheme.cmd *>&1 |
             Tee-Object -FilePath "$HOME\themelive.log"
           if ($LASTEXITCODE -ne 0) { $testExit = $LASTEXITCODE }
           Get-Process -Name neutrinolivetheme -ErrorAction SilentlyContinue |
@@ -2328,7 +2328,7 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          & .\test\demo.ps1 -ScreenshotDir $env:USERPROFILE *>&1 |
+          & .\test\suite\demo.ps1 -ScreenshotDir $env:USERPROFILE *>&1 |
             Tee-Object -FilePath "$HOME\demo.log"
           $e = $LASTEXITCODE
           Get-Process -Name neutrinodemo -ErrorAction SilentlyContinue |
@@ -2368,7 +2368,7 @@ jobs:
         run: |
           bash test/build/mkapp.sh --testing test/probe/neutrinostdfont.js test/neutrinostdfont.cmd
           bash test/build/parse.sh test/neutrinostdfont.cmd
-          & .\test\verify-std.ps1 -Probe font -ScreenshotDir $env:USERPROFILE `
+          & .\test\suite\verify-std.ps1 -Probe font -ScreenshotDir $env:USERPROFILE `
             -Launch -Artifact .\test\neutrinostdfont.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdfont.log"
           $e = $LASTEXITCODE
@@ -2397,7 +2397,7 @@ jobs:
         run: |
           bash test/build/mkapp.sh --testing test/probe/neutrinolivefont.js test/neutrinolivefont.cmd
           bash test/build/parse.sh test/neutrinolivefont.cmd
-          & .\test\fontlive.ps1 *>&1 | Tee-Object -FilePath "$HOME\fontlive.log"
+          & .\test\suite\fontlive.ps1 *>&1 | Tee-Object -FilePath "$HOME\fontlive.log"
           exit $LASTEXITCODE
       - name: sheet
         if: always()

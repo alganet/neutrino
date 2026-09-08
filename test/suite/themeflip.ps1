@@ -63,7 +63,7 @@ function Read-Knob($tag) {
 function Run-Half($tag, $shot) {
   Add-Type -AssemblyName System.Drawing
   Read-Knob $tag | Tee-Object -FilePath "$LogDir\flip-knobs.log" -Append | Write-Host
-  & .\test\verify-std.ps1 -Probe theme -ScreenshotDir $ScreenshotDir `
+  & .\test\suite\verify-std.ps1 -Probe theme -ScreenshotDir $ScreenshotDir `
     -ShotName "theme-$shot" -Launch -Artifact $Artifact *>&1 |
     Tee-Object -FilePath "$LogDir\flip-$tag.log" | Out-Null
   Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |

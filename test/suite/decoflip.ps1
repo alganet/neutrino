@@ -93,7 +93,7 @@ function Run-Half($app, $tag, $shot) {
     # assemblies and compiles a type before it looks for a window, and an app
     # started first spends all of it running unwatched. Doing it there also
     # keeps the two log files this used to write, under the verifier's naming.
-    & (Join-Path $root "test\verify-std.ps1") -Probe geom -AppName $app `
+    & (Join-Path $root "test\suite\verify-std.ps1") -Probe geom -AppName $app `
         -ScreenshotDir $ScreenshotDir -ShotName "frame-$shot" `
         -Launch -Artifact $artifact *>&1 |
         Tee-Object -FilePath (Join-Path $logdir "deco-$tag.log") | Out-Null

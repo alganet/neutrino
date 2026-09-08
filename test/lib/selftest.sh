@@ -1164,6 +1164,32 @@ done
 [ -z "$STRAY" ] && ok "every lane in suites.tsv is a job in ci.yml" \
     || bad "in suites.tsv and not a job in ci.yml:$STRAY"
 
+# Every test/ file a workflow names is on disk, in both spellings.
+#
+# This check exists because the room move shipped without it and the Windows
+# lane found the gap. Every `test/x.ps1` in ci.yml is written with backslashes
+# -- `& .\test\verify-std.ps1` -- and a rewrite that matched forward slashes
+# left all twenty-five of them pointing at files that had moved. Eight steps
+# failed with "is not recognized as a name of a cmdlet, function, script file",
+# eighteen minutes into a lane, on a path a one-second check can resolve.
+#
+# Both separators, because the two lanes that spell it with a backslash are the
+# two nothing else in this file reads.
+#
+# Only extensions that name a *source*. The `.cmd` artifacts and the app
+# directories beside them are build outputs: .gitignore lists them, they are
+# absent on a clean checkout, and a check that demanded them would fail
+# everywhere except on a runner that had already built them.
+MISSINGPATH=""
+for wf in "$ROOT"/.github/workflows/*.yml; do
+    for p in $(grep -ohE 'test[/\\][A-Za-z0-9._/\\-]+\.(sh|ps1|py|js|tsv|qml|containerfile)' "$wf" |
+            tr '\\' '/' | sort -u); do
+        [ -e "$ROOT/$p" ] || MISSINGPATH="$MISSINGPATH $(basename "$wf"):$p"
+    done
+done
+[ -z "$MISSINGPATH" ] && ok "every test/ file a workflow names is on disk" \
+    || bad "named in a workflow and not on disk:$MISSINGPATH"
+
 # No suite is run twice: once from the manifest and once by a hand-written step.
 # This is what makes a half-migrated lane safe, and it is the check that stops
 # the migration quietly double-running a suite for a whole round.
