@@ -215,7 +215,22 @@ if ! grep -q '^    NeutrinoWebview\.run = function ()' "$WORK/compiled.js" ||
 fi
 echo "  PASS: the seam cuts the launcher's javascript from the app's"
 
-NT_BAD="$(grep -nE "\b(var|function)[[:space:]]+($NT_JSC_RESERVED)\b" "$WORK/compiled.js" || true)"
+# The boundaries are spelled out rather than `\b`, and it is not a style choice.
+#
+# `\b` is a GNU extension. POSIX ERE has no word boundary at all, and a grep
+# whose ERE is the system's takes a backslash before an ordinary character as
+# that character -- so on a BSD userland this pattern goes looking for a literal
+# `bvar` and matches nothing, and a check that matches nothing here reports PASS.
+# parse.sh runs on every artifact on every lane, macos included, and the comment
+# above is already about this check going quiet for a different reason.
+#
+# Spelling them out also fixes a false positive `\b` cannot avoid. `$` is a
+# JavaScript identifier character and not a word character, so `\b` reads
+# `var int$x = 1` as a declaration of `int` -- which it is not; it declares
+# `int$x`, and jsc.exe has no objection to it. The character classes here know
+# what a JavaScript name is made of, so `$` is inside the identifier and not a
+# boundary around it.
+NT_BAD="$(grep -nE "(^|[^A-Za-z0-9_$])(var|function)[[:space:]]+($NT_JSC_RESERVED)([^A-Za-z0-9_$]|$)" "$WORK/compiled.js" || true)"
 if [ -n "$NT_BAD" ]; then
     echo "parse.sh: the launcher's javascript declares a name jsc.exe reserves" >&2
     printf '%s\n' "$NT_BAD" | sed 's/^/          /' >&2
