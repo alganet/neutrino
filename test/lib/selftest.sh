@@ -695,6 +695,33 @@ done
 [ -z "$DOUBLED" ] && ok "no lane runs a migrated suite from both the manifest and a step" \
     || bad "run from the manifest and from a hand-written step:$DOUBLED"
 
+# The apparatus a suite needs is brought up by that suite, not by the step that
+# calls it. test/stall.py and test/serve-target.sh are the case this is written
+# about: three lanes each spelled the same twelve lines to start them, launch
+# the app between them and tear them down afterwards, and the three copies were
+# not identical -- macos cleared the status file and cat'd the app's log, the
+# other two did neither. Nothing in the YAML said whether that was deliberate.
+#
+# The order is the whole content of those twelve lines: the target must answer
+# before the app launches, or the navigation fails on its own and every driver
+# reports `held` whether it has a guard or not. An ordering constraint pasted
+# into three jobs is an ordering constraint nobody is checking, so it lives in
+# test/early.sh and test/navrefuse.sh, which are the two files that need it.
+#
+# ERE and not `grep -e a \| b`: BSD grep reads GNU's BRE alternation as two
+# literal characters, and this file runs on the macos lane.
+# awk and not grep: the match has to be filtered to lines that are not YAML
+# comments, and after `grep -n` prepends `file:line:` a `grep -v '^ *#'` is
+# looking at the path. One pass, and the comment test is against the line's own
+# text. ERE and not `\|` anywhere near this, either -- BSD grep reads GNU's BRE
+# alternation as two literal characters, and this file runs on the macos lane.
+HANDLAID="$(awk '
+    /^[ \t]*#/ { next }
+    /test\/stall\.py/ || /test\/serve-target\.sh/ { print FILENAME ":" FNR }
+' "$ROOT"/.github/workflows/*.yml)"
+[ -z "$HANDLAID" ] && ok "no workflow step brings up the stall socket or the navigation target by hand" \
+    || bad "the early-navigation apparatus is spelled in a workflow step at:$(echo $HANDLAID)"
+
 # --dry-run resolves for every lane, and what it prints parses back through
 # step.sh's own option loop. A directive that produced a flag step.sh does not
 # take would otherwise be found by a runner.

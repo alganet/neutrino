@@ -89,6 +89,7 @@ gjs	lanes	display=off timeout=300 build=neutrinotest-release	bash test/lanes.sh 
 gjs	assemble	display=off timeout=300	bash test/assemble.sh
 gjs	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd
 gjs	attack	app=neutrinoattack reap=neutrinoattack:ATTACK	bash test/verify-attack.sh
+gjs	early	build=neutrinoearly	bash test/early.sh test/neutrinoearly.cmd
 gjs	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots
 gjs	themescheme	build=neutrinostdtheme	bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots
 gjs	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots
@@ -124,6 +125,7 @@ kde	*	display=openbox qt timeout=480
 kde	lanes	display=off timeout=300 build=neutrinotest-testing	bash test/lanes.sh test/neutrinotest.cmd
 kde	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd
 kde	attack	gtk app=neutrinoattack reap=neutrinoattack:ATTACK	bash test/verify-attack.sh
+kde	early	gtk build=neutrinoearly	bash test/early.sh test/neutrinoearly.cmd
 kde	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots
 kde	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/themeflip.sh qt test/neutrinostdtheme.cmd ~/screenshots
 kde	stddoc	app=neutrinostddoc	bash test/verify-std.sh doc ~/screenshots
@@ -135,6 +137,7 @@ macos	assemble	display=off timeout=300	bash test/assemble.sh
 macos	walk	timeout=1200 app=neutrinotest-testing cat=neutrinotest-app	bash test/verify-macos.sh ~/screenshots
 macos	loaders	timeout=720 build=neutrinoloaders	bash test/loaders.sh test/neutrinoloaders.cmd
 macos	attack	app=neutrinoattack-testing reap=neutrinoattack:ATTACK cat=neutrinoattack-app	bash test/verify-attack.sh
+macos	early	build=neutrinoearly-testing cat=neutrinoearly-app	bash test/early.sh test/neutrinoearly.cmd
 macos	navrefuse	timeout=720 build=neutrinonavrefuse	bash test/navrefuse.sh test/neutrinonavrefuse.cmd
 macos	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots
 macos	themeflip	timeout=840 cat=flip-a cat=flip-b cat=flip-live-app build=neutrinostdtheme build=neutrinolivetheme	bash test/themeflip.sh macos test/neutrinostdtheme.cmd ~/screenshots test/neutrinolivetheme.cmd
