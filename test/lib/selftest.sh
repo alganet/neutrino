@@ -714,6 +714,45 @@ for suite in $NT_SPEAKERS; do
     ' "$suite" >> "$CALLS"
 done
 
+# ------------------------------------- the harness is loaded before it is used
+#
+# A suite that reads one of the harness's own variables above the line that
+# sources it is a suite that dies on `set -u`, and it dies on the lane that runs
+# it rather than here: `bash -n` is a syntax check and does not know that a name
+# has no value yet, and most of these suites have no offline fixture at all.
+#
+# navrefuse.sh shipped exactly that. NT_STATUS_FILE was read at line 66 and the
+# source sat at line 78, so the macos lane -- the only one that runs it --
+# reported `NT_STATUS_FILE: unbound variable` and one failure, and it was the
+# first thing anybody knew about it.
+#
+# Only the names harness.sh alone defines are looked for. nt_* *functions* are
+# deliberately not, because netinstall/test/lib.sh defines its own and the
+# documented order there is lib.sh first, so a call above the harness line is
+# ordinary there and would make this scan cry wolf on sixteen files.
+EARLY=""
+for suite in $NT_SPEAKERS; do
+    case "$suite" in *.ps1) continue ;; esac
+    # The source *line* and not a mention of the filename. NT_SPEAKERS is built
+    # by grepping for `harness.sh`, which a comment satisfies -- run.sh names it
+    # in its own header and sources nothing -- so a file with no `.` line is not
+    # a sourcing suite and this check does not apply to it.
+    #
+    # And the variable names carry a boundary, or NT_SUITE matches the
+    # NT_SUITES_FILE that run.sh reads three lines in. That is the same defect
+    # the orphan scan was fixed for, arrived at from the other side.
+    n="$(awk '
+        { line = $0; sub(/#.*/, "", line) }
+        srcline == 0 && line ~ /^[[:space:]]*\.[[:space:]].*harness\.sh/ { srcline = NR }
+        use == 0 && line ~ /NT_(LANE|SUITE|RESULTS|STATUS_FILE|FAILURES|PASSES|SKIPS)([^A-Za-z0-9_]|$)/ { use = NR }
+        END { if (srcline > 0 && use > 0 && use < srcline) print use; else print 0 }
+    ' "$suite")"
+    [ "$n" = 0 ] || EARLY="$EARLY $(basename "$suite"):$n"
+done
+[ -z "$EARLY" ] \
+    && ok "every suite sources the harness above the first use of its variables" \
+    || bad "a harness variable is read before the harness is sourced:$EARLY"
+
 # The canary, and the reason either check below can be believed.
 #
 # Both of them report by finding nothing, so a scan that read no calls at all
