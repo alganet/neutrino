@@ -857,6 +857,30 @@ done
 [ -z "$DOUBLED" ] && ok "no lane runs a migrated suite from both the manifest and a step" \
     || bad "run from the manifest and from a hand-written step:$DOUBLED"
 
+# And the mirror of it, which nothing checked: a row that exists here and is
+# named by no step never runs at all.
+#
+# The check above makes a half-migrated lane safe in one direction -- a suite
+# cannot be run twice -- and the migration relies on the other direction being
+# temporary. A row lands in suites.tsv first and a step is pointed at it after,
+# so between those two commits the row is dormant on purpose. What nothing
+# noticed is a migration that stops there: the row reads like a suite the lane
+# runs, `run.sh --list` names it, and no runner ever reaches it. That is a suite
+# quietly deleted by a file that looks like it declares one.
+DORMANT=""
+for lk in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$SUITES_TSV" | sort -u); do
+    l="${lk%%:*}"
+    for sname in $(bash "$RUNSH" --list "$lk" 2>/dev/null); do
+        awk -v lane="$l" '
+            /^  [a-z0-9-]+:$/ { j = $1; sub(/:$/, "", j) }
+            j == lane && /test\/run\.sh/ { print }
+        ' "$ROOT/.github/workflows/ci.yml" | grep -qE "[ ]$sname([ ]|$)" ||
+            DORMANT="$DORMANT $lk/$sname"
+    done
+done
+[ -z "$DORMANT" ] && ok "every suites.tsv row is named by a step in its lane" \
+    || bad "declared in suites.tsv and named by no step:$DORMANT"
+
 # The apparatus a suite needs is brought up by that suite, not by the step that
 # calls it. test/stall.py and test/serve-target.sh are the case this is written
 # about: three lanes each spelled the same twelve lines to start them, launch

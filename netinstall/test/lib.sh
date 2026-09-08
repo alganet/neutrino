@@ -133,6 +133,20 @@ nt_as() {
 # the run page, without opening a log -- and it is cheap because failures are
 # rare. It is also the reason the readings had to leave: they were crowding it
 # out of a thirty-annotation budget.
+#
+# It is nearly unreachable now, and that is worth knowing before anyone edits
+# it. Every suite in this directory that makes an assertion sources
+# ../../test/lib/harness.sh *after* this file, and harness.sh defines nt_fail
+# too -- with a case id first, so the failure reaches the cross-lane grid rather
+# than only the log. The second definition wins, so what a suite calls is that
+# one; the annotation did not go away with it, because harness.sh emits the same
+# `::error title=` when a suite sets NT_ANNOTATE, which every converted suite
+# here does.
+#
+# What still reaches this version is job-ui.sh, which is opt-in behind
+# NEUTRINO_JOB_UI_BISECT and so runs on no lane, and the two calls below in this
+# file. Anything else calling it is a suite that has not been converted, and the
+# way to tell is that its failures are absent from test/cases.tsv.
 nt_fail() {
     echo "  FAIL: $*"
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
