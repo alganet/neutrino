@@ -77,9 +77,11 @@ if (-not $src -or -not (Test-Path $src)) {
     exit 2
 }
 
-$failures = 0
-function Report($m) { Write-Output "report: $m" }
-function Fail($m) { Write-Output "FAIL: $m"; $script:failures++ }
+# The six words. Six checks and none of them said anything when it held, on the
+# suite that says the gap between the compile and the START is not winnable.
+. (Join-Path $PSScriptRoot "lib\harness.ps1")
+
+function Report($m) { nt_report $m }
 
 $work = Join-Path $env:TEMP ("exerace-" + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $work -Force | Out-Null
@@ -321,7 +323,9 @@ Stop-App
 $warm = Launch 240
 Report "control warm window=$($warm.window) launcher_ms=$($warm.ms) launcher_exited=$($warm.exited)"
 if ($warm.window -ne "UP") {
-    Fail "control expected=the shipped build comes up actual=DOWN; nothing below is a reading"
+    nt_fail exerace.control.launched "control expected=the shipped build comes up actual=DOWN; nothing below is a reading"
+} else {
+    nt_pass exerace.control.launched "the shipped build comes up warm"
 }
 Stop-App
 
@@ -347,7 +351,11 @@ if ($poisonOk) {
     $poisonOk = Test-Path $mark
 }
 Report "control poison built=$(Test-Path $poisonExe) live=$(if ($poisonOk) { 'YES' } else { 'NO' })"
-if (-not $poisonOk) { Fail "control expected=the marker exe writes its mark when run actual=silent; the race section is unmeasured" }
+if (-not $poisonOk) {
+    nt_fail exerace.control.poison-live "control expected=the marker exe writes its mark when run actual=silent; the race section is unmeasured"
+} else {
+    nt_pass exerace.control.poison-live "the marker exe writes its mark when run directly"
+}
 
 # =====================================================================
 # gap: how wide, and where the manifest falls
@@ -386,6 +394,7 @@ for ($i = 1; $i -le 2; $i++) {
 # separately -- the question is whether it is reliable, not whether it is
 # possible once.
 $poisonHash = Exe-Hash $poisonExe
+$script:raceWon = @(); $script:raceRan = @(); $script:raceDown = @(); $script:raceCold = @()
 if ($poisonOk) {
     foreach ($mode in @("rename", "overwrite")) {
         for ($i = 1; $i -le 3; $i++) {
@@ -408,15 +417,20 @@ if ($poisonOk) {
             # The finding, asserted: a plant that lands before the process
             # exists is a window that opened. `won=YES` and a poison exe that
             # actually ran are the same event read two ways; either is a FAIL.
-            if ($line -match "won=YES") { Fail "race $mode round=$i a replacement landed before the process started ($line)" }
-            if ($ran) { Fail "race $mode round=$i the planted exe ran ($line)" }
-            if ($r.window -ne "UP") { Fail "race $mode round=$i the real app did not come up, so the refusal is unmeasured ($line)" }
+            # Collected across the six rounds rather than filed per round.
+            # Four questions are asked of each, and a case is one question --
+            # six rows carrying the same id would fold to one verdict in the
+            # grid anyway, and the round that failed would be the thing the
+            # fold threw away. The list goes in the detail instead.
+            if ($line -match "won=YES") { $script:raceWon += "$mode r$i ($line)" }
+            if ($ran) { $script:raceRan += "$mode r$i ($line)" }
+            if ($r.window -ne "UP") { $script:raceDown += "$mode r$i ($line)" }
             # The hammer has to have made real attempts, or a refusal is just a
             # loop that never ran. Round 3 measured 114 to 274 a launch; a floor
             # of 20 catches a future throttle without being flaky.
             $tries = 0
             if ($line -match "tries=(\d+)") { $tries = [int]$Matches[1] }
-            if ($tries -lt 20) { Fail "race $mode round=$i only $tries attempt(s); the window was not hammered ($line)" }
+            if ($tries -lt 20) { $script:raceCold += "$mode r$i tries=$tries" }
         }
         # The folder is left holding whatever the last round put there; the next
         # launch is what removes it, and that is the launcher's own claim.
@@ -424,7 +438,38 @@ if ($poisonOk) {
         $rest = Launch 60
         Report "race $mode recovered window=$($rest.window) exe_rebuilt=$(if ((Exe-Hash $exe) -ne $poisonHash) { 'YES' } else { 'NO' })"
     }
+    # One verdict per question, after all six rounds. Spelled out rather than
+    # driven from a table of arrays: PowerShell's array literal is the wrong
+    # place to be clever, and there are four of them.
+    if ($script:raceWon.Count -gt 0) {
+        nt_fail exerace.race.no-early-landing "race a replacement landed before the process started: $($script:raceWon -join '; ')"
+    } else {
+        nt_pass exerace.race.no-early-landing "no replacement landed before the process started, in any round"
+    }
+    if ($script:raceRan.Count -gt 0) {
+        nt_fail exerace.race.not-launched "race the planted exe ran: $($script:raceRan -join '; ')"
+    } else {
+        nt_pass exerace.race.not-launched "the planted exe never ran, in any round"
+    }
+    if ($script:raceDown.Count -gt 0) {
+        nt_fail exerace.race.app-came-up "race the real app did not come up, so the refusal is unmeasured: $($script:raceDown -join '; ')"
+    } else {
+        nt_pass exerace.race.app-came-up "the real app came up in every round, so each refusal is a reading"
+    }
+    if ($script:raceCold.Count -gt 0) {
+        nt_fail exerace.race.hammered "race the window was not hammered hard enough to mean anything: $($script:raceCold -join '; ')"
+    } else {
+        nt_pass exerace.race.hammered "every round made at least 20 attempts at the window"
+    }
 } else {
+    # The marker exe is the instrument, not the subject: without one, a round
+    # where nothing was planted and a round where the plant was refused look
+    # exactly alike. That is four questions unanswerable rather than false.
+    $why = "there was no marker exe, so a refused plant and no plant at all could not be told apart"
+    nt_skip exerace.race.no-early-landing $why
+    nt_skip exerace.race.not-launched $why
+    nt_skip exerace.race.app-came-up $why
+    nt_skip exerace.race.hammered $why
     Report "race unmeasured: no marker exe"
 }
 Stop-App
@@ -514,6 +559,4 @@ foreach ($f in Get-ChildItem $work -Filter "observe*.log" -ErrorAction SilentlyC
 Report "predict seen=$($obs -join ' ')"
 
 Stop-App
-Write-Output "=== exerace: $failures failure(s) ==="
-if ($failures -gt 0) { exit 1 }
-exit 0
+nt_finish

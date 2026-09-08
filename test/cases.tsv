@@ -325,6 +325,40 @@ winexec.delete.junction-safe	a junction is there for the shipped walk to meet	wi
 winexec.delete.safe-removes	the shipped walk removes the tree it is given	windows-launch
 winexec.delete.safe-spared	the shipped walk spares the junction's target	windows-launch
 
+# The artifact compiling at all, from test/compile.ps1 -- and the only family in
+# this file that both Windows lanes answer, because both run it, each against
+# the artifact its own suites are about.
+#
+# It is first in each lane for the reason its header gives: the launcher
+# compiles the whole polyglot with jsc.exe on first run, so an artifact that
+# does not compile is not a broken feature, it is an app that never appears --
+# and every suite behind it then waits out its own full timeout before saying
+# anything. One reserved word in the jsc region cost a Windows lane its runner.
+compile.artifact	there is a built artifact to read	windows-launch windows-content
+compile.jsc	jsc.exe is here to compile with	windows-launch windows-content
+compile.refs	the artifact names its own reference list	windows-launch windows-content
+compile.compiles	the artifact compiles	windows-launch windows-content
+
+# The gap between the compile and the START, from test/exerace.ps1 --
+# windows-launch alone, and the suite that says that gap is not winnable.
+#
+# The four race cases are one verdict each over six rounds -- two modes, three
+# rounds apiece -- and not one row per round. A case is a question, and six rows
+# carrying one id would fold to a single verdict in the grid anyway, with the
+# round that failed being exactly what the fold discarded. The rounds that
+# failed are named in the detail instead.
+#
+# exerace.control.poison-live is the instrument. Without a marker exe that is
+# known to write when it is run, a round where nothing was planted and a round
+# where the plant was refused look exactly alike -- so its failure makes the
+# four below unanswerable rather than false, and they skip.
+exerace.control.launched	the shipped build comes up warm	windows-launch
+exerace.control.poison-live	the marker exe writes its mark when run directly	windows-launch
+exerace.race.no-early-landing	no replacement lands before the process starts	windows-launch
+exerace.race.not-launched	the planted exe never runs	windows-launch
+exerace.race.app-came-up	the real app comes up in every round	windows-launch
+exerace.race.hammered	every round really hammered the window	windows-launch
+
 # A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
 # because the failure it provokes is the WebView2 package download 404ing and no
 # other lane has that path to fail on.
