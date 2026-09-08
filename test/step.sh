@@ -102,6 +102,19 @@ nt_app_reap() {
 
 if [ -n "$NT_APP" ]; then
     [ -f "$NT_APP" ] || { echo "  FAIL: no artifact at '$NT_APP'"; exit 1; }
+    # The macOS status file, cleared before the app that writes it starts.
+    #
+    # Every testing-tier macOS build writes its window title to this one fixed
+    # path, and six suites read it. A stale file is the previous suite's last
+    # title, which the next verifier reads as its own first state -- so the four
+    # macos steps that launch an artifact each carried this line ahead of the
+    # launch. It belongs here instead: this is the line that starts the app, and
+    # a clear that happens anywhere else is a clear that can be forgotten.
+    #
+    # Not inside the verifier, which is the one place it must not go: the
+    # verifier is already waiting on the file when the app is writing it, and a
+    # removal there races the thing it is waiting for.
+    rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
     # Its own log, named after it, beside the suite's. Every lane's sheet step
     # gathers ~/*.log, so the launcher's account of itself lands in the artifact
     # next to the verifier's -- which is where it already went, under this name.
@@ -112,14 +125,66 @@ if [ -n "$NT_APP" ]; then
     trap 'nt_app_reap' EXIT INT TERM
 fi
 
-# The leash. `timeout` is not on macOS, so this is the same fallback
-# netinstall/test/lib.sh makes: run it unbounded rather than not at all, since a
-# suite that is not run says less than a suite that might overrun.
+# The leash.
+#
+# `timeout` is not on macOS. The fallback used to be to run unbounded -- the
+# same one netinstall/test/lib.sh makes -- on the reasoning that a suite that is
+# not run says less than a suite that might overrun. That reasoning held while
+# nothing passed --timeout: every lane was leashed by the step's own
+# `timeout-minutes` and this function was dormant, so the platform without
+# `timeout` was no worse off than the platform with it.
+#
+# test/run.sh ends that. A lane is one step now, so `timeout-minutes` bounds the
+# whole list rather than any suite in it, and the leash a row declares is the
+# only one that suite has. On macOS that leash would have been a number in a file
+# with nothing behind it -- which is the failure netinstall/test/lib.sh names in
+# its own words: a bound that silently is not there is worse than no bound.
+#
+# So the fallback is a watchdog rather than a shrug. It costs one background
+# subshell per suite and it reports the same way `timeout` does: 124, which the
+# caller below already knows how to read.
+nt_watchdog() {
+    "$@" &
+    local pid=$! dog rc
+    (
+        # Not `sleep $NT_TIMEOUT; kill` in one breath: the suite usually wins,
+        # and a watchdog that cannot be told the race is over leaves a sleeping
+        # process per suite for the length of its own leash.
+        sleep "$NT_TIMEOUT"
+        kill -0 "$pid" 2>/dev/null || exit 0
+        # The process tree, not the process. Same reason nt_app_reap above pkills
+        # before it kills: the thing being run is a shell that execs an engine,
+        # and killing the shell leaves the engine holding the window.
+        pkill -P "$pid" 2>/dev/null || true
+        kill -TERM "$pid" 2>/dev/null || true
+        # A verifier killed mid-report is the one whose report you want, so it
+        # gets a moment to finish writing before the second signal.
+        sleep 5
+        kill -0 "$pid" 2>/dev/null || exit 0
+        pkill -9 -P "$pid" 2>/dev/null || true
+        kill -KILL "$pid" 2>/dev/null || true
+    ) &
+    dog=$!
+    wait "$pid"; rc=$?
+    kill "$dog" 2>/dev/null || true
+    wait "$dog" 2>/dev/null || true
+    # bash reports a signalled child as 128+signal. Both of the watchdog's
+    # signals are reported as 124 instead, so that a suite killed at its leash
+    # says the same number here as it would where `timeout` exists -- the whole
+    # point of the fallback is that the caller cannot tell which one ran.
+    case "$rc" in
+        143|137) rc=124 ;;
+    esac
+    return "$rc"
+}
+
 run_it() {
-    if [ -n "$NT_TIMEOUT" ] && command -v timeout >/dev/null 2>&1; then
+    if [ -z "$NT_TIMEOUT" ]; then
+        "$@"
+    elif command -v timeout >/dev/null 2>&1; then
         timeout "$NT_TIMEOUT" "$@"
     else
-        "$@"
+        nt_watchdog "$@"
     fi
 }
 

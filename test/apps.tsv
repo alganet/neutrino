@@ -1,0 +1,39 @@
+# apps.tsv - the artifacts under test, and how each one is built.
+#
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+# SPDX-License-Identifier: ISC
+#
+# name <TAB> builder <TAB> source <TAB> flags
+#
+# `bash test/mkapp.sh --testing test/neutrinostdtheme.js test/neutrinostdtheme.cmd`
+# appears in .github/workflows/ci.yml fifteen times, and it is one of eighty-four
+# mkapp.sh lines across ten lanes. The artifact is the same artifact every time:
+# the same source, the same flags, built on whichever runner needs it. Eighty-four
+# lines saying twenty-five things is a file, not a workflow.
+#
+# `builder` is the column that made this a table rather than a column in
+# suites.tsv. Almost everything here is mkapp.sh, but the app on the download
+# page is not: test/demoapp.sh assembles pages/demo -- the four files that ship --
+# with test/demoprobe.js concatenated onto the app's own script. A `build=` flag
+# string could not have said that, and a directive per builder would have put the
+# name of a program in the setup column of every row that used it.
+#
+# `source` is the .js mkapp.sh builds from, and it is here rather than derived
+# because it is not always the name: neutrinostdgeom-none is neutrinostdgeom.js
+# built with the decorations off, and a rule that derived the source from the
+# name would have had no way to say so. `-` where the builder takes none.
+#
+# `flags` is passed through verbatim. `-` for none, which is not the same as
+# `--testing` missing by accident: a release build and a testing build of one
+# source are two rows here on purpose, because which one a lane runs is a fact
+# about that lane and has been invisible in the YAML until now.
+#
+# Every artifact built here is passed through test/parse.sh before it runs. That
+# was a per-step choice in fifty-four places and should never have been one: an
+# artifact that does not parse is a suite that measures nothing, and finding out
+# from the suite is finding out late.
+neutrinostddoc	mkapp	neutrinostddoc.js	--testing
+neutrinostdwin	mkapp	neutrinostdwin.js	--testing
+neutrinostdtheme	mkapp	neutrinostdtheme.js	--testing
+neutrinostdfont	mkapp	neutrinostdfont.js	--testing
+neutrinodemo	demoapp	-	-

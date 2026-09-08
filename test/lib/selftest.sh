@@ -425,6 +425,207 @@ done < "$ROOT/test/cases.tsv"
 [ -z "$ORPHAN" ] && ok "every registered case id is emitted by some suite" \
     || bad "in cases.tsv but emitted nowhere:$ORPHAN"
 
+# --------------------------------------------------------------------- run.sh
+
+echo
+echo "### run.sh, and the manifest it reads"
+
+# The manifest, checked without running anything on it. A typo in a lane name or
+# an artifact name is a suite that silently does not run, and the run it does not
+# happen in is a green one -- so this is the half worth catching at a desk.
+
+RUNSH="$ROOT/test/run.sh"
+SUITES_TSV="$ROOT/test/suites.tsv"
+APPS_TSV="$ROOT/test/apps.tsv"
+
+# Column shape. A row with the wrong number of columns puts a command in the
+# setup column, where it is reported as an unknown directive -- a sentence about
+# a directive, for a defect about a tab.
+BADCOLS="$(awk -F'\t' '!/^#/ && NF { if (NF < 3 || NF > 4) print FILENAME ":" FNR }' \
+    "$SUITES_TSV")"
+[ -z "$BADCOLS" ] && ok "every suites.tsv row has three or four columns" \
+    || bad "suites.tsv rows with the wrong column count:$(echo $BADCOLS)"
+
+BADCOLS="$(awk -F'\t' '!/^#/ && NF && NF != 4 { print FILENAME ":" FNR }' "$APPS_TSV")"
+[ -z "$BADCOLS" ] && ok "every apps.tsv row has four columns" \
+    || bad "apps.tsv rows with the wrong column count:$(echo $BADCOLS)"
+
+# Every artifact a suite asks for is declared, and every declared artifact is
+# asked for. Both directions, for the reason the registry scan below runs both:
+# an artifact nobody builds is a row nobody reads, and an artifact nobody
+# declared is a lane that fails at the point it was supposed to start measuring.
+APPNAMES="$(awk -F'\t' '!/^#/ && NF { print $1 }' "$APPS_TSV")"
+WANTED_APPS="$(awk -F'\t' '!/^#/ && NF { print $3 }' "$SUITES_TSV" |
+    tr ' ' '\n' | sed -n 's/^\(app\|build\)=//p' | sort -u)"
+
+MISSING=""
+for a in $WANTED_APPS; do
+    case " $(echo $APPNAMES) " in *" $a "*) ;; *) MISSING="$MISSING $a" ;; esac
+done
+[ -z "$MISSING" ] && ok "every artifact a suite names is declared in apps.tsv" \
+    || bad "named by a suite and not in apps.tsv:$MISSING"
+
+UNUSED=""
+for a in $APPNAMES; do
+    case " $(echo $WANTED_APPS) " in *" $a "*) ;; *) UNUSED="$UNUSED $a" ;; esac
+done
+[ -z "$UNUSED" ] && ok "every artifact in apps.tsv is named by some suite" \
+    || bad "in apps.tsv and named by nothing:$UNUSED"
+
+# The sources exist. mkapp.sh would say so too, but it would say it on a runner
+# eight minutes into a lane rather than here.
+MISSING=""
+while IFS="$(printf '\t')" read -r name builder source flags; do
+    case "$name" in \#*|"") continue ;; esac
+    [ "$builder" = "mkapp" ] || continue
+    [ -f "$ROOT/test/$source" ] || MISSING="$MISSING $source"
+done < "$APPS_TSV"
+[ -z "$MISSING" ] && ok "every mkapp source in apps.tsv is on disk" \
+    || bad "named in apps.tsv and not on disk:$MISSING"
+
+# Every lane in the manifest is a job in the workflow. A lane key that is not a
+# job is rows nobody will ever run, and it looks identical to rows that ran green.
+LANES="$(awk -F'\t' '!/^#/ && NF { sub(/:.*/, "", $1); print $1 }' "$SUITES_TSV" | sort -u)"
+JOBS="$(sed -n 's/^  \([a-z0-9-]*\):$/\1/p' "$ROOT/.github/workflows/ci.yml")"
+STRAY=""
+for l in $LANES; do
+    case " $(echo $JOBS) " in *" $l "*) ;; *) STRAY="$STRAY $l" ;; esac
+done
+[ -z "$STRAY" ] && ok "every lane in suites.tsv is a job in ci.yml" \
+    || bad "in suites.tsv and not a job in ci.yml:$STRAY"
+
+# No suite is run twice: once from the manifest and once by a hand-written step.
+# This is what makes a half-migrated lane safe, and it is the check that stops
+# the migration quietly double-running a suite for a whole round.
+DOUBLED=""
+for l in $LANES; do
+    for sname in $(bash "$RUNSH" --list "$l" 2>/dev/null); do
+        # The lane's own run.sh invocations name the suites it has migrated.
+        awk -v lane="$l" -v s="$sname" '
+            /^  [a-z0-9-]+:$/ { j = $1; sub(/:$/, "", j) }
+            j == lane && /test\/run\.sh/ { print }
+        ' "$ROOT/.github/workflows/ci.yml" | grep -q "[ ]$sname\([ ]\|$\)" || continue
+        # It is migrated. It must not also appear as a bare step.sh line.
+        awk -v lane="$l" '
+            /^  [a-z0-9-]+:$/ { j = $1; sub(/:$/, "", j) }
+            j == lane && /test\/step\.sh/ { print }
+        ' "$ROOT/.github/workflows/ci.yml" | grep -q -- "--log $sname\([ ]\|$\)" &&
+            DOUBLED="$DOUBLED $l/$sname"
+    done
+done
+[ -z "$DOUBLED" ] && ok "no lane runs a migrated suite from both the manifest and a step" \
+    || bad "run from the manifest and from a hand-written step:$DOUBLED"
+
+# --dry-run resolves for every lane, and what it prints parses back through
+# step.sh's own option loop. A directive that produced a flag step.sh does not
+# take would otherwise be found by a runner.
+for l in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$SUITES_TSV" | sort -u); do
+    out="$(bash "$RUNSH" --dry-run "$l" 2>&1)"
+    if [ -z "$out" ]; then
+        bad "run.sh --dry-run $l printed nothing"
+        continue
+    fi
+    unknown="$(printf '%s' "$out" | grep -c 'unknown' || true)"
+    [ "$(printf '%s' "$unknown" | tr -d ' ')" = 0 ] ||
+        bad "run.sh --dry-run $l reported an unknown directive"
+done
+ok "run.sh --dry-run resolves every lane in the manifest"
+
+# The arithmetic, against a fixture manifest. No display, no app, no artifact:
+# what is under test is that a lane adds up and that a suite cannot hide.
+FIXBIN="$WORK/runbin"; mkdir -p "$FIXBIN"
+for n in 0 2 3; do
+    printf '#!/bin/sh\nexit %s\n' "$n" > "$FIXBIN/ntexit$n"
+    chmod +x "$FIXBIN/ntexit$n"
+done
+FIXTSV="$WORK/fixture-suites.tsv"
+{
+    printf 'fixture\t*\ttimeout=20\n'
+    printf 'fixture\tgreen\t-\tntexit0\n'
+    printf 'fixture\tthree\t-\tntexit3\n'
+    printf 'fixture\ttwo\t-\tntexit2\n'
+} > "$FIXTSV"
+
+FIXOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$FIXTSV" bash "$RUNSH" fixture 2>&1)"
+FIXRC=$?
+[ "$FIXRC" = 5 ] && ok "run.sh exits the lane's failure count (0+3+2 = 5)" \
+    || bad "run.sh exited $FIXRC for a fixture lane totalling 5 failures"
+
+# A green suite behind a red one still runs. In YAML that was `if: always()` on
+# every step; here it is the runner's job, and a runner that stopped at the first
+# red would quietly take every reading behind it with it.
+printf '%s' "$FIXOUT" | grep -q '::group::two' &&
+    ok "a suite behind a failing one still runs" ||
+    bad "run.sh stopped at the first failing suite"
+
+# The timing table has a line per suite that ran.
+FIXTIMES="$(printf '%s' "$FIXOUT" | sed -n '/Where the time went/,/Total:/p' |
+    grep -c 's  ' || true)"
+[ "$(printf '%s' "$FIXTIMES" | tr -d ' ')" = 3 ] &&
+    ok "the timing table has one line per suite that ran" ||
+    bad "the timing table had $FIXTIMES lines for three suites"
+
+# The leash, and that it is spoken rather than anonymous. This is the one that
+# matters on macOS, where there is no timeout(1) and step.sh's watchdog is the
+# only thing behind a declared bound.
+LEASHTSV="$WORK/fixture-leash.tsv"
+{
+    printf 'fixture\t*\ttimeout=2\n'
+    printf 'fixture\twedged\t-\tsleep 30\n'
+    printf 'fixture\tafter\t-\tntexit0\n'
+} > "$LEASHTSV"
+LEASHOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$LEASHTSV" bash "$RUNSH" fixture 2>&1)"
+LEASHRC=$?
+printf '%s' "$LEASHOUT" | grep -q 'exceeded its 2s leash' &&
+    ok "a suite past its leash is killed and says so" ||
+    bad "a suite past its leash was not reported as such"
+printf '%s' "$LEASHOUT" | grep -q '::group::after' &&
+    ok "the suite behind a leashed one still runs" ||
+    bad "a leashed suite took the rest of the lane with it"
+[ "$LEASHRC" = 1 ] && ok "a leashed suite counts as one failure, not 124" \
+    || bad "a leashed lane exited $LEASHRC rather than 1"
+
+# An unknown directive is an error. A typo silently ignored is a suite running
+# without the display it asked for.
+BADTSV="$WORK/fixture-bad.tsv"
+printf 'fixture\toops\tnosuchdirective\tntexit0\n' > "$BADTSV"
+BADOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$BADTSV" bash "$RUNSH" fixture 2>&1)"
+printf '%s' "$BADOUT" | grep -q "unknown setup directive 'nosuchdirective'" &&
+    ok "an unknown setup directive is refused by name" ||
+    bad "an unknown setup directive was not refused"
+
+# The selection, which is what keeps a half-migrated lane from double-running.
+SELOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$FIXTSV" bash "$RUNSH" fixture two 2>&1)"
+printf '%s' "$SELOUT" | grep -q '::group::two' &&
+    ! printf '%s' "$SELOUT" | grep -q '::group::green' &&
+    ok "a selection runs only the rows it names" ||
+    bad "a selection did not restrict the rows that ran"
+
+# An empty setup column. Tab is IFS whitespace and bash collapses a run of it, so
+# `suite<TAB><TAB>command` reaches read as two fields and the command lands in
+# the setup variable. It cost a round to find; it does not get to come back.
+printf '%s' "$FIXOUT" | grep -q 'unknown setup directive' &&
+    bad "a row with an empty setup column was misread as a directive" ||
+    ok "a row with an empty setup column keeps its command"
+
+# ------------------------------------------------- the workflow lint, which ran nowhere
+
+echo
+echo "### workflow-lint.py"
+
+if command -v "$(nt_python)" >/dev/null 2>&1; then
+    # This lint has existed since it was written and nothing has ever run it --
+    # not ci.yml, not this file. It encodes rules a YAML parser will not catch,
+    # one of which cost exactly one round to find out.
+    if "$(nt_python)" "$ROOT/test/lib/workflow-lint.py" "$ROOT"/.github/workflows/*.yml; then
+        ok "workflow-lint.py is satisfied with .github/workflows"
+    else
+        bad "workflow-lint.py reported problems"
+    fi
+else
+    echo "  SKIP: no python3 on this machine, so workflow-lint.py did not run"
+fi
+
 echo
 echo "### Total: $FAILED failure(s)"
 exit "$FAILED"
