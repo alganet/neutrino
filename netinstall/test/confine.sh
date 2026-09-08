@@ -13,6 +13,25 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
 fi
 BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 . "$(dirname "$0")/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity, so the one sourced second is the one this file
+# speaks. nt_note and nt_result are lib.sh's and are not shadowed.
+#
+# The ninth netinstall suite through the conversion, and the one whose claims
+# genuinely differ by platform rather than merely being gated. w^x is asserted
+# on Darwin and OpenBSD and lives in the tight tier on Linux; LaunchServices is
+# four cases on Darwin and nothing anywhere else; the /proc and abstract-socket
+# verdicts need a landlock domain. So the divergence is carried by the lane list
+# in test/cases.tsv rather than by a skip on every platform that does not make
+# the claim -- which is what `applies-to` is for, and what keeps a Darwin-only
+# case from reading as nine holes.
+#
+# The gates *within* a platform are skips, because those are a lane that could
+# not answer rather than a lane the question was never for.
+. "$(cd "$(dirname "$0")/../../test/lib" && pwd)/harness.sh"
+# The annotation lib.sh's nt_fail emitted, kept by name so a red netinstall check
+# still says so on the run page.
+NT_ANNOTATE=netinstall
 
 if [ "$NT_WINDOWS" = "1" ]; then
     echo "=== SKIP: payloads run through cmd.exe here; see the windows job ==="
@@ -73,7 +92,6 @@ nt_cleanup() {
 }
 trap nt_cleanup EXIT
 
-FAILURES=0
 
 # Writes outside the app dir, tries to overwrite its own launcher, then reports
 # what the XDG redirection gave it.
@@ -696,31 +714,42 @@ if [ "$(uname -s)" = "Darwin" ] && [ -n "${GITHUB_ACTIONS:-}" ]; then
     NT_LSD_WARM="$NT_LSD_WARM(terminal reached by the warmup: $([ -e "$WARM_CMD" ] && echo yes || echo no))"
 fi
 
-check() {
-    local label="$1" want="$2"
+# The id first, and the name is assert_line rather than check for the reason
+# envlen.sh's check_eq became assert_eq: this is the helper that takes its id
+# through a variable, so it is the one the registry scan in test/lib/selftest.sh
+# cannot follow by reading the file, and assert_[a-z_]+ is the shape that scan
+# knows.
+assert_line() {
+    local id="$1" label="$2" want="$3"
     if grep -qx "$want" <<<"$OUT"; then
-        echo "  PASS: $label ($want)"
+        nt_pass "$id" "$label ($want)"
     else
-        nt_fail "$label expected=$want actual=$(tr '\n' ' ' <<<"$OUT")"
-        FAILURES=$((FAILURES + 1))
+        nt_fail "$id" "$label expected=$want actual=$(tr '\n' ' ' <<<"$OUT")"
     fi
 }
 
+# One id, two expectations: the same write to the same place, and what should
+# happen to it depends on whether this build has a confinement at all. The shape
+# envlen.trunc.keep255 established -- splitting it would make the grid say two
+# lanes tested different things when they tested the same thing.
 if [ "${CONFINE#none}" != "$CONFINE" ]; then
     nt_note "SKIP: no confinement available; asserting the inverse"
-    check "writes outside the app dir succeed unconfined" ESCAPED_HOME
+    assert_line confine.write.outside "writes outside the app dir succeed unconfined" ESCAPED_HOME
+    # There is no launcher rule to assert without a confinement, and that is a
+    # lane that could not answer rather than one nobody asked.
+    nt_skip confine.write.launcher "no confinement available ($CONFINE), so there is no rule over the launcher"
 else
-    check "write outside the app dir is blocked"  BLOCKED_HOME
-    check "overwriting its own launcher is blocked" BLOCKED_LAUNCHER
+    assert_line confine.write.outside "write outside the app dir is blocked"  BLOCKED_HOME
+    assert_line confine.write.launcher "overwriting its own launcher is blocked" BLOCKED_LAUNCHER
 fi
 
-check "its own dir stays writable" OWN_DIR_WRITABLE
-check "reads still work"           READS_WORK
+assert_line confine.appdir.writable "its own dir stays writable" OWN_DIR_WRITABLE
+assert_line confine.reads.work "reads still work"           READS_WORK
 
 echo "=== The environment is an allowlist ==="
-check "a token that lives only in the env is dropped" SECRET_SCRUBBED
-check "the ssh agent socket is dropped"               AGENT_SCRUBBED
-check "what a toolkit needs survives"                 BASICS_KEPT
+assert_line confine.env.secret "a token that lives only in the env is dropped" SECRET_SCRUBBED
+assert_line confine.env.agent "the ssh agent socket is dropped"               AGENT_SCRUBBED
+assert_line confine.env.basics "what a toolkit needs survives"                BASICS_KEPT
 
 case "$(uname -s)" in
     Darwin|OpenBSD)
@@ -729,12 +758,12 @@ case "$(uname -s)" in
         # allowlist, so it lives in the tight tier and confine-strict.sh covers
         # it; on these two the mechanism is an allowlist already and it costs
         # nothing, so it is asserted at every tier.
-        check "cannot execute what it wrote"                 EXEC_BLOCKED
+        assert_line confine.exec.wx "cannot execute what it wrote"                 EXEC_BLOCKED
         # macOS does not redirect TMPDIR, so that is a real writable directory
         # outside the app dir; OpenBSD does redirect it, into the app dir the
         # line above just took execute off. Two different reasons, one answer,
         # and w^x is a lie on either platform if it comes back executable.
-        check "cannot execute what it wrote to the temp dir" EXEC_TMP_BLOCKED ;;
+        assert_line confine.exec.wx.tmp "cannot execute what it wrote to the temp dir" EXEC_TMP_BLOCKED ;;
     *)
         nt_note "w^x is tight-tier only on linux; got $(grep -o 'EXEC_[A-Z_]*' <<<"$OUT" | tr '\n' ' ')" ;;
 esac
@@ -750,18 +779,18 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # claims about Apple daemons, so the suite reports what really happened.
     case "$OUT" in
         *KEYCHAIN_SKIP*)
-            nt_note "keychain probe skipped: no fixture could be planted" ;;
+            nt_skip confine.keychain "no fixture could be planted" ;;
         *)
             # Measured in CI, not assumed: denying com.apple.SecurityServer does
             # stop a real password being read back, so this is a boundary and
             # gets asserted like one.
-            check "a real keychain password cannot be read" KEYCHAIN_BLOCKED ;;
+            assert_line confine.keychain "a real keychain password cannot be read" KEYCHAIN_BLOCKED ;;
     esac
     nt_note "https under the profile: $(grep '^TLS:' <<<"$OUT" | cut -c6-)"
 fi
 
 echo "=== Descriptors the caller left open ==="
-check "an inherited descriptor does not reach the app" FD_CLOSED
+assert_line confine.fd.closed "an inherited descriptor does not reach the app" FD_CLOSED
 
 echo "=== Sockets the app has no path-based rule against ==="
 # Asserted to ABSTRACT_OK, and asserted rather than dropped.
@@ -777,7 +806,7 @@ echo "=== Sockets the app has no path-based rule against ==="
 # on four platforms, so an abstract socket is reachable everywhere now, and this
 # says so where it used to assert the refusal on the lanes that had ABI 6.
 if [ "$(uname -s)" = "Linux" ]; then
-    check "an abstract unix socket is not mediated" ABSTRACT_OK
+    assert_line confine.socket.abstract "an abstract unix socket is not mediated" ABSTRACT_OK
 fi
 
 echo "=== Syscalls that reach across process boundaries ==="
@@ -785,9 +814,9 @@ case "$CONFINE" in
     *seccomp*)
         # process_vm_readv on your own memory always succeeds unfiltered, so a
         # refusal here is the filter and nothing else.
-        check "cannot read another process's memory" PEEK_BLOCKED ;;
+        assert_line confine.peek "cannot read another process's memory" PEEK_BLOCKED ;;
     *)
-        nt_note "no seccomp filter here; got $(grep -o 'PEEK_[A-Z]*' <<<"$OUT")" ;;
+        nt_skip confine.peek "no seccomp filter here; got $(grep -o 'PEEK_[A-Z]*' <<<"$OUT")" ;;
 esac
 
 # Measured, and settled, so it is asserted rather than recorded. Finding 3
@@ -815,23 +844,25 @@ esac
 case "$CONFINE" in
     *landlock*)
         if grep -qx PEERMEM_SKIP <<<"$OUT"; then
-            nt_note "no peer to probe /proc against here"
+            nt_skip confine.proc.peer "no peer to probe /proc against here"
+            nt_skip confine.proc.child "no peer to probe /proc against here"
         else
-            check "cannot write a peer's memory through /proc"  PEERMEM_BLOCKED
-            check "cannot read a peer's maps either"            PEERMAPS_BLOCKED
-            check "nothing under a peer's entry is writable"  PEERWRITABLE_NONE
+            assert_line confine.proc.peer "cannot write a peer's memory through /proc"  PEERMEM_BLOCKED
+            assert_line confine.proc.peer "cannot read a peer's maps either"            PEERMAPS_BLOCKED
+            assert_line confine.proc.peer "nothing under a peer's entry is writable"  PEERWRITABLE_NONE
             # PEEROOM_ESCAPED is what this line used to assert, and it was the
             # honest reading of a real hole: a write to a same-uid peer's
             # oom_score_adj succeeded, marking it for the OOM killer, across a
             # boundary this same ruleset scopes signals over.
-            check "a peer's oom_score_adj is out of reach"    PEEROOM_BLOCKED
+            assert_line confine.proc.peer "a peer's oom_score_adj is out of reach"    PEEROOM_BLOCKED
             # The narrowed rule takes the in-domain child with it. Asserted
             # so the pair above cannot be read as the ptrace hook doing the
             # work: here it is the filesystem rule, and both are refusing.
-            check "an in-domain child goes with it"           CHILDMEM_BLOCKED
+            assert_line confine.proc.child "an in-domain child goes with it"           CHILDMEM_BLOCKED
         fi
         if grep -qx PROCSELF_SKIP <<<"$OUT"; then
-            nt_note "no /proc/self probe here"
+            nt_skip confine.proc.self "no /proc/self probe here"
+            nt_skip confine.proc.usernsmap "no /proc/self probe here"
         else
             # Both tiers. The tight rule grants only WRITE_FILE on /proc/self
             # and reads survive on the read rule above it, which is landlock
@@ -839,9 +870,9 @@ case "$CONFINE" in
             # deepest rule decide alone. A tier that passed everything else by
             # having quietly stopped reading its own /proc would look like a
             # clean result, so this is asked rather than assumed.
-            check "reads under its own /proc entry still work" PROCSELFREAD_OK
-            check "its own /proc entry is read-only now"      PROCSELF_BLOCKED
-            check "a descendant's /proc entry is out of reach" PROCCHILD_BLOCKED
+            assert_line confine.proc.self "reads under its own /proc entry still work" PROCSELFREAD_OK
+            assert_line confine.proc.self "its own /proc entry is read-only now"      PROCSELF_BLOCKED
+            assert_line confine.proc.self "a descendant's /proc entry is out of reach" PROCCHILD_BLOCKED
             # The write bubblewrap and chromium's namespace_sandbox.c depend
             # on: a parent setting up a child's user namespace by writing that
             # child's setgroups and uid_map. It is the price of the peer being
@@ -850,12 +881,14 @@ case "$CONFINE" in
             # started under netinstall, this is the line that says what took it
             # away.
             if grep -qx USERNSMAP_SKIP <<<"$OUT"; then
-                nt_note "no user namespace to map here: $(grep '^usernsmap ' <<<"$OUT")"
+                nt_skip confine.proc.usernsmap "no user namespace to map here: $(grep '^usernsmap ' <<<"$OUT")"
             else
-                check "and the map write an engine sandbox needs" USERNSMAP_BLOCKED
+                assert_line confine.proc.usernsmap "and the map write an engine sandbox needs" USERNSMAP_BLOCKED
             fi
         fi ;;
-    *)  nt_note "the /proc verdict needs a landlock domain; got $CONFINE" ;;
+    *)  for c in confine.proc.peer confine.proc.child confine.proc.self confine.proc.usernsmap; do
+            nt_skip "$c" "the /proc verdict needs a landlock domain; got $CONFINE"
+        done ;;
 esac
 
 if [ "$(uname -s)" = "Darwin" ]; then
@@ -873,17 +906,16 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # Terminal up LaunchServices delivers the document as an apple event, and
     # that has been denied since the profile was written. Asserted so a future
     # change cannot quietly open it while attention is on the other two.
-    check "an apple event to Terminal is refused" LSD_COMMAND_BLOCKED
+    assert_line confine.lsd.command "an apple event to Terminal is refused" LSD_COMMAND_BLOCKED
     # And the other side of the same trade, asserted beside it so the two can
     # never drift apart again: closing those doors must not cost the window.
     case "$OUT" in
-        *POLICY=0*)     echo "  PASS: a confined app can still register as an application" ;;
-        *POLICY=SKIP*)  nt_note "activation policy not measured here" ;;
-        *)              nt_fail "activation policy expected=0 actual=$(printf '%s' "$OUT" | sed -n 's/.*POLICY=\([^ ]*\).*/\1/p')  (-1 is Prohibited: the app runs and shows nothing)"
-                        FAILURES=$((FAILURES + 1)) ;;
+        *POLICY=0*)     nt_pass confine.lsd.policy "a confined app can still register as an application" ;;
+        *POLICY=SKIP*)  nt_skip confine.lsd.policy "activation policy not measured here" ;;
+        *)              nt_fail confine.lsd.policy "activation policy expected=0 actual=$(printf '%s' "$OUT" | sed -n 's/.*POLICY=\([^ ]*\).*/\1/p')  (-1 is Prohibited: the app runs and shows nothing)" ;;
     esac
-    check "cannot launch a bundle it wrote through open(1)"   LSD_APP_BLOCKED
-    check "cannot launch one through NSWorkspace either"      LSD_WS_BLOCKED
+    assert_line confine.lsd.app "cannot launch a bundle it wrote through open(1)"   LSD_APP_BLOCKED
+    assert_line confine.lsd.ws "cannot launch one through NSWorkspace either"      LSD_WS_BLOCKED
 
     # The warm state is a second question, not a second reading of the first:
     # with Terminal already up LaunchServices routes differently, and a denial
@@ -894,15 +926,14 @@ if [ "$(uname -s)" = "Darwin" ]; then
     NT_LSD_WARM_WANT="BLOCKED"
     case "$NT_LSD_WARM" in
         "not measured"*)
-            nt_note "warm launchservices state not measured here" ;;
+            nt_skip confine.lsd.warm "warm launchservices state not measured here" ;;
         *"terminal reached by the warmup: no"*)
-            nt_note "warm launchservices not decisive: the warmup did not launch either" ;;
+            nt_skip confine.lsd.warm "warm launchservices not decisive: the warmup did not launch either" ;;
         *)  for d in APP WS; do
                 case "$NT_LSD_WARM" in
                     *"LSD_${d}_$NT_LSD_WARM_WANT"*)
-                        echo "  PASS: warm $d door agrees with the cold one (LSD_${d}_$NT_LSD_WARM_WANT)" ;;
-                    *)  nt_fail "warm $d door expected=LSD_${d}_$NT_LSD_WARM_WANT actual=$NT_LSD_WARM"
-                        FAILURES=$((FAILURES + 1)) ;;
+                        nt_pass confine.lsd.warm "warm $d door agrees with the cold one (LSD_${d}_$NT_LSD_WARM_WANT)" ;;
+                    *)  nt_fail confine.lsd.warm "warm $d door expected=LSD_${d}_$NT_LSD_WARM_WANT actual=$NT_LSD_WARM" ;;
                 esac
             done ;;
     esac
@@ -921,7 +952,7 @@ fi
 # platform that starts refusing it should fail here and be read about rather
 # than quietly narrowing what the promise says.
 if [ "$(uname -s)" = "Linux" ]; then
-    check "binding a TCP port is not mediated" BIND_OK
+    assert_line confine.bind "binding a TCP port is not mediated" BIND_OK
 else
     nt_note "tcp bind was landlock-only; got $(grep -o 'BIND_[A-Z]*' <<<"$OUT")"
 fi
@@ -945,23 +976,21 @@ echo "=== The probes can still detect what they are looking for ==="
 case "$(uname -s)-$NT_PTRACE_STATE" in
     Linux-0*)
         if grep -q PEERMEM_ESCAPED <<<"$NT_PROC_CONTROL"; then
-            echo "  PASS: unconfined, the probe does reach a peer's memory"
+            nt_pass confine.control.proc "unconfined, the probe does reach a peer's memory"
         else
-            nt_fail "proc control expected=PEERMEM_ESCAPED actual=$NT_PROC_CONTROL"
-            FAILURES=$((FAILURES + 1))
+            nt_fail confine.control.proc "proc control expected=PEERMEM_ESCAPED actual=$NT_PROC_CONTROL"
         fi ;;
     Linux-*)
         # yama refuses the attach before any of our confinement is consulted,
         # so nothing here is decisive and saying so is the honest answer.
-        nt_note "proc control not decisive: ptrace_scope=$NT_PTRACE_STATE" ;;
+        nt_skip confine.control.proc "not decisive: ptrace_scope=$NT_PTRACE_STATE, so yama refuses the attach before our ruleset is consulted" ;;
 esac
 
 if [ "$(uname -s)" = "Darwin" ]; then
     case "$NT_LSD_CONTROL" in
         *command=LAUNCHED*app=LAUNCHED*ws=LAUNCHED*)
-            echo "  PASS: unconfined, all three launchservices doors do open" ;;
-        *)  nt_fail "launchservices control expected=all three LAUNCHED actual=$NT_LSD_CONTROL"
-            FAILURES=$((FAILURES + 1)) ;;
+            nt_pass confine.control.lsd "unconfined, all three launchservices doors do open" ;;
+        *)  nt_fail confine.control.lsd "launchservices control expected=all three LAUNCHED actual=$NT_LSD_CONTROL" ;;
     esac
 fi
 
@@ -997,11 +1026,11 @@ esac
 
 echo "=== The launcher still verifies after the attempt ==="
 if "$APP" --verify >/dev/null 2>&1; then
-    echo "  PASS: pin still matches"
+    nt_pass confine.pin.intact "pin still matches"
 else
-    nt_fail "pin expected=intact actual=broken"
-    FAILURES=$((FAILURES + 1))
+    nt_fail confine.pin.intact "pin expected=intact actual=broken"
 fi
 
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+exit $NT_FAILURES

@@ -359,3 +359,56 @@ fetchconf.steal.control	a config's output flag reaches exactly what this platfor
 fetchconf.steal.message	netinstall says the downloader wrote nothing where it was told	gjs bsd windows-launch macos-netinstall
 fetchconf.steal.oldsentence	and not the superseded sentence about a file that was never written	gjs bsd windows-launch macos-netinstall
 fetchconf.wget.control	the fallback branch fetches a benign payload	gjs bsd windows-launch macos-netinstall
+
+# Containment of a hostile payload, from netinstall/test/confine.sh. Three
+# lanes and not four: that file exits 0 on windows before it does anything --
+# payloads run through cmd.exe there and the windows job asks these questions
+# its own way -- so `.` is the honest cell for windows-launch rather than a hole.
+#
+# This is the first family whose lane lists genuinely differ from each other,
+# and that is the point of having the column. w^x is asserted on Darwin and
+# OpenBSD, where the mechanism is an allowlist already and it costs nothing; on
+# Linux it needs the exec allowlist and lives in the tight tier, so
+# confine-strict.sh owns it. LaunchServices is seven cases on Darwin and no
+# question at all elsewhere. The abstract socket and the TCP bind are landlock
+# verdicts. Writing that divergence here is what keeps a Darwin-only case from
+# reading as two holes.
+#
+# The gates *within* a platform are skips rather than lane lists, because those
+# are a lane that could not answer rather than a lane the question was never
+# for: no seccomp filter, no peer to probe /proc against, no user namespace to
+# map, no keychain fixture, a yama setting that refuses the attach before this
+# ruleset is consulted. confine.peek and the four confine.proc.* cases carry all
+# three lanes for exactly that reason -- they emit a skip on the platforms with
+# no seccomp and no landlock, so a lane list that left those out would make the
+# skip an undeclared id.
+#
+# confine.write.outside is one id with two expectations, the shape
+# envlen.trunc.keep255 established: the same write to the same place, asserted
+# blocked where there is a confinement and escaped where there is not.
+confine.write.outside	a write outside the app dir goes the way this build's confinement says	gjs bsd macos-netinstall
+confine.write.launcher	overwriting its own launcher is blocked	gjs bsd macos-netinstall
+confine.appdir.writable	its own dir stays writable	gjs bsd macos-netinstall
+confine.reads.work	reads still work	gjs bsd macos-netinstall
+confine.env.secret	a token that lives only in the env is dropped	gjs bsd macos-netinstall
+confine.env.agent	the ssh agent socket is dropped	gjs bsd macos-netinstall
+confine.env.basics	what a toolkit needs survives	gjs bsd macos-netinstall
+confine.fd.closed	an inherited descriptor does not reach the app	gjs bsd macos-netinstall
+confine.pin.intact	the launcher still verifies after the attempt	gjs bsd macos-netinstall
+confine.peek	another process's memory cannot be read	gjs bsd macos-netinstall
+confine.proc.peer	a peer's /proc entry is out of reach	gjs bsd macos-netinstall
+confine.proc.child	and an in-domain child's goes with it	gjs bsd macos-netinstall
+confine.proc.self	its own /proc entry is readable and not writable	gjs bsd macos-netinstall
+confine.proc.usernsmap	the map write an engine sandbox needs is refused	gjs bsd macos-netinstall
+confine.exec.wx	it cannot execute what it wrote	bsd macos-netinstall
+confine.exec.wx.tmp	nor what it wrote to the temp dir	bsd macos-netinstall
+confine.socket.abstract	an abstract unix socket is not mediated	gjs
+confine.bind	binding a TCP port is not mediated	gjs
+confine.control.proc	unconfined, the /proc probe does reach a peer's memory	gjs
+confine.keychain	a real keychain password cannot be read	macos-netinstall
+confine.lsd.command	an apple event to Terminal is refused	macos-netinstall
+confine.lsd.policy	a confined app can still register as an application	macos-netinstall
+confine.lsd.app	it cannot launch a bundle it wrote through open(1)	macos-netinstall
+confine.lsd.ws	nor through NSWorkspace	macos-netinstall
+confine.lsd.warm	and the warm doors agree with the cold ones	macos-netinstall
+confine.control.lsd	unconfined, all three launchservices doors do open	macos-netinstall
