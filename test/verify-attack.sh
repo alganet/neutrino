@@ -44,7 +44,7 @@ case "$(uname -s)" in
     Darwin)
         # The macOS driver has no window the shell can query, so the title
         # arrives through the same status file every other macOS check uses.
-        read_title() { sed -n '1p' "${TMPDIR:-/tmp}/neutrino-title.txt" 2>/dev/null || true; }
+        read_title() { sed -n '1p' "$NT_STATUS_FILE" 2>/dev/null || true; }
         EXPECT_FORGE="REFUSED"
         # Recorded and not asserted, and no longer for the reason this used to
         # give. This driver does have a navigation guard -- PR 6 built one out

@@ -354,7 +354,7 @@ app_up() {
     local i
     for i in $(seq 1 "$1"); do
         if [ "$UNAME" = "Darwin" ]; then
-            [ -f "${TMPDIR:-/tmp}/neutrino-title.txt" ] && return 0
+            [ -f "$NT_STATUS_FILE" ] && return 0
         elif command -v xdotool >/dev/null 2>&1; then
             xdotool search --name 'LOADERS READY' >/dev/null 2>&1 && return 0
         fi
@@ -365,7 +365,7 @@ app_up() {
 
 app_down() {
     local i
-    [ "$UNAME" = "Darwin" ] && { rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"; return 0; }
+    [ "$UNAME" = "Darwin" ] && { rm -f "$NT_STATUS_FILE"; return 0; }
     command -v xdotool >/dev/null 2>&1 || return 0
     for i in $(seq 1 20); do
         xdotool search --name 'LOADERS READY' >/dev/null 2>&1 || return 0

@@ -114,7 +114,7 @@ fi
 #
 # Not inside the verifier: that is already waiting on the file while the app is
 # writing it, and a removal there races the thing it is waiting for.
-rm -f "${TMPDIR:-/tmp}/neutrino-title.txt"
+rm -f "$NT_STATUS_FILE"
 
 echo "=== Launching $(basename "$APP") ==="
 bash "$APP" > "$APP_LOG" 2>&1 &
