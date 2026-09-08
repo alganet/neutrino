@@ -442,12 +442,18 @@ echo "### the registry, against every suite that speaks to it"
 # the same way: the scan reported `analyse.sh:are`, out of a comment reading
 # "its nt_pass/nt_fail are not used here", and every fixture id this file
 # invents to test the harness with.
+# netinstall/test/*.sh is in this list and has to be. The reverse scan below has
+# read that tree since splash.sh was converted, but this direction did not -- so
+# a *misspelled* id in a netinstall suite was reported from the far side, as the
+# correctly-spelled one being emitted nowhere, which names the registry rather
+# than the typo. The `harness.sh` guard means the suites still speaking lib.sh's
+# older words cost nothing here.
 UNKNOWN=""
-for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh; do
+for suite in "$ROOT"/test/*.sh "$ROOT"/test/lib/*.sh "$ROOT"/netinstall/test/*.sh; do
     case "$(basename "$suite")" in selftest.sh) continue ;; esac
     grep -q 'harness\.sh' "$suite" 2>/dev/null || continue
     for id in $(sed 's/#.*//' "$suite" |
-                grep -oE '\bnt_(pass|fail|skip|walk_[a-z_]+) "?[a-z][a-z0-9.-]*' |
+                grep -oE '\b(nt_(pass|fail|skip|walk_[a-z_]+)|assert_[a-z_]+) "?[a-z][a-z0-9.-]*' |
                 awk '{print $2}' | tr -d '"' | sort -u); do
         # An id has a dot in it. A bare word is a variable or a fragment.
         case "$id" in *.*) ;; *) continue ;; esac
@@ -493,7 +499,17 @@ while IFS="$(printf '\t')" read -r rid _rest; do
         # walk.resize ...` -- rather than to nt_pass directly, and a scan that
         # only knew the three verdict words would call every one of them an
         # orphan the moment the verifiers stop carrying the literals too.
-        if grep -qE "(nt_(pass|fail|skip|walk_[a-z_]+)|ctl_(pass|fail|skip)) \"?($rid|$stem\.\\\$)" "$suite" 2>/dev/null; then
+        #
+        # And assert_*, which is the same thing arrived at from the other side.
+        # A suite whose assertions differ only in their fixture writes one
+        # wrapper and hands it the id -- netinstall/test/verify.sh has five
+        # rejections that differ in nothing else -- and inside that wrapper the
+        # id is `$id`, which no literal scan can resolve. This is the shape and
+        # not a file: the next converted suite that writes `assert_something` is
+        # covered without this line being touched again. It is the same
+        # allowance the `$stem\.\$` escape above makes for an id whose last
+        # segment is built at runtime.
+        if grep -qE "(nt_(pass|fail|skip|walk_[a-z_]+)|ctl_(pass|fail|skip)|assert_[a-z_]+) \"?($rid|$stem\.\\\$)" "$suite" 2>/dev/null; then
             found=1; break
         fi
     done
