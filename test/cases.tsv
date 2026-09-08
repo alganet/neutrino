@@ -23,9 +23,16 @@
 # test/qtkde.sh and nothing else, and until that suite has a vocabulary it is a
 # lane the registry has nothing to say about.
 #
-# windows-launch is absent from the walk for a reason that is still open:
-# verify-windows.ps1 asserts the same facts and has not been brought onto these
-# ids yet, so it reports none of them.
+# windows-launch was absent from the walk for a long time, because
+# verify-windows.ps1 asserted the same facts in its own sentences and reported
+# none of these ids. It is on them now: it writes the samples it was already
+# taking as a record and hands that to test/lib/walk.sh, which is the shape
+# verify-std.ps1 has used to reach test/lib/analyse.sh since the analysis moved
+# there. Four lanes hold the walk now rather than three.
+#
+# walk.close.process-exits stays macOS's alone. It watches a *process* after the
+# window is gone rather than a record, so there is nothing in the walk record for
+# another lane to answer it from.
 #
 # The ids are dotted and start with the probe family, so a sheet sorts into the
 # order somebody reads it in. They are stable across lanes on purpose -- three
@@ -34,14 +41,14 @@
 #
 # The launcher's own walk: neutrinotest.js drives it and verify-linux.sh,
 # verify-macos.sh and verify-windows.ps1 each watch it on their own platform.
-walk.window.appeared	the app opened a window	gjs kde linux-engines macos
-walk.step0.reached	the app started and reported in	gjs kde linux-engines macos
-walk.title	document.title reached the native window title	gjs kde linux-engines macos
-walk.resize	resizeTo sized the content	gjs kde linux-engines macos
-walk.move	moveTo placed the frame	gjs kde linux-engines macos
-walk.theme.readable	the lane read the desktop palette	gjs kde linux-engines macos
-walk.fonts.readable	the lane read the desktop fonts	gjs kde linux-engines macos
-walk.done	the walk ran to the end	gjs kde linux-engines macos
+walk.window.appeared	the app opened a window	gjs kde linux-engines macos windows-launch
+walk.step0.reached	the app started and reported in	gjs kde linux-engines macos windows-launch
+walk.title	document.title reached the native window title	gjs kde linux-engines macos windows-launch
+walk.resize	resizeTo sized the content	gjs kde linux-engines macos windows-launch
+walk.move	moveTo placed the frame	gjs kde linux-engines macos windows-launch
+walk.theme.readable	the lane read the desktop palette	gjs kde linux-engines macos windows-launch
+walk.fonts.readable	the lane read the desktop fonts	gjs kde linux-engines macos windows-launch
+walk.done	the walk ran to the end	gjs kde linux-engines macos windows-launch
 # macOS alone can watch the launcher process after the window closes: it is
 # the lane whose driver holds the process open, and the one where a window
 # that shut without the process following would go unnoticed.
