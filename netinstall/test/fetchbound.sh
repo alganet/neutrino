@@ -32,13 +32,20 @@ BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 [ -n "$WBIN" ] && [ -x "$WBIN" ] && WBIN="$(cd "$(dirname "$WBIN")" && pwd)/$(basename "$WBIN")"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity, so the one sourced second is the one this file
+# speaks. nt_result is lib.sh's and is not shadowed -- the report lines stay
+# readings.
+. "$(cd "$HERE/../../test/lib" && pwd)/harness.sh"
+# The annotation lib.sh's nt_fail emitted, kept by name so a red netinstall check
+# still says so on the run page.
+NT_ANNOTATE=netinstall
 
 WORK="$(mktemp -d)"
 SERVE="$WORK/serve"
 mkdir -p "$SERVE" "$WORK/bin" "$WORK/out"
 export NEUTRINO_HOME="$WORK/home"
 
-FAILURES=0
 LIMIT=$((16 * 1024 * 1024))
 DEADLINE=120
 
@@ -46,8 +53,11 @@ DEADLINE=120
 # refused on size or on the clock long before a digest is compared.
 NOMATCH="0a1b2c3d4e5f60718a1b2c3d4e5f6071"
 
-ok()   { echo "  PASS: $*"; }
-bad()  { nt_fail "$*"; FAILURES=$((FAILURES + 1)); }
+# ok() and bad() are gone rather than given an id parameter. They were two-word
+# aliases for nt_pass and nt_fail, and a wrapper is the one thing that hides an
+# id from the registry scan in test/lib/selftest.sh -- which is how
+# writable.sh's says_names and envlen.sh's check_eq each cost a round. There is
+# nothing to wrap here, so the call sites say what they assert.
 bytes_of() { [ -f "$1" ] && wc -c < "$1" | tr -d ' ' || echo 0; }
 
 # ---------------------------------------------------------------- the server
@@ -66,10 +76,14 @@ for i in $(seq 1 100); do
     sleep 0.1
 done
 if [ "$UP" != "YES" ]; then
-    bad "the hostile server on port $PORT never came up; nothing below would mean anything"
-    echo "=== Results: $FAILURES failure(s) ==="
-    exit "$FAILURES"
+    nt_fail fetchbound.server.up "the hostile server on port $PORT never came up; nothing below would mean anything"
+    echo "=== Results: $NT_FAILURES failure(s) ==="
+    exit "$NT_FAILURES"
 fi
+# Said when it holds, and it was not before: a server that came up printed
+# nothing, so the row carrying "the apparatus exists" was filed on exactly the
+# runs where nothing else could be filed either.
+nt_pass fetchbound.server.up "the hostile server answered on port $PORT"
 
 as()          { nt_as "$1" "$2" "$WORK/bin"; }
 cached_path() { echo "$NEUTRINO_HOME/apps/$(nt_appkey "$1")/${1%%-*}.cmd"; }
@@ -108,9 +122,9 @@ echo "=== Control: a benign payload from the same server ==="
 printf 'echo hello from a neutrino app\n' > "$SERVE/good.cmd"
 GOOD="good-example-com-1$(nt_pin "$SERVE/good.cmd")"
 if "$(as "$BIN" "$GOOD")" --fetch >/dev/null 2>&1 && [ -f "$(cached_path "$GOOD")" ]; then
-    ok "the server serves, the fetch verifies, the blob is cached"
+    nt_pass fetchbound.control.benign "the server serves, the fetch verifies, the blob is cached"
 else
-    bad "benign payload expected=fetched+cached actual=no; every assertion below is vacuous"
+    nt_fail fetchbound.control.benign "benign payload expected=fetched+cached actual=no; every assertion below is vacuous"
 fi
 
 # ----------------------------------------------- the flag set actually shipped
@@ -126,9 +140,10 @@ BLINE="$(printf '%s\n' "$INFO" | sed -n 's/^bounds  *//p')"
 NTOK="$(printf '%s\n' "$DLINE" | awk '{print NF}')"
 FLAGS=""
 if [ "${NTOK:-0}" -lt 4 ]; then
-    bad "--info printed no usable downloader line: '${DLINE:-<none>}'"
+    nt_fail fetchbound.downloader.line "--info printed no usable downloader line: '${DLINE:-<none>}'"
 else
     FLAGS="$(printf '%s\n' "$DLINE" | awk '{for (i = 1; i <= NF - 2; i++) printf "%s%s", $i, (i < NF - 2 ? " " : "")}')"
+    nt_pass fetchbound.downloader.line "--info names a downloader and its flags ($NTOK words)"
 fi
 DBIN="$(printf '%s\n' "$DLINE" | awk '{print $1}')"
 TOOL="${DBIN:-none}"; TOOL="${TOOL##*\\}"; TOOL="${TOOL##*/}"; TOOL="${TOOL%.exe}"
@@ -141,8 +156,8 @@ esac
 # --info must name the bounds, because on the fallback branch neither of them
 # appears in the command it prints. Ground rule 5.
 case "$BLINE" in
-    *"from curl"*) ok "--info names curl's own bounds" ;;
-    *) bad "--info bounds expected=from-curl actual='${BLINE:-<none>}'" ;;
+    *"from curl"*) nt_pass fetchbound.bounds.named "--info names curl's own bounds" ;;
+    *) nt_fail fetchbound.bounds.named "--info bounds expected=from-curl actual='${BLINE:-<none>}'" ;;
 esac
 nt_result "report: fetchbound tool=$TOOL ver=${VER:-?} bounds=$BLINE"
 
@@ -156,8 +171,8 @@ if [ -n "$FLAGS" ]; then
     run_bounded 60 $FLAGS "$WORK/out/recon.bin" "$NEUTRINO_TEST_ORIGIN/good.cmd"
     RECON=$RUN_RC
 fi
-[ "$RECON" = "0" ] && ok "the reconstructed argv runs" ||
-    bad "reconstruction expected=rc0 actual=$RECON; the four results below could be one broken command line"
+[ "$RECON" = "0" ] && nt_pass fetchbound.argv.reconstructed "the reconstructed argv runs" ||
+    nt_fail fetchbound.argv.reconstructed "reconstruction expected=rc0 actual=$RECON; the four results below could be one broken command line"
 
 SHAPES=""
 for shape in declared chunked lying eof; do
@@ -174,20 +189,20 @@ for shape in declared chunked lying eof; do
     case "$shape" in
         declared)
             # A declared length past the limit is refused before a body starts.
-            [ "$SZ" -eq 0 ] && ok "an honest oversized length writes nothing" ||
-                bad "declared expected=0b actual=${SZ}b" ;;
+            [ "$SZ" -eq 0 ] && nt_pass fetchbound.direct.declared "an honest oversized length writes nothing" ||
+                nt_fail fetchbound.direct.declared "declared expected=0b actual=${SZ}b" ;;
         chunked|eof)
             # The half that had never been measured: no length to refuse in
             # advance, so the guard has to bite mid-body. It does, on four curl
             # versions, at exactly the limit.
             [ "$SZ" -le "$LIMIT" ] && [ "$RUN_RC" -ne 0 ] &&
-                ok "$shape stops at ${SZ}b, at or under the limit, rc=$RUN_RC" ||
-                bad "$shape expected=<=${LIMIT}b-and-refused actual=${SZ}b/rc=$RUN_RC" ;;
+                nt_pass fetchbound.direct.midbody "$shape stops at ${SZ}b, at or under the limit, rc=$RUN_RC" ||
+                nt_fail fetchbound.direct.midbody "$shape expected=<=${LIMIT}b-and-refused actual=${SZ}b/rc=$RUN_RC" ;;
         lying)
             # curl takes the header at its word and writes what it was promised.
             # The digest refuses it a moment later.
-            [ "$SZ" -eq 1024 ] && ok "a lying length yields the 1024 bytes it declared" ||
-                bad "lying expected=1024b actual=${SZ}b" ;;
+            [ "$SZ" -eq 1024 ] && nt_pass fetchbound.direct.lying "a lying length yields the 1024 bytes it declared" ||
+                nt_fail fetchbound.direct.lying "lying expected=1024b actual=${SZ}b" ;;
     esac
 done
 nt_result "report: fetchbound direct recon=$RECON$SHAPES limit=$LIMIT"
@@ -201,10 +216,14 @@ if [ -n "$FLAGS" ]; then
     run_bounded 90 $NOMAX "$WORK/out/nomax.bin" "$NEUTRINO_TEST_ORIGIN/chunked.cmd"
     NOMAXSZ=$(bytes_of "$WORK/out/nomax.bin")
     [ "$NOMAXSZ" -gt "$LIMIT" ] &&
-        ok "with the flag removed the same curl writes ${NOMAXSZ}b, past the limit" ||
-        bad "no-flag control expected=>${LIMIT}b actual=${NOMAXSZ}b; the assertions above prove nothing"
+        nt_pass fetchbound.control.noflag "with the flag removed the same curl writes ${NOMAXSZ}b, past the limit" ||
+        nt_fail fetchbound.control.noflag "no-flag control expected=>${LIMIT}b actual=${NOMAXSZ}b; the assertions above prove nothing"
 else
     NOMAXSZ=0
+    # A skip and not a silence. Without a flag set there is no flag to remove,
+    # so this control cannot be taken -- which is a different answer from a lane
+    # that was asked and said nothing.
+    nt_skip fetchbound.control.noflag "no downloader flags were resolved, so there is no flag to remove"
 fi
 
 # ------------------------------------------------ and the verdicts netinstall gives
@@ -216,8 +235,8 @@ for shape in declared chunked lying eof; do
     run_bounded 150 "$(as "$BIN" "$SPEC")" --fetch
     CACHED=no; [ -f "$(cached_path "$SPEC")" ] && CACHED=YES
     VERDICTS="$VERDICTS $shape=$RUN_RC/$CACHED"
-    [ "$RUN_RC" -ne 0 ] && [ "$CACHED" = "no" ] && ok "$shape refused, nothing cached" ||
-        bad "$shape expected=refused+nothing-cached actual=rc=$RUN_RC cached=$CACHED"
+    [ "$RUN_RC" -ne 0 ] && [ "$CACHED" = "no" ] && nt_pass fetchbound.refused "$shape refused, nothing cached" ||
+        nt_fail fetchbound.refused "$shape expected=refused+nothing-cached actual=rc=$RUN_RC cached=$CACHED"
 done
 nt_result "report: fetchbound netinstall$VERDICTS nomax=${NOMAXSZ}b"
 
@@ -245,14 +264,29 @@ else
 fi
 echo "  $WSTATE"
 
+# Six cases live below, and until now every one of them simply did not happen on
+# a machine that resolves curl -- which is every machine anyone can rent, so the
+# whole branch was absent from the grid rather than exempt from it. A lane that
+# cannot reach the fallback says so per case.
+if [ "$WSTATE" != "REACHED" ]; then
+    for c in fetchbound.fallback.control fetchbound.fallback.size \
+             fetchbound.fallback.size.nocache fetchbound.fallback.clock \
+             fetchbound.fallback.clock.names fetchbound.stderr.guard; do
+        # $WSTATE already opens with "SKIP " on two of its three branches, and
+        # nt_skip prints its own; without this the log reads "SKIP: SKIP no
+        # prefer-wget binary given".
+        nt_skip "$c" "${WSTATE#SKIP }"
+    done
+fi
+
 if [ "$WSTATE" = "REACHED" ]; then
     # Control first: the branch has to work before its refusals mean anything.
     cp "$SERVE/good.cmd" "$SERVE/wgood.cmd"
     WGOOD="wgood-example-com-1$(nt_pin "$SERVE/wgood.cmd")"
     if "$(as "$WBIN" "$WGOOD")" --fetch >/dev/null 2>&1 && [ -f "$(cached_path "$WGOOD")" ]; then
-        ok "the fallback branch fetches and caches a benign payload"
+        nt_pass fetchbound.fallback.control "the fallback branch fetches and caches a benign payload"
     else
-        bad "fallback control expected=fetched+cached actual=no; its refusals below prove nothing"
+        nt_fail fetchbound.fallback.control "fallback control expected=fetched+cached actual=no; its refusals below prove nothing"
     fi
 
     # Size. Before this PR wget wrote every byte offered and netinstall said
@@ -263,10 +297,17 @@ if [ "$WSTATE" = "REACHED" ]; then
     WRC=$?
     WMSG="$(tr -d '\r' < "$WERR" | grep -a 'netinstall:' | tail -1)"
     case "$WMSG" in
-        *"sent more than"*) ok "the fallback refuses an endless body by size, and says so" ;;
-        *) bad "fallback size expected=names-the-size actual='${WMSG:-<none>}' rc=$WRC" ;;
+        *"sent more than"*) nt_pass fetchbound.fallback.size "the fallback refuses an endless body by size, and says so" ;;
+        *) nt_fail fetchbound.fallback.size "fallback size expected=names-the-size actual='${WMSG:-<none>}' rc=$WRC" ;;
     esac
-    [ -f "$(cached_path "$WSPEC")" ] && bad "fallback size expected=nothing-cached actual=cached"
+    # Said either way. This spoke only when the refusal had cached something
+    # anyway, so the run where it behaved and the run where it was never asked
+    # printed the same nothing.
+    if [ -f "$(cached_path "$WSPEC")" ]; then
+        nt_fail fetchbound.fallback.size.nocache "fallback size expected=nothing-cached actual=cached"
+    else
+        nt_pass fetchbound.fallback.size.nocache "the refused body left nothing in the cache"
+    fi
     WOUT=" size=$WRC"
 
     # Clock. wget's --timeout is per read, so a byte a second satisfies it
@@ -281,16 +322,16 @@ if [ "$WSTATE" = "REACHED" ]; then
     T1=$(date +%s)
     WEL=$((T1 - T0))
     if [ "$RUN_ALIVE" = "YES" ]; then
-        bad "fallback clock expected=refused-by-${DEADLINE}s actual=still-running at $((DEADLINE + 60))s"
+        nt_fail fetchbound.fallback.clock "fallback clock expected=refused-by-${DEADLINE}s actual=still-running at $((DEADLINE + 60))s"
     elif [ "$WEL" -gt $((DEADLINE + 40)) ]; then
-        bad "fallback clock expected=~${DEADLINE}s actual=${WEL}s"
+        nt_fail fetchbound.fallback.clock "fallback clock expected=~${DEADLINE}s actual=${WEL}s"
     else
-        ok "the fallback gives up on an endless dribble after ${WEL}s"
+        nt_pass fetchbound.fallback.clock "the fallback gives up on an endless dribble after ${WEL}s"
     fi
     if grep -qa 'held the download open' "$WERR2" 2>/dev/null; then
-        ok "and says the host held it open rather than blaming the network"
+        nt_pass fetchbound.fallback.clock.names "and says the host held it open rather than blaming the network"
     else
-        bad "fallback clock expected=names-the-deadline actual='$(tr -d '\r' < "$WERR2" | grep -a 'netinstall:' | tail -1)'"
+        nt_fail fetchbound.fallback.clock.names "fallback clock expected=names-the-deadline actual='$(tr -d '\r' < "$WERR2" | grep -a 'netinstall:' | tail -1)'"
     fi
     WOUT="$WOUT clock=${WEL}s"
 
@@ -304,15 +345,16 @@ if [ "$WSTATE" = "REACHED" ]; then
     WGOOD2="wbig-example-com-1$(nt_pin "$SERVE/wbig.cmd")"
     "$(as "$WBIN" "$WGOOD2")" --fetch >/dev/null 2>>"$BIGERR"
     if [ -f "$(cached_path "$WGOOD2")" ]; then
-        ok "a fetch whose stderr is already past the limit still succeeds"
+        nt_pass fetchbound.stderr.guard "a fetch whose stderr is already past the limit still succeeds"
         WSTDERR=OK
     else
-        bad "stderr guard expected=fetched actual=no; the child was killed by its own diagnostic"
+        nt_fail fetchbound.stderr.guard "stderr guard expected=fetched actual=no; the child was killed by its own diagnostic"
         WSTDERR=KILLED
     fi
     WOUT="$WOUT stderr-at-$(bytes_of "$BIGERR")b=$WSTDERR"
 fi
 nt_result "report: fetchbound fallback=$WSTATE$WOUT"
 
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+exit $NT_FAILURES

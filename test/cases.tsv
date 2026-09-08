@@ -289,3 +289,35 @@ envlen.emptyname.scrub	an entry with no name does not stop the scrub	gjs bsd win
 envlen.emptyname.control	and the same run without it is still the control	gjs bsd windows-launch macos-netinstall
 envlen.replace.setenv	setenv works on an environ this program allocated	gjs bsd windows-launch macos-netinstall
 envlen.replace.survived	every name set after the replace survived the exec	gjs bsd windows-launch macos-netinstall
+
+# What bounds a hostile host's bytes and seconds, from
+# netinstall/test/fetchbound.sh. The same four lanes.
+#
+# The six fetchbound.fallback.* cases and fetchbound.stderr.guard are the branch
+# where the kernel holds the bounds rather than curl, and it is reached only by a
+# binary built -DNEUTRINO_FETCH_PREFER_WGET -- because every machine anyone can
+# rent resolves curl. Until now that whole branch was simply absent from the
+# grid rather than exempt from it: a lane that could not reach it said so in
+# prose and filed nothing. They are skips with the reason on them now, so the
+# difference between "this lane has no wget" and "this lane stopped reporting"
+# is one the grid can show.
+#
+# windows-launch skips them for a second reason, and it is a better one: there
+# is no fork and no setrlimit there, so nt_fetch is nt_win_spawn and no wget
+# branch is compiled at all.
+fetchbound.server.up	the hostile server came up	gjs bsd windows-launch macos-netinstall
+fetchbound.control.benign	a benign payload from the same server is fetched and cached	gjs bsd windows-launch macos-netinstall
+fetchbound.downloader.line	--info names a downloader and its flags	gjs bsd windows-launch macos-netinstall
+fetchbound.bounds.named	--info names the bounds it is holding	gjs bsd windows-launch macos-netinstall
+fetchbound.argv.reconstructed	the argv reconstructed from --info runs	gjs bsd windows-launch macos-netinstall
+fetchbound.direct.declared	an honest oversized length writes nothing	gjs bsd windows-launch macos-netinstall
+fetchbound.direct.midbody	a body with no declared length is stopped at the limit	gjs bsd windows-launch macos-netinstall
+fetchbound.direct.lying	a lying length yields only the bytes it declared	gjs bsd windows-launch macos-netinstall
+fetchbound.control.noflag	with the bound removed the same downloader runs past it	gjs bsd windows-launch macos-netinstall
+fetchbound.refused	every hostile shape is refused and nothing is cached	gjs bsd windows-launch macos-netinstall
+fetchbound.fallback.control	the fallback branch fetches and caches a benign payload	gjs bsd windows-launch macos-netinstall
+fetchbound.fallback.size	the fallback refuses an endless body by size, and says so	gjs bsd windows-launch macos-netinstall
+fetchbound.fallback.size.nocache	and leaves nothing in the cache	gjs bsd windows-launch macos-netinstall
+fetchbound.fallback.clock	the fallback gives up on an endless dribble	gjs bsd windows-launch macos-netinstall
+fetchbound.fallback.clock.names	and names the host rather than blaming the network	gjs bsd windows-launch macos-netinstall
+fetchbound.stderr.guard	a fetch whose stderr is already past the limit still succeeds	gjs bsd windows-launch macos-netinstall
