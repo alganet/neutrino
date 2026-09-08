@@ -494,3 +494,20 @@ env.tight.dlopen	the same directory's library maps anyway	gjs kde macos-netinsta
 env.tight.ctor	and its constructor runs	gjs kde macos-netinstall
 env.tight.home	a library under $HOME is in reach	gjs kde macos-netinstall
 env.tight.home.ctor	and it runs	gjs kde macos-netinstall
+
+# The landlock floor, from netinstall/test/landlockfloor.sh. gjs alone: the
+# suite exits before it reports anything on a machine that is not linux, and it
+# needs docker to reach the other bases at all.
+#
+# One case out of a file that is otherwise all `report:` lines, and that is the
+# right proportion. What this suite produces is a survey of other distributions'
+# kernels, which is a reading somebody has to act on rather than something that
+# can be true or false. What can be asserted is the instrument: that the host's
+# own confine line could be read, because every userland row is read the same
+# way and an unreadable one would make them all say the same nothing.
+#
+# The suite still exits 0 whatever happens, deliberately -- it is a probe, not a
+# gate. The difference the conversion makes is that its one failure now files a
+# row, so a host whose --info stopped naming a confinement shows red in the grid
+# instead of emitting an annotation into a green lane.
+landlockfloor.host.abi	the host's own confine line can be read	gjs
