@@ -185,8 +185,13 @@ nt_setup() {
             # suites that open a window.
             display=off) wm=""; tk=""; nodisp=1 ;;
             display=*) wm="${d#display=}"; nodisp=0 ;;
-            gtk)       tk="--gtk" ;;
-            qt)        tk="--qt" ;;
+            # Both, where a lane asks for both. kde's default is Qt, but its
+            # attack step exports GDK_BACKEND as well, because the probe it
+            # launches is reached through the GTK walk on that machine. So these
+            # accumulate rather than overwrite -- a row saying `gtk` on a Qt lane
+            # is adding a toolkit, not choosing one.
+            gtk)       case "$tk" in *--gtk*) ;; *) tk="$tk --gtk" ;; esac ;;
+            qt)        case "$tk" in *--qt*) ;; *) tk="$tk --qt" ;; esac ;;
             timeout=*) leash="${d#timeout=}" ;;
             app=*)     APP_NAME="${d#app=}"; BUILD_NAMES="$BUILD_NAMES ${d#app=}" ;;
             build=*)   BUILD_NAMES="$BUILD_NAMES ${d#build=}" ;;
