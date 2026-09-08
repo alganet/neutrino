@@ -359,6 +359,45 @@ exerace.race.not-launched	the planted exe never runs	windows-launch
 exerace.race.app-came-up	the real app comes up in every round	windows-launch
 exerace.race.hammered	every round really hammered the window	windows-launch
 
+# The document the driver renders, from test/docswap.ps1 -- windows-content
+# alone, because the defect was the Windows driver's loadHTML dropping its
+# argument and reading the file again out of NEUTRINO_SCRIPT_PATH hundreds of
+# lines later, inside the event loop. The other three drivers render the first
+# read.
+#
+# The instrument is two markers, because one cannot measure two reads: a meta
+# tag the second read decides and a page-script constant the first read decides,
+# so a title reading `script=A doc=B` is the two reads disagreeing and nothing
+# else produces it.
+#
+# docswap.oldswap.reproduced is the half that keeps the other half honest. Each
+# individual delay is a race and gets no verdict of its own -- that is PR 22's
+# lesson about a reading that moves with load -- but the defect has to reproduce
+# at one of the three, or the swap cases above have one side and "it would have
+# failed before" is a claim again. If it ever goes red, the two reads stopped
+# being far enough apart to get between, which is worth being told.
+#
+# The two phase cases are Run-Phase's own preconditions, filed once after every
+# phase rather than once per phase. A window left over from the last phase is
+# the one that gets read -- PR 22's round 2 read one build's answer off another
+# build's title and it looked exactly like a real reading -- and the launcher
+# has to be gone before the file under it is touched.
+#
+# `gone` and `oldgone` are readings and stay readings. Removing the file cannot
+# pick which read it breaks: at a short delay it beats boot's read, the app
+# cannot read its own source, and no window comes up -- which is the same
+# "no window title" that the second read failing produces. A candidate round
+# asserted here and was right about the reading while measuring the wrong read.
+docswap.builds	all three builds could be derived	windows-content
+docswap.old-differs	the old-spelling build differs from the shipped one	windows-content
+docswap.phase.clean-start	every phase began with no window left from the last	windows-content
+docswap.phase.launcher-exited	the launcher had exited before the file was touched	windows-content
+docswap.control	the shipped build comes up and reads its own markers	windows-content
+docswap.oldcontrol	the pre-fix spelling comes up and reads its own markers	windows-content
+docswap.swap.window	a window came up at all three delays	windows-content
+docswap.swap.one-read	both markers came from one read at all three delays	windows-content
+docswap.oldswap.reproduced	the defect reproduces at at least one delay	windows-content
+
 # A failed initialisation, from test/verify-winerr.ps1 -- windows-launch alone,
 # because the failure it provokes is the WebView2 package download 404ing and no
 # other lane has that path to fail on.
