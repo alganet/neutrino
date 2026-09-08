@@ -906,6 +906,26 @@ keeping: a helper handed its id through a variable is the one thing the registry
 scan in `selftest.sh` cannot follow, so anything that must stay is named
 `assert_*`, which that scan knows.
 
+The Windows suites speak it too, and dot-source it rather than sourcing it:
+
+```powershell
+. (Join-Path $PSScriptRoot "lib\harness.ps1")
+
+nt_pass attack.wire.control "wire (control) = LIVE"
+nt_skip attack.nav.refused  "nav = MISSING, which this platform records rather than asserts"
+nt_finish
+```
+
+The six words are spelled the same in both languages, and that is the whole of
+why there is one scan and not two: `nt_pass attack.reported "..."` is the same
+sequence of whitespace-separated tokens either way, so `selftest.sh` reads a
+converted `.ps1` without knowing that it is doing so, and the canary that says
+how many calls it found covers both trees at once. A Verb-Noun spelling would
+have needed a second scan, and a second scan is a second thing that can quietly
+read nothing. Dot-sourcing is the mechanism on that side: `.` runs the file in
+the caller's scope, so the counters `nt_finish` exits on are the suite's own,
+where `&` would give every suite a private set that always read zero.
+
 Each call writes twice: the line it always wrote, so job logs and everything
 reading them are unchanged, and a row to `$NT_RESULTS` carrying the id.
 
@@ -1016,8 +1036,9 @@ netinstall to run one.
 - `neutrino/`: the launcher, split by language under a polyglot skeleton -- see `neutrino/POLYGLOT.md`
 - `neutrino/assemble.sh`: the assembler (neutrino/ + your overlay -> .cmd)
 - `test/`: the suites, and `test/lib/` the harness they share -- `harness.sh`
-  (the vocabulary), `analyse.sh` (the standards assertions, one copy for every
-  lane), `display.sh`, `selftest.sh` and the recorded runs it replays.
+  and `harness.ps1` (the vocabulary, once per language), `analyse.sh` (the
+  standards assertions, one copy for every lane), `display.sh`, `selftest.sh`
+  and the recorded runs it replays.
   `test/cases.tsv` is the case registry, `test/suites.tsv` and `test/apps.tsv`
   are what each lane runs and what it builds, and `test/run.sh` and
   `test/step.sh` are what read them
