@@ -61,6 +61,7 @@ neutrinonavrefuse	mkapp	neutrinoearly.js	--testing	-
 neutrinolivetheme	mkapp	neutrinolivetheme.js	--testing	-
 neutrinoloaders	mkapp	neutrinoloaders.js	--testing	-
 neutrinoloaders-default	mkapp	neutrinoloaders.js	-	-
+neutrinoappdir	mkapp	neutrinoloaders.js	--testing	-
 neutrinostdgeom	mkapp	neutrinostdgeom.js	--testing	-
 neutrinostdgeom-none	mkapp	neutrinostdgeom.js	--testing --decorations=none	-
 neutrinostddoc	mkapp	neutrinostddoc.js	--testing	-
