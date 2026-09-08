@@ -85,6 +85,15 @@
 # behind it is the failure this project has a name for.
 
 gjs	*	display=metacity gtk timeout=480
+gjs	lanes	display=off timeout=300 build=neutrinotest-release	bash test/lanes.sh test/neutrinotest.cmd
+gjs	assemble	display=off timeout=300	bash test/assemble.sh
+gjs	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	bash test/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd
+gjs	attack	app=neutrinoattack reap=neutrinoattack:ATTACK	bash test/verify-attack.sh
+gjs	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots
+gjs	themescheme	build=neutrinostdtheme	bash test/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots
+gjs	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots
+gjs	fontflip	soft	bash test/fontflip.sh gtk 8
+gjs	fontlive	timeout=600 build=neutrinolivefont	env NT_FONTFLIP_LIVE_ONLY=1 bash test/fontflip.sh gtk 8 test/neutrinolivefont.cmd
 gjs	stddoc	app=neutrinostddoc	bash test/verify-std.sh doc ~/screenshots
 gjs	stdwin	app=neutrinostdwin timeout=600	bash test/verify-std.sh win ~/screenshots
 gjs	stdtheme	app=neutrinostdtheme	bash test/verify-std.sh theme ~/screenshots

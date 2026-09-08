@@ -34,10 +34,12 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 NT_WM=""; NT_QT=0; NT_GTK=0; NT_LOG=""; NT_TIMEOUT=""; NT_APP=""
+NT_CAT=""; NT_REAP=""
 
 usage() {
     echo "usage: step.sh [--display WM|none] [--qt] [--gtk] [--log NAME]" >&2
-    echo "               [--app ARTIFACT] [--timeout SECS] -- <command> [args...]" >&2
+    echo "               [--app ARTIFACT] [--cat NAME]... [--reap PAT[:PREFIX]]" >&2
+    echo "               [--timeout SECS] -- <command> [args...]" >&2
     exit 2
 }
 
@@ -51,6 +53,10 @@ while [ $# -gt 0 ]; do
         --log=*) NT_LOG="${1#--log=}"; shift ;;
         --app) NT_APP="${2:-}"; shift 2 ;;
         --app=*) NT_APP="${1#--app=}"; shift ;;
+        --cat) NT_CAT="$NT_CAT ${2:-}"; shift 2 ;;
+        --cat=*) NT_CAT="$NT_CAT ${1#--cat=}"; shift ;;
+        --reap) NT_REAP="${2:-}"; shift 2 ;;
+        --reap=*) NT_REAP="${1#--reap=}"; shift ;;
         --timeout) NT_TIMEOUT="${2:-}"; shift 2 ;;
         --timeout=*) NT_TIMEOUT="${1#--timeout=}"; shift ;;
         --) shift; break ;;
@@ -121,6 +127,14 @@ if [ -n "$NT_APP" ]; then
     NT_APP_LOG="$HOME/$(basename "${NT_APP%.cmd}")-app.log"
     bash "$NT_APP" > "$NT_APP_LOG" 2>&1 &
     NT_APP_PID=$!
+    # The pid, to the suite that is about to watch it.
+    #
+    # verify-macos.sh is the one verifier that asserts something about the
+    # *process* rather than the window -- walk.close.process-exits, whether the
+    # launcher exits after window.close() -- and it reads $APP_PID. The macos
+    # step launched the app itself for that reason alone. It does not have to:
+    # the thing that starts the app is the thing that knows its pid.
+    export APP_PID="$NT_APP_PID"
     # Reaped however this exits, including on the leash firing or a Ctrl-C.
     trap 'nt_app_reap' EXIT INT TERM
 fi
@@ -191,11 +205,37 @@ run_it() {
 if [ -n "$NT_LOGFILE" ]; then
     run_it "$@" > "$NT_LOGFILE" 2>&1
     RC=$?
-    cat "$NT_LOGFILE"
 else
     run_it "$@"
     RC=$?
 fi
+
+# The window, gone before the next suite starts looking for one.
+#
+# `pkill` returns when the signal is delivered, not when the process has gone,
+# and a webview takes longer to tear a window down than a shell takes to run its
+# next line -- so on kde the attack probe's window was on the display for every
+# capture the lane took afterwards. test/reap.sh waits and then escalates; six
+# steps called it by hand and this is the same call.
+#
+# Before the logs, so that anything it says about a window that needed SIGKILL
+# lands next to the suite that left it.
+if [ -n "$NT_REAP" ]; then
+    bash "$HERE/reap.sh" "${NT_REAP%%:*}" "$(printf '%s' "$NT_REAP" | awk -F: 'NF>1{print $2}')"
+fi
+
+# The logs a suite wrote besides its own, in front of its own.
+#
+# decoflip and themeflip each launch a probe twice and leave a log per half --
+# `deco-a`/`deco-b`, `flip-a`/`flip-b` -- and the differential they print only
+# means something beside them. Eight steps ended `cat ~/flip-a.log ~/flip-b.log
+# ~/themediff.log`, in that order, and the order is the point: the halves are
+# the evidence and the differential is the reading.
+for c in $NT_CAT; do
+    cat "$HOME/$c.log" 2>/dev/null || true
+done
+
+[ -n "$NT_LOGFILE" ] && cat "$NT_LOGFILE"
 
 # 124 is what `timeout` exits when it fires, and it is worth saying so: a suite
 # that was killed at its leash and a suite that reported 124 failures are

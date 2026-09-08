@@ -575,8 +575,8 @@ BADCOLS="$(awk -F'\t' '!/^#/ && NF { if (NF < 3 || NF > 4) print FILENAME ":" FN
 [ -z "$BADCOLS" ] && ok "every suites.tsv row has three or four columns" \
     || bad "suites.tsv rows with the wrong column count:$(echo $BADCOLS)"
 
-BADCOLS="$(awk -F'\t' '!/^#/ && NF && NF != 4 { print FILENAME ":" FNR }' "$APPS_TSV")"
-[ -z "$BADCOLS" ] && ok "every apps.tsv row has four columns" \
+BADCOLS="$(awk -F'\t' '!/^#/ && NF && NF != 5 { print FILENAME ":" FNR }' "$APPS_TSV")"
+[ -z "$BADCOLS" ] && ok "every apps.tsv row has five columns" \
     || bad "apps.tsv rows with the wrong column count:$(echo $BADCOLS)"
 
 # Every artifact a suite asks for is declared, and every declared artifact is
@@ -609,7 +609,7 @@ done
 # The sources exist. mkapp.sh would say so too, but it would say it on a runner
 # eight minutes into a lane rather than here.
 MISSING=""
-while IFS="$(printf '\t')" read -r name builder source flags; do
+while IFS="$(printf '\t')" read -r name builder source flags outname; do
     case "$name" in \#*|"") continue ;; esac
     [ "$builder" = "mkapp" ] || continue
     [ -f "$ROOT/test/$source" ] || MISSING="$MISSING $source"

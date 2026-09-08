@@ -113,8 +113,15 @@ fi
 
 BUILT=""
 
+# The artifact's filename for a row, defaulting to the row's own name.
+nt_app_out() {
+    awk -F'\t' -v n="$1" '!/^#/ && NF && $1 == n {
+        print ($5 == "" || $5 == "-") ? n ".cmd" : $5; exit
+    }' "$APPS_FILE"
+}
+
 nt_build() {
-    local name="$1" line builder source flags out
+    local name="$1" line builder source flags outname out
     # Memoised. A lane runs five suites off four artifacts and the same one is
     # named by two rows; building it twice is thirty seconds of a runner for a
     # file that is already on disk and byte-identical.
@@ -126,8 +133,10 @@ nt_build() {
     builder="$(printf '%s' "$line" | awk -F'\t' '{print $2}')"
     source="$(printf '%s' "$line" | awk -F'\t' '{print $3}')"
     flags="$(printf '%s' "$line" | awk -F'\t' '{print $4}')"
+    outname="$(printf '%s' "$line" | awk -F'\t' '{print $5}')"
     [ "$flags" = "-" ] && flags=""
-    out="$HERE/$name.cmd"
+    [ -z "$outname" ] || [ "$outname" = "-" ] && outname="$name.cmd"
+    out="$HERE/$outname"
 
     case "$builder" in
         mkapp)
@@ -157,26 +166,47 @@ STEP_ARGS=""
 APP_NAME=""
 BUILD_NAMES=""
 SETUP_BAD=""
+SOFT=0
 
 nt_setup() {
-    local wm="" tk="" leash="" d
-    APP_NAME=""; BUILD_NAMES=""; SETUP_BAD=""
+    local wm="" tk="" leash="" reap="" cats="" nodisp=0 d
+    APP_NAME=""; BUILD_NAMES=""; SETUP_BAD=""; SOFT=0
     for d in $1 $2; do
         [ "$d" = "-" ] && continue
         case "$d" in
-            display=*) wm="${d#display=}" ;;
+            # `display=off` is not `display=none`, and the difference cost a
+            # reading to notice. test/lib/display.sh's `none` means an X server
+            # with no window manager -- it is for the lanes that assert on the
+            # walk rather than on the frame, and it still starts Xvfb. `off` is
+            # this file's word for a suite that wants no display at all:
+            # lanes.sh drives stub engines and assemble.sh reads files, and
+            # neither had a DISPLAY in the workflow. It clears the toolkit too,
+            # because a lane default that says `gtk` is saying it about the
+            # suites that open a window.
+            display=off) wm=""; tk=""; nodisp=1 ;;
+            display=*) wm="${d#display=}"; nodisp=0 ;;
             gtk)       tk="--gtk" ;;
             qt)        tk="--qt" ;;
             timeout=*) leash="${d#timeout=}" ;;
             app=*)     APP_NAME="${d#app=}"; BUILD_NAMES="$BUILD_NAMES ${d#app=}" ;;
             build=*)   BUILD_NAMES="$BUILD_NAMES ${d#build=}" ;;
+            cat=*)     cats="$cats --cat ${d#cat=}" ;;
+            reap=*)    reap="${d#reap=}" ;;
+            # continue-on-error, spelled once. Four steps carry it in the
+            # workflow and every one of them is a probe: it reports a reading
+            # nobody asserts, so a red one is a lane that measured something
+            # rather than a lane that failed.
+            soft)      SOFT=1 ;;
             *)         SETUP_BAD="$d"; return 1 ;;
         esac
     done
     STEP_ARGS=""
+    [ "$nodisp" = 1 ] && { wm=""; tk=""; }
     [ -n "$wm" ]    && STEP_ARGS="$STEP_ARGS --display $wm"
     [ -n "$tk" ]    && STEP_ARGS="$STEP_ARGS $tk"
     [ -n "$leash" ] && STEP_ARGS="$STEP_ARGS --timeout $leash"
+    [ -n "$reap" ]  && STEP_ARGS="$STEP_ARGS --reap $reap"
+    [ -n "$cats" ] && STEP_ARGS="$STEP_ARGS$cats"
     return 0
 }
 
@@ -211,7 +241,12 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     fi
 
     APP_ARG=""
-    [ -n "$APP_NAME" ] && APP_ARG="--app $HERE/$APP_NAME.cmd"
+    if [ -n "$APP_NAME" ]; then
+        # The filename apps.tsv gives it, which is not always the row's name:
+        # neutrinotest-release and neutrinotest-testing both write
+        # neutrinotest.cmd.
+        APP_ARG="--app $HERE/$(nt_app_out "$APP_NAME")"
+    fi
 
     if [ "$DRY" = 1 ]; then
         echo "$suite: bash $HERE/step.sh$STEP_ARGS --log $suite $APP_ARG -- $command"
@@ -237,6 +272,14 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     SUITE_SECS=$((SECONDS - SUITE_T0))
     TIMINGS="$TIMINGS$(printf '%5ds  %s\n' "$SUITE_SECS" "$suite")
 "
+    if [ "$RC" != 0 ] && [ "$SOFT" = 1 ]; then
+        # Said, and not counted. The reading is still in the log and the
+        # pictures are still in the sheet; what a probe must not do is turn a
+        # lane red for having measured something.
+        echo "  $suite: $RC failure(s), not counted (soft)"
+        RC=0
+    fi
+
     if [ "$RC" != 0 ]; then
         echo "  $suite: $RC failure(s)"
         # A red step used to name itself in the GitHub UI. A red lane names the
