@@ -48,6 +48,23 @@ BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
 [ -n "$TBIN" ] && [ -x "$TBIN" ] && TBIN="$(cd "$(dirname "$TBIN")" && pwd)/$(basename "$TBIN")"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
+# harness.sh after lib.sh, and the order is the mechanism: both define nt_fail
+# and they disagree about arity, so the one sourced second is the one this file
+# speaks. nt_result and nt_note are lib.sh's and are not shadowed -- the report
+# lines stay readings, and a note about the instrument stays a note.
+#
+# The eighth netinstall suite through the conversion and the most branch-heavy.
+# Almost nothing here is asked unconditionally: the downloader has to be curl,
+# the curl has to honour CURL_HOME, a config location has to be both honoured
+# and readable under the fetch phase, and the fallback branch needs a wget. Each
+# of those gates now reports per case rather than printing one line of prose and
+# filing nothing, for the reason writable.sh and envlen.sh grew the same
+# treatment: the grid reads rows, and an exemption that never becomes a row is
+# indistinguishable from a lane that stopped reporting.
+. "$(cd "$HERE/../../test/lib" && pwd)/harness.sh"
+# The annotation lib.sh's nt_fail emitted, kept by name so a red netinstall check
+# still says so on the run page.
+NT_ANNOTATE=netinstall
 
 WORK="$(mktemp -d)"
 SERVE="$WORK/serve"
@@ -55,7 +72,6 @@ mkdir -p "$SERVE" "$WORK/bin" "$WORK/cfg"
 export NEUTRINO_HOME="$WORK/home"
 BLOBS="$NEUTRINO_HOME/blobs"
 
-FAILURES=0
 LIMIT=$((16 * 1024 * 1024))
 
 # What each lane measured before anything was written. Windows curl 8.16.0
@@ -94,8 +110,10 @@ case "$(uname -s)" in
         WANT_OUT=refused ;;
 esac
 
-ok()  { echo "  PASS: $*"; }
-bad() { nt_fail "$*"; FAILURES=$((FAILURES + 1)); }
+# ok() and bad() are gone rather than given an id parameter, the same as in
+# fetchbound.sh. They were two-word aliases for nt_pass and nt_fail, and a
+# wrapper is the one thing that hides an id from the registry scan in
+# test/lib/selftest.sh. The call sites say what they assert.
 bytes_of() { [ -f "$1" ] && wc -c < "$1" | tr -d ' ' || echo 0; }
 
 # What a run said for itself, short enough to survive as an annotation. The
@@ -124,10 +142,11 @@ for i in $(seq 1 100); do
     sleep 0.1
 done
 if [ "$UP" != "YES" ]; then
-    bad "the hostile server on port $PORT never came up; nothing below would mean anything"
-    echo "=== Results: $FAILURES failure(s) ==="
-    exit "$FAILURES"
+    nt_fail fetchconf.server.up "the hostile server on port $PORT never came up; nothing below would mean anything"
+    echo "=== Results: $NT_FAILURES failure(s) ==="
+    exit "$NT_FAILURES"
 fi
+nt_pass fetchconf.server.up "the hostile server answered on port $PORT"
 
 as()          { nt_as "$1" "$2" "$WORK/bin"; }
 cached_path() { echo "$NEUTRINO_HOME/apps/$(nt_appkey "$1")/${1%%-*}.cmd"; }
@@ -175,9 +194,9 @@ clean_home
 BASE_RC=1
 if "$GOODBIN" --fetch >/dev/null 2>&1 && [ -f "$(cached_path "$GOOD")" ]; then
     BASE_RC=0
-    ok "the server serves, the fetch verifies, the blob is cached"
+    nt_pass fetchconf.control.benign "the server serves, the fetch verifies, the blob is cached"
 else
-    bad "benign payload expected=fetched+cached actual=no; every reading below is vacuous"
+    nt_fail fetchconf.control.benign "benign payload expected=fetched+cached actual=no; every reading below is vacuous"
 fi
 
 echo "=== The downloader this platform resolved ==="
@@ -200,8 +219,9 @@ OFLAG="$(printf '%s\n' "$DLINE" | awk '{print $(NF - 2)}')"
 FLAGS=""
 if [ "${NTOK:-0}" -ge 5 ] && { [ "$OFLAG" = "-o" ] || [ "$OFLAG" = "-O" ]; }; then
     FLAGS="$(printf '%s\n' "$DLINE" | awk '{for (i = 2; i <= NF - 3; i++) printf "%s%s", $i, (i < NF - 3 ? " " : "")}')"
+    nt_pass fetchconf.downloader.line "--info's downloader line ends in <output flag> <dest> <url>"
 else
-    bad "--info's downloader line does not end in <output flag> <dest> <url>: '${DLINE:-<none>}'; the reconstructions below are skipped"
+    nt_fail fetchconf.downloader.line "--info's downloader line does not end in <output flag> <dest> <url>: '${DLINE:-<none>}'; the reconstructions below are skipped"
 fi
 CLINE="$(printf '%s\n' "$INFO" | sed -n 's/^config  *//p')"
 echo "  downloader $DLINE"
@@ -217,8 +237,8 @@ echo "  config     ${CLINE:-<none>}"
 # the arm in fetch.c that printed it is gone for the same reason this one is.
 WANT_CFG="not suppressed"
 case "$CLINE" in
-    *"$WANT_CFG"*) ok "--info names what the downloader reads besides its argv" ;;
-    *) bad "--info config expected=*${WANT_CFG}* actual='${CLINE:-<none>}'" ;;
+    *"$WANT_CFG"*) nt_pass fetchconf.info.config "--info names what the downloader reads besides its argv" ;;
+    *) nt_fail fetchconf.info.config "--info config expected=*${WANT_CFG}* actual='${CLINE:-<none>}'" ;;
 esac
 
 # Whether the argv suppresses the downloader's config. It does not, on purpose
@@ -311,6 +331,11 @@ CURLHOME_OK=no
 if [ "$TOOL" != "curl" ]; then
     echo "  SKIP: this platform did not resolve curl (tool=$TOOL)"
     LOCS=" tool=$TOOL"
+    # Both of the cases below this gate are about curl's own configuration
+    # files. A lane that resolved something else has no answer to give, which is
+    # a different thing from having none recorded.
+    nt_skip fetchconf.kctl "this platform did not resolve curl (tool=$TOOL)"
+    nt_skip fetchconf.locations "this platform did not resolve curl (tool=$TOOL)"
 else
     # Three levels, so a negative can be told apart from a broken probe:
     #   -K            -- the file's contents are valid for this curl
@@ -319,10 +344,10 @@ else
     write_proxy_rc "$WORK/cfg/explicit"
     if "$DBIN" -sS -K "$(nt_native "$WORK/cfg/explicit")" -o /dev/null \
             "$NEUTRINO_TEST_ORIGIN/good.cmd" >/dev/null 2>&1; then
-        bad "-K control expected=refused actual=fetched; this curl ignored a config it was handed by name, so every 'no' below is unreadable"
+        nt_fail fetchconf.kctl "-K control expected=refused actual=fetched; this curl ignored a config it was handed by name, so every 'no' below is unreadable"
         KCTL=IGNORED
     else
-        ok "handed the file by name, this curl takes the proxy from it"
+        nt_pass fetchconf.kctl "handed the file by name, this curl takes the proxy from it"
         KCTL=OK
     fi
 
@@ -406,10 +431,12 @@ fi
 
 nt_result "report: fetchconf tool=$TOOL ver=${VER:-?} argv-suppresses=$ARGVQ base=$BASE_RC kctl=${KCTL:-n/a} direct=${DIRECT:-n/a}"
 nt_result "report: fetchconf locations$LOCS"
-if [ "$LOCS" = "$WANT_LOCS" ]; then
-    ok "every configuration location reads exactly as measured"
-else
-    bad "locations expected='$WANT_LOCS' actual='$LOCS'"
+if [ "$TOOL" = "curl" ]; then
+    if [ "$LOCS" = "$WANT_LOCS" ]; then
+        nt_pass fetchconf.locations "every configuration location reads exactly as measured"
+    else
+        nt_fail fetchconf.locations "locations expected='$WANT_LOCS' actual='$LOCS'"
+    fi
 fi
 
 # ------------------------------------------------ does the config beat the argv
@@ -443,7 +470,10 @@ if [ "${DIRECT:-no}" = "READ" ]; then
             -o "$WORK/ovr-size.bin" "$NEUTRINO_TEST_ORIGIN/chunked.cmd"
         SZ=$(bytes_of "$WORK/ovr-size.bin")
         if [ "$SZ" -le "$LIMIT" ]; then
-            ok "a config asking for 999999999 bytes does not raise the argv's limit (${SZ}b)"
+            # The same fact the verdict below states, measured. One id, because
+            # it is one claim about one measurement -- see the note on
+            # envlen.trunc.keep255 for why that is not two cases.
+            nt_pass fetchconf.override.size "a config asking for 999999999 bytes does not raise the argv's limit (${SZ}b)"
             OVRSIZE="argv/${SZ}b"
         else
             OVRSIZE="config/${SZ}b"
@@ -476,13 +506,25 @@ nt_result "report: fetchconf override $OVR"
 # print them. This is that claim asked with a config file trying to move both,
 # which is the regression this suite exists to hold: curl parses the config
 # first, so a last-wins option is won by the command line.
+#
+# Skipped rather than failed where the question could not be put. These two used
+# to be asserted unconditionally against $OVR, so a lane whose curl does not
+# honour CURL_HOME printed "SKIP: ..." in prose a few lines up and then went red
+# twice on `actual=unasked` -- a lane reporting a failure about a measurement it
+# had just said it could not take.
 case "$OVR" in
-    *"size=argv/"*) ok "a config cannot raise the argv's size bound" ;;
-    *) bad "override size expected=argv actual='$OVR'" ;;
-esac
-case "$OVR" in
-    *"time=argv/"*) ok "a config cannot lower the argv's clock either" ;;
-    *) bad "override time expected=argv actual='$OVR'" ;;
+    unasked*)
+        nt_skip fetchconf.override.size "this curl does not honour CURL_HOME even unconfined, so the argv was never contested"
+        nt_skip fetchconf.override.time "this curl does not honour CURL_HOME even unconfined, so the argv was never contested" ;;
+    *)
+        case "$OVR" in
+            *"size=argv/"*) nt_pass fetchconf.override.size "a config cannot raise the argv's size bound" ;;
+            *) nt_fail fetchconf.override.size "override size expected=argv actual='$OVR'" ;;
+        esac
+        case "$OVR" in
+            *"time=argv/"*) nt_pass fetchconf.override.time "a config cannot lower the argv's clock either" ;;
+            *) nt_fail fetchconf.override.time "override time expected=argv actual='$OVR'" ;;
+        esac ;;
 esac
 
 # --------------------------------------------- and the option that is not last-wins
@@ -555,6 +597,9 @@ if [ -n "$CFGENV" ]; then
     FCONF="$(printf '%s\n' "$INFO" | sed -n 's/^fetch  *//p' | sed 's/,* writes confined to .*//' | cut -c1-70)"
 else
     echo "  SKIP: no config location is both honoured and readable under the fetch phase"
+    for c in fetchconf.steal.control fetchconf.steal.message fetchconf.steal.oldsentence; do
+        nt_skip "$c" "no config location is both honoured and readable under the fetch phase"
+    done
 fi
 nt_result "report: fetchconf output cfg=$CFGWHERE in[$STEAL_IN] out[$STEAL_OUT] fetchline=${FCONF:-?}"
 nt_result "report: fetchconf output-tight in[${STEAL_TIN:-unasked}] out[$STEAL_TIGHT]"
@@ -572,31 +617,46 @@ if [ -n "$CFGENV" ]; then
         # there is nowhere -- it is that the *payload* still arrives through the
         # same lowered child, which is PAYLOADCURL_OK below and would be absent
         # if the confinement had simply broken the downloader.
+        # One id with two expectations, the same shape as
+        # envlen.trunc.keep255: both branches read $STEAL_IN, and what differs
+        # is what this platform's confinement should have done with it.
         case "$STEAL_IN" in
-            *"/0b/"*) ok "a config's output flag cannot land even inside blobs" ;;
-            *) bad "steal expected=0b inside blobs actual='$STEAL_IN'; the file grant is wider than the payload file" ;;
+            *"/0b/"*) nt_pass fetchconf.steal.control "a config's output flag cannot land even inside blobs" ;;
+            *) nt_fail fetchconf.steal.control "steal expected=0b inside blobs actual='$STEAL_IN'; the file grant is wider than the payload file" ;;
         esac
         # And the sentence is about a download that failed, not about a
         # downloader that succeeded and wrote nothing -- a different path, so
         # the assertion below does not apply and is not silently skipped.
+        # A skip and not only a note. The note says it in prose and the grid
+        # reads rows; windows-launch is a lane both of these cases are expected
+        # on, so without a row they are holes rather than exemptions.
         nt_note "the 'wrote nothing to' sentence is not reached here: the steal fails in curl, before netinstall inspects a destination"
+        nt_skip fetchconf.steal.message "the steal fails in curl here, before netinstall inspects a destination"
+        nt_skip fetchconf.steal.oldsentence "the steal fails in curl here, before netinstall inspects a destination"
     else
         # The control, first: the steal has to work somewhere, or "refused"
         # below is a mechanism that was never running.
         case "$STEAL_IN" in
-            *"/31b/"*) ok "a config's output flag does take the payload" ;;
-            *) bad "steal control expected=31b actual='$STEAL_IN'; the verdicts below prove nothing" ;;
+            *"/31b/"*) nt_pass fetchconf.steal.control "a config's output flag does take the payload" ;;
+            *) nt_fail fetchconf.steal.control "steal control expected=31b actual='$STEAL_IN'; the verdicts below prove nothing" ;;
         esac
 
         # netinstall used to answer this with "payload too large or unreadable"
         # -- a true sentence about a file that is not there.
         if grep -aq 'wrote nothing to' "$WORK/steal-in.err" 2>/dev/null; then
-            ok "and netinstall says the downloader wrote nothing where it was told"
+            nt_pass fetchconf.steal.message "and netinstall says the downloader wrote nothing where it was told"
         else
-            bad "steal message expected=names-the-empty-destination actual='$(said "$WORK/steal-in.err")'"
+            nt_fail fetchconf.steal.message "steal message expected=names-the-empty-destination actual='$(said "$WORK/steal-in.err")'"
         fi
+        # Said either way. This spoke only when the superseded sentence had come
+        # back, so the run where it had not and the run where nothing looked
+        # printed the same nothing -- and the sentence it guards against is one
+        # that was true about a file that is not there, which is the whole
+        # reason this case exists.
         if grep -aq 'payload too large or unreadable' "$WORK/steal-in.err" 2>/dev/null; then
-            bad "steal message: the old sentence is still being printed for a file that was never written"
+            nt_fail fetchconf.steal.oldsentence "steal message: the old sentence is still being printed for a file that was never written"
+        else
+            nt_pass fetchconf.steal.oldsentence "the superseded sentence is not printed for a file that was never written"
         fi
     fi
 
@@ -694,6 +754,12 @@ else
 fi
 echo "  $WSTATE"
 
+if [ "$WSTATE" != "REACHED" ]; then
+    # $WSTATE already opens with "SKIP " on two of its three branches, and
+    # nt_skip prints its own.
+    nt_skip fetchconf.wget.control "${WSTATE#SKIP }"
+fi
+
 if [ "$WSTATE" = "REACHED" ]; then
     WGOODBIN="$(as "$WBIN" "$GOOD")"
     WDBIN="$(printf '%s\n' "$WINFO" | sed -n 's/^downloader  *//p' | awk '{print $1}')"
@@ -703,8 +769,8 @@ if [ "$WSTATE" = "REACHED" ]; then
     clean_home
     WBASE=no
     "$WGOODBIN" --fetch >/dev/null 2>&1 && [ -f "$(cached_path "$GOOD")" ] && WBASE=yes
-    [ "$WBASE" = "yes" ] && ok "the fallback branch fetches a benign payload" ||
-        bad "fallback control expected=fetched actual=no; its readings below prove nothing"
+    [ "$WBASE" = "yes" ] && nt_pass fetchconf.wget.control "the fallback branch fetches a benign payload" ||
+        nt_fail fetchconf.wget.control "fallback control expected=fetched actual=no; its readings below prove nothing"
 
     # wget is not curl and the dead-proxy detector needs a second reading here.
     # GNU wget *fails* when $WGETRC names a file it cannot read, so on a
@@ -820,5 +886,6 @@ if [ "$WSTATE" = "REACHED" ]; then
 fi
 nt_result "report: fetchconf wget $WSTATE$WOUT"
 
-echo "=== Results: $FAILURES failure(s) ==="
-exit $FAILURES
+# $NT_FAILURES rather than a counter of this file's own: nt_fail counts.
+echo "=== Results: $NT_FAILURES failure(s) ==="
+exit $NT_FAILURES
