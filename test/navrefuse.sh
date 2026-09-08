@@ -56,6 +56,31 @@ fi
 APP="$(cd "$(dirname "$APP")" && pwd)/$(basename "$APP")"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# The six words. Nine assertions, none of which reached a case id, on the one
+# suite in the tree that holds a build against itself with the refusal deleted
+# -- so the lane could say the macOS navigation guard works and the grid had
+# nothing to show for it.
+#
+# Sourced here and not further down, because $NT_STATUS_FILE is read a few lines
+# below and this file runs under `set -u`: with the source after the use, the
+# lane reported `NT_STATUS_FILE: unbound variable` and one failure. `bash -n`
+# does not catch a use before a definition and no offline check runs this suite,
+# so the macos lane was the only thing that could say so.
+. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
+
+report() { nt_report "$*"; }
+
+# The three gates each ended the run, and each left the six findings below them
+# unreported.
+skip_findings() {
+    nt_skip navrefuse.control.unguarded "$1"
+    nt_skip navrefuse.app.came-up "$1"
+    nt_skip navrefuse.held "$1"
+    nt_skip navrefuse.said "$1"
+    nt_skip navrefuse.old.held "$1"
+    nt_skip navrefuse.old.said "$1"
+}
+
 # One engine has this bridge and one driver is written against it.
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "report: not Darwin; the JXA bridge is the only one with this rule"
@@ -75,26 +100,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The six words. Nine assertions, none of which reached a case id, on the one
-# suite in the tree that holds a build against itself with the refusal deleted
-# -- so the lane could say the macOS navigation guard works and the grid had
-# nothing to show for it.
-. "$(cd "$(dirname "$0")" && pwd)/lib/harness.sh"
-
 WAIT=45
-
-report() { nt_report "$*"; }
-
-# The three gates each ended the run, and each left the six findings below them
-# unreported.
-skip_findings() {
-    nt_skip navrefuse.control.unguarded "$1"
-    nt_skip navrefuse.app.came-up "$1"
-    nt_skip navrefuse.held "$1"
-    nt_skip navrefuse.said "$1"
-    nt_skip navrefuse.old.held "$1"
-    nt_skip navrefuse.old.said "$1"
-}
 
 # What the control deletes. Matched without the spelling on the end -- neither
 # `;` nor `();` -- on purpose: run against the build before the fix this then
