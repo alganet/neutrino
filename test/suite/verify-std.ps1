@@ -80,7 +80,7 @@ public class StdWinAPI {
 "@
 
 if (-not $AppName) { $AppName = "neutrinostd$Probe" }
-if (-not $AppDir) { $AppDir = Join-Path $PSScriptRoot "..\neutrinostd$Probe" }
+if (-not $AppDir) { $AppDir = Join-Path $PSScriptRoot "..\out\neutrinostd$Probe" }
 $FirstTimeout = 240
 # Thirteen states at 1500 ms, plus the settles and the fullscreen wait, is over
 # twenty seconds before the first window is even counted. Sized to the app

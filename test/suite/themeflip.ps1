@@ -27,7 +27,7 @@
 # are taken once, in one language, for every lane.
 
 param(
-    [string]$Artifact = ".\test\neutrinostdtheme.cmd",
+    [string]$Artifact = ".\test\out\neutrinostdtheme.cmd",
     [string]$ScreenshotDir = $env:USERPROFILE,
     [string]$LogDir = $HOME
 )

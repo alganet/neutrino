@@ -63,15 +63,15 @@
 # is over the runs after it, which is what "opening the app again" costs.
 #
 # Usage:
-#   bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/neutrinotime.cmd
-#   pwsh test/suite/launchtime.ps1 -Artifact test\neutrinotime.cmd -Runs 5
+#   bash test/build/mkapp.sh --testing test/probe/neutrinoloaders.js test/out/neutrinotime.cmd
+#   pwsh test/suite/launchtime.ps1 -Artifact test\out\neutrinotime.cmd -Runs 5
 #
 # The app has to be a --testing build: the trace channel is what the two inner
 # phases are read from, and a release build does not have one. Without it the
 # outer numbers still land and the breakdown says so.
 
 param(
-    [string]$Artifact = (Join-Path $PSScriptRoot "..\neutrinotime.cmd"),
+    [string]$Artifact = (Join-Path $PSScriptRoot "..\out\neutrinotime.cmd"),
     [int]$Runs = 5,
     # The title the app sets when it has rendered. This is the only signal
     # from outside that the content is actually up: a window handle exists

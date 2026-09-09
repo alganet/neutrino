@@ -97,54 +97,54 @@
 # behind it is the failure this project has a name for.
 
 gjs	*	display=metacity gtk timeout=480
-gjs	lanes	display=off timeout=300 build=neutrinotest-release	bash test/suite/lanes.sh test/neutrinotest.cmd
+gjs	lanes	display=off timeout=300 build=neutrinotest-release	bash test/suite/lanes.sh test/out/neutrinotest.cmd
 gjs	assemble	display=off timeout=300	bash test/suite/assemble.sh
-gjs	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	bash test/suite/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd
+gjs	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	bash test/suite/loaders.sh test/out/neutrinoloaders.cmd test/out/neutrinoloaders-default.cmd
 gjs	walk	timeout=900 app=neutrinotest-release	bash test/suite/verify-linux.sh ~/screenshots
 gjs	attack	app=neutrinoattack reap=neutrinoattack:ATTACK	bash test/suite/verify-attack.sh
-gjs	early	build=neutrinoearly	bash test/suite/early.sh test/neutrinoearly.cmd
-gjs	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/suite/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots
-gjs	themescheme	build=neutrinostdtheme	bash test/suite/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots
-gjs	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/suite/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots
+gjs	early	build=neutrinoearly	bash test/suite/early.sh test/out/neutrinoearly.cmd
+gjs	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/suite/decoflip.sh test/out/neutrinostdgeom.cmd test/out/neutrinostdgeom-none.cmd ~/screenshots
+gjs	themescheme	build=neutrinostdtheme	bash test/suite/themescheme.sh test/out/neutrinostdtheme.cmd ~/screenshots
+gjs	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/suite/themeflip.sh gtk test/out/neutrinostdtheme.cmd ~/screenshots
 gjs	fontflip		env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh gtk 8
-gjs	fontlive	timeout=600 build=neutrinolivefont	env NT_FONTFLIP_HALF=live bash test/suite/fontflip.sh gtk 8 test/neutrinolivefont.cmd
+gjs	fontlive	timeout=600 build=neutrinolivefont	env NT_FONTFLIP_HALF=live bash test/suite/fontflip.sh gtk 8 test/out/neutrinolivefont.cmd
 gjs	stddoc	app=neutrinostddoc	bash test/suite/verify-std.sh doc ~/screenshots
 gjs	stdwin	app=neutrinostdwin timeout=600	bash test/suite/verify-std.sh win ~/screenshots
 gjs	stdtheme	app=neutrinostdtheme	bash test/suite/verify-std.sh theme ~/screenshots
 gjs	demo	app=neutrinodemo	bash test/suite/demo.sh ~/screenshots
 gjs	stdfont	app=neutrinostdfont	bash test/suite/verify-std.sh font ~/screenshots
 linux-engines:cjs	*	display=metacity gtk timeout=480
-linux-engines:cjs	lanes	display=off timeout=300 build=neutrinotest-release	bash test/suite/lanes.sh test/neutrinotest.cmd
-linux-engines:cjs	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	bash test/suite/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd
+linux-engines:cjs	lanes	display=off timeout=300 build=neutrinotest-release	bash test/suite/lanes.sh test/out/neutrinotest.cmd
+linux-engines:cjs	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	bash test/suite/loaders.sh test/out/neutrinoloaders.cmd test/out/neutrinoloaders-default.cmd
 linux-engines:cjs	walk	timeout=900 app=neutrinotest-release	bash test/suite/verify-linux.sh ~/screenshots
-linux-engines:cjs	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/suite/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots
-linux-engines:cjs	themescheme	build=neutrinostdtheme	bash test/suite/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots
-linux-engines:cjs	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/suite/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots
+linux-engines:cjs	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/suite/decoflip.sh test/out/neutrinostdgeom.cmd test/out/neutrinostdgeom-none.cmd ~/screenshots
+linux-engines:cjs	themescheme	build=neutrinostdtheme	bash test/suite/themescheme.sh test/out/neutrinostdtheme.cmd ~/screenshots
+linux-engines:cjs	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/suite/themeflip.sh gtk test/out/neutrinostdtheme.cmd ~/screenshots
 linux-engines:cjs	stddoc	app=neutrinostddoc	bash test/suite/verify-std.sh doc ~/screenshots
 linux-engines:cjs	stdwin	app=neutrinostdwin timeout=600	bash test/suite/verify-std.sh win ~/screenshots
 linux-engines:cjs	stdtheme	app=neutrinostdtheme	bash test/suite/verify-std.sh theme ~/screenshots
 linux-engines:py	*	display=metacity gtk timeout=480
-linux-engines:py	lanes	display=off timeout=300 build=neutrinotest-release	bash test/suite/lanes.sh test/neutrinotest.cmd
-linux-engines:py	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	bash test/suite/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd
+linux-engines:py	lanes	display=off timeout=300 build=neutrinotest-release	bash test/suite/lanes.sh test/out/neutrinotest.cmd
+linux-engines:py	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	bash test/suite/loaders.sh test/out/neutrinoloaders.cmd test/out/neutrinoloaders-default.cmd
 linux-engines:py	walk	timeout=900 app=neutrinotest-release	bash test/suite/verify-linux.sh ~/screenshots
-linux-engines:py	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/suite/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots
-linux-engines:py	themescheme	build=neutrinostdtheme	bash test/suite/themescheme.sh test/neutrinostdtheme.cmd ~/screenshots
-linux-engines:py	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/suite/themeflip.sh gtk test/neutrinostdtheme.cmd ~/screenshots
+linux-engines:py	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/suite/decoflip.sh test/out/neutrinostdgeom.cmd test/out/neutrinostdgeom-none.cmd ~/screenshots
+linux-engines:py	themescheme	build=neutrinostdtheme	bash test/suite/themescheme.sh test/out/neutrinostdtheme.cmd ~/screenshots
+linux-engines:py	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/suite/themeflip.sh gtk test/out/neutrinostdtheme.cmd ~/screenshots
 linux-engines:py	fontflip		env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh gtk 8
-linux-engines:py	fontlive	timeout=600 build=neutrinolivefont	env NT_FONTFLIP_HALF=live bash test/suite/fontflip.sh gtk 8 test/neutrinolivefont.cmd
+linux-engines:py	fontlive	timeout=600 build=neutrinolivefont	env NT_FONTFLIP_HALF=live bash test/suite/fontflip.sh gtk 8 test/out/neutrinolivefont.cmd
 linux-engines:py	stddoc	app=neutrinostddoc	bash test/suite/verify-std.sh doc ~/screenshots
 linux-engines:py	stdwin	app=neutrinostdwin timeout=600	bash test/suite/verify-std.sh win ~/screenshots
 linux-engines:py	stdtheme	app=neutrinostdtheme	bash test/suite/verify-std.sh theme ~/screenshots
 linux-engines:py	stdfont	app=neutrinostdfont	bash test/suite/verify-std.sh font ~/screenshots
 kde	*	display=openbox qt timeout=480
-kde	lanes	display=off timeout=300 build=neutrinotest-testing	bash test/suite/lanes.sh test/neutrinotest.cmd
-kde	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/suite/loaders.sh test/neutrinoloaders.cmd test/neutrinoloaders-default.cmd
+kde	lanes	display=off timeout=300 build=neutrinotest-testing	bash test/suite/lanes.sh test/out/neutrinotest.cmd
+kde	loaders	timeout=1500 build=neutrinoloaders build=neutrinoloaders-default	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/suite/loaders.sh test/out/neutrinoloaders.cmd test/out/neutrinoloaders-default.cmd
 kde	walk	timeout=900 dbus app=neutrinotest-testing	bash test/suite/verify-linux.sh ~/screenshots
 kde	attack	gtk app=neutrinoattack reap=neutrinoattack:ATTACK	bash test/suite/verify-attack.sh
-kde	appdir	timeout=1500 build=neutrinoappdir	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/suite/appdir.sh test/neutrinoappdir.cmd
-kde	early	gtk build=neutrinoearly	bash test/suite/early.sh test/neutrinoearly.cmd
-kde	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/suite/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots
-kde	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/suite/themeflip.sh qt test/neutrinostdtheme.cmd ~/screenshots
+kde	appdir	timeout=1500 build=neutrinoappdir	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/suite/appdir.sh test/out/neutrinoappdir.cmd
+kde	early	gtk build=neutrinoearly	bash test/suite/early.sh test/out/neutrinoearly.cmd
+kde	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/suite/decoflip.sh test/out/neutrinostdgeom.cmd test/out/neutrinostdgeom-none.cmd ~/screenshots
+kde	themeflip	timeout=840 cat=flip-a cat=flip-b build=neutrinostdtheme	bash test/suite/themeflip.sh qt test/out/neutrinostdtheme.cmd ~/screenshots
 kde	stddoc	app=neutrinostddoc	bash test/suite/verify-std.sh doc ~/screenshots
 kde	stdwin	app=neutrinostdwin timeout=600	bash test/suite/verify-std.sh win ~/screenshots
 kde	stdtheme	app=neutrinostdtheme	bash test/suite/verify-std.sh theme ~/screenshots
@@ -152,12 +152,12 @@ kde	stdfont	app=neutrinostdfont	bash test/suite/verify-std.sh font ~/screenshots
 macos	*	timeout=480
 macos	assemble	display=off timeout=300	bash test/suite/assemble.sh
 macos	walk	timeout=1200 app=neutrinotest-testing cat=neutrinotest-app	bash test/suite/verify-macos.sh ~/screenshots
-macos	loaders	timeout=720 build=neutrinoloaders	bash test/suite/loaders.sh test/neutrinoloaders.cmd
+macos	loaders	timeout=720 build=neutrinoloaders	bash test/suite/loaders.sh test/out/neutrinoloaders.cmd
 macos	attack	app=neutrinoattack-testing reap=neutrinoattack:ATTACK cat=neutrinoattack-app	bash test/suite/verify-attack.sh
-macos	early	build=neutrinoearly-testing cat=neutrinoearly-app	bash test/suite/early.sh test/neutrinoearly.cmd
-macos	navrefuse	timeout=720 build=neutrinonavrefuse	bash test/suite/navrefuse.sh test/neutrinonavrefuse.cmd
-macos	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/suite/decoflip.sh test/neutrinostdgeom.cmd test/neutrinostdgeom-none.cmd ~/screenshots
-macos	themeflip	timeout=840 cat=flip-a cat=flip-b cat=flip-live-app build=neutrinostdtheme build=neutrinolivetheme	bash test/suite/themeflip.sh macos test/neutrinostdtheme.cmd ~/screenshots test/neutrinolivetheme.cmd
+macos	early	build=neutrinoearly-testing cat=neutrinoearly-app	bash test/suite/early.sh test/out/neutrinoearly.cmd
+macos	navrefuse	timeout=720 build=neutrinonavrefuse	bash test/suite/navrefuse.sh test/out/neutrinonavrefuse.cmd
+macos	stdgeom	timeout=840 cat=deco-a cat=deco-b build=neutrinostdgeom build=neutrinostdgeom-none	bash test/suite/decoflip.sh test/out/neutrinostdgeom.cmd test/out/neutrinostdgeom-none.cmd ~/screenshots
+macos	themeflip	timeout=840 cat=flip-a cat=flip-b cat=flip-live-app build=neutrinostdtheme build=neutrinolivetheme	bash test/suite/themeflip.sh macos test/out/neutrinostdtheme.cmd ~/screenshots test/out/neutrinolivetheme.cmd
 macos	fontflip		env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh macos 0
 macos	stddoc	app=neutrinostddoc	bash test/suite/verify-std.sh doc ~/screenshots
 macos	stdwin	app=neutrinostdwin timeout=600	bash test/suite/verify-std.sh win ~/screenshots

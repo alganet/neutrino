@@ -17,7 +17,7 @@
 # a -Launch of its own.
 
 param(
-    [string]$Artifact = (Join-Path $PSScriptRoot "..\neutrinodemo.cmd"),
+    [string]$Artifact = (Join-Path $PSScriptRoot "..\out\neutrinodemo.cmd"),
     [string]$ScreenshotDir = $env:USERPROFILE,
     [int]$Timeout = 240
 )

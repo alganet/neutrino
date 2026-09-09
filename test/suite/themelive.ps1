@@ -21,7 +21,7 @@
 # contrast theme applied, which arrived as one more. So the mechanism works and
 # what this file adds is a runner that says so.
 param(
-    [string]$Artifact = ".\test\neutrinolivetheme.cmd",
+    [string]$Artifact = ".\test\out\neutrinolivetheme.cmd",
     [int]$UpTimeout = 120,
     [int]$MoveTimeout = 30
 )

@@ -7,11 +7,11 @@ param(
     [string]$ScreenshotDir = $env:USERPROFILE,
     # The neutrinotest artifact and the folder it compiles and unpacks into.
     # Default to this script's own dir, which is where the standalone windows
-    # lane builds and runs `test\neutrinotest.cmd`. The netinstall e2e installs
+    # lane builds and runs `test\out\neutrinotest.cmd`. The netinstall e2e installs
     # the same app into a temp HOME and runs it from there, so it passes those
     # in: the WebView2 package sits beside the exe, wherever the exe is.
-    [string]$Artifact = (Join-Path $PSScriptRoot "..\neutrinotest.cmd"),
-    [string]$AppDir = (Join-Path $PSScriptRoot "..\neutrinotest"),
+    [string]$Artifact = (Join-Path $PSScriptRoot "..\out\neutrinotest.cmd"),
+    [string]$AppDir = (Join-Path $PSScriptRoot "..\out\neutrinotest"),
     # The process to watch. Derived from the artifact, because the wait below
     # used to name `neutrinotest` outright and the probe lanes launch the same
     # verifier against a build with a different name. Both callers that exist

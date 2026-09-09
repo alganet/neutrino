@@ -344,7 +344,7 @@ run_windows() {
 #
 # The desktop is put back where it was found, on every exit path.
 
-LIVE_ART="${3:-$ROOT/test/neutrinolivefont.cmd}"
+LIVE_ART="${3:-$ROOT/test/out/neutrinolivefont.cmd}"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 
 # What GTK is actually drawing with, asked of the toolkit rather than of the

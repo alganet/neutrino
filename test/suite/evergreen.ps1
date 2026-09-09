@@ -441,7 +441,7 @@ Section "idl - the IIDs and the vtable order, from the pinned package"
 # so this is measuring the same package the driver would.
 
 $artifact = $args[0]
-if (-not $artifact) { $artifact = "test\neutrinotest.cmd" }
+if (-not $artifact) { $artifact = "test\out\neutrinotest.cmd" }
 $pinVersion = ""
 $pinSha = ""
 if (Test-Path $artifact) {

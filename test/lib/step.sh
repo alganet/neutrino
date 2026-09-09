@@ -12,7 +12,7 @@
 # The first, fifty-seven times:
 #
 #   TEST_EXIT=0
-#   bash test/suite/lanes.sh test/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
+#   bash test/suite/lanes.sh test/out/neutrinotest.cmd > ~/lanes.log 2>&1 || TEST_EXIT=$?
 #   cat ~/lanes.log
 #   exit $TEST_EXIT
 #
@@ -89,7 +89,7 @@ fi
 #
 # Twenty-six steps in the workflow did this by hand:
 #
-#   bash test/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
+#   bash test/out/neutrinostddoc.cmd > ~/stddoc-app.log 2>&1 &
 #   APP_PID=$!
 #   ... run the verifier, keep its status ...
 #   pkill -P "$APP_PID" 2>/dev/null || true
@@ -130,7 +130,7 @@ if [ -n "$NT_APP" ]; then
     #
     # Only kde does, and it is not a preference: QtWebEngine wants a session bus
     # and the container has no desktop to inherit one from, so the walk there was
-    # written `dbus-run-session -- bash test/neutrinotest.cmd` in the workflow
+    # written `dbus-run-session -- bash test/out/neutrinotest.cmd` in the workflow
     # while the other three lanes launched the same artifact bare. That is a
     # difference between lanes, which is what the setup column is for -- and it
     # cannot go in the command column, because the command is the verifier and

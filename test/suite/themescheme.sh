@@ -47,7 +47,7 @@
 
 set -uo pipefail
 
-ART="${1:-test/neutrinostdtheme.cmd}"
+ART="${1:-test/out/neutrinostdtheme.cmd}"
 SHOTS="${2:-$HOME/screenshots}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOGDIR="${NT_SCHEME_LOGDIR:-$HOME}"

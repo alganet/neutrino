@@ -41,6 +41,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
 SUITES_FILE="${NT_SUITES_FILE:-$HERE/suites.tsv}"
 APPS_FILE="${NT_APPS_FILE:-$HERE/apps.tsv}"
 
@@ -130,6 +131,32 @@ fi
 
 BUILT=""
 
+# Where a built artifact lands, and the one place that decides it.
+#
+# They sat in test/ itself until now, which put twenty-seven build outputs and
+# their app folders in the corridor between the six rooms -- and cost .gitignore
+# fifty-four hand-written lines, one pair per artifact, that nothing checked.
+# One room, one ignore rule.
+OUT_DIR="$HERE/out"
+
+# The cache. An artifact is built once per (builder, source, flags) and copied to
+# every slot that wants it, because seven suites are built from
+# neutrinoloaders.js --testing and the file is byte-identical every time.
+#
+# This is not an optimisation of a thing that was fast. Nothing cached before:
+# $BUILT is a shell variable and CI invokes this file once per suite, so
+# neutrinotest.js release was assembled three times on gjs alone. Copying a
+# built artifact is what test/suite/standalone.ps1 already does to get two apps
+# out of one build.
+CACHE_DIR="$OUT_DIR/.cache"
+
+# One file per build, named after it rather than hashed, so a stale entry is
+# something a person can look at and recognise.
+nt_cache_path() {
+    printf '%s/%s.cmd' "$CACHE_DIR" \
+        "$(printf '%s-%s-%s' "$1" "$2" "$3" | tr -c 'A-Za-z0-9._-' '-')"
+}
+
 # The artifact's filename for a row, defaulting to the row's own name.
 nt_app_out() {
     awk -F'\t' -v n="$1" '!/^#/ && NF && $1 == n {
@@ -138,7 +165,7 @@ nt_app_out() {
 }
 
 nt_build() {
-    local name="$1" line builder source flags outname out nt_f nt_ov
+    local name="$1" line builder source flags outname out cache nt_f nt_ov nt_newer
     # Memoised. A lane runs five suites off four artifacts and the same one is
     # named by two rows; building it twice is thirty seconds of a runner for a
     # file that is already on disk and byte-identical.
@@ -153,7 +180,26 @@ nt_build() {
     outname="$(printf '%s' "$line" | awk -F'\t' '{print $5}')"
     [ "$flags" = "-" ] && flags=""
     [ -z "$outname" ] || [ "$outname" = "-" ] && outname="$name.cmd"
-    out="$HERE/$outname"
+    out="$OUT_DIR/$outname"
+    # assemble.sh refuses an output whose directory does not exist, and says so
+    # rather than creating it -- the artifact's path is the caller's statement
+    # about where it wants the file, not a request to build a tree.
+    mkdir -p "$OUT_DIR" "$CACHE_DIR" || return 1
+
+    cache="$(nt_cache_path "$builder" "$source" "$flags")"
+    # Stale if anything the build reads is newer than the entry. A person
+    # editing neutrinofoo.js expects the next run to see it; CI checks out once
+    # and never edits, so this costs one find and saves the rebuild.
+    if [ -f "$cache" ]; then
+        nt_newer="$(find "$ROOT/neutrino" "$HERE/probe" "$ROOT/pages" \
+            -newer "$cache" -print 2>/dev/null | head -1 || true)"
+        [ -z "$nt_newer" ] || rm -f "$cache"
+    fi
+    if [ -f "$cache" ]; then
+        cp "$cache" "$out" || return 1
+        BUILT="$BUILT $name"
+        return 0
+    fi
 
     # The builder is in build/ and the source is in probe/, and neither room is
     # spelled in apps.tsv. That table names an artifact, a builder and a source
@@ -184,14 +230,16 @@ nt_build() {
             # ${1+"$@"} and not "$@": with no flags at all and `set -u`, the
             # bare form is an unbound variable on the bash 3.2 macOS ships,
             # which is the same reason nothing in this tree uses an array.
-            bash "$HERE/build/mkapp.sh" ${1+"$@"} "$HERE/probe/$source" "$out" || return 1 ;;
+            bash "$HERE/build/mkapp.sh" ${1+"$@"} "$HERE/probe/$source" "$cache" || return 1 ;;
         demoapp)
-            bash "$HERE/build/demoapp.sh" "$out" || return 1 ;;
+            bash "$HERE/build/demoapp.sh" "$cache" || return 1 ;;
         *)
             echo "  FAIL: artifact '$name' names an unknown builder '$builder'"; return 1 ;;
     esac
 
-    bash "$HERE/build/parse.sh" "$out" || return 1
+    # Once per build and not once per slot: the copies are the same bytes.
+    bash "$HERE/build/parse.sh" "$cache" || { rm -f "$cache"; return 1; }
+    cp "$cache" "$out" || return 1
     BUILT="$BUILT $name"
     return 0
 }
@@ -319,7 +367,7 @@ while IFS="$(printf '\t')" read -r suite setup command; do
         # The filename apps.tsv gives it, which is not always the row's name:
         # neutrinotest-release and neutrinotest-testing both write
         # neutrinotest.cmd.
-        APP_ARG="--app $HERE/$(nt_app_out "$APP_NAME")"
+        APP_ARG="--app $OUT_DIR/$(nt_app_out "$APP_NAME")"
     fi
 
     if [ "$DRY" = 1 ]; then

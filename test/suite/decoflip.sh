@@ -29,8 +29,8 @@
 
 set -uo pipefail
 
-DEC="${1:-test/neutrinostdgeom.cmd}"
-NONE="${2:-test/neutrinostdgeom-none.cmd}"
+DEC="${1:-test/out/neutrinostdgeom.cmd}"
+NONE="${2:-test/out/neutrinostdgeom-none.cmd}"
 SHOTS="${3:-$HOME/screenshots}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"

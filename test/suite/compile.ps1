@@ -47,7 +47,7 @@ function skip_rest($why) {
 Write-Output "=== compile: does the artifact compile ==="
 
 $artifact = $args[0]
-if (-not $artifact) { $artifact = "test\neutrinotest.cmd" }
+if (-not $artifact) { $artifact = "test\out\neutrinotest.cmd" }
 if (-not (Test-Path $artifact)) {
     nt_fail compile.artifact "no built artifact at '$artifact'; nothing below is a reading"
     nt_skip compile.jsc "there was no artifact to compile, so the compiler was never reached for"
