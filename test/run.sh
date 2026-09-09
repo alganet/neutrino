@@ -43,7 +43,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 SUITES_FILE="${NT_SUITES_FILE:-$HERE/suites.tsv}"
-APPS_FILE="${NT_APPS_FILE:-$HERE/apps.tsv}"
+BUILDS_FILE="${NT_BUILDS_FILE:-$HERE/builds.tsv}"
 
 LIST=0
 DRY=0
@@ -62,9 +62,10 @@ done
 [ $# -ge 1 ] || { echo "usage: run.sh [--list] [--dry-run] <lane>[:<phase>] [suite ...]" >&2
                   echo "       run.sh --build <artifact> ..." >&2; exit 2; }
 
-# --build names artifacts and not a lane. An artifact is a row in apps.tsv; it
-# has no lane, no suite and no display, so none of the manifest reading below is
-# on its path. This is the door a `shell: bash` build step reaches for on a lane
+# --build names artifacts and not a lane. It takes `<slot>=<build>`: a build is
+# a row in builds.tsv and a slot is what this copy of it is called. Neither has
+# a lane, a suite or a display, so none of the manifest reading below is on its
+# path. This is the door a `shell: bash` build step reaches for on a lane
 # whose suites are still pwsh and cannot be manifest rows yet -- the build was
 # never the part that had to stay in the workflow, only the step that runs it.
 if [ "$BUILD_ONLY" = 1 ]; then
@@ -157,30 +158,29 @@ nt_cache_path() {
         "$(printf '%s-%s-%s' "$1" "$2" "$3" | tr -c 'A-Za-z0-9._-' '-')"
 }
 
-# The artifact's filename for a row, defaulting to the row's own name.
-nt_app_out() {
-    awk -F'\t' -v n="$1" '!/^#/ && NF && $1 == n {
-        print ($5 == "" || $5 == "-") ? n ".cmd" : $5; exit
-    }' "$APPS_FILE"
-}
-
+# nt_build <slot> <build>: put a copy of <build> at test/out/<slot>.cmd.
+#
+# Two arguments and not one, because they are two different things. <build> is a
+# row in builds.tsv -- what to assemble. <slot> is what this copy is called, and
+# it is the suite's name, so appcache runs test/out/appcache.cmd. Seven suites
+# name loaders-testing and each gets its own file and its own app folder beside
+# it, which is what the launcher derives from the filename and what keeps two
+# suites from reading each other's trace.
 nt_build() {
-    local name="$1" line builder source flags outname out cache nt_f nt_ov nt_newer
+    local slot="$1" name="$2" line builder source flags out cache nt_f nt_ov nt_newer
     # Memoised. A lane runs five suites off four artifacts and the same one is
     # named by two rows; building it twice is thirty seconds of a runner for a
     # file that is already on disk and byte-identical.
-    case " $BUILT " in *" $name "*) return 0 ;; esac
+    case " $BUILT " in *" $slot=$name "*) return 0 ;; esac
 
-    line="$(awk -F'\t' -v n="$name" '!/^#/ && NF && $1 == n { print; exit }' "$APPS_FILE")"
-    [ -n "$line" ] || { echo "  FAIL: no artifact '$name' in $APPS_FILE"; return 1; }
+    line="$(awk -F'\t' -v n="$name" '!/^#/ && NF && $1 == n { print; exit }' "$BUILDS_FILE")"
+    [ -n "$line" ] || { echo "  FAIL: no build '$name' in $BUILDS_FILE"; return 1; }
 
     builder="$(printf '%s' "$line" | awk -F'\t' '{print $2}')"
     source="$(printf '%s' "$line" | awk -F'\t' '{print $3}')"
     flags="$(printf '%s' "$line" | awk -F'\t' '{print $4}')"
-    outname="$(printf '%s' "$line" | awk -F'\t' '{print $5}')"
     [ "$flags" = "-" ] && flags=""
-    [ -z "$outname" ] || [ "$outname" = "-" ] && outname="$name.cmd"
-    out="$OUT_DIR/$outname"
+    out="$OUT_DIR/$slot.cmd"
     # assemble.sh refuses an output whose directory does not exist, and says so
     # rather than creating it -- the artifact's path is the caller's statement
     # about where it wants the file, not a request to build a tree.
@@ -197,14 +197,14 @@ nt_build() {
     fi
     if [ -f "$cache" ]; then
         cp "$cache" "$out" || return 1
-        BUILT="$BUILT $name"
+        BUILT="$BUILT $slot=$name"
         return 0
     fi
 
     # The builder is in build/ and the source is in probe/, and neither room is
-    # spelled in apps.tsv. That table names an artifact, a builder and a source
-    # by name; where each of those lives is this runner's business, and a
-    # manifest that carried the paths would have to be re-edited by every move.
+    # spelled in builds.tsv. That table names a build, a builder and a source by
+    # name; where each of those lives is this runner's business, and a manifest
+    # that carried the paths would have to be re-edited by every move.
     case "$builder" in
         mkapp)
             # The flags column is argv, and a bare `--overlay <name>` in it
@@ -225,7 +225,7 @@ nt_build() {
                 fi
             done
             if [ "$nt_ov" = 1 ]; then
-                echo "  FAIL: artifact '$name' ends its flags with a bare --overlay"; return 1
+                echo "  FAIL: build '$name' ends its flags with a bare --overlay"; return 1
             fi
             # ${1+"$@"} and not "$@": with no flags at all and `set -u`, the
             # bare form is an unbound variable on the bash 3.2 macOS ships,
@@ -234,13 +234,13 @@ nt_build() {
         demoapp)
             bash "$HERE/build/demoapp.sh" "$cache" || return 1 ;;
         *)
-            echo "  FAIL: artifact '$name' names an unknown builder '$builder'"; return 1 ;;
+            echo "  FAIL: build '$name' names an unknown builder '$builder'"; return 1 ;;
     esac
 
     # Once per build and not once per slot: the copies are the same bytes.
     bash "$HERE/build/parse.sh" "$cache" || { rm -f "$cache"; return 1; }
     cp "$cache" "$out" || return 1
-    BUILT="$BUILT $name"
+    BUILT="$BUILT $slot=$name"
     return 0
 }
 
@@ -249,10 +249,18 @@ nt_build() {
 # number that failed. No suite runs and no display is asked for.
 if [ "$BUILD_ONLY" = 1 ]; then
     NT_BUILD_RC=0
+    # `<slot>=<build>` names both, which is what the pwsh lanes want: they run
+    # `.\test\out\appcache.cmd` and the step above them should say which build
+    # that is. A bare `<build>` is the local convenience -- the slot is the
+    # build's own name.
     for nt_name in "$@"; do
-        echo "::group::build $nt_name"
-        if nt_build "$nt_name"; then
-            echo "  built $nt_name"
+        case "$nt_name" in
+            *=*) nt_slot_name="${nt_name%%=*}"; nt_build_name="${nt_name#*=}" ;;
+            *)   nt_slot_name="$nt_name"; nt_build_name="$nt_name" ;;
+        esac
+        echo "::group::build $nt_slot_name ($nt_build_name)"
+        if nt_build "$nt_slot_name" "$nt_build_name"; then
+            echo "  built $nt_slot_name from $nt_build_name"
         else
             NT_BUILD_RC=$((NT_BUILD_RC + 1))
         fi
@@ -272,14 +280,14 @@ fi
 # running without the display it asked for, which fails later as "no window
 # appeared" -- a sentence about the app.
 STEP_ARGS=""
-APP_NAME=""
-BUILD_NAMES=""
+APP_SPEC=""
+BUILD_SPECS=""
 SETUP_BAD=""
 SOFT=0
 
 nt_setup() {
     local wm="" tk="" leash="" reap="" cats="" dbus="" toolkit="" nodisp=0 d
-    APP_NAME=""; BUILD_NAMES=""; SETUP_BAD=""; SOFT=0
+    APP_SPEC=""; BUILD_SPECS=""; SETUP_BAD=""; SOFT=0
     for d in $1 $2; do
         [ "$d" = "-" ] && continue
         case "$d" in
@@ -302,8 +310,18 @@ nt_setup() {
             gtk)       case "$tk" in *--gtk*) ;; *) tk="$tk --gtk" ;; esac ;;
             qt)        case "$tk" in *--qt*) ;; *) tk="$tk --qt" ;; esac ;;
             timeout=*) leash="${d#timeout=}" ;;
-            app=*)     APP_NAME="${d#app=}"; BUILD_NAMES="$BUILD_NAMES ${d#app=}" ;;
-            build=*)   BUILD_NAMES="$BUILD_NAMES ${d#build=}" ;;
+            # Both name a build in builds.tsv, optionally with a slot in front
+            # of it: `build=<build>` is this suite's own copy and
+            # `build=<slot>:<build>` a second one beside it, for the ten rows
+            # that compare two builds. The path is derived from the suite in
+            # both cases -- see nt_slot below.
+            #
+            # app= is build= plus one thing: step.sh launches that artifact,
+            # reaps it and exports its pid, and the command column then names
+            # only the verifier. build= is for the artifacts the command is
+            # handed instead, which is why only those are appended to it.
+            app=*)     APP_SPEC="${d#app=}"; BUILD_SPECS="$BUILD_SPECS ${d#app=}" ;;
+            build=*)   BUILD_SPECS="$BUILD_SPECS ${d#build=}" ;;
             cat=*)     cats="$cats --cat ${d#cat=}" ;;
             # A session bus around the artifact test/lib/step.sh launches. kde asks
             # for one because QtWebEngine wants a bus and the container has no
@@ -338,6 +356,19 @@ nt_setup() {
     return 0
 }
 
+# A spec is `<build>` or `<slot>:<build>`; this turns it into the artifact's
+# name. Bare is the suite itself -- appcache runs test/out/appcache.cmd -- and a
+# slot hangs off it, so loaders' second artifact is test/out/loaders-default.cmd.
+# The name is what the launcher derives the app folder and the Windows process
+# name from, so two suites sharing a build still get two of each.
+nt_slot() {
+    case "$1" in
+        *:*) printf '%s-%s' "$2" "${1%%:*}" ;;
+        *)   printf '%s' "$2" ;;
+    esac
+}
+nt_spec_build() { printf '%s' "${1##*:}"; }
+
 # ----------------------------------------------------------------------- the run
 
 FAILURES=0
@@ -369,15 +400,21 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     fi
 
     APP_ARG=""
-    if [ -n "$APP_NAME" ]; then
-        # The filename apps.tsv gives it, which is not always the row's name:
-        # neutrinotest-release and neutrinotest-testing both write
-        # neutrinotest.cmd.
-        APP_ARG="--app $OUT_DIR/$(nt_app_out "$APP_NAME")"
-    fi
+    [ -z "$APP_SPEC" ] || APP_ARG="--app $OUT_DIR/$(nt_slot "$APP_SPEC" "$suite").cmd"
+
+    # The artifacts the command is handed, appended in the order the row names
+    # them. They were spelled out in twenty-nine command columns and in every
+    # one of them the path was a thing the runner had just built and already
+    # knew -- so a row said `neutrinostdgeom.cmd` and nothing checked that any
+    # build produced it. A suite's argv is unchanged: it still reads $1 and $2.
+    ART_ARGS=""
+    for nt_s in $BUILD_SPECS; do
+        [ "$nt_s" = "$APP_SPEC" ] && continue
+        ART_ARGS="$ART_ARGS $OUT_DIR/$(nt_slot "$nt_s" "$suite").cmd"
+    done
 
     if [ "$DRY" = 1 ]; then
-        echo "$suite: bash $HERE/lib/step.sh$STEP_ARGS --log $suite $APP_ARG -- $command"
+        echo "$suite: bash $HERE/lib/step.sh$STEP_ARGS --log $suite $APP_ARG -- $command$ART_ARGS"
         continue
     fi
 
@@ -423,13 +460,13 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     # the day that row is written.
     export NT_SUITE="$suite"
 
-    for a in $BUILD_NAMES; do
-        nt_build "$a" || { RC=1; break; }
+    for nt_s in $BUILD_SPECS; do
+        nt_build "$(nt_slot "$nt_s" "$suite")" "$(nt_spec_build "$nt_s")" || { RC=1; break; }
     done
 
     if [ "$RC" = 0 ]; then
         # shellcheck disable=SC2086
-        bash "$HERE/lib/step.sh" $STEP_ARGS --log "$suite" $APP_ARG -- $command
+        bash "$HERE/lib/step.sh" $STEP_ARGS --log "$suite" $APP_ARG -- $command $ART_ARGS
         RC=$?
     fi
 

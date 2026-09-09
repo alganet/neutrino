@@ -1,0 +1,69 @@
+# builds.tsv - what can be built, and out of what.
+#
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+# SPDX-License-Identifier: ISC
+#
+# name <TAB> builder <TAB> source <TAB> flags
+#
+# This was apps.tsv, and it had thirty rows describing twenty builds. Seven of
+# them were neutrinoloaders.js --testing under seven names -- neutrinocache,
+# neutrinorace, neutrinowarm, neutrinotime, neutrinoappdir, neutrinoloaders,
+# neutrinostandalone-testing -- byte-identical every time. `neutrinocache` was
+# never a thing. It was "the loaders app, but appcache's copy of it", and that
+# sentence was nowhere in the tree: the name said neither what it was built from
+# nor who ran it, so answering either question meant reading the table.
+#
+# So the name of the artifact and the name of the build are two different jobs,
+# and this file only does the second one. A row here says what a build IS. Which
+# suite gets a copy, and what that copy is called, is suites.tsv's business --
+# see the `build=` directive there. The artifact a suite runs is named after the
+# suite, so `appcache` runs `test/out/appcache.cmd` and nothing has to be
+# looked up.
+#
+# `builder` is mkapp or demoapp. Almost everything is mkapp.sh; the app on the
+# download page is not, because test/build/demoapp.sh assembles pages/demo --
+# the four files that ship -- with test/probe/demoprobe.js concatenated onto the
+# app's own script, which no flag string could say.
+#
+# `source` is the .js under test/probe/ that mkapp.sh builds from. `-` where the
+# builder takes none.
+#
+# `flags` is argv for the builder, `-` for none. A bare `--overlay <name>`
+# resolves against test/probe/, the same way `source` does: the rooms are the
+# runner's business, and a manifest carrying paths would be re-edited by every
+# move.
+#
+# There is no output column any more. apps.tsv had one because "half the tree
+# refers to that path by name"; nothing does now.
+#
+# ------------------------------------------------------------------- the names
+#
+# A name says what the build is, not who asked for it. `-testing` and `-release`
+# where both exist, because which one a lane runs is a fact about that lane and
+# was invisible in the YAML until these tables existed: a testing build carries
+# the trace channel, the macOS status file, the two windows environment
+# overrides and Qt's --no-sandbox, and a release build does not carry them at
+# all.
+test-release	mkapp	neutrinotest.js	-
+test-testing	mkapp	neutrinotest.js	--testing
+attack-release	mkapp	neutrinoattack.js	-
+attack-testing	mkapp	neutrinoattack.js	--testing
+early-release	mkapp	neutrinoearly.js	-
+early-testing	mkapp	neutrinoearly.js	--testing
+loaders-release	mkapp	neutrinoloaders.js	-
+loaders-testing	mkapp	neutrinoloaders.js	--testing
+geom	mkapp	neutrinostdgeom.js	--testing
+geom-nodeco	mkapp	neutrinostdgeom.js	--testing --decorations=none
+std-doc	mkapp	neutrinostddoc.js	--testing
+std-win	mkapp	neutrinostdwin.js	--testing
+std-theme	mkapp	neutrinostdtheme.js	--testing
+std-font	mkapp	neutrinostdfont.js	--testing
+live-theme	mkapp	neutrinolivetheme.js	--testing
+live-font	mkapp	neutrinolivefont.js	--testing
+docswap	mkapp	neutrinodoc.js	--testing
+# Two builds that are a launcher part swapped rather than a flag. The overlay
+# directory is the whole difference and it is named in the flags, so the reason
+# the artifact differs is readable here rather than in a workflow.
+nav-hermetic	mkapp	neutrinonav.js	--overlay nav-hermetic
+winerr	mkapp	neutrinotest.js	--overlay winerr
+demo	demoapp	-	-

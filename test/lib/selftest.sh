@@ -1101,7 +1101,7 @@ echo "### run.sh, and the manifest it reads"
 
 RUNSH="$ROOT/test/run.sh"
 SUITES_TSV="$ROOT/test/suites.tsv"
-APPS_TSV="$ROOT/test/apps.tsv"
+BUILDS_TSV="$ROOT/test/builds.tsv"
 
 # Column shape. A row with the wrong number of columns puts a command in the
 # setup column, where it is reported as an unknown directive -- a sentence about
@@ -1111,56 +1111,68 @@ BADCOLS="$(awk -F'\t' '!/^#/ && NF { if (NF < 3 || NF > 4) print FILENAME ":" FN
 [ -z "$BADCOLS" ] && ok "every suites.tsv row has three or four columns" \
     || bad "suites.tsv rows with the wrong column count:$(echo $BADCOLS)"
 
-BADCOLS="$(awk -F'\t' '!/^#/ && NF && NF != 5 { print FILENAME ":" FNR }' "$APPS_TSV")"
-[ -z "$BADCOLS" ] && ok "every apps.tsv row has five columns" \
-    || bad "apps.tsv rows with the wrong column count:$(echo $BADCOLS)"
+BADCOLS="$(awk -F'\t' '!/^#/ && NF && NF != 4 { print FILENAME ":" FNR }' "$BUILDS_TSV")"
+[ -z "$BADCOLS" ] && ok "every builds.tsv row has four columns" \
+    || bad "builds.tsv rows with the wrong column count:$(echo $BADCOLS)"
 
 # Every artifact a suite asks for is declared, and every declared artifact is
 # asked for. Both directions, for the reason the registry scan below runs both:
 # an artifact nobody builds is a row nobody reads, and an artifact nobody
 # declared is a lane that fails at the point it was supposed to start measuring.
-APPNAMES="$(awk -F'\t' '!/^#/ && NF { print $1 }' "$APPS_TSV")"
+APPNAMES="$(awk -F'\t' '!/^#/ && NF { print $1 }' "$BUILDS_TSV")"
 # awk and not `sed -n 's/^\(app\|build\)=//p'`: `\|` is GNU's alternation and
 # BSD sed reads it as a literal, so on macOS that expression matched nothing and
 # this list came back empty -- which made the next check report all five
 # artifacts as unused. The first thing the macos lane caught.
 WANTED_APPS="$(awk -F'\t' '!/^#/ && NF { print $3 }' "$SUITES_TSV" |
     tr ' ' '\n' |
-    awk '/^(app|build)=/ { sub(/^(app|build)=/, ""); print }' | sort -u)"
+    awk '/^(app|build)=/ {
+        sub(/^(app|build)=/, "")
+        # `<slot>:<build>` -- the slot names the artifact, and the build is
+        # what this scan asks about.
+        sub(/^[^:]*:/, "")
+        print
+    }' | sort -u)"
 
 # And the artifacts named by `run.sh --build` in a workflow, which is how a lane
 # whose suites are still pwsh asks for one. Those rows are read by the same
 # table and are no less declared for the step that runs them not being a
 # manifest row yet -- without this, every windows artifact reads as an orphan
 # and the check that is supposed to find a leftover finds eleven of them.
+# `--build <slot>=<build> ...`; this wants the build half of each pair.
+#
+# It filtered on a `neutrino` prefix until the builds were renamed, and that is
+# a shape worth not repeating: a filter naming the thing it filters for matches
+# nothing the day the naming changes, and a scan that matches nothing reports
+# the same green as a tree with nothing wrong in it.
 WANTED_APPS="$WANTED_APPS $(sed -n 's/.*run\.sh --build //p' \
     "$ROOT"/.github/workflows/*.yml | tr ' ' '\n' |
-    awk '/^neutrino[A-Za-z0-9-]*$/ { print }' | sort -u)"
+    awk -F= 'NF == 2 { print $2 } NF == 1 && $1 != "" { print $1 }' | sort -u)"
 
 MISSING=""
 for a in $WANTED_APPS; do
     case " $(echo $APPNAMES) " in *" $a "*) ;; *) MISSING="$MISSING $a" ;; esac
 done
-[ -z "$MISSING" ] && ok "every artifact a suite names is declared in apps.tsv" \
-    || bad "named by a suite and not in apps.tsv:$MISSING"
+[ -z "$MISSING" ] && ok "every build a suite names is declared in builds.tsv" \
+    || bad "named by a suite and not in builds.tsv:$MISSING"
 
 UNUSED=""
 for a in $APPNAMES; do
     case " $(echo $WANTED_APPS) " in *" $a "*) ;; *) UNUSED="$UNUSED $a" ;; esac
 done
-[ -z "$UNUSED" ] && ok "every artifact in apps.tsv is named by some suite" \
-    || bad "in apps.tsv and named by nothing:$UNUSED"
+[ -z "$UNUSED" ] && ok "every build in builds.tsv is named by some suite" \
+    || bad "in builds.tsv and named by nothing:$UNUSED"
 
 # The sources exist. mkapp.sh would say so too, but it would say it on a runner
 # eight minutes into a lane rather than here.
 MISSING=""
-while IFS="$(printf '\t')" read -r name builder source flags outname; do
+while IFS="$(printf '\t')" read -r name builder source flags; do
     case "$name" in \#*|"") continue ;; esac
     [ "$builder" = "mkapp" ] || continue
     [ -f "$ROOT/test/probe/$source" ] || MISSING="$MISSING $source"
-done < "$APPS_TSV"
-[ -z "$MISSING" ] && ok "every mkapp source in apps.tsv is on disk" \
-    || bad "named in apps.tsv and not on disk:$MISSING"
+done < "$BUILDS_TSV"
+[ -z "$MISSING" ] && ok "every mkapp source in builds.tsv is on disk" \
+    || bad "named in builds.tsv and not on disk:$MISSING"
 
 # Every lane in the manifest is a job in the workflow. A lane key that is not a
 # job is rows nobody will ever run, and it looks identical to rows that ran green.
@@ -1560,7 +1572,7 @@ echo "### every artifact a lane runs comes out of the registry"
 
 # Two rules, and both of them are things this tree did until now.
 #
-# The first: a workflow may not build an artifact. test/apps.tsv is the table of
+# The first: a workflow may not build an artifact. test/builds.tsv is the table of
 # what exists and test/run.sh is what builds it, and the whole reason for both is
 # that eighty-four mkapp.sh lines across ten lanes were a test framework kept in
 # YAML. Eleven artifacts were still built by hand here, none of them passed
@@ -1590,7 +1602,7 @@ done > "$WORK/wfbuild.txt"
 BUILDERS="$(tr '\n' ' ' < "$WORK/wfbuild.txt" | sed 's/ *$//')"
 [ -z "$BUILDERS" ] \
     && ok "no workflow builds an artifact for itself" \
-    || bad "a workflow calls a builder directly; it belongs in test/apps.tsv: $BUILDERS"
+    || bad "a workflow calls a builder directly; it belongs in test/builds.tsv: $BUILDERS"
 
 # The canary. A scan whose glob has stopped matching reports the same green as a
 # workflow with nothing wrong in it, which is the shape this file has been caught
