@@ -17,11 +17,16 @@
 # a -Launch of its own.
 
 param(
-    [string]$Artifact = (Join-Path $PSScriptRoot "..\out\neutrinodemo.cmd"),
+    [string]$Artifact = "",
     [string]$ScreenshotDir = $env:USERPROFILE,
     [int]$Timeout = 240
 )
 
+
+# Required. A default here is a path that goes stale silently: the caller
+# passes nothing, the artifact moves, and the failure reads as an app that
+# never came up.
+if (-not $Artifact) { throw "usage: demo.ps1 -Artifact <app.cmd>" }
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms

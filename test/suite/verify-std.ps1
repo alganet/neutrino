@@ -79,6 +79,15 @@ public class StdWinAPI {
 }
 "@
 
+# Derived from the artifact when there is one, and only guessed when there is
+# not. The guess was a second, independent copy of the layout -- so a move had
+# to remember it as well as the artifact, and nothing connected the two.
+if (-not $AppName -and $Artifact) {
+    $AppName = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)
+}
+if (-not $AppDir -and $Artifact) {
+    $AppDir = Join-Path (Split-Path -Parent $Artifact) $AppName
+}
 if (-not $AppName) { $AppName = "neutrinostd$Probe" }
 if (-not $AppDir) { $AppDir = Join-Path $PSScriptRoot "..\out\neutrinostd$Probe" }
 $FirstTimeout = 240

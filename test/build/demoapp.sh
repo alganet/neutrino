@@ -27,7 +27,7 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 # The artifact lands beside the others, in test/, and not in the room the
 # builder lives in: every manifest and every suite names it as test/<name>.cmd
 # and .gitignore lists it there.
-OUT="${1:-$ROOT/test/out/neutrinodemo.cmd}"
+OUT="${1:?usage: demoapp.sh <output.cmd>}"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

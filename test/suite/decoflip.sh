@@ -29,8 +29,8 @@
 
 set -uo pipefail
 
-DEC="${1:-test/out/neutrinostdgeom.cmd}"
-NONE="${2:-test/out/neutrinostdgeom-none.cmd}"
+DEC="${1:?usage: decoflip.sh <decorated.cmd> <chromeless.cmd> [shotdir]}"
+NONE="${2:?usage: decoflip.sh <decorated.cmd> <chromeless.cmd> [shotdir]}"
 SHOTS="${3:-$HOME/screenshots}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"

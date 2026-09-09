@@ -27,11 +27,16 @@
 # are taken once, in one language, for every lane.
 
 param(
-    [string]$Artifact = ".\test\out\neutrinostdtheme.cmd",
+    [string]$Artifact = "",
     [string]$ScreenshotDir = $env:USERPROFILE,
     [string]$LogDir = $HOME
 )
 
+
+# Required. A default here is a path that goes stale silently: the caller
+# passes nothing, the artifact moves, and the failure reads as an app that
+# never came up.
+if (-not $Artifact) { throw "usage: themeflip.ps1 -Artifact <app.cmd>" }
 $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 
 function Set-AppsTheme($light) {

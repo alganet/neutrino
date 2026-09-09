@@ -35,15 +35,20 @@ set -uo pipefail
 . "$(cd "$(dirname "$0")/.." && pwd)/lib/live.sh"
 
 MODE="${1:-gtk}"
-ART="${2:-test/out/neutrinostdtheme.cmd}"
+ART="${2:?usage: themeflip.sh <mode> <app.cmd> [shotdir] [live.cmd]}"
 SHOTS="${3:-$HOME/screenshots}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 # The live half's probe, which is a different app asking a different question --
-# see live_half at the bottom. Defaulted rather than required, so a caller that
-# predates this half runs it instead of silently not running it; CI names it
-# anyway, so the artifact goes through parse.sh with the others.
-LIVE_ART="${4:-$ROOT/test/out/neutrinolivetheme.cmd}"
+# see live_half at the bottom. Empty when the caller names none, and live_half
+# then says so and returns.
+#
+# It defaulted to a path until now, and the default was never right: only the
+# macos row builds this artifact, so on the other four lanes it named a file
+# that was not there. It never failed because the GTK knob check bails before
+# reaching it -- which means the reason this suite passed on four lanes had
+# nothing to do with the reason it was supposed to.
+LIVE_ART="${4:-}"
 
 note() { echo "report: $*"; }
 
@@ -588,6 +593,10 @@ live_half_qt() {
 }
 
 live_half() {
+    if [ -z "$LIVE_ART" ]; then
+        note "live half: this lane was given no live artifact, so there is nothing to observe"
+        return 0
+    fi
     local rc=0
 
     # Two of the three modes have a knob that is desktop state rather than a

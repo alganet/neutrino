@@ -5,19 +5,23 @@
 
 param(
     [string]$ScreenshotDir = $env:USERPROFILE,
-    # The neutrinotest artifact and the folder it compiles and unpacks into.
-    # Default to this script's own dir, which is where the standalone windows
-    # lane builds and runs `test\out\neutrinotest.cmd`. The netinstall e2e installs
-    # the same app into a temp HOME and runs it from there, so it passes those
-    # in: the WebView2 package sits beside the exe, wherever the exe is.
-    [string]$Artifact = (Join-Path $PSScriptRoot "..\out\neutrinotest.cmd"),
-    [string]$AppDir = (Join-Path $PSScriptRoot "..\out\neutrinotest"),
+    # The artifact and the folder it compiles and unpacks into. Both required.
+    #
+    # They defaulted to this script's own dir until the artifacts moved, and the
+    # defaults are why that move was dangerous: the windows lane passed neither,
+    # so a stale path here would have been read as a missing window rather than
+    # as a wrong path -- and there were two of them, set independently, so a
+    # move had to remember both. The netinstall e2e always passed them, because
+    # it installs the same app into a temp HOME; now every caller does what that
+    # one already did.
+    [string]$Artifact = "",
+    [string]$AppDir = "",
     # The process to watch. Derived from the artifact, because the wait below
     # used to name `neutrinotest` outright and the probe lanes launch the same
     # verifier against a build with a different name. Both callers that exist
     # today install an app called neutrinotest, so this is the value they were
     # already getting.
-    [string]$AppName = [System.IO.Path]::GetFileNameWithoutExtension($Artifact),
+    [string]$AppName = "",
     # Start the app here, rather than being pointed at one already running.
     #
     # The app gives its audience an eleven-second head start before its first
@@ -43,6 +47,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Before anything else, and loudly. A default that has gone stale reads as an
+# app that never came up, which is a finding about the launcher rather than
+# about this file's argv.
+if (-not $Artifact) { throw "usage: verify-windows.ps1 -Artifact <app.cmd> -AppDir <dir> [-Launch]" }
+if (-not $AppDir)   { throw "usage: verify-windows.ps1 -Artifact <app.cmd> -AppDir <dir> [-Launch]" }
+if (-not $AppName)  { $AppName = [System.IO.Path]::GetFileNameWithoutExtension($Artifact) }
 
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms

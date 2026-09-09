@@ -71,7 +71,7 @@
 # outer numbers still land and the breakdown says so.
 
 param(
-    [string]$Artifact = (Join-Path $PSScriptRoot "..\out\neutrinotime.cmd"),
+    [string]$Artifact = "",
     [int]$Runs = 5,
     # The title the app sets when it has rendered. This is the only signal
     # from outside that the content is actually up: a window handle exists
@@ -85,6 +85,11 @@ param(
     [int]$TimeoutSeconds = 180
 )
 
+
+# Required. A default here is a path that goes stale silently: the caller
+# passes nothing, the artifact moves, and the failure reads as an app that
+# never came up.
+if (-not $Artifact) { throw "usage: launchtime.ps1 -Artifact <app.cmd>" }
 $ErrorActionPreference = "Continue"
 function Report($m) { Write-Output "report: $m" }
 function Fail($m) { Write-Output "FAIL: $m"; $script:failures++ }
