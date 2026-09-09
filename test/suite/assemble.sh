@@ -850,6 +850,21 @@ for nt_size in "0 600" "900 0" "-1 600" "9.5 600" "tall 600" '"900" 600'; do
 done
 accepts "a one-pixel window" "S" 1 1 "auto" "auto"
 
+# A whole config on stdin, for the shapes that `refuses` cannot spell: it takes
+# five values and builds the file, and half the cases below are files that are
+# not five values. Defined here rather than beside its group further down,
+# because bash resolves a function name when the call runs and not when the file
+# is read -- the definition used to sit fifteen lines *after* this first caller,
+# so this one case exited 127 and, with no `set -e` in this suite, neither
+# failed nor counted. It read as a passing case for as long as it existed.
+badconf() {
+    nt_name="$1"; nt_d="$(confdir case)"
+    cat > "$nt_d/config.json"
+    rm -f "$T/out.cmd"
+    bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/conf.log" 2>&1
+    if [ "$?" = "0" ]; then fail "$nt_name was accepted"; else pass "$nt_name is refused"; fi
+}
+
 # A tier is not a config key any more, so a config naming one is a config with
 # an unknown key in it -- which is the case above, and this is the line that
 # says the two readings agree.
@@ -868,13 +883,6 @@ refuses "an empty title" "" 900 600 "auto" "auto"
 # The shapes that are not a flat object of the six keys. There is no merge in
 # the assembler -- an overlay replaces config.json whole -- so a file naming
 # only a title would take the rest from nowhere.
-badconf() {
-    nt_name="$1"; nt_d="$(confdir case)"
-    cat > "$nt_d/config.json"
-    rm -f "$T/out.cmd"
-    bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/conf.log" 2>&1
-    if [ "$?" = "0" ]; then fail "$nt_name was accepted"; else pass "$nt_name is refused"; fi
-}
 badconf "a config missing a key" <<'EOF'
 {
     "title": "S"

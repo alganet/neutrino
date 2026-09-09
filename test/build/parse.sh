@@ -27,7 +27,11 @@ trap 'rm -rf "$WORK"' EXIT
 TARGET="${1:-}"
 if [ -z "$TARGET" ]; then
     TARGET="$WORK/template.cmd"
-    bash "$ROOT/neutrino/assemble.sh" > "$TARGET"
+    # `-` and not a bare redirect: assemble.sh takes the output as an argument
+    # and refuses a call that names none, so the redirect form exited 1 here and
+    # took this script down with it under `set -e`. Every caller in CI passes a
+    # target, which is why the documented default above had never run.
+    bash "$ROOT/neutrino/assemble.sh" - > "$TARGET"
 fi
 # Resolved before anything changes directory, because the assertions run from a
 # work directory and a relative path would quietly stop meaning the same file.
