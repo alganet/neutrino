@@ -1748,8 +1748,13 @@ echo "### no suite watches a process it does not name a file for"
 # <name>.cmd or <name>.exe themselves, so their literal is self-consistent and
 # nothing outside can invalidate it. That is the rule: name a process, and this
 # file wants to find you naming a file for it too.
+# The workflow is scanned with the suites, and it is where this bug actually
+# shipped: ten reap steps named `neutrinostdtheme` and friends, and every one of
+# them stopped ending anything the day the artifacts were renamed. One of those
+# left a finished window up for the next suite to attach to, which reported a
+# window that never changed -- a sentence about the app, again.
 WATCHED=""
-for f in "$ROOT"/test/suite/*.ps1; do
+for f in "$ROOT"/test/suite/*.ps1 "$ROOT"/.github/workflows/*.yml; do
     [ -f "$f" ] || continue
     for nt_n in $(grep -ohE -- '-Name "?(neutrino[A-Za-z0-9-]+)"?|ProcessName -eq "(neutrino[A-Za-z0-9-]+)"' "$f" |
                   grep -oE 'neutrino[A-Za-z0-9-]+' | sort -u); do
@@ -1763,10 +1768,11 @@ done
 
 # The canary: this scan is a grep over a glob, and a glob that stops matching
 # reports the same green as a tree with nothing wrong in it.
-NPS="$(ls "$ROOT"/test/suite/*.ps1 2>/dev/null | grep -c . || true)"
-NWATCH="$(grep -ohE -- '-Name [$"]?[A-Za-z0-9]' "$ROOT"/test/suite/*.ps1 2>/dev/null | grep -c . || true)"
+NPS="$(ls "$ROOT"/test/suite/*.ps1 "$ROOT"/.github/workflows/*.yml 2>/dev/null | grep -c . || true)"
+NWATCH="$(grep -ohE -- '-Name [$"]?[A-Za-z0-9]' "$ROOT"/test/suite/*.ps1 \
+    "$ROOT"/.github/workflows/*.yml 2>/dev/null | grep -c . || true)"
 if [ "$NPS" -gt 0 ] && [ "$NWATCH" -gt 0 ]; then
-    ok "the process-name scan reads the tree ($NPS suites, $NWATCH Get-Process names)"
+    ok "the process-name scan reads the tree ($NPS files, $NWATCH Get-Process names)"
 else
     bad "the process-name scan read $NPS suites and $NWATCH names, so the check above proves nothing"
 fi
