@@ -2159,7 +2159,7 @@ jobs:
             Tee-Object -FilePath "$HOME\stdgeom.log"
           $e = $LASTEXITCODE
           Get-Content "$HOME\deco-a.log","$HOME\deco-b.log" -ErrorAction SilentlyContinue
-          foreach ($n in @("neutrinostdgeom","neutrinostdgeom-none")) {
+          foreach ($n in @("stdgeom","stdgeom-none")) {
             Get-Process -Name $n -ErrorAction SilentlyContinue |
               Stop-Process -Force -ErrorAction SilentlyContinue
           }
@@ -2360,7 +2360,7 @@ jobs:
           # else, while the reason -- the reader naming the property it could
           # not read and quoting the exception -- sat in a different job's log
           # entirely. A step that can fail should carry the line that says why.
-          $err = Join-Path $env:USERPROFILE "launch-neutrinostdfont-err.log"
+          $err = Join-Path $env:USERPROFILE "launch-stdfont-err.log"
           if (Test-Path $err) { Write-Host "--- the app's own stderr"; Get-Content $err }
           exit $e
       # And a running app, with the desktop's text size moved underneath it.
