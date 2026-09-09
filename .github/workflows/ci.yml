@@ -1618,7 +1618,7 @@ jobs:
             Write-Output "report: the warm-up wrote no trace"
           }
           Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } | Stop-Process -Force -ErrorAction SilentlyContinue
-          Get-Process -Name "neutrinowarm" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process -Name "warm" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           exit 0
       # A launch end to end, which the step above cannot give and never could.
       #
@@ -1773,7 +1773,7 @@ jobs:
           $raceExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } |
             Stop-Process -Force -ErrorAction SilentlyContinue
-          Get-Process -Name "neutrinorace" -ErrorAction SilentlyContinue |
+          Get-Process -Name "exerace" -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $raceExit
       # A failed initialisation has to end, and has to leave a record. Both
@@ -1805,7 +1805,7 @@ jobs:
         run: |
           & .\test\suite\verify-winerr.ps1 .\test\out\winerr.cmd *>&1 | Tee-Object -FilePath "$HOME\winerr-verify.log"
           $testExit = $LASTEXITCODE
-          Get-Process -Name "neutrinoerr" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process -Name "winerr" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
       - if: always()
         uses: mlugg/setup-zig@v2
@@ -1935,7 +1935,7 @@ jobs:
             } else {
                 Add-Content $log "report: the app wrote no trace at all"
             }
-            Get-Process -Name "neutrinoload$replica" -ErrorAction SilentlyContinue |
+            Get-Process -Name "load$replica" -ErrorAction SilentlyContinue |
                 Stop-Process -Force -ErrorAction SilentlyContinue
             if ($r -ne 0) { $rc = $r }
           }
@@ -2172,7 +2172,7 @@ jobs:
             -Launch -Artifact .\test\out\stddoc.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stddoc.log"
           $e = $LASTEXITCODE
-          Get-Process -Name neutrinostddoc -ErrorAction SilentlyContinue |
+          Get-Process -Name stddoc -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $e
       # Round 2. Whether the standard window verbs do anything and can be
@@ -2203,7 +2203,7 @@ jobs:
             -Launch -Artifact .\test\out\stdwin.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdwin.log"
           $e = $LASTEXITCODE
-          Get-Process -Name neutrinostdwin -ErrorAction SilentlyContinue |
+          Get-Process -Name stdwin -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $e
       - if: always()
@@ -2214,7 +2214,7 @@ jobs:
             -Launch -Artifact .\test\out\stdtheme.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdtheme.log"
           $e = $LASTEXITCODE
-          Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |
+          Get-Process -Name stdtheme -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $e
       # Round 3: where each colour came from.
@@ -2284,7 +2284,7 @@ jobs:
           & .\test\suite\themelive.ps1 -Artifact .\test\out\themelive.cmd *>&1 |
             Tee-Object -FilePath "$HOME\themelive.log"
           if ($LASTEXITCODE -ne 0) { $testExit = $LASTEXITCODE }
-          Get-Process -Name neutrinolivetheme -ErrorAction SilentlyContinue |
+          Get-Process -Name themelive -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
       # The app on the download page, and this is the lane it broke on.
@@ -2312,7 +2312,7 @@ jobs:
               -Artifact .\test\out\demo.cmd *>&1 |
             Tee-Object -FilePath "$HOME\demo.log"
           $e = $LASTEXITCODE
-          Get-Process -Name neutrinodemo -ErrorAction SilentlyContinue |
+          Get-Process -Name demo -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $e
       # One artifact, one file: the lane's pictures and logs as a page that opens
@@ -2352,7 +2352,7 @@ jobs:
             -Launch -Artifact .\test\out\stdfont.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdfont.log"
           $e = $LASTEXITCODE
-          Get-Process -Name neutrinostdfont -ErrorAction SilentlyContinue |
+          Get-Process -Name stdfont -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           # The app's own stderr, in the step that ran it.
           #
