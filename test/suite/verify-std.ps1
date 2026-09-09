@@ -88,8 +88,17 @@ if (-not $AppName -and $Artifact) {
 if (-not $AppDir -and $Artifact) {
     $AppDir = Join-Path (Split-Path -Parent $Artifact) $AppName
 }
-if (-not $AppName) { $AppName = "neutrinostd$Probe" }
-if (-not $AppDir) { $AppDir = Join-Path $PSScriptRoot "..\out\neutrinostd$Probe" }
+# No last resort. It used to guess `neutrinostd<probe>` and a folder beside it,
+# which was the layout of the test tree written into a suite for a third time --
+# and once the artifacts were named after the suites that run them, a guess
+# there could only ever be wrong. Every caller passes -Artifact.
+# `throw` and not Fail/Finish: those are defined further down this file, and a
+# call above their definition is a call to nothing. That is the same defect this
+# tree just found in test/suite/assemble.sh, where a helper used fifteen lines
+# above its definition exited 127 and counted as neither pass nor failure.
+if (-not $AppName -and $Launch) {
+    throw "verify-std.ps1: -Launch needs -Artifact to know what to watch"
+}
 $FirstTimeout = 240
 # Thirteen states at 1500 ms, plus the settles and the fullscreen wait, is over
 # twenty seconds before the first window is even counted. Sized to the app

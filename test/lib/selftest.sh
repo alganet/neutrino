@@ -1766,6 +1766,25 @@ done
     && ok "every literal process name a suite watches is one it writes a file for" \
     || bad "watched by name and never written:$WATCHED"
 
+# And the workflow names no artifact of its own at all.
+#
+# The rule above is about `-Name`, and both of the things it missed were not:
+# an array literal feeding `-Name $n` in a loop, and `launch-<app>-err.log`, a
+# filename verify-std.ps1 builds from the artifact's basename. What they have in
+# common is simpler than a pattern -- they are old artifact names, and ci.yml has
+# no business spelling an artifact name at all now. It names slots, and slots are
+# what `--build <slot>=<build>` and `test\out\<slot>.cmd` already say. Anything
+# still called `neutrino<something>` outside a comment there is a leftover.
+STALEWF=""
+for wf in "$ROOT"/.github/workflows/*.yml; do
+    for nt_n in $(grep -v '^[[:space:]]*#' "$wf" | grep -ohE 'neutrino[a-z0-9]{3,}' | sort -u); do
+        STALEWF="$STALEWF $(basename "$wf"):$nt_n"
+    done
+done
+[ -z "$STALEWF" ] \
+    && ok "no workflow spells an artifact name; they name slots" \
+    || bad "an old artifact name is still spelled in a workflow:$STALEWF"
+
 # The canary: this scan is a grep over a glob, and a glob that stops matching
 # reports the same green as a tree with nothing wrong in it.
 NPS="$(ls "$ROOT"/test/suite/*.ps1 "$ROOT"/.github/workflows/*.yml 2>/dev/null | grep -c . || true)"
