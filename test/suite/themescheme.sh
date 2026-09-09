@@ -48,7 +48,7 @@
 set -uo pipefail
 
 ART="${1:?usage: themescheme.sh <app.cmd> [shotdir]}"
-SHOTS="${2:-$HOME/screenshots}"
+SHOTS="${NT_SHOT_DIR:-$HOME/screenshots}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOGDIR="${NT_SCHEME_LOGDIR:-$HOME}"
 

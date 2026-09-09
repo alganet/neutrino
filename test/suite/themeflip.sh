@@ -34,9 +34,12 @@ set -uo pipefail
 # copies and what is genuinely each knob's own.
 . "$(cd "$(dirname "$0")/.." && pwd)/lib/live.sh"
 
-MODE="${1:-gtk}"
-ART="${2:?usage: themeflip.sh <mode> <app.cmd> [shotdir] [live.cmd]}"
-SHOTS="${3:-$HOME/screenshots}"
+# The toolkit, which is a fact about the lane and not about this row: the
+# lane's own `toolkit=` says it once, step.sh exports it, and ten rows stop
+# repeating a word that was already declared beside them.
+MODE="${NT_TOOLKIT:-gtk}"
+ART="${1:?usage: themeflip.sh <app.cmd> [live.cmd]}"
+SHOTS="${NT_SHOT_DIR:-$HOME/screenshots}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 # The live half's probe, which is a different app asking a different question --
@@ -48,7 +51,7 @@ LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 # that was not there. It never failed because the GTK knob check bails before
 # reaching it -- which means the reason this suite passed on four lanes had
 # nothing to do with the reason it was supposed to.
-LIVE_ART="${4:-}"
+LIVE_ART="${2:-}"
 
 note() { echo "report: $*"; }
 
@@ -62,7 +65,7 @@ note() { echo "report: $*"; }
 #
 # macOS only, because it is the only mode whose knob is machine state rather
 # than a variable in this shell.
-if [ "${1:-gtk}" = macos ]; then
+if [ "$MODE" = macos ]; then
     NT_KNOB_WAS="$(defaults read -g AppleInterfaceStyle 2>/dev/null || echo light)"
     nt_knob_restore() {
         if [ "$NT_KNOB_WAS" = light ]; then

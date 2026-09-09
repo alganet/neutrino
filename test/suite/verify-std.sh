@@ -35,7 +35,7 @@
 set -uo pipefail
 
 PROBE="${1:-geom}"
-SHOT_DIR="${2:-$HOME/screenshots}"
+SHOT_DIR="${NT_SHOT_DIR:-$HOME/screenshots}"
 # What the picture is called, which is not what the probe is called.
 #
 # This wrote `std-$PROBE.png` for as long as one probe meant one launch. It has

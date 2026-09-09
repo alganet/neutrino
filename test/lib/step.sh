@@ -35,6 +35,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 NT_WM=""; NT_QT=0; NT_GTK=0; NT_LOG=""; NT_TIMEOUT=""; NT_APP=""
 NT_CAT=""; NT_REAP=""; NT_DBUS=0
+NT_TOOLKIT="${NT_TOOLKIT:-}"
 
 usage() {
     echo "usage: step.sh [--display WM|none] [--qt] [--gtk] [--log NAME]" >&2
@@ -52,6 +53,8 @@ while [ $# -gt 0 ]; do
         --log) NT_LOG="${2:-}"; shift 2 ;;
         --log=*) NT_LOG="${1#--log=}"; shift ;;
         --dbus) NT_DBUS=1; shift ;;
+        --toolkit) NT_TOOLKIT="${2:-}"; shift 2 ;;
+        --toolkit=*) NT_TOOLKIT="${1#--toolkit=}"; shift ;;
         --app) NT_APP="${2:-}"; shift 2 ;;
         --app=*) NT_APP="${1#--app=}"; shift ;;
         --cat) NT_CAT="$NT_CAT ${2:-}"; shift 2 ;;
@@ -80,6 +83,17 @@ fi
 # Where the log goes. $HOME, because that is where every sheet step already
 # looks -- `cp ~/*.log ~/sheetsrc/` -- and moving it would be a change to eight
 # lanes for no reason.
+# Where a suite puts its pictures. Twenty rows passed `~/screenshots` and every
+# one of them passed the same thing, which makes it a default with a variable
+# behind it rather than an argument. A row that wants another one sets
+# NT_SHOT_DIR in its command column with env(1), the way it would any other.
+export NT_SHOT_DIR="${NT_SHOT_DIR:-$HOME/screenshots}"
+
+# The toolkit this lane draws with. It is a fact about the lane -- gjs and
+# linux-engines are gtk, kde is qt, macos is macos -- and it was argv on ten
+# rows, sitting next to a setup column that already declared it.
+export NT_TOOLKIT
+
 NT_LOGFILE=""
 if [ -n "$NT_LOG" ]; then
     NT_LOGFILE="$HOME/$NT_LOG.log"

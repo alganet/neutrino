@@ -23,7 +23,7 @@ NT_WALK_EXTRA="walk.renderer.sandboxed"
 # cold runner needs.
 TIMEOUT="${NT_WAIT_TIMEOUT:-60}"
 POLL_INTERVAL="${NT_WAIT_POLL:-0.5}"
-SCREENSHOT_DIR="${1:-.}"
+SCREENSHOT_DIR="${NT_SHOT_DIR:-.}"
 
 mkdir -p "$SCREENSHOT_DIR"
 

@@ -39,8 +39,11 @@ set -uo pipefail
 # a second one whose passing reading is a font name and not `moved=yes`.
 . "$(cd "$(dirname "$0")/.." && pwd)/lib/live.sh"
 
-MODE="${1:-gtk}"
-WATCH="${2:-8}"
+# The toolkit, which is a fact about the lane and not about this row: the
+# lane's own `toolkit=` says it once, step.sh exports it, and ten rows stop
+# repeating a word that was already declared beside them.
+MODE="${NT_TOOLKIT:-gtk}"
+WATCH="${1:-8}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 note() { nt_report "$*"; }
@@ -347,7 +350,7 @@ run_windows() {
 # Empty when the caller names none. The live half is the only reader, and the
 # probe half's rows do not pass it -- so a default here was a path that existed
 # on two lanes of the five that reach this line.
-LIVE_ART="${3:-}"
+LIVE_ART="${2:-}"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 
 # What GTK is actually drawing with, asked of the toolkit rather than of the

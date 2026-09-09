@@ -43,7 +43,7 @@ set -uo pipefail
 # to be killed by, which is a fact about a line at the top of a different file.
 . "$(cd "$(dirname "$0")/.." && pwd)/lib/title.sh"
 
-SHOT_DIR="${1:-$HOME/screenshots}"
+SHOT_DIR="${NT_SHOT_DIR:-$HOME/screenshots}"
 TIMEOUT=180
 POLL=0.5
 
