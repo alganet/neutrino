@@ -1447,6 +1447,7 @@ jobs:
       # context and $RUNNER_TEMP is the only writable path outside the checkout
       # that every runner agrees on.
       - shell: bash
+        timeout-minutes: 2
         run: |
           mkdir -p "$RUNNER_TEMP/nt-results"
           echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
@@ -1454,7 +1455,21 @@ jobs:
       - timeout-minutes: 5
         shell: bash
         run: bash test/lib/selftest.sh
+      # Bounded, like every pwsh step on this lane already was.
+      #
+      # This lane's `shell: bash` steps were the ten that were not, and on run
+      # 34305755555 that is what a stalled three-second build cost: the step ran
+      # until the job's own `timeout-minutes` killed the lane, twenty-five
+      # minutes later, with the `launch under load` readings and the sheet
+      # unstarted behind it. GitHub keeps no log for a job it kills that way, so
+      # the run reported neither the readings nor the stall.
+      #
+      # run.sh leashes each build now, and this is the backstop above it: a
+      # number just high enough that the leash inside speaks first and names the
+      # build, and low enough that a lane which loses one step still reaches the
+      # steps behind it -- every one of which is `if: always()`.
       - shell: bash
+        timeout-minutes: 6
         run: bash test/run.sh --build lanes=test-release
       # And the suites themselves, which are a sixth language nothing checked.
       # The argument below is the one that applies: a file that does not parse
@@ -1554,6 +1569,7 @@ jobs:
       # is the state each of those suites was measured in when it had a runner
       # to itself and appcache to warm it.
       - shell: bash
+        timeout-minutes: 6
         run: bash test/run.sh --build warm=loaders-testing
       - name: warm the WebView2 runtime
         timeout-minutes: 5
@@ -1642,6 +1658,7 @@ jobs:
       # what the stamp's certutil costs -- are the numbers the launcher's own
       # comment about size and modification time has been waiting for.
       - shell: bash
+        timeout-minutes: 6
         run: bash test/run.sh --build launchtime=loaders-testing
       - name: launch time
         timeout-minutes: 10
@@ -1719,6 +1736,7 @@ jobs:
       # wrote the program every launch into a directory anyone could rewrite,
       # here it wrote it once and trusted a stamp beside it afterwards.
       - if: always()
+        timeout-minutes: 6
         shell: bash
         run: bash test/run.sh --build appcache=loaders-testing
       - if: always()
@@ -1736,6 +1754,7 @@ jobs:
       # a driver that reads it on no tier at all measures the same as one that
       # reads it on the right one.
       - if: always()
+        timeout-minutes: 6
         shell: bash
         run: |
           bash test/run.sh --build standalone=loaders-release standalone-testing=loaders-testing
@@ -1753,6 +1772,7 @@ jobs:
       # and measures the launch path's own file I/O, and it is gated
       # `if: always()` so it is measured whether or not appcache was.
       - if: always()
+        timeout-minutes: 6
         shell: bash
         run: bash test/run.sh --build exerace=loaders-testing
       # The gap between the compile and the START, asserted shut. The batch
@@ -1796,6 +1816,7 @@ jobs:
       # does: an Evergreen path that fails has to end up on the package path,
       # and the only proof of it is a build that gets all the way to the 404.
       - if: always()
+        timeout-minutes: 6
         shell: bash
         run: |
           bash test/run.sh --build winerr=winerr
@@ -1873,6 +1894,7 @@ jobs:
       # app directories, so replica 2 cannot read a trace replica 1 left. It
       # asserts, so it can fail the run; the load is stopped whatever happens.
       - if: always()
+        timeout-minutes: 6
         shell: bash
         run: |
           bash test/run.sh --build load1=test-testing load2=test-testing
@@ -1957,6 +1979,7 @@ jobs:
       - name: sheet
         if: always()
         continue-on-error: true
+        timeout-minutes: 10
         shell: bash
         run: |
           # Gathered rather than globbed in place: this lane's pictures and logs
