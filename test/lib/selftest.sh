@@ -1731,6 +1731,47 @@ else
 fi
 
 echo
+echo "### no suite watches a process it does not name a file for"
+
+# The bug this exists for cost a Windows lane and could not be seen from here.
+#
+# The launcher names the exe -- and therefore the Windows process -- after the
+# .cmd. verify-nav.ps1 and themeflip.ps1 launched the artifact they were handed
+# and then watched `Get-Process -Name "neutrinonav"` and `neutrinostdtheme`,
+# names spelled by hand. When the artifacts were renamed after the suites that
+# run them, both kept watching a process nobody starts -- and neither says
+# "wrong name": they say the app owns no window, which is a sentence about the
+# launcher.
+#
+# A suite may still name a process literally when it also makes the file: the
+# copy-into-TEMP suites -- appcache, exerace, docswap, standalone -- write
+# <name>.cmd or <name>.exe themselves, so their literal is self-consistent and
+# nothing outside can invalidate it. That is the rule: name a process, and this
+# file wants to find you naming a file for it too.
+WATCHED=""
+for f in "$ROOT"/test/suite/*.ps1; do
+    [ -f "$f" ] || continue
+    for nt_n in $(grep -ohE -- '-Name "?(neutrino[A-Za-z0-9-]+)"?|ProcessName -eq "(neutrino[A-Za-z0-9-]+)"' "$f" |
+                  grep -oE 'neutrino[A-Za-z0-9-]+' | sort -u); do
+        grep -qE "$nt_n\.(cmd|exe)" "$f" && continue
+        WATCHED="$WATCHED $(basename "$f"):$nt_n"
+    done
+done
+[ -z "$WATCHED" ] \
+    && ok "every literal process name a suite watches is one it writes a file for" \
+    || bad "watched by name and never written:$WATCHED"
+
+# The canary: this scan is a grep over a glob, and a glob that stops matching
+# reports the same green as a tree with nothing wrong in it.
+NPS="$(ls "$ROOT"/test/suite/*.ps1 2>/dev/null | grep -c . || true)"
+NWATCH="$(grep -ohE -- '-Name [$"]?[A-Za-z0-9]' "$ROOT"/test/suite/*.ps1 2>/dev/null | grep -c . || true)"
+if [ "$NPS" -gt 0 ] && [ "$NWATCH" -gt 0 ]; then
+    ok "the process-name scan reads the tree ($NPS suites, $NWATCH Get-Process names)"
+else
+    bad "the process-name scan read $NPS suites and $NWATCH names, so the check above proves nothing"
+fi
+
+echo
 echo "### workflow-lint.py"
 
 if command -v "$(nt_python)" >/dev/null 2>&1; then

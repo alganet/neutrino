@@ -37,6 +37,9 @@ param(
 # passes nothing, the artifact moves, and the failure reads as an app that
 # never came up.
 if (-not $Artifact) { throw "usage: themeflip.ps1 -Artifact <app.cmd>" }
+# The process the launcher makes from that .cmd, and the one both halves
+# have to see gone before the next launch.
+$AppName = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)
 $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 
 function Set-AppsTheme($light) {
@@ -71,12 +74,12 @@ function Run-Half($tag, $shot) {
   & .\test\suite\verify-std.ps1 -Probe theme -ScreenshotDir $ScreenshotDir `
     -ShotName "theme-$shot" -Launch -Artifact $Artifact *>&1 |
     Tee-Object -FilePath "$LogDir\flip-$tag.log" | Out-Null
-  Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |
+  Get-Process -Name $AppName -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
   # The precondition the unix half states out loud: the next launch must not
   # find this one's window.
   $n = 0
-  while ($n -lt 60 -and (Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue)) {
+  while ($n -lt 60 -and (Get-Process -Name $AppName -ErrorAction SilentlyContinue)) {
     Start-Sleep -Milliseconds 500; $n++
   }
 }

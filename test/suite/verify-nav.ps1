@@ -52,6 +52,11 @@
 $ErrorActionPreference = "Continue"
 
 $lane = $args[0]
+# The process to watch, which the launcher names after the .cmd. It was the
+# literal `neutrinonav` until the artifacts were named after the suites that run
+# them, and a stale one here does not read as a wrong name -- it reads as an app
+# that never opened a window.
+$AppName = [System.IO.Path]::GetFileNameWithoutExtension($lane)
 $outDir = $args[1]
 if (-not $lane -or -not (Test-Path $lane) -or -not $outDir) {
     Write-Output "usage: verify-nav.ps1 <app.cmd> <outDir>"
@@ -139,7 +144,7 @@ function Beacon-Field($pattern, $name) {
 }
 
 function Stop-Apps {
-    Get-Process -Name "neutrinonav" -ErrorAction SilentlyContinue |
+    Get-Process -Name $AppName -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
 }
@@ -279,7 +284,7 @@ function App-Windows {
     $found = New-Object System.Collections.ArrayList
     try {
         $pids = @(Get-Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.ProcessName -eq "neutrinonav" -or $_.ProcessName -eq "msedgewebview2" } |
+            Where-Object { $_.ProcessName -eq $AppName -or $_.ProcessName -eq "msedgewebview2" } |
             ForEach-Object { [uint32]$_.Id })
         if ($pids.Count -eq 0) { return $found }
         $cb = [NtWin.Enum+EnumWindowsProc] {
