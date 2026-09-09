@@ -959,7 +959,7 @@ the difference that was there by accident.
 
 [`test/suites.tsv`](test/suites.tsv) is that list — lane, suite, the desktop the
 suite needs, and the command — and
-[`test/apps.tsv`](test/apps.tsv) is the artifacts, each built once and passed
+[`test/builds.tsv`](test/builds.tsv) is the builds, each built once and passed
 through `parse.sh` before anything runs it.
 [`test/run.sh`](test/run.sh) reads both and
 [`test/lib/step.sh`](test/lib/step.sh) runs one row: the display, the app launch and its
@@ -1036,7 +1036,7 @@ netinstall to run one.
 - `neutrino/`: the launcher, split by language under a polyglot skeleton -- see `neutrino/POLYGLOT.md`
 - `neutrino/assemble.sh`: the assembler (neutrino/ + your overlay -> .cmd)
 - `test/`: `run.sh` is the door and the three `.tsv` are the map --
-  `cases.tsv` is the case registry, `suites.tsv` and `apps.tsv` are what each
+  `cases.tsv` is the case registry, `suites.tsv` and `builds.tsv` are what each
   lane runs and what it builds. Everything else is in a room named for what it
   is:
   - `test/suite/`: the things that assert. One file per suite, flat, because
