@@ -31,7 +31,7 @@ set -uo pipefail
 
 DEC="${1:?usage: decoflip.sh <decorated.cmd> <chromeless.cmd> [shotdir]}"
 NONE="${2:?usage: decoflip.sh <decorated.cmd> <chromeless.cmd> [shotdir]}"
-SHOTS="${3:-$HOME/screenshots}"
+SHOTS="${NT_SHOT_DIR:-$HOME/screenshots}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 
