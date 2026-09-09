@@ -86,7 +86,7 @@ note() { echo "report: $*"; }
 # suite that samples something transient has to check its own slowest turn
 # against the dwell, and it cannot do that against a number the app might have
 # changed underneath it.
-APP_JS="test/neutrinostd${PROBE}.js"
+APP_JS="$(dirname "$0")/../probe/neutrinostd${PROBE}.js"
 DWELL="$(sed -n 's/^var DWELL = \([0-9]*\);.*/\1/p' "$APP_JS" 2>/dev/null | head -1)"
 [ -n "$DWELL" ] || DWELL=1500
 
