@@ -151,7 +151,13 @@ BUILT=""
 # their app folders in the corridor between the six rooms -- and cost .gitignore
 # fifty-four hand-written lines, one pair per artifact, that nothing checked.
 # One room, one ignore rule.
-OUT_DIR="$HERE/out"
+#
+# Overridable for the same reason the three manifests are: a test that builds
+# has to be able to build somewhere that is not the room CI's next step reads.
+# Without it the only cache a build could use was the lane's own, and a test
+# that exercised a failing build would delete an entry the lane was about to
+# want.
+OUT_DIR="${NT_OUT_DIR:-$HERE/out}"
 
 # The cache. An artifact is built once per (builder, source, flags) and copied to
 # every slot that wants it, because seven suites are built from
@@ -169,6 +175,27 @@ CACHE_DIR="$OUT_DIR/.cache"
 nt_cache_path() {
     printf '%s/%s.cmd' "$CACHE_DIR" \
         "$(printf '%s-%s-%s' "$1" "$2" "$3" | tr -c 'A-Za-z0-9._-' '-')"
+}
+
+# The leash a build never had.
+#
+# Every suite this file runs is bounded -- the row declares `timeout=` and
+# step.sh kills at it -- and every build it runs was not. That asymmetry cost a
+# whole windows-launch lane on run 34305755555: the netinstall step ahead of it
+# failed in a minute, the three-second `--build load1 load2` step behind it
+# stalled, and with nothing bounding either the build or the step the job spent
+# the rest of its forty minutes there and was killed. A job killed by its own
+# `timeout-minutes` publishes no sheet and GitHub keeps no log for it, so the
+# one thing the run could have said -- which build, and how far it got -- is the
+# thing that was lost.
+#
+# So a build is leashed the way a suite is, through the same file, so that there
+# is one leash in this tree and not two. It is deliberately loose: the builds
+# this bounds run in about three seconds, and a bound is here to turn a hang
+# into a sentence, not to fail a slow runner.
+NT_BUILD_LEASH="${NT_BUILD_LEASH:-300}"
+nt_leashed() {
+    bash "$HERE/lib/step.sh" --timeout "$NT_BUILD_LEASH" -- "$@"
 }
 
 # nt_build <slot> <build>: put a copy of <build> at test/out/<slot>.cmd.
@@ -243,15 +270,15 @@ nt_build() {
             # ${1+"$@"} and not "$@": with no flags at all and `set -u`, the
             # bare form is an unbound variable on the bash 3.2 macOS ships,
             # which is the same reason nothing in this tree uses an array.
-            bash "$HERE/build/mkapp.sh" ${1+"$@"} "$HERE/probe/$source" "$cache" || return 1 ;;
+            nt_leashed bash "$HERE/build/mkapp.sh" ${1+"$@"} "$HERE/probe/$source" "$cache" || return 1 ;;
         demoapp)
-            bash "$HERE/build/demoapp.sh" "$cache" || return 1 ;;
+            nt_leashed bash "$HERE/build/demoapp.sh" "$cache" || return 1 ;;
         *)
             echo "  FAIL: build '$name' names an unknown builder '$builder'"; return 1 ;;
     esac
 
     # Once per build and not once per slot: the copies are the same bytes.
-    bash "$HERE/build/parse.sh" "$cache" || { rm -f "$cache"; return 1; }
+    nt_leashed bash "$HERE/build/parse.sh" "$cache" || { rm -f "$cache"; return 1; }
     cp "$cache" "$out" || return 1
     BUILT="$BUILT $slot=$name"
     return 0

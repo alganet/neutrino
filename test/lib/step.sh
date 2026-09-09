@@ -269,7 +269,11 @@ done
 # that was killed at its leash and a suite that reported 124 failures are
 # different problems and the number alone cannot tell them apart.
 if [ -n "$NT_TIMEOUT" ] && [ "$RC" = 124 ]; then
-    echo "  FAIL: $1 exceeded its ${NT_TIMEOUT}s leash and was killed"
+    # The whole command and not `$1`. Every row in suites.tsv opens its
+    # command with `bash` or with `env`, and so does every build run.sh leashes,
+    # so the first word named the interpreter on every lane and never the thing
+    # that hung.
+    echo "  FAIL: $* exceeded its ${NT_TIMEOUT}s leash and was killed"
     exit 1
 fi
 exit "$RC"

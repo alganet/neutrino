@@ -1541,6 +1541,34 @@ printf '%s' "$LEASHOUT" | grep -q '::group::after' &&
 [ "$LEASHRC" = 1 ] && ok "a leashed suite counts as one failure, not 124" \
     || bad "a leashed lane exited $LEASHRC rather than 1"
 
+# The same leash, on the other half of the runner. A suite has declared a bound
+# since this file was written; a build never had one, and on run 34305755555 a
+# three-second `--build` step stalled and spent the rest of a forty-minute
+# windows-launch job. A job killed by its own `timeout-minutes` publishes no
+# sheet and GitHub keeps no log for it, so the run said nothing at all -- which
+# is why the bound is asserted here rather than left to the workflow.
+#
+# Wedged at `node`, because that is a real hang in the real builder: parse.sh
+# shells out to it to check the split, and a build that never returns from it is
+# indistinguishable from the one that cost the lane. Its own NT_OUT_DIR, so the
+# cache this deletes on the way out is not the one the next CI step reads.
+BLDBIN="$WORK/buildbin"; mkdir -p "$BLDBIN"
+printf '#!/bin/sh\nsleep 30\n' > "$BLDBIN/node"
+chmod +x "$BLDBIN/node"
+BLDTSV="$WORK/fixture-builds.tsv"
+printf 'wedged\tmkapp\tneutrinotest.js\t-\n' > "$BLDTSV"
+BLDOUT="$(PATH="$BLDBIN:$PATH" NT_OUT_DIR="$WORK/buildout" NT_BUILDS_FILE="$BLDTSV" \
+    NT_BUILD_LEASH=3 bash "$RUNSH" --build wedged 2>&1)"
+BLDRC=$?
+printf '%s' "$BLDOUT" | grep -q 'exceeded its 3s leash' &&
+    ok "a build past its leash is killed and says so" ||
+    bad "a build past its leash was not reported as such"
+printf '%s' "$BLDOUT" | grep -q 'parse.sh' &&
+    ok "the leash names the build step that hung, not the interpreter" ||
+    bad "a leashed build did not name what was running"
+[ "$BLDRC" = 1 ] && ok "a leashed build counts as one artifact that did not build" \
+    || bad "a leashed --build exited $BLDRC rather than 1"
+
 # An unknown directive is an error. A typo silently ignored is a suite running
 # without the display it asked for.
 BADTSV="$WORK/fixture-bad.tsv"
