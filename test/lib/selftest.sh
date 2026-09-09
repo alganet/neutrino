@@ -1101,6 +1101,7 @@ echo "### run.sh, and the manifest it reads"
 
 RUNSH="$ROOT/test/run.sh"
 SUITES_TSV="$ROOT/test/suites.tsv"
+LANES_TSV="$ROOT/test/lanes.tsv"
 BUILDS_TSV="$ROOT/test/builds.tsv"
 
 # Column shape. A row with the wrong number of columns puts a command in the
@@ -1176,14 +1177,38 @@ done < "$BUILDS_TSV"
 
 # Every lane in the manifest is a job in the workflow. A lane key that is not a
 # job is rows nobody will ever run, and it looks identical to rows that ran green.
-LANES="$(awk -F'\t' '!/^#/ && NF { sub(/:.*/, "", $1); print $1 }' "$SUITES_TSV" | sort -u)"
+LANES="$(awk -F'\t' '!/^#/ && NF { sub(/:.*/, "", $1); print $1 }' "$LANES_TSV" | sort -u)"
+LANEKEYS="$(awk -F'\t' '!/^#/ && NF { print $1 }' "$LANES_TSV" | tr '\n' ' ')"
+NT_SEEN=""
 JOBS="$(sed -n 's/^  \([a-z0-9-]*\):$/\1/p' "$ROOT/.github/workflows/ci.yml")"
 STRAY=""
 for l in $LANES; do
     case " $(echo $JOBS) " in *" $l "*) ;; *) STRAY="$STRAY $l" ;; esac
 done
-[ -z "$STRAY" ] && ok "every lane in suites.tsv is a job in ci.yml" \
-    || bad "in suites.tsv and not a job in ci.yml:$STRAY"
+[ -z "$STRAY" ] && ok "every lane in lanes.tsv is a job in ci.yml" \
+    || bad "in lanes.tsv and not a job in ci.yml:$STRAY"
+
+# Every lane a suite names is a lane, and no lane is claimed twice for one
+# suite. This is what makes the lists disjoint rather than ordered: with two
+# rows for `walk` there is no precedence to remember, because at most one of
+# them can apply -- and a typo in a lane list is rows nobody runs, which reads
+# exactly like rows that ran green.
+LANEDUP=""; LANESTRAY=""
+while IFS="$(printf '\t')" read -r nt_suite nt_lanes _rest; do
+    case "$nt_suite" in \#*|"") continue ;; esac
+    [ "$nt_lanes" = "*" ] && nt_lanes="$LANEKEYS"
+    for nt_l in $nt_lanes; do
+        case " $LANEKEYS " in *" $nt_l "*) ;; *) LANESTRAY="$LANESTRAY $nt_suite:$nt_l" ;; esac
+        case " $NT_SEEN " in
+            *" $nt_suite/$nt_l "*) LANEDUP="$LANEDUP $nt_suite/$nt_l" ;;
+            *) NT_SEEN="$NT_SEEN $nt_suite/$nt_l" ;;
+        esac
+    done
+done < "$SUITES_TSV"
+[ -z "$LANESTRAY" ] && ok "every lane a suite names is a lane in lanes.tsv" \
+    || bad "named by a suite and not a lane:$LANESTRAY"
+[ -z "$LANEDUP" ] && ok "no suite claims one lane twice" \
+    || bad "claimed by two rows of the same suite:$LANEDUP"
 
 # A file that walks up to the repo root walks up the right number of times.
 #
@@ -1260,7 +1285,7 @@ done
 # vacuous for the one lane that runs its list twice, which is the lane most able
 # to run a suite twice by accident.
 DOUBLED=""
-for lk in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$SUITES_TSV" | sort -u); do
+for lk in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$LANES_TSV"); do
     l="${lk%%:*}"
     for sname in $(bash "$RUNSH" --list "$lk" 2>/dev/null); do
         # The lane's own run.sh invocations name the suites it has migrated.
@@ -1290,7 +1315,7 @@ done
 # runs, `run.sh --list` names it, and no runner ever reaches it. That is a suite
 # quietly deleted by a file that looks like it declares one.
 DORMANT=""
-for lk in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$SUITES_TSV" | sort -u); do
+for lk in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$LANES_TSV"); do
     l="${lk%%:*}"
     for sname in $(bash "$RUNSH" --list "$lk" 2>/dev/null); do
         awk -v lane="$l" '
@@ -1464,13 +1489,21 @@ for n in 0 2 3; do
 done
 FIXTSV="$WORK/fixture-suites.tsv"
 {
-    printf 'fixture\t*\ttimeout=20\n'
-    printf 'fixture\tgreen\t-\tntexit0\n'
-    printf 'fixture\tthree\t-\tntexit3\n'
-    printf 'fixture\ttwo\t-\tntexit2\n'
+    printf 'green\tfixture\t-\tntexit0\n'
+    printf 'three\tfixture\t-\tntexit3\n'
+    printf 'two\tfixture\t-\tntexit2\n'
 } > "$FIXTSV"
 
-FIXOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$FIXTSV" bash "$RUNSH" fixture 2>&1)"
+# The lane the fixtures run on. It was the `*` row in each of them; with a table
+# per thing it is a table, and NT_LANES_FILE is the third of the three the
+# runner reads -- which is also the first time any test has exercised one of
+# those overrides.
+FIXLANES="$WORK/fixture-lanes.tsv"
+printf 'fixture\ttimeout=20\n' > "$FIXLANES"
+LEASHLANES="$WORK/fixture-leash-lanes.tsv"
+printf 'fixture\ttimeout=2\n' > "$LEASHLANES"
+
+FIXOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$FIXTSV" NT_LANES_FILE="$FIXLANES" bash "$RUNSH" fixture 2>&1)"
 FIXRC=$?
 [ "$FIXRC" = 5 ] && ok "run.sh exits the lane's failure count (0+3+2 = 5)" \
     || bad "run.sh exited $FIXRC for a fixture lane totalling 5 failures"
@@ -1494,11 +1527,10 @@ FIXTIMES="$(printf '%s' "$FIXOUT" | sed -n '/Where the time went/,/Total:/p' |
 # only thing behind a declared bound.
 LEASHTSV="$WORK/fixture-leash.tsv"
 {
-    printf 'fixture\t*\ttimeout=2\n'
-    printf 'fixture\twedged\t-\tsleep 30\n'
-    printf 'fixture\tafter\t-\tntexit0\n'
+    printf 'wedged\tfixture\t-\tsleep 30\n'
+    printf 'after\tfixture\t-\tntexit0\n'
 } > "$LEASHTSV"
-LEASHOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$LEASHTSV" bash "$RUNSH" fixture 2>&1)"
+LEASHOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$LEASHTSV" NT_LANES_FILE="$LEASHLANES" bash "$RUNSH" fixture 2>&1)"
 LEASHRC=$?
 printf '%s' "$LEASHOUT" | grep -q 'exceeded its 2s leash' &&
     ok "a suite past its leash is killed and says so" ||
@@ -1512,14 +1544,14 @@ printf '%s' "$LEASHOUT" | grep -q '::group::after' &&
 # An unknown directive is an error. A typo silently ignored is a suite running
 # without the display it asked for.
 BADTSV="$WORK/fixture-bad.tsv"
-printf 'fixture\toops\tnosuchdirective\tntexit0\n' > "$BADTSV"
-BADOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$BADTSV" bash "$RUNSH" fixture 2>&1)"
+printf 'oops\tfixture\tnosuchdirective\tntexit0\n' > "$BADTSV"
+BADOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$BADTSV" NT_LANES_FILE="$FIXLANES" bash "$RUNSH" fixture 2>&1)"
 printf '%s' "$BADOUT" | grep -q "unknown setup directive 'nosuchdirective'" &&
     ok "an unknown setup directive is refused by name" ||
     bad "an unknown setup directive was not refused"
 
 # The selection, which is what keeps a half-migrated lane from double-running.
-SELOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$FIXTSV" bash "$RUNSH" fixture two 2>&1)"
+SELOUT="$(PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$FIXTSV" NT_LANES_FILE="$FIXLANES" bash "$RUNSH" fixture two 2>&1)"
 printf '%s' "$SELOUT" | grep -q '::group::two' &&
     ! printf '%s' "$SELOUT" | grep -q '::group::green' &&
     ok "a selection runs only the rows it names" ||
@@ -1551,8 +1583,8 @@ cat > "$FIXBIN/ntspeak" <<NTSPEAK
 nt_pass fixture.named "a row that says which row asked for it"
 NTSPEAK
 chmod +x "$FIXBIN/ntspeak"
-printf 'fixture\tthe-row-name\ttimeout=20\tntspeak\n' > "$NAMETSV"
-PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$NAMETSV" NT_RESULTS_DIR="$NAMEDIR" \
+printf 'the-row-name\tfixture\ttimeout=20\tntspeak\n' > "$NAMETSV"
+PATH="$FIXBIN:$PATH" NT_SUITES_FILE="$NAMETSV" NT_LANES_FILE="$FIXLANES" NT_RESULTS_DIR="$NAMEDIR" \
     bash "$RUNSH" fixture >/dev/null 2>&1
 [ -f "$NAMEDIR/the-row-name.tsv" ] \
     && ok "the harness files a row under the manifest's name for it" \

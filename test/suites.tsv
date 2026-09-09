@@ -1,165 +1,80 @@
-# suites.tsv - what each lane runs, and the desktop each suite needs.
+# suites.tsv - what each suite is, and which lanes run it.
 #
 # SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
 # SPDX-License-Identifier: ISC
 #
-# lane <TAB> suite <TAB> setup <TAB> command
+# suite <TAB> lanes <TAB> setup <TAB> command
 #
-# Until this file existed, the answer to "what does the kde lane run" was to read
-# 3365 lines of .github/workflows/ci.yml and hold thirty steps in your head. The
-# lanes genuinely differ -- that is the point of having ten of them -- but the
-# difference was an emergent property of a YAML file rather than something a
-# reader could see, and the difference that was there by accident looked exactly
-# like the difference that was there on purpose.
+# This had sixty-two rows for eighteen suites, because a row was one suite on
+# one lane and five lanes ran nearly the same list. Twenty-nine of those rows
+# were duplicates of another: `verify-std.sh doc` appeared five times, and the
+# file could not say that the five were one thing.
 #
-# So the divergence is declared. `themescheme` runs on GTK lanes and not on Qt
-# ones because WebKitGTK's prefers-color-scheme follows the theme's *name*; that
-# is a fact worth writing down once, in the place that decides it, instead of
-# being visible only as a step that is present in one job and absent in another.
+# `lanes` is a space-separated list, or `*` for every lane, which is exactly how
+# cases.tsv's `applies-to` already works. A suite that genuinely differs takes a
+# second row with a disjoint lane list -- walk runs the release build on gjs and
+# the testing build on kde, and that is a fact worth two rows. Disjoint and not
+# ordered: which row applies to a lane is never a question of precedence, and
+# selftest asserts no lane is claimed twice for one suite.
 #
-# ------------------------------------------------------------------ the columns
+# `setup` is space-separated directives from the closed vocabulary in
+# test/run.sh. An unknown directive is an error and not a shrug.
 #
-# `lane` is a lane key. `<lane>:<phase>` names one pass of a lane that runs its
-# list more than once: linux-engines swaps its engine packages and runs the same
-# suites again, and until now the two halves filed their rows under one name and
-# neither was attributable. Everything left of the colon is what reaches
-# $NT_LANE, so cases.tsv and the grid never see a phase.
+# `command` is argv, split on whitespace, run through test/lib/step.sh. It does
+# not name the artifact: `build=` and `app=` do that, and run.sh appends the
+# paths it just built. It also does not name the toolkit or the screenshot
+# directory -- see lanes.tsv and NT_SHOT_DIR.
 #
-# `suite` is the name, and it is four things at once: step.sh's --log, the
-# $NT_SUITE the harness files rows under, the heading in the job log, and the row
-# in the timing table. Unique per lane. A row whose suite column is `*` is the
-# lane's defaults -- see below.
+# ---------------------------------------------------------------------- the run
 #
-# `setup` is space-separated directives from a closed vocabulary, listed in
-# test/run.sh. An unknown directive is an error and not a shrug: a typo that is
-# silently ignored is a suite running without the display it asked for.
-#
-# `command` is argv, split on whitespace and run through test/step.sh. Because it
-# is argv and not a shell fragment, a suite that needs a variable in its
-# environment spells it with env(1) in this column, and there is no `env=`
-# directive to specify, test and explain.
-#
-# ------------------------------------------------------------- the defaults row
-#
-# `display=metacity gtk` is true of fourteen gjs rows and would be written
-# fourteen times. The `*` row says it once and every suite row on that lane
-# merges over it, so what is left in a row is only what makes that row different
-# -- which is the whole reason to read one.
-#
-# --------------------------------------------------------------------- ordering
-#
-# File order is run order. That matters more here than it did in YAML, where the
-# step list was the order and could not be anything else: selftest stays first on
-# the lanes that run it, because a broken reporter makes every reading behind it
-# unreadable and that is worth finding out first.
+# File order is run order, for every lane at once. That is what one list costs:
+# there is one sequence now, and each lane runs the subsequence that names it.
+# It fits every lane as it was, with one exception worth writing down -- macos
+# ran `walk` before `loaders` and every other lane ran them the other way round,
+# and no single order can hold both. macos now runs loaders first. Nothing in
+# either suite reads the other, and step.sh clears the status file before each
+# launch, so the swap is a change in order and not in what is measured.
 #
 # ------------------------------------------------------------- what is not here
 #
 # Provisioning is not a suite. apt, brew, sysctl, setup-zig, docker login, the
 # engine-removal guards, anything reading a secret and anything with a ${{ }} in
-# it stays in the workflow, which is the thing that owns the machine. So does
-# every `uses:` step, and the sheet and upload steps at the end of each lane --
-# those name per-lane picture directories with human captions and there is
-# nothing repeated about them.
+# it stays in the workflow, which is the thing that owns the machine. So do the
+# sheet and upload steps.
 #
-# Four lanes have no rows here at all, and should not. bsd, kde-live, wayland and
-# macos-netinstall each run one command -- netinstall/test/run.sh, or qtkde.sh --
-# inside a VM action or a container pull. netinstall has a runner of its own and
-# it is better at that job than this one would be. This is the runner for the
-# test/ tree, and four lanes running neither is the honest answer; it is the same
-# answer cases.tsv already gives them.
+# The two Windows lanes have no rows: their steps are `shell: pwsh` and this
+# column is argv for bash. Their builds do come from the tables --
+# `run.sh --build <slot>=<build>` -- so what they run is declared even where how
+# they run it is not.
 #
-# ------------------------------------------------------------------- migration
-#
-# A lane moves onto this file one suite at a time. `run.sh <lane> a b c` runs
-# only the rows it names, so a row that exists here and is not yet named by the
-# workflow does not run, and a step the workflow still spells by hand is not
-# duplicated. That began with the twenty steps already written as one-liners
-# through step.sh -- the safest thing to move first, and the set whose arithmetic
-# this runner had to get right before anything harder went through it.
-#
-# The four unix lanes are on it now, including the steps that were not one-liners
-# and had to be argued about first: the walk, which was eleven to nineteen lines
-# on four jobs and had drifted five ways between them; the early-navigation
-# suite, whose apparatus is test/suite/early.sh because the order it comes up in is
-# the whole content of it; and kde's appdir, which was said to need a quoted
-# value in the command column and turned out to need its two knobs to live in
-# the file that drives qml instead.
-#
-# What is left is the two windows lanes. Their steps are `shell: pwsh` and this
-# runner is bash, which is a design question rather than a paste -- see the
-# `dbus` directive below for the shape the answer would take.
-#
-# The leashes are the `timeout-minutes` those steps carried, in seconds. They
-# were a ceiling GitHub enforced per step; a lane is fewer steps now, so the leash
-# a row declares is the one that suite has. That is also why test/lib/step.sh grew a
-# watchdog: on macOS there is no timeout(1), and a declared leash with nothing
-# behind it is the failure this project has a name for.
-
-gjs	*	display=metacity gtk timeout=480 toolkit=gtk
-gjs	lanes	display=off timeout=300 build=test-release	bash test/suite/lanes.sh
-gjs	assemble	display=off timeout=300	bash test/suite/assemble.sh
-gjs	loaders	timeout=1500 build=loaders-testing build=default:loaders-release	bash test/suite/loaders.sh
-gjs	walk	timeout=900 app=test-release	bash test/suite/verify-linux.sh
-gjs	attack	app=attack-release reap=neutrinoattack:ATTACK	bash test/suite/verify-attack.sh
-gjs	early	build=early-release	bash test/suite/early.sh
-gjs	stdgeom	timeout=840 cat=deco-a cat=deco-b build=geom build=none:geom-nodeco	bash test/suite/decoflip.sh
-gjs	themescheme	build=std-theme	bash test/suite/themescheme.sh
-gjs	themeflip	timeout=840 cat=flip-a cat=flip-b build=std-theme	bash test/suite/themeflip.sh
-gjs	fontflip		env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh 8
-gjs	fontlive	timeout=600 build=live-font	env NT_FONTFLIP_HALF=live bash test/suite/fontflip.sh 8
-gjs	stddoc	app=std-doc	bash test/suite/verify-std.sh doc
-gjs	stdwin	app=std-win timeout=600	bash test/suite/verify-std.sh win
-gjs	stdtheme	app=std-theme	bash test/suite/verify-std.sh theme
-gjs	demo	app=demo	bash test/suite/demo.sh
-gjs	stdfont	app=std-font	bash test/suite/verify-std.sh font
-linux-engines:cjs	*	display=metacity gtk timeout=480 toolkit=gtk
-linux-engines:cjs	lanes	display=off timeout=300 build=test-release	bash test/suite/lanes.sh
-linux-engines:cjs	loaders	timeout=1500 build=loaders-testing build=default:loaders-release	bash test/suite/loaders.sh
-linux-engines:cjs	walk	timeout=900 app=test-release	bash test/suite/verify-linux.sh
-linux-engines:cjs	stdgeom	timeout=840 cat=deco-a cat=deco-b build=geom build=none:geom-nodeco	bash test/suite/decoflip.sh
-linux-engines:cjs	themescheme	build=std-theme	bash test/suite/themescheme.sh
-linux-engines:cjs	themeflip	timeout=840 cat=flip-a cat=flip-b build=std-theme	bash test/suite/themeflip.sh
-linux-engines:cjs	stddoc	app=std-doc	bash test/suite/verify-std.sh doc
-linux-engines:cjs	stdwin	app=std-win timeout=600	bash test/suite/verify-std.sh win
-linux-engines:cjs	stdtheme	app=std-theme	bash test/suite/verify-std.sh theme
-linux-engines:py	*	display=metacity gtk timeout=480 toolkit=gtk
-linux-engines:py	lanes	display=off timeout=300 build=test-release	bash test/suite/lanes.sh
-linux-engines:py	loaders	timeout=1500 build=loaders-testing build=default:loaders-release	bash test/suite/loaders.sh
-linux-engines:py	walk	timeout=900 app=test-release	bash test/suite/verify-linux.sh
-linux-engines:py	stdgeom	timeout=840 cat=deco-a cat=deco-b build=geom build=none:geom-nodeco	bash test/suite/decoflip.sh
-linux-engines:py	themescheme	build=std-theme	bash test/suite/themescheme.sh
-linux-engines:py	themeflip	timeout=840 cat=flip-a cat=flip-b build=std-theme	bash test/suite/themeflip.sh
-linux-engines:py	fontflip		env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh 8
-linux-engines:py	fontlive	timeout=600 build=live-font	env NT_FONTFLIP_HALF=live bash test/suite/fontflip.sh 8
-linux-engines:py	stddoc	app=std-doc	bash test/suite/verify-std.sh doc
-linux-engines:py	stdwin	app=std-win timeout=600	bash test/suite/verify-std.sh win
-linux-engines:py	stdtheme	app=std-theme	bash test/suite/verify-std.sh theme
-linux-engines:py	stdfont	app=std-font	bash test/suite/verify-std.sh font
-kde	*	display=openbox qt timeout=480 toolkit=qt
-kde	lanes	display=off timeout=300 build=test-testing	bash test/suite/lanes.sh
-kde	loaders	timeout=1500 build=loaders-testing build=default:loaders-release	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/suite/loaders.sh
-kde	walk	timeout=900 dbus app=test-testing	bash test/suite/verify-linux.sh
-kde	attack	gtk app=attack-release reap=neutrinoattack:ATTACK	bash test/suite/verify-attack.sh
-kde	appdir	timeout=1500 build=loaders-testing	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/suite/appdir.sh
-kde	early	gtk build=early-release	bash test/suite/early.sh
-kde	stdgeom	timeout=840 cat=deco-a cat=deco-b build=geom build=none:geom-nodeco	bash test/suite/decoflip.sh
-kde	themeflip	timeout=840 cat=flip-a cat=flip-b build=std-theme	bash test/suite/themeflip.sh
-kde	stddoc	app=std-doc	bash test/suite/verify-std.sh doc
-kde	stdwin	app=std-win timeout=600	bash test/suite/verify-std.sh win
-kde	stdtheme	app=std-theme	bash test/suite/verify-std.sh theme
-kde	stdfont	app=std-font	bash test/suite/verify-std.sh font
-macos	*	timeout=480 toolkit=macos
-macos	assemble	display=off timeout=300	bash test/suite/assemble.sh
-macos	walk	timeout=1200 app=test-testing cat=neutrinotest-app	bash test/suite/verify-macos.sh
-macos	loaders	timeout=720 build=loaders-testing	bash test/suite/loaders.sh
-macos	attack	app=attack-testing reap=neutrinoattack:ATTACK cat=neutrinoattack-app	bash test/suite/verify-attack.sh
-macos	early	build=early-testing cat=neutrinoearly-app	bash test/suite/early.sh
-macos	navrefuse	timeout=720 build=early-testing	bash test/suite/navrefuse.sh
-macos	stdgeom	timeout=840 cat=deco-a cat=deco-b build=geom build=none:geom-nodeco	bash test/suite/decoflip.sh
-macos	themeflip	timeout=840 cat=flip-a cat=flip-b cat=flip-live-app build=std-theme build=live:live-theme	bash test/suite/themeflip.sh
-macos	fontflip		env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh 0
-macos	stddoc	app=std-doc	bash test/suite/verify-std.sh doc
-macos	stdwin	app=std-win timeout=600	bash test/suite/verify-std.sh win
-macos	stdtheme	app=std-theme	bash test/suite/verify-std.sh theme
-macos	stdfont	app=std-font	bash test/suite/verify-std.sh font
+# bsd, kde-live, wayland and macos-netinstall have no rows either, and that is
+# not a migration left half-done: they run netinstall/test/run.sh or qtkde.sh.
+lanes	gjs linux-engines:cjs linux-engines:py	display=off timeout=300 build=test-release	bash test/suite/lanes.sh
+lanes	kde	display=off timeout=300 build=test-testing	bash test/suite/lanes.sh
+assemble	gjs macos	display=off timeout=300	bash test/suite/assemble.sh
+loaders	gjs linux-engines:cjs linux-engines:py	timeout=1500 build=loaders-testing build=default:loaders-release	bash test/suite/loaders.sh
+loaders	kde	timeout=1500 build=loaders-testing build=default:loaders-release	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/suite/loaders.sh
+loaders	macos	timeout=720 build=loaders-testing	bash test/suite/loaders.sh
+walk	gjs linux-engines:cjs linux-engines:py	timeout=900 app=test-release	bash test/suite/verify-linux.sh
+walk	kde	timeout=900 dbus app=test-testing	bash test/suite/verify-linux.sh
+walk	macos	timeout=1200 app=test-testing	bash test/suite/verify-macos.sh
+attack	gjs	app=attack-release reap=ATTACK	bash test/suite/verify-attack.sh
+attack	kde	gtk app=attack-release reap=ATTACK	bash test/suite/verify-attack.sh
+attack	macos	app=attack-testing reap=ATTACK	bash test/suite/verify-attack.sh
+appdir	kde	timeout=1500 build=loaders-testing	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/suite/appdir.sh
+early	gjs	build=early-release	bash test/suite/early.sh
+early	kde	gtk build=early-release	bash test/suite/early.sh
+early	macos	build=early-testing	bash test/suite/early.sh
+navrefuse	macos	timeout=720 build=early-testing	bash test/suite/navrefuse.sh
+stdgeom	*	timeout=840 cat=deco-a cat=deco-b build=geom build=none:geom-nodeco	bash test/suite/decoflip.sh
+themescheme	gjs linux-engines:cjs linux-engines:py	build=std-theme	bash test/suite/themescheme.sh
+themeflip	gjs linux-engines:cjs linux-engines:py kde	timeout=840 cat=flip-a cat=flip-b build=std-theme	bash test/suite/themeflip.sh
+themeflip	macos	timeout=840 cat=flip-a cat=flip-b cat=flip-live-app build=std-theme build=live:live-theme	bash test/suite/themeflip.sh
+fontflip	gjs linux-engines:py	-	env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh 8
+fontflip	macos	-	env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh 0
+fontlive	gjs linux-engines:py	timeout=600 build=live-font	env NT_FONTFLIP_HALF=live bash test/suite/fontflip.sh 8
+stddoc	*	app=std-doc	bash test/suite/verify-std.sh doc
+stdwin	*	app=std-win timeout=600	bash test/suite/verify-std.sh win
+stdtheme	*	app=std-theme	bash test/suite/verify-std.sh theme
+demo	gjs	app=demo	bash test/suite/demo.sh
+stdfont	gjs linux-engines:py kde macos	app=std-font	bash test/suite/verify-std.sh font
