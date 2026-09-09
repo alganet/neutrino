@@ -27,13 +27,18 @@
 #
 # ---------------------------------------------------------------------- the run
 #
-# File order is run order, for every lane at once. That is what one list costs:
-# there is one sequence now, and each lane runs the subsequence that names it.
-# It fits every lane as it was, with one exception worth writing down -- macos
-# ran `walk` before `loaders` and every other lane ran them the other way round,
-# and no single order can hold both. macos now runs loaders first. Nothing in
-# either suite reads the other, and step.sh clears the status file before each
-# launch, so the swap is a change in order and not in what is measured.
+# File order is run order, and with one list it is one order: each lane runs the
+# subsequence of these rows that names it. It fits every lane as it was but one
+# -- macos ran `walk` before `loaders` and the other four ran them the other way
+# round, and no single sequence holds both. macos runs loaders first here.
+#
+# That is a smaller change than it reads as, and the reason is worth knowing
+# before trusting this paragraph: CI does not run a lane, it runs a suite. Every
+# lane is a column of `run.sh <lane> <suite>` steps in ci.yml, one per row, so
+# the order a runner executes is the workflow's and this file's order never
+# reaches it. What the sequence here governs is `bash test/run.sh macos` with no
+# suite named -- a whole lane at once, which is a thing a person does on a desk
+# and CI has never done.
 #
 # ------------------------------------------------------------- what is not here
 #
