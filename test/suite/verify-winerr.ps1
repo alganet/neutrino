@@ -20,17 +20,25 @@
 # package URL 404s and the download throws the way a digest mismatch would.
 # Nothing about the driver is modified: this is the real path into handleError.
 #
-# It takes two substitutions to get there now, and the second is worth as much
-# as the first. The driver renders through the WebView2 runtime the machine
-# already has and only fetches the package when it cannot, so a build carrying
-# nothing but a bad pin never reaches the pin -- it comes up, and this suite
-# passes while measuring nothing. Naming an entry point that does not exist is
-# what puts the download back in front of it.
+# It takes two of those to get there now, and the second is worth as much as the
+# first. The driver renders through the WebView2 runtime the machine already has
+# and only fetches the package when it cannot, so a build carrying nothing but a
+# bad pin never reaches the pin -- it comes up, and this suite passes while
+# measuring nothing. Naming an entry point that does not exist is what puts the
+# download back in front of it.
 #
 # Which makes this the one suite that measures the fallback. An Evergreen path
 # that fails has to arrive on the package path, and the proof of it is a build
-# that gets all the way to the 404 this file is waiting for. See ci.yml, where
-# both substitutions are made and checked.
+# that gets all the way to the 404 this file is waiting for.
+#
+# Both are overlay parts, not edits to a built file. The line above saying
+# nothing about the driver is modified was not true until they were: the
+# workflow ran two `sed -i` over the assembled .cmd, each with a `grep -q` after
+# it standing in for the failure path a substitution does not have, and this was
+# the one artifact in the tree no single assemble.sh run had produced. It is now
+# a row in test/apps.tsv naming test/probe/winerr/, which replaces
+# js/webview2-pin.js and js/evergreen-export.js the way every other variation in
+# this tree replaces a part.
 #
 # Usage: verify-winerr.ps1 <app.cmd>
 
