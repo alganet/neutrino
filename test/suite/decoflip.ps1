@@ -20,8 +20,13 @@
 # one: there the two halves share a name and only the window prefix separates
 # them.
 param(
-    [string]$Decorated = "neutrinostdgeom",
-    [string]$Chromeless = "neutrinostdgeom-none",
+    # Paths, not names. These were bare artifact names and Run-Half rebuilt
+    # `test\<name>.cmd` from them, which put the layout of the test tree inside
+    # a suite -- and made this the one artifact reference in the tree that no
+    # search for a path could find. The process to watch is still derived from
+    # the filename, because that is what the launcher names the exe after.
+    [string]$Decorated = "",
+    [string]$Chromeless = "",
     [string]$ScreenshotDir = $env:USERPROFILE
 )
 
@@ -36,6 +41,9 @@ $ErrorActionPreference = "Continue"
 # the verifier nor the differential. $PSScriptRoot is what every other .ps1 here
 # uses and it is the spelling selftest.sh can check the count against.
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+if (-not $Decorated -or -not $Chromeless) {
+    throw "usage: decoflip.ps1 -Decorated <app.cmd> -Chromeless <app.cmd>"
+}
 $logdir = if ($env:NT_FLIP_LOGDIR) { $env:NT_FLIP_LOGDIR } else { $env:USERPROFILE }
 $halfFailures = 0
 # Whether a half could not be started at all, which is different from a half
@@ -90,8 +98,8 @@ function Wait-Gone($name) {
 # tag because `deco-b` says nothing to a reader looking at a sheet, and because
 # both halves wrote one filename until this round -- so the decorated window,
 # which is the control this whole differential rests on, was never shipped.
-function Run-Half($app, $tag, $shot) {
-    $artifact = Join-Path $root "test\$app.cmd"
+function Run-Half($artifact, $tag, $shot) {
+    $app = [System.IO.Path]::GetFileNameWithoutExtension($artifact)
     if (-not (Test-Path $artifact)) {
         Write-Host "FAIL: no artifact at '$artifact'; the $tag half cannot run"
         $script:halfBroken = $true

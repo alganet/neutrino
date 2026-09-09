@@ -21,11 +21,16 @@
 # contrast theme applied, which arrived as one more. So the mechanism works and
 # what this file adds is a runner that says so.
 param(
-    [string]$Artifact = ".\test\out\neutrinolivetheme.cmd",
+    [string]$Artifact = "",
     [int]$UpTimeout = 120,
     [int]$MoveTimeout = 30
 )
 
+
+# Required. A default here is a path that goes stale silently: the caller
+# passes nothing, the artifact moves, and the failure reads as an app that
+# never came up.
+if (-not $Artifact) { throw "usage: themelive.ps1 -Artifact <app.cmd>" }
 $ErrorActionPreference = "Continue"
 $key  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 $name = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)

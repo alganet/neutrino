@@ -344,7 +344,10 @@ run_windows() {
 #
 # The desktop is put back where it was found, on every exit path.
 
-LIVE_ART="${3:-$ROOT/test/out/neutrinolivefont.cmd}"
+# Empty when the caller names none. The live half is the only reader, and the
+# probe half's rows do not pass it -- so a default here was a path that existed
+# on two lanes of the five that reach this line.
+LIVE_ART="${3:-}"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 
 # What GTK is actually drawing with, asked of the toolkit rather than of the
@@ -515,7 +518,15 @@ run_gtk_all() {
         *) skip_probe "this row runs the live half; the probe half is the fontflip row's" ;;
     esac
     case "$NT_FONTFLIP_HALF" in
-        live|both) live_half_gtk || rc=$? ;;
+        live|both)
+            # An empty $LIVE_ART is a row that named no live artifact, which is
+            # a skip with a reason rather than a launch of a path that is not
+            # there. It reads the same way in the grid as the branch below.
+            if [ -z "$LIVE_ART" ]; then
+                skip_live "this row named no live artifact to watch"
+            else
+                live_half_gtk || rc=$?
+            fi ;;
         *) skip_live "this row runs the probe half; the live half is the fontlive row's" ;;
     esac
     return "$rc"

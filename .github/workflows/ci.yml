@@ -1691,7 +1691,9 @@ jobs:
           # timeout; this is here for the ones nobody has thought of.
           $testExit = 0
           try {
-              & .\test\suite\verify-windows.ps1 -Launch *>&1 | Tee-Object -FilePath "$HOME\windows-verify.log"
+              & .\test\suite\verify-windows.ps1 -Launch `
+                -Artifact .\test\out\neutrinotest.cmd -AppDir .\test\out\neutrinotest `
+                *>&1 | Tee-Object -FilePath "$HOME\windows-verify.log"
               $testExit = $LASTEXITCODE
           } catch {
               "FAIL: verify-windows.ps1 ended by exception: $($_.Exception.Message)" |
@@ -2150,7 +2152,9 @@ jobs:
         timeout-minutes: 14
         shell: pwsh
         run: |
-          & .\test\suite\decoflip.ps1 -Decorated neutrinostdgeom -Chromeless neutrinostdgeom-none `
+          & .\test\suite\decoflip.ps1 `
+              -Decorated .\test\out\neutrinostdgeom.cmd `
+              -Chromeless .\test\out\neutrinostdgeom-none.cmd `
             -ScreenshotDir $env:USERPROFILE *>&1 |
             Tee-Object -FilePath "$HOME\stdgeom.log"
           $e = $LASTEXITCODE
@@ -2247,7 +2251,7 @@ jobs:
       - if: always()
         timeout-minutes: 16
         shell: pwsh
-        run: .\test\suite\themeflip.ps1
+        run: .\test\suite\themeflip.ps1 -Artifact .\test\out\neutrinostdtheme.cmd
       - if: always()
         shell: bash
         run: |
@@ -2304,7 +2308,8 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          & .\test\suite\demo.ps1 -ScreenshotDir $env:USERPROFILE *>&1 |
+          & .\test\suite\demo.ps1 -ScreenshotDir $env:USERPROFILE `
+              -Artifact .\test\out\neutrinodemo.cmd *>&1 |
             Tee-Object -FilePath "$HOME\demo.log"
           $e = $LASTEXITCODE
           Get-Process -Name neutrinodemo -ErrorAction SilentlyContinue |
@@ -2371,7 +2376,8 @@ jobs:
         shell: pwsh
         run: |
           bash test/run.sh --build neutrinolivefont
-          & .\test\suite\fontlive.ps1 *>&1 | Tee-Object -FilePath "$HOME\fontlive.log"
+          & .\test\suite\fontlive.ps1 -Artifact .\test\out\neutrinolivefont.cmd `
+            *>&1 | Tee-Object -FilePath "$HOME\fontlive.log"
           exit $LASTEXITCODE
       - name: sheet
         if: always()

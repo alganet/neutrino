@@ -48,11 +48,16 @@
 # reports a lane as broken -- and a suite that blames a launcher for a knob that
 # does nothing is worse than one that says it could not tell.
 param(
-    [string]$Artifact = ".\test\out\neutrinolivefont.cmd",
+    [string]$Artifact = "",
     [int]$UpTimeout = 120,
     [int]$MoveTimeout = 30
 )
 
+
+# Required. A default here is a path that goes stale silently: the caller
+# passes nothing, the artifact moves, and the failure reads as an app that
+# never came up.
+if (-not $Artifact) { throw "usage: fontlive.ps1 -Artifact <app.cmd>" }
 $ErrorActionPreference = "Continue"
 $key  = "HKCU:\Software\Microsoft\Accessibility"
 $name = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)

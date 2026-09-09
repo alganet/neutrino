@@ -441,7 +441,9 @@ Section "idl - the IIDs and the vtable order, from the pinned package"
 # so this is measuring the same package the driver would.
 
 $artifact = $args[0]
-if (-not $artifact) { $artifact = "test\out\neutrinotest.cmd" }
+# Required rather than defaulted. Every caller passes it; a default only
+# survives to be wrong the day the artifact moves.
+if (-not $artifact) { throw "usage: evergreen.ps1 <app.cmd>" }
 $pinVersion = ""
 $pinSha = ""
 if (Test-Path $artifact) {

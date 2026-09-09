@@ -47,7 +47,9 @@ function skip_rest($why) {
 Write-Output "=== compile: does the artifact compile ==="
 
 $artifact = $args[0]
-if (-not $artifact) { $artifact = "test\out\neutrinotest.cmd" }
+# Required rather than defaulted. Every caller passes it; a default only
+# survives to be wrong the day the artifact moves.
+if (-not $artifact) { throw "usage: compile.ps1 <app.cmd>" }
 if (-not (Test-Path $artifact)) {
     nt_fail compile.artifact "no built artifact at '$artifact'; nothing below is a reading"
     nt_skip compile.jsc "there was no artifact to compile, so the compiler was never reached for"

@@ -130,7 +130,9 @@ Write-Output "=== winexec: the program the driver runs, and the tree it deletes 
 # A built artifact and not a file in the repository: the launcher is neutrino/
 # now, assembled on every build, so what these assertions read is what shipped.
 $webview = $args[0]
-if (-not $webview) { $webview = "test\out\neutrinotest.cmd" }
+# Required rather than defaulted. Every caller passes it; a default only
+# survives to be wrong the day the artifact moves.
+if (-not $webview) { throw "usage: winexec.ps1 <app.cmd>" }
 if (-not (Test-Path $webview)) {
     nt_fail winexec.control.artifact "no built artifact at '$webview'; nothing below is a reading"
     skip_everything "there was no artifact to read, so nothing below was measured"
