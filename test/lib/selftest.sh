@@ -1676,6 +1676,61 @@ done
     || bad "an assembled artifact is patched after it is built:$PATCHED"
 
 echo
+echo "### every .cmd a workflow names is a slot something builds"
+
+# The check that did not exist, and whose absence is why the old scheme drifted.
+#
+# A `.cmd` path is a build output, so the "every test/ file a workflow names is
+# on disk" scan above deliberately skips it: the file is absent on a clean
+# checkout and demanding it would fail everywhere except on a runner that had
+# already built it. That left the paths themselves unchecked -- a step could name
+# test/neutrinocache.cmd and nothing anywhere said which build produced it, or
+# whether any did.
+#
+# Resolving against the workflow's own `--build` lines instead of against the
+# filesystem closes it without needing a built tree. The pwsh lanes spell both:
+# `run.sh --build appcache=loaders-testing` and then `.\test\out\appcache.cmd`,
+# and this is what makes the second follow from the first.
+NT_SLOTS="$(sed -n 's/.*run\.sh --build //p' "$ROOT"/.github/workflows/*.yml |
+    tr ' ' '\n' | sed 's/=.*//' | grep . | sort -u | tr '\n' ' ')"
+# The bash lanes name no paths at all -- run.sh appends them -- so a slot they
+# build is only ever spelled in the tables. Those are the suite names.
+NT_SLOTS="$NT_SLOTS $(awk -F'\t' '!/^#/ && NF { print $1 }' "$SUITES_TSV" | sort -u | tr '\n' ' ')"
+# And the second artifact of a two-build row, which hangs a slot off the suite.
+NT_SLOTS="$NT_SLOTS $(awk -F'\t' '!/^#/ && NF {
+        n = split($3, d, " ")
+        for (i = 1; i <= n; i++)
+            if (d[i] ~ /^(app|build)=[^:]+:/) {
+                sub(/^(app|build)=/, "", d[i]); sub(/:.*/, "", d[i])
+                print $1 "-" d[i]
+            }
+    }' "$SUITES_TSV" | sort -u | tr '\n' ' ')"
+
+NAMEDCMD="$(grep -ohE 'test[/\\]out[/\\][A-Za-z0-9$-]+\.cmd' "$ROOT"/.github/workflows/*.yml |
+    tr '\\' '/' | sed 's|test/out/||; s|\.cmd$||' | sort -u)"
+STRAYCMD=""
+for nt_c in $NAMEDCMD; do
+    # `load$replica` is one name written for two, and the loop that writes it is
+    # three lines below the --build that makes both.
+    case "$nt_c" in *'$'*) continue ;; esac
+    case " $NT_SLOTS " in *" $nt_c "*) ;; *) STRAYCMD="$STRAYCMD $nt_c" ;; esac
+done
+[ -z "$STRAYCMD" ] \
+    && ok "every .cmd a workflow names is a slot something builds ($(printf '%s' "$NAMEDCMD" | grep -c .) named)" \
+    || bad "named in a workflow and built by nothing:$STRAYCMD"
+
+# The canary. A glob that has stopped matching reports the same green as a
+# workflow with nothing wrong in it -- fifth time in this file, and the reason
+# every scan here says how much it read.
+NSLOT="$(printf '%s' "$NT_SLOTS" | tr ' ' '\n' | grep -c . || true)"
+NNAMED="$(printf '%s\n' "$NAMEDCMD" | grep -c . || true)"
+if [ "$NSLOT" -gt 0 ] && [ "$NNAMED" -gt 0 ]; then
+    ok "the slot scan reads the tree ($NSLOT slots declared, $NNAMED named in workflows)"
+else
+    bad "the slot scan found $NSLOT slots and $NNAMED named artifacts, so the check above proves nothing"
+fi
+
+echo
 echo "### workflow-lint.py"
 
 if command -v "$(nt_python)" >/dev/null 2>&1; then
