@@ -43,6 +43,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 SUITES_FILE="${NT_SUITES_FILE:-$HERE/suites.tsv}"
+LANES_FILE="${NT_LANES_FILE:-$HERE/lanes.tsv}"
 BUILDS_FILE="${NT_BUILDS_FILE:-$HERE/builds.tsv}"
 
 LIST=0
@@ -109,19 +110,31 @@ fi
 # two fields and the command lands in the setup variable, where it is then
 # reported as an unknown directive. Every field this emits is non-empty for that
 # reason alone.
+# The rows this lane runs, in file order. A row names its lanes in column two,
+# space separated, or `*` for all of them -- the same spelling cases.tsv uses
+# for `applies-to`, and for the same reason: the list is the fact, and a row per
+# lane made five copies of it.
 nt_rows() {
     awk -F'\t' -v lane="$LANE_KEY" '
         /^#/ { next }
         NF == 0 { next }
-        $1 == lane {
+        {
+            hit = ($2 == "*")
+            if (!hit) {
+                n = split($2, ls, " ")
+                for (i = 1; i <= n; i++) if (ls[i] == lane) hit = 1
+            }
+            if (!hit) next
             setup = ($3 == "" ? "-" : $3)
             cmd   = ($4 == "" ? "-" : $4)
-            printf "%s\t%s\t%s\n", $2, setup, cmd
+            printf "%s\t%s\t%s\n", $1, setup, cmd
         }
     ' "$SUITES_FILE"
 }
 
-DEFAULTS="$(nt_rows | awk -F'\t' '$1 == "*" { print $2; exit }')"
+# What the lane is, as opposed to what it runs.
+DEFAULTS="$(awk -F'\t' -v lane="$LANE_KEY" '
+    !/^#/ && NF && $1 == lane { print $2; exit }' "$LANES_FILE")"
 
 if [ "$BUILD_ONLY" = 0 ] && [ -z "$(nt_rows)" ]; then
     echo "run.sh: no rows for lane '$LANE_KEY' in $SUITES_FILE" >&2
@@ -281,13 +294,14 @@ fi
 # appeared" -- a sentence about the app.
 STEP_ARGS=""
 APP_SPEC=""
+REAP_PREFIX=""
 BUILD_SPECS=""
 SETUP_BAD=""
 SOFT=0
 
 nt_setup() {
-    local wm="" tk="" leash="" reap="" cats="" dbus="" toolkit="" nodisp=0 d
-    APP_SPEC=""; BUILD_SPECS=""; SETUP_BAD=""; SOFT=0
+    local wm="" tk="" leash="" cats="" dbus="" toolkit="" nodisp=0 d
+    APP_SPEC=""; BUILD_SPECS=""; REAP_PREFIX=""; SETUP_BAD=""; SOFT=0
     for d in $1 $2; do
         [ "$d" = "-" ] && continue
         case "$d" in
@@ -335,7 +349,11 @@ nt_setup() {
             # column that already said `gtk` or `qt` -- and macos, which says
             # neither, spelled it in the command column five times.
             toolkit=*) toolkit="${d#toolkit=}" ;;
-            reap=*)    reap="${d#reap=}" ;;
+            # Only the window-title prefix now. The other half was the
+            # artifact's basename spelled by hand -- reap.sh pgreps it against
+            # command lines, and the runner is the thing that just decided what
+            # that basename is.
+            reap=*)    REAP_PREFIX="${d#reap=}" ;;
             # continue-on-error, spelled once. Four steps carry it in the
             # workflow and every one of them is a probe: it reports a reading
             # nobody asserts, so a red one is a lane that measured something
@@ -349,7 +367,6 @@ nt_setup() {
     [ -n "$wm" ]    && STEP_ARGS="$STEP_ARGS --display $wm"
     [ -n "$tk" ]    && STEP_ARGS="$STEP_ARGS $tk"
     [ -n "$leash" ] && STEP_ARGS="$STEP_ARGS --timeout $leash"
-    [ -n "$reap" ]  && STEP_ARGS="$STEP_ARGS --reap $reap"
     [ -n "$cats" ] && STEP_ARGS="$STEP_ARGS$cats"
     [ -n "$dbus" ] && STEP_ARGS="$STEP_ARGS$dbus"
     [ -n "$toolkit" ] && STEP_ARGS="$STEP_ARGS --toolkit $toolkit"
@@ -377,7 +394,6 @@ RAN=0
 
 while IFS="$(printf '\t')" read -r suite setup command; do
     [ -n "$suite" ] || continue
-    [ "$suite" = "*" ] && continue
     if [ -n "$WANTED" ]; then
         case " $WANTED " in *" $suite "*) ;; *) continue ;; esac
     fi
@@ -400,7 +416,17 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     fi
 
     APP_ARG=""
-    [ -z "$APP_SPEC" ] || APP_ARG="--app $OUT_DIR/$(nt_slot "$APP_SPEC" "$suite").cmd"
+    if [ -n "$APP_SPEC" ]; then
+        nt_app_slot="$(nt_slot "$APP_SPEC" "$suite")"
+        APP_ARG="--app $OUT_DIR/$nt_app_slot.cmd"
+        # step.sh names the launcher's own log after the artifact, so three rows
+        # spelled `cat=neutrinotest-app` to get it into the job log -- a name
+        # derived in one file and written out in another, tracking the artifact
+        # filename rather than the row. The artifact is the suite's now, so this
+        # is the suite's too, and it needs saying in neither place.
+        APP_ARG="$APP_ARG --cat $nt_app_slot-app"
+        [ -z "$REAP_PREFIX" ] || APP_ARG="$APP_ARG --reap $nt_app_slot:$REAP_PREFIX"
+    fi
 
     # The artifacts the command is handed, appended in the order the row names
     # them. They were spelled out in twenty-nine command columns and in every

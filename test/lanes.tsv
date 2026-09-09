@@ -1,0 +1,29 @@
+# lanes.tsv - the machine each lane is, in the words the runner understands.
+#
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+# SPDX-License-Identifier: ISC
+#
+# lane <TAB> setup
+#
+# These were the `*` rows in suites.tsv, and they were never suites: a window
+# manager, a toolkit, a default leash and the toolkit a lane draws with are
+# facts about the machine, not about anything it runs. With one row per suite
+# next door there is nowhere for them to sit, and that is the right pressure --
+# they are a different table because they are a different thing.
+#
+# Every suite row on a lane merges over its lane row, left to right, so what is
+# left in a suite row is only what makes that row different. A suite saying
+# `display=off` overrides a lane saying `display=metacity` by plain assignment.
+#
+# `<lane>:<phase>` names one pass of a lane that runs its list more than once:
+# linux-engines swaps its engine packages between halves. Everything left of the
+# colon is what reaches $NT_LANE, so cases.tsv and the grid never see a phase.
+#
+# `toolkit=` is the one that was argv until now. Ten command columns passed
+# `gtk`, `qt` or `macos` as a word, next to a setup column that already said
+# `gtk` or `qt` for the display -- two spellings of one fact.
+gjs	display=metacity gtk timeout=480 toolkit=gtk
+linux-engines:cjs	display=metacity gtk timeout=480 toolkit=gtk
+linux-engines:py	display=metacity gtk timeout=480 toolkit=gtk
+kde	display=openbox qt timeout=480 toolkit=qt
+macos	timeout=480 toolkit=macos
