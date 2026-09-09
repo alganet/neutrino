@@ -48,7 +48,7 @@
 # reports a lane as broken -- and a suite that blames a launcher for a knob that
 # does nothing is worse than one that says it could not tell.
 param(
-    [string]$Artifact = ".\test\neutrinolivefont.cmd",
+    [string]$Artifact = ".\test\out\neutrinolivefont.cmd",
     [int]$UpTimeout = 120,
     [int]$MoveTimeout = 30
 )

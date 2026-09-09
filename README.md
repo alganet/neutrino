@@ -836,11 +836,11 @@ The test suite verifies IPC works end-to-end on all platforms:
 ```bash
 # Build the test app. mkapp.sh writes the overlay a one-file app would
 # otherwise be a directory for, and is what this suite builds with.
-bash test/build/mkapp.sh test/probe/neutrinotest.js test/neutrinotest.cmd
+bash test/build/mkapp.sh test/probe/neutrinotest.js test/out/neutrinotest.cmd
 
 # Run with verification (Linux, requires xdotool)
 bash test/lib/step.sh --display metacity --gtk --log walk \
-  --app test/neutrinotest.cmd -- bash test/suite/verify-linux.sh screenshots/
+  --app test/out/neutrinotest.cmd -- bash test/suite/verify-linux.sh screenshots/
 ```
 
 Tests exercise `document.title`, `window.resizeTo` and `window.moveTo` with external scripts that poll window state and assert expected values. CI runs these automatically on all four platforms.

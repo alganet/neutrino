@@ -5,7 +5,7 @@
 #
 # name <TAB> builder <TAB> source <TAB> flags <TAB> out
 #
-# `bash test/build/mkapp.sh --testing test/probe/neutrinostdtheme.js test/neutrinostdtheme.cmd`
+# `bash test/build/mkapp.sh --testing test/probe/neutrinostdtheme.js test/out/neutrinostdtheme.cmd`
 # appears in .github/workflows/ci.yml fifteen times, and it is one of eighty-four
 # mkapp.sh lines across ten lanes. The artifact is the same artifact every time:
 # the same source, the same flags, built on whichever runner needs it. Eighty-four

@@ -35,7 +35,7 @@ set -uo pipefail
 . "$(cd "$(dirname "$0")/.." && pwd)/lib/live.sh"
 
 MODE="${1:-gtk}"
-ART="${2:-test/neutrinostdtheme.cmd}"
+ART="${2:-test/out/neutrinostdtheme.cmd}"
 SHOTS="${3:-$HOME/screenshots}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
@@ -43,7 +43,7 @@ LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
 # see live_half at the bottom. Defaulted rather than required, so a caller that
 # predates this half runs it instead of silently not running it; CI names it
 # anyway, so the artifact goes through parse.sh with the others.
-LIVE_ART="${4:-$ROOT/test/neutrinolivetheme.cmd}"
+LIVE_ART="${4:-$ROOT/test/out/neutrinolivetheme.cmd}"
 
 note() { echo "report: $*"; }
 

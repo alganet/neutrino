@@ -1480,7 +1480,7 @@ jobs:
       - timeout-minutes: 5
         shell: pwsh
         run: |
-          & .\test\suite\compile.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
+          & .\test\suite\compile.ps1 test\out\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
           exit $LASTEXITCODE
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
@@ -1521,7 +1521,7 @@ jobs:
       - timeout-minutes: 10
         shell: pwsh
         run: |
-          & .\test\suite\winexec.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\winexec.log"
+          & .\test\suite\winexec.ps1 test\out\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\winexec.log"
           exit $LASTEXITCODE
       # Whether the 20 MB the Windows lane downloads on first run has to be
       # downloaded at all. What renders is the Evergreen Runtime, which is
@@ -1541,7 +1541,7 @@ jobs:
       - timeout-minutes: 15
         shell: pwsh
         run: |
-          & .\test\suite\evergreen.ps1 test\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\evergreen.log"
+          & .\test\suite\evergreen.ps1 test\out\neutrinotest.cmd *>&1 | Tee-Object -FilePath "$HOME\evergreen.log"
           exit $LASTEXITCODE
       # The monolith launched a webview (appcache) before the neutrinotest
       # verify, so the WebView2 runtime's one-time cold init was already done.
@@ -1563,7 +1563,7 @@ jobs:
           # runtime init, and the real verify keeps its own 240s bound, so this
           # never fails the job. No pipe on the launcher -- the batch STARTs a
           # detached exe and exits, and a pipe would outlive it (PR 20/28).
-          $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", ".\test\neutrinowarm.cmd" -PassThru -WindowStyle Hidden
+          $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", ".\test\out\neutrinowarm.cmd" -PassThru -WindowStyle Hidden
           $i = 0
           for (; $i -lt 180; $i++) {
             if (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like "LOADERS*" }) { break }
@@ -1609,7 +1609,7 @@ jobs:
             Write-Output "report:   none carried them; one command line was:"
             Write-Output "report:   $($cl.Substring(0, [Math]::Min(220, $cl.Length)))"
           }
-          $trace = ".\test\neutrinowarm\neutrino-trace.log"
+          $trace = ".\test\out\neutrinowarm\neutrino-trace.log"
           if (Test-Path $trace) {
             Write-Output "report: the startup path, unloaded:"
             Get-Content $trace | Select-Object -First 24 |
@@ -1652,7 +1652,7 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          & .\test\suite\launchtime.ps1 -Artifact test\neutrinotime.cmd -Runs 5 -Fresh *>&1 |
+          & .\test\suite\launchtime.ps1 -Artifact test\out\neutrinotime.cmd -Runs 5 -Fresh *>&1 |
             Tee-Object -FilePath "$HOME\launchtime.log"
           exit 0
       # The netinstall step below has had a timeout all along and this one has
@@ -1703,7 +1703,7 @@ jobs:
           # had reached "Step 0" -- which is a section header and not a pass --
           # and the app's side of it was in a file nothing read. A refusal
           # writes `neutrino: ...` here before any window exists.
-          $errLog = "test\neutrinotest\neutrino-error.log"
+          $errLog = "test\out\neutrinotest\neutrino-error.log"
           if (Test-Path $errLog) {
               Add-Content "$HOME\windows-verify.log" "=== the app's own account ==="
               Add-Content "$HOME\windows-verify.log" (Get-Content $errLog)
@@ -1723,7 +1723,7 @@ jobs:
         timeout-minutes: 15
         shell: pwsh
         run: |
-          & .\test\suite\appcache.ps1 .\test\neutrinocache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
+          & .\test\suite\appcache.ps1 .\test\out\neutrinocache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
           exit $LASTEXITCODE
       # The document the exe renders, and who gets to name it. It used to come
       # from NEUTRINO_SCRIPT_PATH, which the batch region set and netinstall's
@@ -1741,7 +1741,7 @@ jobs:
         timeout-minutes: 15
         shell: pwsh
         run: |
-          & .\test\suite\standalone.ps1 .\test\neutrinostandalone.cmd .\test\neutrinostandalone-testing.cmd *>&1 |
+          & .\test\suite\standalone.ps1 .\test\out\neutrinostandalone.cmd .\test\out\neutrinostandalone-testing.cmd *>&1 |
               Tee-Object -FilePath "$HOME\standalone.log"
           exit $LASTEXITCODE
       # It launches the app some forty times over three probing modes, and the
@@ -1767,7 +1767,7 @@ jobs:
         timeout-minutes: 15
         shell: pwsh
         run: |
-          & .\test\suite\exerace.ps1 .\test\neutrinorace.cmd *>&1 | Tee-Object -FilePath "$HOME\exerace.log"
+          & .\test\suite\exerace.ps1 .\test\out\neutrinorace.cmd *>&1 | Tee-Object -FilePath "$HOME\exerace.log"
           $raceExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } |
             Stop-Process -Force -ErrorAction SilentlyContinue
@@ -1801,7 +1801,7 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          & .\test\suite\verify-winerr.ps1 .\test\neutrinoerr.cmd *>&1 | Tee-Object -FilePath "$HOME\winerr-verify.log"
+          & .\test\suite\verify-winerr.ps1 .\test\out\neutrinoerr.cmd *>&1 | Tee-Object -FilePath "$HOME\winerr-verify.log"
           $testExit = $LASTEXITCODE
           Get-Process -Name "neutrinoerr" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           exit $testExit
@@ -1882,8 +1882,8 @@ jobs:
           $env:NEUTRINO_WEBVIEW2_LIB_DIR = $null
           $rc = 0
           foreach ($replica in "1", "2") {
-            $artifact = "test\neutrinoload$replica.cmd"
-            $appdir   = "test\neutrinoload$replica"
+            $artifact = "test\out\neutrinoload$replica.cmd"
+            $appdir   = "test\out\neutrinoload$replica"
             $log      = "$HOME\load-verify-$replica.log"
             # Its own frames. verify-windows.ps1 names a screenshot after the
             # state it caught, and the core launch above runs the same script:
@@ -2028,12 +2028,12 @@ jobs:
       - timeout-minutes: 5
         shell: pwsh
         run: |
-          & .\test\suite\compile.ps1 test\neutrinoattack.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
+          & .\test\suite\compile.ps1 test\out\neutrinoattack.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
           exit $LASTEXITCODE
       - timeout-minutes: 15
         shell: pwsh
         run: |
-          .\test\neutrinoattack.cmd
+          .\test\out\neutrinoattack.cmd
           # The name the rows file under. Set here rather than left to derive
           # from the filename, so this lane's twelve attack.* cases sit in the
           # sheet under the same `attack` the four bash lanes get from
@@ -2074,7 +2074,7 @@ jobs:
         timeout-minutes: 12
         shell: pwsh
         run: |
-          & .\test\suite\verify-nav.ps1 .\test\neutrinonav.cmd "$HOME\navlogs" *>&1 |
+          & .\test\suite\verify-nav.ps1 .\test\out\neutrinonav.cmd "$HOME\navlogs" *>&1 |
             Tee-Object -FilePath "$HOME\navlogs-full.log"
           $navExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "NAV-*" } |
@@ -2090,7 +2090,7 @@ jobs:
         timeout-minutes: 20
         shell: pwsh
         run: |
-          & .\test\suite\docswap.ps1 .\test\neutrinodoc.cmd "$HOME\docswaplogs" *>&1 |
+          & .\test\suite\docswap.ps1 .\test\out\neutrinodoc.cmd "$HOME\docswaplogs" *>&1 |
             Tee-Object -FilePath "$HOME\docswap-full.log"
           $swapExit = $LASTEXITCODE
           Get-Process | Where-Object { $_.MainWindowTitle -like "DOCSWAP*" } |
@@ -2165,7 +2165,7 @@ jobs:
         shell: pwsh
         run: |
           & .\test\suite\verify-std.ps1 -Probe doc -ScreenshotDir $env:USERPROFILE `
-            -Launch -Artifact .\test\neutrinostddoc.cmd *>&1 |
+            -Launch -Artifact .\test\out\neutrinostddoc.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stddoc.log"
           $e = $LASTEXITCODE
           Get-Process -Name neutrinostddoc -ErrorAction SilentlyContinue |
@@ -2196,7 +2196,7 @@ jobs:
         shell: pwsh
         run: |
           & .\test\suite\verify-std.ps1 -Probe win -ScreenshotDir $env:USERPROFILE `
-            -Launch -Artifact .\test\neutrinostdwin.cmd *>&1 |
+            -Launch -Artifact .\test\out\neutrinostdwin.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdwin.log"
           $e = $LASTEXITCODE
           Get-Process -Name neutrinostdwin -ErrorAction SilentlyContinue |
@@ -2207,7 +2207,7 @@ jobs:
         shell: pwsh
         run: |
           & .\test\suite\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE `
-            -Launch -Artifact .\test\neutrinostdtheme.cmd *>&1 |
+            -Launch -Artifact .\test\out\neutrinostdtheme.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdtheme.log"
           $e = $LASTEXITCODE
           Get-Process -Name neutrinostdtheme -ErrorAction SilentlyContinue |
@@ -2277,7 +2277,7 @@ jobs:
         shell: pwsh
         run: |
           $testExit = 0
-          & .\test\suite\themelive.ps1 -Artifact .\test\neutrinolivetheme.cmd *>&1 |
+          & .\test\suite\themelive.ps1 -Artifact .\test\out\neutrinolivetheme.cmd *>&1 |
             Tee-Object -FilePath "$HOME\themelive.log"
           if ($LASTEXITCODE -ne 0) { $testExit = $LASTEXITCODE }
           Get-Process -Name neutrinolivetheme -ErrorAction SilentlyContinue |
@@ -2344,7 +2344,7 @@ jobs:
         run: |
           bash test/run.sh --build neutrinostdfont
           & .\test\suite\verify-std.ps1 -Probe font -ScreenshotDir $env:USERPROFILE `
-            -Launch -Artifact .\test\neutrinostdfont.cmd *>&1 |
+            -Launch -Artifact .\test\out\neutrinostdfont.cmd *>&1 |
             Tee-Object -FilePath "$HOME\stdfont.log"
           $e = $LASTEXITCODE
           Get-Process -Name neutrinostdfont -ErrorAction SilentlyContinue |
@@ -2440,13 +2440,13 @@ jobs:
       # asserts what shipped, and the `@@include` that puts macos-confine.sh
       # into a build is the step most able to go wrong. Naming it also keeps
       # this step off assemble.sh, which it would otherwise call for itself.
-      - run: bash test/suite/confine-macos.sh test/neutrinotest.cmd
+      - run: bash test/suite/confine-macos.sh test/out/neutrinotest.cmd
       # The engine walk, on the platform whose order it is now about. lanes.sh
       # is stub-driven and needs no display, and it ran on three Linux lanes and
       # nowhere else -- so the two assertions that name osascript had never
       # executed, and the ordering this lane depends on was asserted only where
       # osascript does not exist.
-      - run: bash test/suite/lanes.sh test/neutrinotest.cmd
+      - run: bash test/suite/lanes.sh test/out/neutrinotest.cmd
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
       # assembles anything -- once per sed, because the spelling of what it
