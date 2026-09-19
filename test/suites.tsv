@@ -73,9 +73,8 @@
 # and they are rows all the same; the pwsh section at the end says how, and
 # both lanes are one `run.sh <lane>` step like the rest.
 #
-# bsd and kde-live have no rows, and that is not a migration left half-done:
-# bsd runs netinstall/test/run.sh inside a guest this runner cannot reach, and
-# kde-live runs qtkde.sh, which is a container and not a suite.
+# bsd has no rows, and that is not a migration left half-done: it runs
+# netinstall/test/run.sh inside a guest this runner cannot reach.
 #
 # ------------------------------------------------------------------ the profile
 #
@@ -415,6 +414,21 @@ themescheme	gjs linux-engines:cjs linux-engines:py	build=std-theme	bash test/sui
 # beside it.
 themeflip	gjs linux-engines:cjs linux-engines:py kde	timeout=840 cat=flip-a cat=flip-b build=std-theme	bash test/suite/themeflip.sh
 themeflip	macos	timeout=840 cat=flip-a cat=flip-b cat=flip-live-app build=std-theme build=live:live-theme	bash test/suite/themeflip.sh
+#
+# The Qt lane's live half, which needs a desktop the kde runner cannot be:
+# there Qt loads QGtk3Theme and a theme change under a running process
+# delivers nothing -- measured, and the honest answer for that desktop.
+# Whether the lane follows a change on the desktop it is named for could not
+# be asked there at all, since Ubuntu's plasma-integration is built against
+# Qt 5. So kde-live brings one: test/apparatus/qtkde.sh pulls the image the
+# `kde image` workflow publishes -- a real Plasma 6 stack, not a mock -- or
+# builds it locally when the pull fails, and runs themeflip.sh's live half
+# inside it. themelive-kde.sh is the verdict: the apparatus exits 0 both
+# when the half passed and when there was no desktop to run it on, and
+# those are not the same result to a reader. The same row name as the
+# Windows live half, because it is the same question of a different
+# desktop.
+themelive	kde-live	display=off timeout=720	bash test/suite/themelive-kde.sh
 #
 # ------------------------------------------------- the app on the download page
 #
