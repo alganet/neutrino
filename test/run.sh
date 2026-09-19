@@ -22,9 +22,11 @@
 #
 # What this adds, and why:
 #
-#   ::group::   A lane is one step now. Thirty collapsible sections in the GitHub
-#               UI would have become one wall of text, and the folding is not a
-#               nicety: it is how anybody finds the suite that failed.
+#   ::group::   A lane is one step now -- it was written to be, and for a while
+#               the workflow still ran it as one step per row. Thirty
+#               collapsible sections in the GitHub UI would have become one
+#               wall of text, and the folding is not a nicety: it is how
+#               anybody finds the suite that failed.
 #
 #   the build   Every artifact is built and parsed here rather than in the step
 #               that runs it. parse.sh was a per-step choice in fifty-four
@@ -164,8 +166,10 @@ OUT_DIR="${NT_OUT_DIR:-$HERE/out}"
 # neutrinoloaders.js --testing and the file is byte-identical every time.
 #
 # This is not an optimisation of a thing that was fast. Nothing cached before:
-# $BUILT is a shell variable and CI invokes this file once per suite, so
-# neutrinotest.js release was assembled three times on gjs alone. Copying a
+# $BUILT is a shell variable and CI invoked this file once per suite, so
+# neutrinotest.js release was assembled three times on gjs alone. CI runs a
+# lane as one invocation now and $BUILT would cover it, but a person running
+# one suite at a time still gets the cache, and it is the same file. Copying a
 # built artifact is what test/suite/standalone.ps1 already does to get two apps
 # out of one build.
 CACHE_DIR="$OUT_DIR/.cache"
