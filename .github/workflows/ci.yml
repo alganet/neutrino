@@ -9,33 +9,56 @@ on: [push]
 # timeout and a job timeout answer different questions.
 #
 # A step's ceiling sits above the internal budget of what it runs, not above the
-# time it usually takes. verify-std.sh waits 180s for a first window and records
-# for 90 (150 for the window probe); decoflip.sh and themeflip.sh spend that
-# twice, with a 30s wait between halves. So the geometry pair's floor is about
-# nine and a half minutes even though it takes fifteen seconds, and a ceiling
-# under that floor would kill the verifier in the middle of reporting *why* it
-# failed -- turning a diagnosable failure into an anonymous one, which is the
-# only outcome worse than a slow lane.
+# time it usually takes. Most of that rule has left this file with the steps it
+# governed: a suite's bound is its row's `timeout=` in test/suites.tsv now, and
+# the arithmetic behind each one is written beside it there. What the rule cost
+# to learn is worth keeping here, because it is about ceilings and not about any
+# one suite. verify-std.sh waits 180s for a first window and records for 90 (150
+# for the window probe); decoflip.sh and themeflip.sh spend that twice, with a
+# 30s wait between halves, so the geometry pair's floor is about nine and a half
+# minutes even though it takes fifteen seconds -- and a ceiling under that floor
+# kills the verifier in the middle of reporting *why* it failed, turning a
+# diagnosable failure into an anonymous one, which is the only outcome worse
+# than a slow lane. Above the floor, tight: `stdwin` once had twenty minutes for
+# a step measured at 151 seconds against a floor of six, and that headroom was
+# paid for by the case it was meant for, `windows-content`'s decoration pair
+# wedging at 1215s and then at 1815s, each time held to the end of a ceiling far
+# above anything it could legitimately need.
 #
-# Above that floor, tight. `stdwin` had twenty minutes for a step measured at
-# 151 seconds against a floor of six, and the cost of that headroom is paid by
-# the case it was meant for: `windows-content`'s decoration pair has wedged
-# twice, at 1215s and 1815s, each time held to the end of a ceiling far above
-# anything it could legitimately need. Fourteen minutes is above its floor and
-# less than half of what the last hang cost.
+# Three step ceilings are left in this file, all of them on test/lib/selftest.sh,
+# which is the one thing a lane runs that is not a row. It has no internal budget
+# to sit above -- it waits for nothing and asserts against the tree -- so the
+# rule for it is its measured cost with room for a slow runner. The three are
+# not the same number, because the same script costs 29s on ubuntu, 101s on
+# macos and 263s under MSYS, where every one of its several thousand process
+# spawns is a Windows process creation.
 #
-# A job's ceiling is not the sum of its steps. It answers "has this lane stopped"
-# rather than "is this step slow", so it sits above the lane's measured wall
-# clock with room for a slow runner, and every lane here measures between 11 and
-# 19 minutes -- except `wayland`, which is a splash suite behind an apt install
-# and is expected in single digits. Its ceiling is the one guess in this file,
-# and it is a guess because the lane is new; the first complete run replaces it.
+# A job's ceiling is not the sum of its steps, and since every suite became a
+# leashed row it is not the backstop for a slow suite either: a row that wedges
+# costs its own `timeout=` and the lane carries on past it. What is left for a
+# job ceiling to catch is a hang with no leash above it -- provisioning, an apt
+# mirror, an action, a guest that never boots, run.sh itself -- so it answers
+# "has this lane stopped" and nothing finer, and a lane that exceeds it has not
+# got slower, it has stopped.
 #
-# Measured on run 33446055662 and 33450686867, not guessed, and the two hangs
+# Each is the larger of twice the lane's measured wall clock and the lane's
+# longest row leash on top of that wall clock, rounded up to five minutes and
+# never under ten. The second term is what lets one row spend everything it is
+# allowed and still leave the lane time to report; the first is room for a slow
+# runner on a lane where nothing is near its leash. Both terms are written above
+# each job, so a ceiling can be checked against its own arithmetic rather than
+# taken on trust -- which is how four of them came to be wrong: the numbers they
+# were derived from were a shape of this file that no longer existed.
+#
+# Measured across runs 35465319046, 35468059840, 35469429197 and 35470958413 --
+# four complete green runs of this file as it now stands -- and the two hangs
 # above are from 33363744511 and 33366711441.
 
 jobs:
-  # Measured against a complete run rather than guessed: this lane took 12.0 min measured, and a netinstall step that may take 35.
+  # Measured across four runs, not guessed: this lane took 10.2 min at its
+  # longest, and its longest row leash is 25 min (netinstall and loaders, 1500s each).
+  # Twice the wall clock is 20.4 and the leash on top of it is 35.2, so the
+  # ceiling below is the larger of the two rounded up to five: 40.
   # Without a job ceiling the default is six hours, which is what a wedged step
   # spends before anyone finds out -- a run that hangs reports nothing, and
   # nothing is the one result no round can act on. A lane that exceeds this has
@@ -126,7 +149,10 @@ jobs:
   #
   # The two halves write into the same ~/screenshots, so cjs's upload sits
   # between them rather than at the end.
-  # Measured against a complete run rather than guessed: this lane took 10.6 min measured.
+  # Measured across four runs, not guessed: this lane took 8.0 min at its
+  # longest, and its longest row leash is 25 min (loaders, 1500s, in both phases).
+  # Twice the wall clock is 16.0 and the leash on top of it is 33.0, so the
+  # ceiling below is the larger of the two rounded up to five: 35.
   # Without a job ceiling the default is six hours, which is what a wedged step
   # spends before anyone finds out -- a run that hangs reports nothing, and
   # nothing is the one result no round can act on. A lane that exceeds this has
@@ -236,16 +262,16 @@ jobs:
   # workflow when its definition changes; a run here pulls it. If the pull
   # fails -- a fork with no package published yet -- test/apparatus/qtkde.sh builds it
   # locally instead, which is slow but not broken.
-  # Measured against a complete run rather than guessed: this lane took 2.1 min
-  # measured, almost all of it the one step below. Read across five runs, that
-  # step is 62s, 73s, 75s, 75s and 121s -- the spread is the image pull, not the
-  # half.
+  # Measured across four runs, not guessed: this lane took 1.2 min at its
+  # longest, and its longest row leash is 12 min (themelive, 720s).
+  # Twice the wall clock is 2.4 and the leash on top of it is 13.2, so the
+  # ceiling below is the larger of the two rounded up to five: 15.
   #
-  # Until now the block above this one belonged to kde and had drifted down into
-  # this job's step list, which is how a lane running test/apparatus/qtkde.sh alone came to
-  # be annotated with the ceiling of a netinstall step it does not have. This
-  # lane's own numbers were never written down and its one real step had no
-  # ceiling at all.
+  # It was 40, which was never this lane's number: the block above this one
+  # belonged to kde and had drifted down into this job's step list, so a lane
+  # running one Qt half came to be annotated with the ceiling of a netinstall
+  # step it does not have. The drift was fixed and the 40 was left. This lane
+  # has never taken longer than 1.2 minutes in any run seen.
   #
   # Without a job ceiling the default is six hours, which is what a wedged step
   # spends before anyone finds out -- a run that hangs reports nothing, and
@@ -253,7 +279,7 @@ jobs:
   # not got slower, it has stopped.
   kde-live:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: read
@@ -282,14 +308,19 @@ jobs:
         with:
           lane: kde-live
 
-  # Measured against a complete run rather than guessed: this lane took 12.6 min measured, and a netinstall step that may take 35.
+  # Measured across four runs, not guessed: this lane took 5.6 min at its
+  # longest, and its longest row leash is 25 min (appdir, loaders and netinstall, 1500s each).
+  # Twice the wall clock is 11.2 and the leash on top of it is 30.6, so the
+  # ceiling below is the larger of the two rounded up to five: 35.
+  # It was 40, derived when this lane spelled netinstall as a step of its own
+  # with a 35-minute ceiling; that step is a row with a 1500s leash now.
   # Without a job ceiling the default is six hours, which is what a wedged step
   # spends before anyone finds out -- a run that hangs reports nothing, and
   # nothing is the one result no round can act on. A lane that exceeds this has
   # not got slower, it has stopped.
   kde:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 35
     env:
       NT_LANE: kde
     steps:
@@ -347,9 +378,16 @@ jobs:
   # server. This is the only lane with both, so it is the only lane where
   # either of them is more than a skip.
   #
-  # Unmeasured, unlike every other ceiling in this file: the first complete run
-  # is what replaces it. The work is an apt install, one compositor, the three
-  # builds run.sh always does and a suite that takes fifteen seconds elsewhere.
+  # Measured across four runs, not guessed: this lane took 1.4 min at its
+  # longest, and its longest row leash is 10 min (netinstall, 600s).
+  # Twice the wall clock is 2.8 and the leash on top of it is 11.4, so the
+  # ceiling below is the larger of the two rounded up to five: 15.
+  #
+  # This was the one guess in the file -- "unmeasured, unlike every other
+  # ceiling here; the first complete run is what replaces it". The run came and
+  # the guess was right to within nothing: 15 is what the rule gives. The work
+  # is an apt install, one compositor, the three builds run.sh always does and
+  # a suite that takes half a minute; the row step is 32 seconds of the 84.
   wayland:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -414,9 +452,27 @@ jobs:
   # step, which was never really about guests -- a lane that stops at its first
   # red step reports nothing about the steps behind it, and that is true of a
   # lane with one guest exactly as it was of a lane with three.
+  #
+  # Measured across four runs, not guessed: this lane took 6.5 min at its
+  # longest, and it has no rows at all -- its leash is the longest nt_timeout
+  # inside netinstall/test/run.sh, which is 20 min (landlockfloor, job-ui, env).
+  # Twice the wall clock is 13.0 and the leash on top of it is 26.5, so the
+  # ceiling below is the larger of the two rounded up to five: 30.
+  #
+  # It was 60, and 60 was never derived from anything. This is the one lane
+  # where the job ceiling is the only bound on the work: the guest step is a
+  # vmactions action with no leash of its own, and the suite's nt_timeouts are
+  # inside the VM where this file cannot see them. A guest that never boots is
+  # exactly what this number exists to catch, and an hour of catching it is
+  # fifty-three minutes of a runner spent on a lane that already stopped.
+  #
+  # Without a job ceiling the default is six hours, which is what a wedged step
+  # spends before anyone finds out -- a run that hangs reports nothing, and
+  # nothing is the one result no round can act on. A lane that exceeds this has
+  # not got slower, it has stopped.
   bsd:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       NT_LANE: bsd
     steps:
@@ -608,7 +664,6 @@ jobs:
           fi
 
   # How the exe gets onto disk and comes up: the core launch, the driver's own
-
   # file and process I/O, the app cache, the gap between the compile and the
   # START, an initialisation that fails, the netinstall suite, and the same
   # launch watched on a runner that is busy.
@@ -622,20 +677,36 @@ jobs:
   #
   # The load probe goes last on purpose. It starts cpus*3 spinners, and
   # nothing else in the lane should be measured against them.
-  # Measured against a complete run rather than guessed: this lane took 16.9 min measured, the longest lane, netinstall step 20.
+  # Measured across four runs, not guessed: this lane took 28.2 min at its
+  # longest, and its longest row leash is 20 min (walk and netinstall, 1200s each).
+  # Twice the wall clock is 56.4 and the leash on top of it is 48.2, so the
+  # ceiling below is the larger of the two rounded up to five: 60.
+  # It was 40, and 40 was the one ceiling in this file a slow runner could
+  # plausibly have reached: 28.2 measured against it is 70 per cent spent. The
+  # lane has not got slower on this branch -- the last run on main measured 26.9
+  # -- the number was simply never derived from it. This is still the longest
+  # lane in the file by ten minutes, and 21.4 of its 28.2 are the one row step.
   # Without a job ceiling the default is six hours, which is what a wedged step
   # spends before anyone finds out -- a run that hangs reports nothing, and
   # nothing is the one result no round can act on. A lane that exceeds this has
   # not got slower, it has stopped.
   windows-launch:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       NT_LANE: windows-launch
     steps:
       - uses: actions/checkout@v7
       # MSYS's turn at the harness. See the gjs lane for why this runs on three.
-      - timeout-minutes: 5
+      #
+      # Ten minutes and not the five the other two get, because this is the one
+      # copy of this step that was close to its ceiling: measured at 198s, 249s,
+      # 257s, 258s and 263s across five runs against 300. A slow runner takes
+      # the lane with it, and it takes it at the first step, so the whole lane
+      # would be lost to a timeout with nothing to read. The script has no
+      # internal budget -- it waits for nothing -- so the cost is process
+      # creation, several thousand of them, which is what MSYS is slow at.
+      - timeout-minutes: 10
         shell: bash
         run: bash test/lib/selftest.sh
       # The compiler netinstall's suite builds with, put on the machine before
@@ -676,7 +747,11 @@ jobs:
   # question of the same driver. Every group is gated `if: always()`, so a red
   # offline tier does not hide whether docswap passed -- the failure that cost
   # a whole round when all of this sat in one long lane.
-  # Measured against a complete run rather than guessed: this lane took 14.8 min measured.
+  # Measured across four runs, not guessed: this lane took 16.2 min at its
+  # longest, and its longest row leash is 20 min (docswap, 1200s).
+  # Twice the wall clock is 32.4 and the leash on top of it is 36.2, so the
+  # ceiling below is the larger of the two rounded up to five: 40.
+  # docswap alone is 9.9 of those 16.2 minutes.
   # Without a job ceiling the default is six hours, which is what a wedged step
   # spends before anyone finds out -- a run that hangs reports nothing, and
   # nothing is the one result no round can act on. A lane that exceeds this has
@@ -707,8 +782,7 @@ jobs:
             docswap=$HOME/docswaplogs
             nav=$HOME/navlogs
 
-  # Everything this platform has to say about a running app: the core launch
-
+  # Everything this platform has to say about a running app: the core launch,
   # the loader environment, hostile content, a page that navigates before its
   # own load finished, and the navigation guard's account of itself.
   #
@@ -717,7 +791,10 @@ jobs:
   #
   # One upload at the end: all four jobs pointed at ~/screenshots, so the
   # separate artifacts were separate names over the same directory.
-  # Measured against a complete run rather than guessed: this lane took 11.4 min measured.
+  # Measured across four runs, not guessed: this lane took 8.6 min at its
+  # longest, and its longest row leash is 20 min (walk, 1200s).
+  # Twice the wall clock is 17.2 and the leash on top of it is 28.6, so the
+  # ceiling below is the larger of the two rounded up to five: 30.
   # Without a job ceiling the default is six hours, which is what a wedged step
   # spends before anyone finds out -- a run that hangs reports nothing, and
   # nothing is the one result no round can act on. A lane that exceeds this has
@@ -750,7 +827,11 @@ jobs:
   # matrix -- one run.sh that nothing here can split -- so it is what every
   # other job is balanced against, and it carries nothing else that a runner
   # would have to wait behind.
-  # Measured against a complete run rather than guessed: this lane took 14.3 min measured, almost all of it one step.
+  # Measured across four runs, not guessed: this lane took 5.3 min at its
+  # longest, and its longest row leash is 30 min (netinstall, 1800s).
+  # Twice the wall clock is 10.6 and the leash on top of it is 35.3, so the
+  # ceiling below is the larger of the two rounded up to five: 40.
+  # Still almost all of it one step: 5.1 of the 5.3 is the row step.
   # That figure is from before the suite stopped running neutrino's verifiers,
   # which is a minute of it on this lane; the ceilings below are above the old
   # number and therefore above the new one, and the next complete run is what
@@ -808,6 +889,12 @@ jobs:
   # It never fails the run. Every verdict in it has already been counted by the
   # lane that produced it, and a reporting job that can redden a run is one that
   # eventually reddens it for a reason that is about the report.
+  #
+  # Measured across four runs, not guessed: this lane took 0.2 min at its
+  # longest, and it has no rows and so no leash -- it downloads ten sheets and
+  # runs test/report/matrix.py over them. Twice the wall clock is 0.4, so this is the
+  # ceiling that meets the floor instead: ten minutes, under which a number here
+  # would be measuring the artifact download and the queue rather than the job.
   matrix:
     runs-on: ubuntu-latest
     timeout-minutes: 10
