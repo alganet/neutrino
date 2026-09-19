@@ -31,8 +31,9 @@
 # The two Windows lanes and macos-netinstall are here with no display and no
 # toolkit: their suites bring up their own windows and none of it is drawn by
 # a display this runner starts. wayland's `display=wayland` is an X server
-# *and* a compositor, which display.sh says why. bsd and kde-live have no row
-# anywhere, and suites.tsv says why for each.
+# *and* a compositor, which display.sh says why. kde-live's one row brings up
+# its own desktop in a container. bsd has no row anywhere, and suites.tsv
+# says why.
 gjs	display=metacity gtk timeout=480 toolkit=gtk
 linux-engines:cjs	display=metacity gtk timeout=480 toolkit=gtk shots=shots-cjs
 linux-engines:py	display=metacity gtk timeout=480 toolkit=gtk
@@ -40,5 +41,6 @@ kde	display=openbox qt timeout=480 toolkit=qt
 macos	timeout=480 toolkit=macos
 macos-netinstall	timeout=480
 wayland	display=wayland timeout=480
+kde-live	timeout=480
 windows-launch	timeout=480
 windows-content	timeout=480

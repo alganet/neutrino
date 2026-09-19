@@ -259,44 +259,19 @@ jobs:
       packages: read
     env:
       NT_LANE: kde-live
+      # Whose package to pull: a fork pulls its own, and the row's suite
+      # lowercases it, because ghcr.io names are and repository owners are not.
+      NT_KDE_OWNER: ${{ github.repository_owner }}
     steps:
       - uses: actions/checkout@v7
       # Best-effort: a public package needs no login, and a fork without one
       # falls through to the local build rather than failing here.
       - run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin || true
-      # A half that could not run says so and does not fail the job -- that is
-      # the same contract the other live halves keep, and the reason it is
-      # checked here rather than left to an exit status: qtkde.sh exits 0 both
-      # when the half passed and when there was no desktop to run it on, and
-      # those are not the same result to a reader.
-      # Six times the slowest of five readings, and well under the job's 40, so
-      # a step that wedges is stopped by its own ceiling and the failure names
-      # the step rather than the lane. That is the whole reason a step ceiling
-      # is worth having under a job ceiling: `timeout-minutes` on the job says
-      # only that the lane stopped somewhere.
-      - shell: bash
-        timeout-minutes: 12
-        run: |
-          NT_KDE_RUNTIME=docker \
-          NT_KDE_IMAGE="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/neutrino-kde:f42" \
-            bash test/apparatus/qtkde.sh 2>&1 | tee ~/qtkde.log
-          # FAIL first, and that order is the whole point: a run that reached
-          # the flip and was handed nothing also prints the note saying which
-          # plugin it found, so a skip check asked first would read a real
-          # failure as a machine that could not run the half.
-          if grep -q '^FAIL' ~/qtkde.log; then
-            exit 1
-          fi
-          if grep -q '^PASS' ~/qtkde.log; then
-            exit 0
-          fi
-          if grep -qE '^report: (live half: (no|a scheme|the control)|qtkde: (no|the image|pull))' ~/qtkde.log; then
-            echo "kde-live: the half did not run here; the notes above say why"
-            exit 0
-          fi
-          echo "kde-live: no PASS, no FAIL and no reason given"
-          exit 1
-
+      # The lane, from test/suites.tsv, as one step; the gjs lane says why. Its
+      # one row is the live theme half on a desktop this runner brings up in a
+      # container, and the suite is what tells "passed" from "could not run
+      # here" -- which the step used to do by reading the log after the fact.
+      - run: bash test/run.sh kde-live
       # Same as bsd: one log, and until now no way to read it but the job page.
       # The lane's page, built and published by .github/actions/sheet, which
       # says what it is and why it cannot redden a lane.
