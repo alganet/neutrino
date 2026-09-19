@@ -76,11 +76,7 @@
 #
 # bsd and kde-live have no rows, and that is not a migration left half-done:
 # bsd runs netinstall/test/run.sh inside a guest this runner cannot reach, and
-# kde-live runs qtkde.sh, which is a container and not a suite. wayland has
-# none yet because the compositor it needs is brought up by an apparatus that
-# writes an env file for the step to source, and that is a display and not a
-# suite -- when display.sh can say `wayland`, its row is the netinstall one
-# with NEUTRINO_SUITES=splash and NEUTRINO_SPLASH_EXPECT=wayland.
+# kde-live runs qtkde.sh, which is a container and not a suite.
 #
 # ------------------------------------------------------------------ the profile
 #
@@ -245,9 +241,13 @@ early	macos	build=early-testing	bash test/suite/early.sh
 #
 # -------------------------------------------------------------- the netinstall
 #
-# One row per lane and not one row, because the four lanes ask it four
+# One row per lane and not one row, because the five lanes ask it five
 # different questions and each asks in its own variables. gjs runs the whole
-# list under X11 and photographs the splash; kde runs the toolkit-facing
+# list under X11 and photographs the splash; wayland runs the splash alone --
+# the rest of the list asks what a kernel refuses, and this lane is
+# ubuntu-latest like gjs and kde -- under a compositor its lane row brings up
+# beside the X server, because two of the splash's cases are about the choice
+# between the two and can be asked nowhere else; kde runs the toolkit-facing
 # suites alone -- this lane and gjs are both ubuntu-latest, one kernel, one
 # Landlock ABI, so every suite that asks what the kernel refuses was being
 # asked twice on the same machine, about 170 s a push; netinstall/test/run.sh
@@ -276,6 +276,7 @@ early	macos	build=early-testing	bash test/suite/early.sh
 # what setup-zig put on the machine, and a row is not the place to say what a
 # machine has.
 netinstall	gjs	timeout=1500 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=x11 bash netinstall/test/run.sh
+netinstall	wayland	timeout=600 shots=netinstall-screenshots	env NEUTRINO_SUITES=splash NEUTRINO_SPLASH_EXPECT=wayland bash netinstall/test/run.sh
 netinstall	kde	timeout=1500	env NEUTRINO_SUITES=env,e2e QTWEBENGINE_DISABLE_SANDBOX=1 dbus-run-session -- bash netinstall/test/run.sh
 netinstall	windows-launch	timeout=1200 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=win32 bash netinstall/test/run.sh
 netinstall	macos-netinstall	timeout=1800 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=appkit bash netinstall/test/run.sh

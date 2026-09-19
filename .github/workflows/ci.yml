@@ -464,35 +464,13 @@ jobs:
           sudo apt update
           sudo apt install -y sway grim xvfb wayland-utils \
             || sudo apt install -y sway grim xvfb wayland-utils
-      - name: netinstall splash suite
-        timeout-minutes: 10
-        run: |
-          export DISPLAY=:99
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; }
-          # Not piped into tee. These steps run under `bash -e` with no
-          # pipefail, so a compositor that failed to start would hand its exit
-          # status to tee, the lane would carry on, the splash would decline
-          # silently on a machine with no compositor, and the run would be
-          # green having measured nothing -- which is the exact failure this
-          # lane exists to notice.
-          WL_RC=0
-          bash test/apparatus/wayland-up.sh ~/wayland.env 1024x768 > ~/wayland-up.log 2>&1 || WL_RC=$?
-          cat ~/wayland-up.log
-          [ "$WL_RC" = 0 ] || exit "$WL_RC"
-          . ~/wayland.env
-          echo "report: wayland lane has WAYLAND_DISPLAY=$WAYLAND_DISPLAY and DISPLAY=$DISPLAY"
-          export NEUTRINO_SUITES=splash
-          export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
-          # The reason this lane exists, said out loud, and the one line that
-          # keeps it honest. See the gjs lane.
-          export NEUTRINO_SPLASH_EXPECT=wayland
-          # Redirected so the sheet below has a log to show, then echoed by a
-          # process that exits -- which is also what puts the ::error from a
-          # failed assertion back in front of the runner.
-          NT_EXIT=0
-          bash netinstall/test/run.sh > ~/netinstall-splash.log 2>&1 || NT_EXIT=$?
-          cat ~/netinstall-splash.log
-          exit $NT_EXIT
+      # The lane, from test/suites.tsv, as one step; the gjs lane says why.
+      # Its lane row says `display=wayland`, which is an X server and a
+      # compositor -- test/lib/display.sh says why both and
+      # test/apparatus/wayland-up.sh says why sway -- and a compositor that
+      # does not come up fails the row before the splash can decline silently
+      # on a machine with none.
+      - run: bash test/run.sh wayland
       # continue-on-error, because this is a reporting tool. A lane that passed
       # every control it has and goes red because the page builder tripped is
       # reporting about itself, and the thing it was built to report on is the
