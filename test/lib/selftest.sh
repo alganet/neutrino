@@ -1291,8 +1291,8 @@ done
 # to run a suite twice by accident.
 # A step that runs the lane bare -- `run.sh gjs`, no suite after it -- names
 # every row, which is what both loops below mean by nt_lane_names_all. It is
-# how every bash lane runs now; the per-suite form is what the pwsh lanes
-# still use around their own steps.
+# how every lane runs now; the per-suite form is what a lane mid-migration
+# uses, and both loops still read it.
 nt_lane_names_all() {
     awk -v lane="$1" '
         /^  [a-z0-9-]+:$/ { j = $1; sub(/:$/, "", j) }
@@ -1749,9 +1749,10 @@ echo "### every .cmd a workflow names is a slot something builds"
 # whether any did.
 #
 # Resolving against the workflow's own `--build` lines instead of against the
-# filesystem closes it without needing a built tree. The pwsh lanes spell both:
-# `run.sh --build appcache=loaders-testing` and then `.\test\out\appcache.cmd`,
-# and this is what makes the second follow from the first.
+# filesystem closes it without needing a built tree. The pwsh lanes used to
+# spell both -- `run.sh --build appcache=loaders-testing` and then
+# `.\test\out\appcache.cmd` -- and this is what made the second follow from
+# the first; the canary below now says there is no such step left.
 NT_SLOTS="$(sed -n 's/.*run\.sh --build //p' "$ROOT"/.github/workflows/*.yml |
     tr ' ' '\n' | sed 's/=.*//' | grep . | sort -u | tr '\n' ' ')"
 # The bash lanes name no paths at all -- run.sh appends them -- so a slot they
