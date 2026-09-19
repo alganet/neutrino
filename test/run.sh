@@ -410,8 +410,8 @@ nt_setup() {
             # that carries it. The fontflip rows used to and do not now --
             # whether a probe could take its reading is a case, and the
             # workflow's continue-on-error came off those steps with the
-            # directive. Two pwsh probes in the workflow still spell it by hand,
-            # and this is the word waiting for them.
+            # directive. The Windows lanes' two probes -- warm and launch time
+            # -- carry it too, since they became rows.
             soft)      SOFT=1 ;;
             *)         SETUP_BAD="$d"; return 1 ;;
         esac

@@ -28,11 +28,11 @@
 # of the way of the pygobject half's: the two halves never shared a directory
 # to begin with, they only shared a default.
 #
-# windows-launch and macos-netinstall are here with no display and no toolkit
-# because the one row each runs -- netinstall -- draws with neither. wayland's
-# `display=wayland` is an X server *and* a compositor, which display.sh says
-# why. The other windows lane, bsd and kde-live have no row anywhere, and
-# suites.tsv says why for each.
+# The two Windows lanes and macos-netinstall are here with no display and no
+# toolkit: their suites bring up their own windows and none of it is drawn by
+# a display this runner starts. wayland's `display=wayland` is an X server
+# *and* a compositor, which display.sh says why. bsd and kde-live have no row
+# anywhere, and suites.tsv says why for each.
 gjs	display=metacity gtk timeout=480 toolkit=gtk
 linux-engines:cjs	display=metacity gtk timeout=480 toolkit=gtk shots=shots-cjs
 linux-engines:py	display=metacity gtk timeout=480 toolkit=gtk

@@ -69,10 +69,9 @@
 # `soft` so that its leash cannot fail it either. The line between the two is
 # whether the step asks the machine something or tells it something.
 #
-# The Windows lanes' own suites have no rows: their steps are `shell: pwsh` and
-# this column is argv for bash. Their builds do come from the tables --
-# `run.sh --build <slot>=<build>` -- so what they run is declared even where how
-# they run it is not. windows-launch's one bash step, netinstall, is a row.
+# The Windows lanes' suites are PowerShell and this column is argv for bash,
+# and they are rows all the same; the pwsh section at the end says how, and
+# both lanes are one `run.sh <lane>` step like the rest.
 #
 # bsd and kde-live have no rows, and that is not a migration left half-done:
 # bsd runs netinstall/test/run.sh inside a guest this runner cannot reach, and

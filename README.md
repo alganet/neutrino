@@ -972,8 +972,9 @@ bash test/run.sh gjs stddoc        # one suite, the way CI used to run it
 bash test/run.sh gjs               # the whole lane, which is what CI runs
 ```
 
-The exit status is the lane's failure count, and every bash lane in CI is one
-such step between its provisioning and its sheet. Two lanes have no rows and
+The exit status is the lane's failure count, and every lane in CI -- the two
+PowerShell ones included -- is one such step between its provisioning and its
+sheet. Two lanes have no rows and
 should not: `bsd` and `kde-live` each run one command — `netinstall/test/run.sh`
 inside a VM action, or `qtkde.sh` in a container.
 
