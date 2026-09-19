@@ -390,25 +390,30 @@ jobs:
             netinstall=$HOME/netinstall-screenshots
 
   # netinstall away from the desktop lanes: cross-compiled for six targets, and
-
-  # then run on the three BSDs, in that order on one runner.
+  # then run on OpenBSD, on one runner.
   #
   # Four jobs before this, and every one of them was mostly waiting -- the
   # cross build is 45 seconds of zig behind a minute of action setup, and each
   # VM lane spent its runner booting a guest to run a shell suite. Serialised
-  # they are one job of about fifteen minutes, which is the same band the
-  # macOS and Windows jobs land in.
+  # they were one job of about fifteen minutes; two of the three guests have
+  # since gone and it measures six.
   #
-  # `mem: 3072` on each guest is not cosmetic: the default is 6144, the post
-  # step that halts a vmactions VM does not run until the job ends, so all
-  # three are alive at once, and three times the default does not fit on this
-  # runner. The suites here are shell, curl and a small C compile; 3G is ample.
+  # Three guests became one on 2026-09-03, when FreeBSD and NetBSD stopped
+  # being targets: neither has anything that confines, and with the sandbox
+  # refusal unconditional a build for either would compile and then decline to
+  # run. Every sentence here was written for three and went on saying three --
+  # `mem: 3072` justified as the only way to fit three guests at once, the
+  # `openbsd-` prefix on the log justified as a collision between them, and
+  # `if: always()` justified as one dead guest not costing the others their
+  # readings. None of those three reasons exists any more.
   #
-  # The freebsd and netbsd lanes both used to copy back `bsd-suite.log` and
-  # `bsd-probe.log`. In one job those are the same file, so each guest now
-  # names its own. Every step is gated `if: always()` -- the whole point of
-  # three separate lanes was that a dead guest cost only its own reading, and
-  # that has to survive the merge.
+  # What the arithmetic leaves standing, on its own terms: 3G rather than the
+  # 6144 default, because the suites here are shell, curl and a small C compile
+  # and the guest is not what this lane is measuring; the `openbsd-` prefix,
+  # which is now only a name, and a correct one; and `if: always()` on every
+  # step, which was never really about guests -- a lane that stops at its first
+  # red step reports nothing about the steps behind it, and that is true of a
+  # lane with one guest exactly as it was of a lane with three.
   bsd:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -486,8 +491,8 @@ jobs:
             pkg_add -I python3 || pkg_add -I python%3 || true
           # The log comes back rather than being written inside the guest and
           # left there. It is copied out and printed by a step of its own, which
-          # is why the `suite log` steps below are the one place in this file
-          # that still exist only to `cat` something.
+          # is why the `suite log` step below is the one place in this file
+          # that still exists only to `cat` something.
           #
           # `&& rc=0 || rc=$?` and not a bare `$?`: vmactions pipes this script
           # to `sh` behind a literal `set -eu` (index.js, `const fullCmd`), and
@@ -513,9 +518,9 @@ jobs:
             bash netinstall/test/run.sh > openbsd-suite.log 2>&1 && rc=0 || rc=$?
             echo "$rc" > openbsd-suite.rc
             exit 0
-      # One step, one cat, per guest.
+      # One step, one cat.
       #
-      # These were four steps apiece, each running annotate.sh over the same
+      # These were four steps, each running annotate.sh over the same
       # suite log with a different grep -- results, readings, errors, totals --
       # because annotations were the only channel that reached a reader without
       # a token, and each bucket had its own cap to spend. `gh` reads the job
@@ -524,7 +529,7 @@ jobs:
       #
       # This is the one lane where that log has no other route out. It is
       # written inside a guest VM and copied back, so nothing else in the job
-      # prints it -- which is why these steps become `cat` rather than
+      # prints it -- which is why this step became a `cat` rather than
       # disappearing with the rest.
       - name: suite log
         if: always()
@@ -544,6 +549,13 @@ jobs:
       # An absent rc file is a failure and not a pass. It means the guest never
       # reached the end of the run, or copyback did not happen, and neither is a
       # state this lane may report as success -- that was the whole defect.
+      #
+      # A count and not a list, deliberately. Most of what this lane counts as
+      # failures are suites exiting 2 without printing a FAIL line at all -- a
+      # setup that did not come up rather than an assertion that did not hold --
+      # so a step that grepped the log for `FAIL:` would report fewer failures
+      # than the rc says there are, and the difference between the two numbers
+      # is the part worth reading. The log above is where that reading is.
       - name: outcome
         if: always()
         run: |
@@ -554,15 +566,6 @@ jobs:
           rc="$(cat openbsd-suite.rc)"
           echo "report: openbsd suite rc=$rc"
           [ "$rc" = "0" ] || { echo "FAIL: the openbsd suite reported $rc failure(s)"; exit 1; }
-      # Three steps over the suite log, because the cap is per step and round 2
-      # dropped four chunks from the middle of the failures alone. Anchored to
-      # the plain `  FAIL:` echo, not to /FAIL:/ -- nt_fail prints the same
-      # sentence twice, once for a reader and once as an ::error, and matching
-      # both halved the number of distinct failures that fit.
-      # Most of what this lane counts as failures are suites exiting 2 without
-      # printing a FAIL line at all -- a setup that did not come up, not an
-      # assertion that did not hold. Those two are different problems and the
-      # results step above cannot see the first one.
 
       # This lane published nothing. Its whole reading is a log written inside a
       # guest and copied back, so a reader who wanted it had to open the job.
