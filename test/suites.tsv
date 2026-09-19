@@ -11,7 +11,12 @@
 # file could not say that the five were one thing.
 #
 # `lanes` is a space-separated list, or `*` for every lane, which is exactly how
-# cases.tsv's `applies-to` already works. A suite that genuinely differs takes a
+# cases.tsv's `applies-to` already works -- and, as there, no row says `*` any
+# more. Four did, and they meant the five desktop lanes: the day
+# windows-launch and macos-netinstall got a row each for netinstall, `*` began
+# claiming the standards probes for two lanes that have never run them, and
+# selftest's dormant-row check said so. A list is what a row knows; "every
+# lane" is a fact about the other file. A suite that genuinely differs takes a
 # second row with a disjoint lane list -- walk runs the release build on gjs and
 # the testing build on kde, and that is a fact worth two rows. Disjoint and not
 # ordered: which row applies to a lane is never a question of precedence, and
@@ -53,18 +58,44 @@
 # `soft` so that its leash cannot fail it either. The line between the two is
 # whether the step asks the machine something or tells it something.
 #
-# The two Windows lanes have no rows: their steps are `shell: pwsh` and this
-# column is argv for bash. Their builds do come from the tables --
+# The Windows lanes' own suites have no rows: their steps are `shell: pwsh` and
+# this column is argv for bash. Their builds do come from the tables --
 # `run.sh --build <slot>=<build>` -- so what they run is declared even where how
-# they run it is not.
+# they run it is not. windows-launch's one bash step, netinstall, is a row.
 #
-# bsd, kde-live, wayland and macos-netinstall have no rows either, and that is
-# not a migration left half-done: they run netinstall/test/run.sh or qtkde.sh.
+# bsd and kde-live have no rows, and that is not a migration left half-done:
+# bsd runs netinstall/test/run.sh inside a guest this runner cannot reach, and
+# kde-live runs qtkde.sh, which is a container and not a suite. wayland has
+# none yet because the compositor it needs is brought up by an apparatus that
+# writes an env file for the step to source, and that is a display and not a
+# suite -- when display.sh can say `wayland`, its row is the netinstall one
+# with NEUTRINO_SUITES=splash and NEUTRINO_SPLASH_EXPECT=wayland.
+#
+# -------------------------------------------------------------- the netinstall
+#
+# One row per lane and not one row, because the four lanes ask it four
+# different questions and each asks in its own variables. gjs runs the whole
+# list under X11 and photographs the splash; kde runs the four toolkit-facing
+# suites -- see netinstall/test/run.sh, where NEUTRINO_SUITES is read and the
+# argument is written out in full -- under a session bus, because
+# confine-session has to have one to close; windows-launch and macos-netinstall
+# run the whole list with no display of ours at all and assert which mechanism
+# the splash drew with. `shots=` is where the pictures go, so the sheet can
+# head them apart from the suites' frames, and NEUTRINO_SPLASH_SHOTS follows
+# it inside splash.sh. NEUTRINO_SPLASH_EXPECT is an assertion and not a
+# report: the splash declines silently where it cannot draw, so a lane that
+# lost its display server would pass splash.sh by skipping every case in it.
+# Measured on run 33750772253, not hoped for.
+#
+# The command is `dbus-run-session -- bash ...` on kde and not the `dbus`
+# directive, because that directive puts a bus around the artifact step.sh
+# launches, and here there is no artifact: the runner under it launches its
+# own. NEUTRINO_SUITES takes commas as well as spaces for this column's sake.
 lanes	gjs linux-engines:cjs linux-engines:py	display=off timeout=300 build=test-release	bash test/suite/lanes.sh
 confine	macos	display=off timeout=300 build=test-testing	bash test/suite/confine-macos.sh
 lanes	kde macos	display=off timeout=300 build=test-testing	bash test/suite/lanes.sh
 assemble	gjs macos	display=off timeout=300	bash test/suite/assemble.sh
-shotroom	macos	display=off timeout=180 soft	bash test/apparatus/shotroom-macos.sh
+shotroom	macos macos-netinstall	display=off timeout=180 soft	bash test/apparatus/shotroom-macos.sh
 loaders	gjs linux-engines:cjs linux-engines:py	timeout=1500 build=loaders-testing build=default:loaders-release	bash test/suite/loaders.sh
 loaders	kde	timeout=1500 build=loaders-testing build=default:loaders-release	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/suite/loaders.sh
 loaders	macos	timeout=720 build=loaders-testing	bash test/suite/loaders.sh
@@ -78,16 +109,20 @@ appdir	kde	timeout=1500 build=loaders-testing	env QTWEBENGINE_DISABLE_SANDBOX=1 
 early	gjs	build=early-release	bash test/suite/early.sh
 early	kde	gtk build=early-release	bash test/suite/early.sh
 early	macos	build=early-testing	bash test/suite/early.sh
+netinstall	gjs	timeout=1500 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=x11 bash netinstall/test/run.sh
+netinstall	kde	timeout=1500	env NEUTRINO_SUITES=env,e2e QTWEBENGINE_DISABLE_SANDBOX=1 dbus-run-session -- bash netinstall/test/run.sh
+netinstall	windows-launch	timeout=1200 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=win32 bash netinstall/test/run.sh
+netinstall	macos-netinstall	timeout=1800 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=appkit bash netinstall/test/run.sh
 navrefuse	macos	timeout=720 build=early-testing	bash test/suite/navrefuse.sh
-stdgeom	*	timeout=840 cat=deco-a cat=deco-b build=geom build=none:geom-nodeco	bash test/suite/decoflip.sh
+stdgeom	gjs linux-engines:cjs linux-engines:py kde macos	timeout=840 cat=deco-a cat=deco-b build=geom build=none:geom-nodeco	bash test/suite/decoflip.sh
 themescheme	gjs linux-engines:cjs linux-engines:py	build=std-theme	bash test/suite/themescheme.sh
 themeflip	gjs linux-engines:cjs linux-engines:py kde	timeout=840 cat=flip-a cat=flip-b build=std-theme	bash test/suite/themeflip.sh
 themeflip	macos	timeout=840 cat=flip-a cat=flip-b cat=flip-live-app build=std-theme build=live:live-theme	bash test/suite/themeflip.sh
 fontflip	gjs linux-engines:py	-	env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh 8
 fontflip	macos	-	env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh 0
 fontlive	gjs linux-engines:py	timeout=600 build=live-font	env NT_FONTFLIP_HALF=live bash test/suite/fontflip.sh 8
-stddoc	*	app=std-doc	bash test/suite/verify-std.sh doc
-stdwin	*	app=std-win timeout=600	bash test/suite/verify-std.sh win
-stdtheme	*	app=std-theme	bash test/suite/verify-std.sh theme
+stddoc	gjs linux-engines:cjs linux-engines:py kde macos	app=std-doc	bash test/suite/verify-std.sh doc
+stdwin	gjs linux-engines:cjs linux-engines:py kde macos	app=std-win timeout=600	bash test/suite/verify-std.sh win
+stdtheme	gjs linux-engines:cjs linux-engines:py kde macos	app=std-theme	bash test/suite/verify-std.sh theme
 demo	gjs	app=demo	bash test/suite/demo.sh
 stdfont	gjs linux-engines:py kde macos	app=std-font	bash test/suite/verify-std.sh font

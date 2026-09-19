@@ -139,25 +139,15 @@ jobs:
       # before the app launches are test/suite/early.sh's, which is where the order
       # they have to come up in is written down.
       - run: bash test/run.sh gjs early
+      # The installer's own suite, the whole list, under this lane's display.
+      # The pictures it takes -- splash.sh photographs the splash window over
+      # a stalled download, one portrait and then six frames in a row, which
+      # the sheet plays back as one figure that cycles -- go where the row's
+      # `shots=` says, beside the verifiers' frames and not among them. What
+      # this lane draws with is asserted, not reported; the row says why.
       - name: netinstall suite
         timeout-minutes: 25
-        run: |
-          export DISPLAY=:99
-          export GDK_BACKEND=x11
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; metacity >/dev/null 2>&1 & sleep 2; }
-          # The pictures the netinstall suite takes: splash.sh photographs the
-          # splash window over a stalled download -- one portrait and then six
-          # frames in a row, which the sheet plays back as one figure that
-          # cycles, because the window moves and a still cannot show that. Their
-          # own directory, so the sheet can head them separately from the
-          # verifiers' frames; unset, the suite skips both cases and says so.
-          export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
-          # What this lane draws with, asserted rather than reported. The
-          # splash declines silently where it cannot draw, so a lane that lost
-          # its display server would pass splash.sh by skipping every case in
-          # it. Measured on run 33750772253, not hoped for.
-          export NEUTRINO_SPLASH_EXPECT=x11
-          bash netinstall/test/run.sh
+        run: bash test/run.sh gjs netinstall
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
       # Two questions were opened here. Whether an app can be written against
@@ -531,18 +521,10 @@ jobs:
       - if: always()
         timeout-minutes: 14
         run: bash test/run.sh linux-engines:cjs themeflip
-      # Cleared between the two halves. Both verifiers write into the same
-      # directory, and on two runners that did not matter; on one, the second
-      # artifact would carry the first lane's frames and there would be no way
-      # to tell from the artifact which engine drew them.
-      # Parked, not deleted. Both halves write into the same directory, so the
-      # cjs frames have to leave before the pygobject ones arrive -- but they
-      # are half of this job's evidence, and the sheet at the end carries both
-      # under their own headings rather than this job publishing two artifacts.
-      - if: always()
-        run: |
-          rm -rf ~/shots-cjs
-          mv ~/screenshots ~/shots-cjs 2>/dev/null || mkdir -p ~/shots-cjs
+      # No step moves the cjs frames out of the pygobject half's way any more:
+      # the cjs phase's row in test/lanes.tsv says `shots=shots-cjs`, so the
+      # two halves never write into one directory to begin with. The sheet at
+      # the end still carries both under their own headings.
       - if: always()
         run: |
           sudo apt update
@@ -942,32 +924,17 @@ jobs:
       # same way the attack row does and for the same reason: the probe reaches
       # its window through the GTK walk on this machine.
       - run: bash test/run.sh kde early
+      # The toolkit-facing suites of the installer's list, and not the whole
+      # of it. This lane and gjs are both ubuntu-latest -- one kernel, one
+      # Landlock ABI -- so every suite that asks what the kernel refuses was
+      # being asked twice on the same machine, about 170 s a push. The row
+      # names the ones where the two lanes differ, and netinstall/test/run.sh
+      # writes the argument out in full where NEUTRINO_SUITES is read. Under a
+      # session bus, because confine-session closes one and the session it
+      # closes has to have been really there.
       - name: netinstall suite
         timeout-minutes: 25
-        run: |
-          export DISPLAY=:99
-          export QT_QPA_PLATFORM=xcb
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-dev-shm-usage"
-          export QTWEBENGINE_DISABLE_SANDBOX=1
-          export XDG_RUNTIME_DIR="/tmp/runtime-$USER"
-          mkdir -p "$XDG_RUNTIME_DIR"
-          chmod 700 "$XDG_RUNTIME_DIR"
-          pgrep Xvfb >/dev/null 2>&1 || { Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 & sleep 3; openbox >/dev/null 2>&1 & sleep 2; }
-          # The toolkit-facing four, and not the whole list. This lane and gjs
-          # are both ubuntu-latest -- one kernel, one Landlock ABI -- so every
-          # suite above that asks what the kernel refuses was being asked twice
-          # on the same machine, about 170 s a push. See run.sh, where the
-          # variable is read and the argument is written out in full.
-          #
-          # These four are the ones where the two lanes differ: env carries Qt's
-          # loader knobs here and GTK's there, and the other three put a real
-          # webview under a tier -- which is the whole reason a second Linux lane
-          # exists. confine-session doubly so: dbus-run-session below means the
-          # session it closes was really there, and nt_userns lifts AppArmor
-          # from inside the suite here where gjs has a job step do it.
-          export NEUTRINO_SUITES="env e2e"
-          dbus-run-session -- bash netinstall/test/run.sh
+        run: bash test/run.sh kde netinstall
       # The web-standards probe, round 1: the apparatus, and nothing else.
       #
       # Two questions were opened here. Whether an app can be written against
@@ -1833,33 +1800,22 @@ jobs:
         shell: bash
         env:
           NETINSTALL_CC: zig cc
-        run: |
-          # Redirected, and that is the whole of this comment. The batch region
-          # STARTs a detached exe which inherits the standard handles, so with
-          # the step's own pipe on the other end it stays open for as long as
-          # the app lives -- and these apps are written never to close. Every
-          # suite inside run.sh is bounded by nt_timeout, so the suite is reaped
-          # and the orphan holding the pipe is not: the step then runs on past
-          # its own timeout-minutes, measured at 37 minutes against a bound of
-          # 20, and the rest of the lane never starts. A file has no reader to
-          # wait on. The log is echoed afterwards by a process that does exit,
-          # which is also what puts nt_result's lines back in front of the
-          # runner -- redirecting without that would take the readings away
-          # with the hang.
-          #
-          # PR 20 wrote this lesson down for a probe that piped the launcher.
-          # This is the step on this lane that never got it.
-          NT_EXIT=0
-          # Where splash.sh puts its picture of the splash window and the six
-          # frames of it moving; the sheet step below heads them as
-          # netinstall's own.
-          export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
-          # Measured on run 33750772253. See the gjs lane for why it is an
-          # assertion and not a report.
-          export NEUTRINO_SPLASH_EXPECT=win32
-          bash netinstall/test/run.sh > ~/netinstall.log 2>&1 || NT_EXIT=$?
-          cat ~/netinstall.log
-          exit $NT_EXIT
+        # Through the runner, which redirects the suite to a file and cats it
+        # afterwards -- and on this lane that shape is not a nicety. The batch
+        # region STARTs a detached exe which inherits the standard handles, so
+        # with a step's own pipe on the other end it stays open for as long as
+        # the app lives, and these apps are written never to close. Every
+        # suite inside netinstall's run.sh is bounded by nt_timeout, so the
+        # suite is reaped and the orphan holding the pipe is not: the step ran
+        # on past its own timeout-minutes, measured at 37 minutes against a
+        # bound of 20, and the rest of the lane never started. A file has no
+        # reader to wait on. test/lib/step.sh is the one place that lesson is
+        # written now, and this step is one of the places it had to be
+        # relearned.
+        #
+        # The compiler stays here: it is what setup-zig put on the machine, and
+        # a row is not the place to say what a machine has.
+        run: bash test/run.sh windows-launch netinstall
       # The suite watched closely enough, on a runner that is busy.
       #
       # verify-windows used to wait for each of the app's titles in turn, and
@@ -2736,23 +2692,19 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/nt-results"
           echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
+      # The same row the macos lane runs, for the same alert over the same
+      # pictures; the macos lane's step says what it does and why it cannot
+      # fail anything.
       - name: the room the picture is taken in
         timeout-minutes: 3
-        continue-on-error: true
-        run: |
-          bash test/apparatus/shotroom-macos.sh > ~/shotroom.log 2>&1 || true
-          cat ~/shotroom.log
+        run: bash test/run.sh macos-netinstall shotroom
+      # Where splash.sh puts its portrait of the splash window and the six
+      # frames of it moving is the row's `shots=`, and the sheet step below
+      # heads them as netinstall's own. The mechanism it draws with is
+      # asserted; see the gjs lane.
       - name: netinstall suite
         timeout-minutes: 30
-        run: |
-          # Where splash.sh puts its portrait of the splash window and the six
-          # frames of it moving; the sheet step below heads them as
-          # netinstall's own.
-          export NEUTRINO_SPLASH_SHOTS=$HOME/netinstall-screenshots
-          # Measured on run 33750772253. See the gjs lane for why it is an
-          # assertion and not a report.
-          export NEUTRINO_SPLASH_EXPECT=appkit
-          bash netinstall/test/run.sh
+        run: bash test/run.sh macos-netinstall netinstall
       # One artifact, one file: this lane's logs and its one picture as a page
       # that opens in a browser, the same page every other lane publishes. The
       # sheet is the one place its assertions can be read without opening a
