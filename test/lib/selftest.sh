@@ -1691,12 +1691,22 @@ BUILDERS="$(tr '\n' ' ' < "$WORK/wfbuild.txt" | sed 's/ *$//')"
 # workflow with nothing wrong in it, which is the shape this file has been caught
 # in four times -- so it says how much it read.
 NWF="$(printf '%s\n' $NT_WF | grep -c . || true)"
-NBUILD="$(grep -c 'run\.sh --build' "$ROOT"/.github/workflows/ci.yml 2>/dev/null || echo 0)"
-if [ "$NWF" -gt 0 ] && [ "$NBUILD" -gt 0 ]; then
-    ok "the workflow scan reads the tree ($NWF workflows, $NBUILD registry builds in ci.yml)"
+if [ "$NWF" -gt 0 ]; then
+    ok "the workflow scan reads the tree ($NWF workflows)"
 else
-    bad "the workflow scan read $NWF workflows and found $NBUILD registry builds, so the check above proves nothing"
+    bad "the workflow scan read no workflows, so the check above proves nothing"
 fi
+# And the stronger rule the registry builds used to be the canary for: no
+# workflow runs `run.sh --build` at all. That door was the pwsh lanes' while
+# their suites were steps and had to be handed an artifact by name; every
+# suite is a row now, every row names its build, and a `--build` back in the
+# workflow is a suite that has been un-migrated. The count used to have to be
+# above zero for this scan to mean anything; it has to be zero now.
+# grep -c prints its zero and exits 1, so `|| echo 0` made this "0\n0" once.
+NBUILD="$(grep -c 'run\.sh --build' "$ROOT"/.github/workflows/ci.yml 2>/dev/null || true)"
+[ "${NBUILD:-0}" = 0 ] \
+    && ok "no workflow step builds an artifact by name; every build is a row's" \
+    || bad "$NBUILD step(s) in ci.yml run 'run.sh --build'; the artifact belongs to a row"
 
 # And nothing rewrites a built artifact, anywhere the launcher's own suites live.
 PATCHED=""
@@ -1772,14 +1782,20 @@ done
 
 # The canary. A glob that has stopped matching reports the same green as a
 # workflow with nothing wrong in it -- fifth time in this file, and the reason
-# every scan here says how much it read.
+# every scan here says how much it read. The slots are read off the tables and
+# must be many; the names are read off the workflows and must now be none: a
+# workflow naming test/out/<x>.cmd is a step running an artifact by hand, and
+# the check above only says whether such a step names something that exists.
 NSLOT="$(printf '%s' "$NT_SLOTS" | tr ' ' '\n' | grep -c . || true)"
 NNAMED="$(printf '%s\n' "$NAMEDCMD" | grep -c . || true)"
-if [ "$NSLOT" -gt 0 ] && [ "$NNAMED" -gt 0 ]; then
-    ok "the slot scan reads the tree ($NSLOT slots declared, $NNAMED named in workflows)"
+if [ "$NSLOT" -gt 0 ]; then
+    ok "the slot scan reads the tree ($NSLOT slots declared)"
 else
-    bad "the slot scan found $NSLOT slots and $NNAMED named artifacts, so the check above proves nothing"
+    bad "the slot scan found no slots, so the check above proves nothing"
 fi
+[ "$NNAMED" = 0 ] \
+    && ok "no workflow names an artifact; the rows do" \
+    || bad "$NNAMED artifact path(s) spelled in a workflow; a step is running one by hand"
 
 echo
 echo "### no suite watches a process it does not name a file for"

@@ -107,6 +107,25 @@ confine	macos	display=off timeout=300 build=test-testing	bash test/suite/confine
 lanes	gjs linux-engines:cjs linux-engines:py	display=off timeout=300 build=test-release	bash test/suite/lanes.sh
 lanes	kde macos	display=off timeout=300 build=test-testing	bash test/suite/lanes.sh
 #
+# ------------------------------------------------- the sixth language, parsed
+#
+# On the Windows lanes, before anything is launched: the suites this lane is
+# made of are parsed, and the artifact is compiled, for one reason with two
+# faces. An artifact that does not compile is an app that never appears, and
+# every suite that waits for a window then waits out its own timeout before
+# saying so. One reserved word in the jsc region cost windows-launch its
+# runner that way -- three suites spent fifty minutes between them against a
+# forty-minute job, the run was killed in the middle of the fourth, and
+# GitHub keeps no logs for a job killed like that. The compiler had said
+# exactly what was wrong, once, on the first launch of the first suite.
+# psparse is the same rule for the sixth language: a .ps1 that does not parse
+# has shipped twice and both times was found by a runner eighteen minutes in,
+# which is also why nothing pwsh is a `run:` block any more. The pwsh section
+# at the end of this file says how a PowerShell suite is a row at all.
+psparse	windows-launch windows-content	timeout=300	pwsh -NoProfile -File test/build/psparse.ps1
+compile	windows-launch	timeout=300 build=test-release	pwsh -NoProfile -File test/suite/compile.ps1
+compile	windows-content	timeout=300 build=attack-release	pwsh -NoProfile -File test/suite/compile.ps1
+#
 # ------------------------------------------------------------------ the assembler
 #
 # The assembler, and the stamp it says it applied. Pure shell, no display and
@@ -278,7 +297,6 @@ early	macos	build=early-testing	bash test/suite/early.sh
 netinstall	gjs	timeout=1500 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=x11 bash netinstall/test/run.sh
 netinstall	wayland	timeout=600 shots=netinstall-screenshots	env NEUTRINO_SUITES=splash NEUTRINO_SPLASH_EXPECT=wayland bash netinstall/test/run.sh
 netinstall	kde	timeout=1500	env NEUTRINO_SUITES=env,e2e QTWEBENGINE_DISABLE_SANDBOX=1 dbus-run-session -- bash netinstall/test/run.sh
-netinstall	windows-launch	timeout=1200 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=win32 bash netinstall/test/run.sh
 netinstall	macos-netinstall	timeout=1800 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=appkit bash netinstall/test/run.sh
 #
 # ---------------------------------------------------------- the navigation guard
@@ -464,38 +482,95 @@ fontlive	gjs linux-engines:py	timeout=600 build=live-font	env NT_FONTFLIP_HALF=l
 # the app on the download page -- the essay is not repeated; what is said
 # here is what is true on this platform only.
 #
-# The suites this lane is made of are parsed before any of them runs, and the
-# artifact is compiled before anything is launched, for one reason with two
-# faces: an artifact that does not compile is an app that never appears, and
-# every suite that waits for a window then waits out its own timeout before
-# saying so. One reserved word in the jsc region cost windows-launch its
-# runner that way -- three suites spent fifty minutes between them against a
-# forty-minute job, the run was killed in the middle of the fourth, and
-# GitHub keeps no logs for a job killed like that. The compiler had said
-# exactly what was wrong, once, on the first launch of the first suite.
-# psparse is the same rule for the sixth language: a .ps1 that does not parse
-# has shipped twice and both times was found by a runner eighteen minutes
-# in, which is also why themeflip.ps1 is a file and not a `run:` block.
-psparse	windows-launch windows-content	timeout=300	pwsh -NoProfile -File test/build/psparse.ps1
-compile	windows-launch	timeout=300 build=test-release	pwsh -NoProfile -File test/suite/compile.ps1
-compile	windows-content	timeout=300 build=attack-release	pwsh -NoProfile -File test/suite/compile.ps1
+# --------------------------------------------------------------- windows-launch
 #
-# windows-launch: the launcher itself. winexec is the program the driver runs
-# and the tree it deletes; evergreen is the WebView2 pin and what the runtime
-# answers; walk is verify-windows.ps1 with -Launch, the six states watched
-# from outside, which on this platform derives the app folder from the
-# artifact and prints the launcher's own error log after its results. Then
-# the loader suites off one build: the exe compiled once and kept out of the
-# app's reach, the two standalone tiers, the exe race, the error dialog, and
-# launch time, which reports a number and asserts nothing and is `soft`.
+# The launcher itself, and the two that read a built artifact without
+# starting anything. winexec is the Windows driver's own file and process
+# I/O: it reads the artifact and compiles small programs, needs no display,
+# and what it asserts is a spelling plus two platform facts -- how
+# CreateProcess resolves a bare program name, and what this framework does
+# to a junction. Windows only, because the mechanisms are. evergreen is
+# whether the 20 MB the lane downloads on first run has to be downloaded at
+# all: what renders is the Evergreen Runtime, already on this runner and on
+# most machines, and the package is the SDK wrapper around it. It fetches
+# the pinned package once, to read the IIDs out of its header rather than
+# to load anything from it -- so a run of it proves nothing about the
+# network the shipped app would need, which is the point. It can fail the
+# lane only on its last section: an environment that will not come up is
+# the hypothesis being wrong, and everything above it is measurement.
 winexec	windows-launch	timeout=600 build=test-release	pwsh -NoProfile -File test/suite/winexec.ps1
 evergreen	windows-launch	timeout=900 build=test-release	pwsh -NoProfile -File test/suite/evergreen.ps1
+#
+# The runtime, warmed before anything is timed. The monolith launched a
+# webview (appcache) before the neutrinotest verify, so the WebView2
+# runtime's one-time cold init was already done; with the verify first in
+# this lane it was the cold launch, and the documented Windows first-window
+# stall landed on it far more often -- measured, netinstall 3/3 and core 1/2
+# against a historical 3/10. This restores the precondition: launch a
+# LOADERS webview, the one appcache shows comes up reliably cold, wait for
+# its window, and move on. Everything behind it inherits the warm runtime,
+# which is the state each of those suites was measured in when it had a
+# runner to itself. Soft, and the file says why; it also reads the
+# unloaded startup path off the trace, which nothing else on the lane can.
+#
+# launchtime is a launch end to end, which the trace cannot give: the
+# driver's clock starts at the driver's first line, so the batch region --
+# another process, running before this one exists -- can only be read from
+# outside. Five launches of one app, numbered rather than averaged: run 1
+# compiles the exe and creates a WebView2 profile and is not the launch
+# anybody complains about. Behind the warm-up, so the numbers are a second
+# launch's. Reported and not asserted: what a launch costs on a four-cpu
+# runner is not this project's to hold to a number; what it is for is the
+# shape, and the two readings under it -- what a process start costs here,
+# and what the stamp's certutil costs -- are the numbers the launcher's own
+# comment about size and modification time has been waiting for.
+#
+# walk is verify-windows.ps1 with -Launch: the six states watched from
+# outside, on this platform deriving the app folder from the artifact and
+# printing the launcher's own error log after its results, which the step
+# used to append by hand. The app not exiting is exactly what a missing
+# close handler once produced, and the row's leash is what ends it.
+warm	windows-launch	timeout=300 build=loaders-testing soft reap=LOADERS	pwsh -NoProfile -File test/apparatus/warm-windows.ps1
+launchtime	windows-launch	timeout=600 build=loaders-testing soft	pwsh -NoProfile -File test/suite/launchtime.ps1 -Runs 5 -Fresh -Artifact
 walk	windows-launch	timeout=1200 build=test-release reap=	pwsh -NoProfile -File test/suite/verify-windows.ps1 -Launch -Artifact
+#
+# The loader suites, off one --testing build each. appcache: the exe the
+# batch region runs is the one it just compiled -- the same finding as
+# kde's appdir in a different mechanism: there the launcher wrote the
+# program every launch into a directory anyone could rewrite, here it wrote
+# it once and trusted a stamp beside it afterwards. standalone: the
+# document the exe renders, and who gets to name it -- it used to come from
+# NEUTRINO_SCRIPT_PATH, which the batch region set and netinstall's
+# allowlist passed through intact; getScriptPath derives it from the exe's
+# own location now, so the exe also runs when nothing launched it. Two
+# artifacts because the gate has two directions: the release build must
+# ignore the variable and the testing build must still read it, or a driver
+# that reads it on no tier measures the same as one that reads it on the
+# right one. exerace: the gap between the compile and the START, asserted
+# shut -- the batch region MOVEs the freshly compiled exe onto a predictable
+# name in the app folder, writes a manifest, and only then STARTs it, and
+# three probing rounds established the window is real in time (about 150
+# ms) and shut in access, some three hundred same-uid plant attempts a
+# launch refused every time; it launches the app some forty times over
+# three probing modes and was half an hour nobody could overlap, and is
+# ninety seconds now. winerr: a failed initialisation has to end and has to
+# leave a record, both measured absent before it -- the driver sat holding
+# a modal box ninety seconds after the download threw, with nothing in its
+# app folder naming the failure. Provoked by pinning a version that does
+# not exist and naming an export that does not, because the driver renders
+# through the runtime the machine has and only fetches the package when it
+# cannot; that makes it the one suite that measures the fallback.
 appcache	windows-launch	timeout=900 build=loaders-testing	pwsh -NoProfile -File test/suite/appcache.ps1
 standalone	windows-launch	timeout=900 build=loaders-release build=testing:loaders-testing	pwsh -NoProfile -File test/suite/standalone.ps1
 exerace	windows-launch	timeout=900 build=loaders-testing reap=LOADERS	pwsh -NoProfile -File test/suite/exerace.ps1
 winerr	windows-launch	timeout=600 build=winerr reap=	pwsh -NoProfile -File test/suite/verify-winerr.ps1
-launchtime	windows-launch	timeout=600 build=loaders-testing soft	pwsh -NoProfile -File test/suite/launchtime.ps1 -Runs 5 -Fresh -Artifact
+#
+# The installer's suite, late on this lane as it always was -- its row sits
+# here and not with its four siblings because file order is run order -- and
+# then load, which is the walk again, twice, under cpus*3 spinners; the file
+# says what that measures and why two.
+netinstall	windows-launch	timeout=1200 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=win32 bash netinstall/test/run.sh
+load	windows-launch	timeout=900 build=test-testing build=2:test-testing	pwsh -NoProfile -File test/suite/load.ps1
 #
 # windows-content: what the driver does with page content. The attack suite
 # is the hostile page, launched by the verifier itself now (-Artifact) since
