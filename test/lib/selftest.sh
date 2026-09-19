@@ -1284,11 +1284,22 @@ done
 # linux-engines:cjs and :py -- so iterating the stripped names made this check
 # vacuous for the one lane that runs its list twice, which is the lane most able
 # to run a suite twice by accident.
+# A step that runs the lane bare -- `run.sh gjs`, no suite after it -- names
+# every row, which is what both loops below mean by nt_lane_names_all. It is
+# how every bash lane runs now; the per-suite form is what the pwsh lanes
+# still use around their own steps.
+nt_lane_names_all() {
+    awk -v lane="$1" '
+        /^  [a-z0-9-]+:$/ { j = $1; sub(/:$/, "", j) }
+        j == lane && /test\/run\.sh/ { print }
+    ' "$ROOT/.github/workflows/ci.yml" | grep -qE "test/run\.sh $2[[:space:]]*$"
+}
 DOUBLED=""
 for lk in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$LANES_TSV"); do
     l="${lk%%:*}"
     for sname in $(bash "$RUNSH" --list "$lk" 2>/dev/null); do
         # The lane's own run.sh invocations name the suites it has migrated.
+        nt_lane_names_all "$l" "$lk" ||
         awk -v lane="$l" -v s="$sname" '
             /^  [a-z0-9-]+:$/ { j = $1; sub(/:$/, "", j) }
             j == lane && /test\/run\.sh/ { print }
@@ -1317,6 +1328,7 @@ done
 DORMANT=""
 for lk in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$LANES_TSV"); do
     l="${lk%%:*}"
+    nt_lane_names_all "$l" "$lk" && continue
     for sname in $(bash "$RUNSH" --list "$lk" 2>/dev/null); do
         awk -v lane="$l" '
             /^  [a-z0-9-]+:$/ { j = $1; sub(/:$/, "", j) }

@@ -968,13 +968,15 @@ reaping, the leash, and the log where the sheet step will find it.
 ```bash
 bash test/run.sh --list gjs        # what that lane runs, in order
 bash test/run.sh --dry-run gjs     # the argv each row resolves to
-bash test/run.sh gjs stddoc        # one suite, the way CI runs it
-bash test/run.sh gjs               # the whole lane
+bash test/run.sh gjs stddoc        # one suite, the way CI used to run it
+bash test/run.sh gjs               # the whole lane, which is what CI runs
 ```
 
-The exit status is the lane's failure count. Four lanes have no rows and should
-not: `bsd`, `kde-live`, `wayland` and `macos-netinstall` each run one command —
-`netinstall/test/run.sh`, or `qtkde.sh` — inside a VM action or a container.
+The exit status is the lane's failure count, and every bash lane in CI is one
+such step between its provisioning and its sheet. Three lanes have no rows and
+should not: `bsd` and `kde-live` each run one command — `netinstall/test/run.sh`
+inside a VM action, or `qtkde.sh` in a container — and `wayland` waits on
+`display.sh` learning to bring up a compositor.
 
 ### Reading a CI run
 
