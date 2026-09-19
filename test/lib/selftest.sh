@@ -1152,7 +1152,7 @@ WANTED_APPS="$(awk -F'\t' '!/^#/ && NF { print $3 }' "$SUITES_TSV" |
 # nothing the day the naming changes, and a scan that matches nothing reports
 # the same green as a tree with nothing wrong in it.
 WANTED_APPS="$WANTED_APPS $(sed -n 's/.*run\.sh --build //p' \
-    "$ROOT"/.github/workflows/*.yml | tr ' ' '\n' |
+    "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml | tr ' ' '\n' |
     awk -F= 'NF == 2 { print $2 } NF == 1 && $1 != "" { print $1 }' | sort -u)"
 
 MISSING=""
@@ -1272,7 +1272,7 @@ done
 # absent on a clean checkout, and a check that demanded them would fail
 # everywhere except on a runner that had already built them.
 MISSINGPATH=""
-for wf in "$ROOT"/.github/workflows/*.yml; do
+for wf in "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml; do
     for p in $(grep -ohE 'test[/\\][A-Za-z0-9._/\\-]+\.(sh|ps1|py|js|tsv|qml|containerfile)' "$wf" |
             tr '\\' '/' | sort -u); do
         [ -e "$ROOT/$p" ] || MISSINGPATH="$MISSINGPATH $(basename "$wf"):$p"
@@ -1368,7 +1368,7 @@ done
 HANDLAID="$(awk '
     /^[ \t]*#/ { next }
     /test\/stall\.py/ || /test\/serve-target\.sh/ { print FILENAME ":" FNR }
-' "$ROOT"/.github/workflows/*.yml)"
+' "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml)"
 [ -z "$HANDLAID" ] && ok "no workflow step brings up the stall socket or the navigation target by hand" \
     || bad "the early-navigation apparatus is spelled in a workflow step at:$(echo $HANDLAID)"
 
@@ -1672,7 +1672,7 @@ echo "### every artifact a lane runs comes out of the registry"
 # netinstall/ is not scanned for either. That suite fetches, verifies and slots
 # opaque bytes: its payloads are written by hand on purpose, several of them are
 # deliberately malformed, and one appends to a .cmd to make a second version.
-NT_WF="$(ls "$ROOT"/.github/workflows/*.yml 2>/dev/null)"
+NT_WF="$(ls "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml 2>/dev/null)"
 BUILDERS=""
 for wf in $NT_WF; do
     # The builders by their paths, and not by their basenames: `assemble.sh` is
@@ -1710,7 +1710,7 @@ NBUILD="$(grep -c 'run\.sh --build' "$ROOT"/.github/workflows/ci.yml 2>/dev/null
 
 # And nothing rewrites a built artifact, anywhere the launcher's own suites live.
 PATCHED=""
-for f in "$ROOT"/.github/workflows/*.yml "$ROOT"/test/*.tsv \
+for f in "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml "$ROOT"/test/*.tsv \
          "$ROOT"/test/*.sh "$ROOT"/test/suite/* "$ROOT"/test/lib/* \
          "$ROOT"/test/build/* "$ROOT"/test/report/* "$ROOT"/test/apparatus/*; do
     [ -f "$f" ] || continue
@@ -1753,7 +1753,7 @@ echo "### every .cmd a workflow names is a slot something builds"
 # spell both -- `run.sh --build appcache=loaders-testing` and then
 # `.\test\out\appcache.cmd` -- and this is what made the second follow from
 # the first; the canary below now says there is no such step left.
-NT_SLOTS="$(sed -n 's/.*run\.sh --build //p' "$ROOT"/.github/workflows/*.yml |
+NT_SLOTS="$(sed -n 's/.*run\.sh --build //p' "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml |
     tr ' ' '\n' | sed 's/=.*//' | grep . | sort -u | tr '\n' ' ')"
 # The bash lanes name no paths at all -- run.sh appends them -- so a slot they
 # build is only ever spelled in the tables. Those are the suite names.
@@ -1768,7 +1768,7 @@ NT_SLOTS="$NT_SLOTS $(awk -F'\t' '!/^#/ && NF {
             }
     }' "$SUITES_TSV" | sort -u | tr '\n' ' ')"
 
-NAMEDCMD="$(grep -ohE 'test[/\\]out[/\\][A-Za-z0-9$-]+\.cmd' "$ROOT"/.github/workflows/*.yml |
+NAMEDCMD="$(grep -ohE 'test[/\\]out[/\\][A-Za-z0-9$-]+\.cmd' "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml |
     tr '\\' '/' | sed 's|test/out/||; s|\.cmd$||' | sort -u)"
 STRAYCMD=""
 for nt_c in $NAMEDCMD; do
@@ -1822,7 +1822,7 @@ echo "### no suite watches a process it does not name a file for"
 # left a finished window up for the next suite to attach to, which reported a
 # window that never changed -- a sentence about the app, again.
 WATCHED=""
-for f in "$ROOT"/test/suite/*.ps1 "$ROOT"/.github/workflows/*.yml; do
+for f in "$ROOT"/test/suite/*.ps1 "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml; do
     [ -f "$f" ] || continue
     for nt_n in $(grep -ohE -- '-Name "?(neutrino[A-Za-z0-9-]+)"?|ProcessName -eq "(neutrino[A-Za-z0-9-]+)"' "$f" |
                   grep -oE 'neutrino[A-Za-z0-9-]+' | sort -u); do
@@ -1844,7 +1844,7 @@ done
 # what `--build <slot>=<build>` and `test\out\<slot>.cmd` already say. Anything
 # still called `neutrino<something>` outside a comment there is a leftover.
 STALEWF=""
-for wf in "$ROOT"/.github/workflows/*.yml; do
+for wf in "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml; do
     for nt_n in $(grep -v '^[[:space:]]*#' "$wf" | grep -ohE 'neutrino[a-z0-9]{3,}' | sort -u); do
         STALEWF="$STALEWF $(basename "$wf"):$nt_n"
     done
@@ -1855,9 +1855,9 @@ done
 
 # The canary: this scan is a grep over a glob, and a glob that stops matching
 # reports the same green as a tree with nothing wrong in it.
-NPS="$(ls "$ROOT"/test/suite/*.ps1 "$ROOT"/.github/workflows/*.yml 2>/dev/null | grep -c . || true)"
+NPS="$(ls "$ROOT"/test/suite/*.ps1 "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml 2>/dev/null | grep -c . || true)"
 NWATCH="$(grep -ohE -- '-Name [$"]?[A-Za-z0-9]' "$ROOT"/test/suite/*.ps1 \
-    "$ROOT"/.github/workflows/*.yml 2>/dev/null | grep -c . || true)"
+    "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml 2>/dev/null | grep -c . || true)"
 if [ "$NPS" -gt 0 ] && [ "$NWATCH" -gt 0 ]; then
     ok "the process-name scan reads the tree ($NPS files, $NWATCH Get-Process names)"
 else
@@ -1871,7 +1871,7 @@ if command -v "$(nt_python)" >/dev/null 2>&1; then
     # This lint has existed since it was written and nothing has ever run it --
     # not ci.yml, not this file. It encodes rules a YAML parser will not catch,
     # one of which cost exactly one round to find out.
-    if "$(nt_python)" "$ROOT/test/lib/workflow-lint.py" "$ROOT"/.github/workflows/*.yml; then
+    if "$(nt_python)" "$ROOT/test/lib/workflow-lint.py" "$ROOT"/.github/workflows/*.yml "$ROOT"/.github/actions/*/action.yml; then
         ok "workflow-lint.py is satisfied with .github/workflows"
     else
         bad "workflow-lint.py reported problems"

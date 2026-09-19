@@ -1,0 +1,55 @@
+# sheet - the lane's page, built and published, once for every lane.
+#
+# SPDX-FileCopyrightText: 2026 Alexandre Gomes Gaigalas <alganet@gmail.com>
+# SPDX-License-Identifier: ISC
+#
+# One artifact, one file: the lane's pictures and logs as a page that opens in
+# a browser. What it replaces is a directory of PNGs in a zip, which made
+# comparing the decorated frame against the chromeless one a matter of
+# extracting both and remembering the first while looking at the second. The
+# pictures are inlined, so there is nothing to fetch and nothing to run.
+#
+# Nine lanes each spelled this as two steps -- the sheet.sh call and the
+# upload -- and the only thing that differed was which directories hold the
+# lane's pictures and what to call them. Those are the inputs. The caller keeps
+# `if: always()` and `continue-on-error: true` on its own step, because those
+# are the caller's decisions and the reason is the caller's to state: a lane
+# that passed every control it has and goes red because the page builder
+# tripped is reporting about itself, and the thing it was built to report on
+# is the one nobody would then read.
+name: sheet
+description: build the lane's sheet with test/report/sheet.sh and upload it
+inputs:
+  lane:
+    description: the lane, which names the page and the artifact
+    required: true
+  sources:
+    description: one `<label>=<dir>` per line; $HOME is expanded
+    required: false
+    default: ""
+  gather:
+    description: the label for the logs and pictures gathered from $HOME
+    required: false
+    default: Logs
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        NT_SHEET_LANE: ${{ inputs.lane }}
+        NT_SHEET_SOURCES: ${{ inputs.sources }}
+        NT_SHEET_GATHER: ${{ inputs.gather }}
+      run: |
+        # The sources arrive as lines and leave as arguments, with $HOME
+        # expanded here because a `with:` block is not a shell.
+        set --
+        while IFS= read -r src; do
+          [ -n "$src" ] || continue
+          set -- "$@" "${src//\$HOME/$HOME}"
+        done <<< "$NT_SHEET_SOURCES"
+        bash test/report/sheet.sh "--gather=$NT_SHEET_GATHER" "$NT_SHEET_LANE" \
+          ~/sheet/"$NT_SHEET_LANE".html "$@"
+    - uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.lane }}-sheet
+        path: ~/sheet/${{ inputs.lane }}.html
