@@ -567,20 +567,32 @@ jobs:
       # This lane published nothing. Its whole reading is a log written inside a
       # guest and copied back, so a reader who wanted it had to open the job.
       # One artifact, like every other lane.
+      #
+      # The tenth caller of .github/actions/sheet, and the last lane that was
+      # still spelling the page and its upload by hand. What kept it out was
+      # `--gather`, which reads $HOME: every other lane's verifiers write their
+      # logs and pictures there, and this one's are written inside a guest and
+      # arrive in the workspace because `copyback: true` copies the workspace
+      # and nothing else. That is not a reason to keep a second spelling of the
+      # sheet -- it is a lane whose evidence has a different address, which is
+      # what `sources` is for. Three copies into a staging directory become the
+      # two places the evidence actually is, named.
+      #
+      # `gather:` is emptied rather than left at its default. Nothing on this
+      # job writes a log or a picture to $HOME -- the only thing parked there is
+      # the zig cache, which is neither -- so gathering would find nothing; and
+      # saying so here is the difference between a lane that has no $HOME
+      # evidence and a lane that was expected to have some and lost it.
       - name: sheet
         if: always()
         continue-on-error: true
-        run: |
-          mkdir -p ~/sheetsrc ~/sheet
-          cp openbsd-suite.log ~/sheetsrc/ 2>/dev/null || true
-          # Copied back from the guest by the action, not written here.
-          cp nt-results/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/report/sheet.sh bsd ~/sheet/bsd.html "Logs=$HOME/sheetsrc"
-      - uses: actions/upload-artifact@v7
-        if: always()
+        uses: ./.github/actions/sheet
         with:
-          name: bsd-sheet
-          path: ~/sheet/bsd.html
+          lane: bsd
+          gather: ""
+          sources: |
+            Logs=openbsd-suite.log
+            Logs=nt-results
       # Last, and unconditional: setup-zig's post step saves whatever is at
       # ZIG_GLOBAL_CACHE_DIR, and that path is still the workspace one.
       - if: always()
