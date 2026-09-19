@@ -90,21 +90,21 @@ Set-AppsTheme 0
 Run-Half b dark
 Set-AppsTheme 1
 
-# `exit 0`, on purpose, and it is the one thing about this file a reader should
-# not have to guess at.
-#
-# Run-Half discards each half's $LASTEXITCODE, which for every other suite in
-# this tree would be a defect: test/run.sh adds a lane up by summing exit codes
-# and never parsing, so a step that always exits 0 is a step that can never
-# redden its lane. What makes it right here is that this file asserts nothing.
-# It sets a knob, runs the verifier twice and keeps two logs -- and the verifier
-# it runs is verify-std.ps1, which files the std.theme.* rows through
-# lib/analyse.sh on its own account. Those rows are the signal; a second exit
-# code carrying the same failures would double-count them in the lane total.
-#
-# So this is the sequencer and not the judge, which is the same division the
-# header states for the analysis. The thing it would be worth failing on is a
-# half that never ran at all, and that is not visible from an exit code either:
-# it looks like a verifier that ran and found nothing, which is exactly what a
-# hole in the grid is for.
-exit 0
+# The differential, run from here as themeflip.sh runs it, and its exit is
+# this file's exit. Until now this ended `exit 0` on purpose and said why at
+# length: Run-Half discards each half's $LASTEXITCODE, which for every other
+# suite would be a defect -- test/run.sh adds a lane up by summing exit codes
+# and never parsing -- and what made it right was that this file asserts
+# nothing. It sets a knob, runs the verifier twice and keeps two logs, and the
+# verifier files the std.theme.* rows through lib/analyse.sh on its own
+# account; a second exit code carrying the same failures would double-count
+# them. That division stands: this is the sequencer and not the judge of the
+# halves. The judge of the *flip* is themediff.sh, which a bash step used to
+# run after this one and whose exit the step carried; a manifest row has no
+# step after it, so the differ runs here, once, and what it says is what this
+# exits. The halves' own verdicts are still not in it.
+$differ = Join-Path $PSScriptRoot "themediff.sh"
+& bash $differ (Join-Path $LogDir "flip-a.log") (Join-Path $LogDir "flip-b.log")
+$diffFailures = $LASTEXITCODE
+if ($null -eq $diffFailures) { $diffFailures = 1; Write-Host "FAIL: themediff.sh did not run" }
+exit $diffFailures
