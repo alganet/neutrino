@@ -47,6 +47,12 @@
 # it stays in the workflow, which is the thing that owns the machine. So do the
 # sheet and upload steps.
 #
+# A reading of the machine is a row, though, when a suite depends on it and the
+# only thing it must not do is fail the lane: `shotroom` clears the macOS alert
+# out of every picture the lane will take, exits 0 whatever it finds, and is
+# `soft` so that its leash cannot fail it either. The line between the two is
+# whether the step asks the machine something or tells it something.
+#
 # The two Windows lanes have no rows: their steps are `shell: pwsh` and this
 # column is argv for bash. Their builds do come from the tables --
 # `run.sh --build <slot>=<build>` -- so what they run is declared even where how
@@ -55,8 +61,10 @@
 # bsd, kde-live, wayland and macos-netinstall have no rows either, and that is
 # not a migration left half-done: they run netinstall/test/run.sh or qtkde.sh.
 lanes	gjs linux-engines:cjs linux-engines:py	display=off timeout=300 build=test-release	bash test/suite/lanes.sh
-lanes	kde	display=off timeout=300 build=test-testing	bash test/suite/lanes.sh
+confine	macos	display=off timeout=300 build=test-testing	bash test/suite/confine-macos.sh
+lanes	kde macos	display=off timeout=300 build=test-testing	bash test/suite/lanes.sh
 assemble	gjs macos	display=off timeout=300	bash test/suite/assemble.sh
+shotroom	macos	display=off timeout=180 soft	bash test/apparatus/shotroom-macos.sh
 loaders	gjs linux-engines:cjs linux-engines:py	timeout=1500 build=loaders-testing build=default:loaders-release	bash test/suite/loaders.sh
 loaders	kde	timeout=1500 build=loaders-testing build=default:loaders-release	env QTWEBENGINE_DISABLE_SANDBOX=1 bash test/suite/loaders.sh
 loaders	macos	timeout=720 build=loaders-testing	bash test/suite/loaders.sh

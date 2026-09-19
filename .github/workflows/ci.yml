@@ -88,7 +88,6 @@ jobs:
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
       - run: bash test/apparatus/nobrowser.sh
-      - run: bash test/run.sh --build lanes=test-release
       # The engine walk, asserted with stub interpreters: no display, no
       # toolkit, and it is the only place the meaning of an exit status is
       # checked rather than assumed.
@@ -295,9 +294,10 @@ jobs:
       #
       # Two steps, because they are two different kinds of thing. The probe
       # asks the *toolkit* what roles it can name and which signals move when
-      # the desktop's font moves, and stays continue-on-error: it answers
-      # questions rather than asserting them, and a runner image that changed
-      # its schemas should not turn a lane red for it.
+      # the desktop's font moves. What it measures is a report and not a case;
+      # whether it could take the reading at all is a case, and it is counted
+      # -- this step was continue-on-error after its row stopped being soft,
+      # and a probe that raised on its first line went green here once.
       #
       # The step under it asserts. verify-std.sh's font mode fails a lane where
       # `neutrino.fonts` and the custom properties disagree, where an unset
@@ -306,7 +306,6 @@ jobs:
       # where the two sizes differ by more than the pixel WebKit truncates.
       - name: font probe
         if: always()
-        continue-on-error: true
         timeout-minutes: 8
         run: bash test/run.sh gjs fontflip
       - name: fonts
@@ -416,7 +415,6 @@ jobs:
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
       - run: bash test/apparatus/nobrowser.sh
-      - run: bash test/run.sh --build lanes=test-release
       # The walk itself: no display, no toolkit, stub engines. It asserts what a
       # status means, which is the contract the fallthrough rests on.
       - timeout-minutes: 5
@@ -585,8 +583,6 @@ jobs:
       - if: always()
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - if: always()
-        run: bash test/run.sh --build lanes=test-release
-      - if: always()
         timeout-minutes: 5
         run: bash test/run.sh linux-engines:py lanes
       - if: always()
@@ -713,9 +709,10 @@ jobs:
       #
       # Two steps, because they are two different kinds of thing. The probe
       # asks the *toolkit* what roles it can name and which signals move when
-      # the desktop's font moves, and stays continue-on-error: it answers
-      # questions rather than asserting them, and a runner image that changed
-      # its schemas should not turn a lane red for it.
+      # the desktop's font moves. What it measures is a report and not a case;
+      # whether it could take the reading at all is a case, and it is counted
+      # -- this step was continue-on-error after its row stopped being soft,
+      # and a probe that raised on its first line went green here once.
       #
       # The step under it asserts. verify-std.sh's font mode fails a lane where
       # `neutrino.fonts` and the custom properties disagree, where an unset
@@ -724,7 +721,6 @@ jobs:
       # where the two sizes differ by more than the pixel WebKit truncates.
       - name: font probe
         if: always()
-        continue-on-error: true
         timeout-minutes: 8
         run: bash test/run.sh linux-engines:py fontflip
       - name: fonts
@@ -888,7 +884,6 @@ jobs:
       # image that is Google Chrome, whose terms-of-service window then sits on
       # the display for the rest of the job and in every screenshot after it.
       - run: bash test/apparatus/nobrowser.sh
-      - run: bash test/run.sh --build lanes=test-testing
       # The engine walk, asserted with stub interpreters: no display, no
       # toolkit, and it is the only place the meaning of an exit status is
       # checked rather than assumed.
@@ -2454,7 +2449,6 @@ jobs:
       # runs on three.
       - timeout-minutes: 5
         run: bash test/lib/selftest.sh
-      - run: bash test/run.sh --build lanes=test-testing
       # The launcher's own seatbelt profile, asserted as a value: that it can be
       # built inside a profile that denies /tmp, that the text is the same
       # either way, that seatbelt takes it, and that what seatbelt takes
@@ -2465,17 +2459,19 @@ jobs:
       # profile without one step going red. No display, no engine, about a
       # second, so it sits with parse.sh at the top of the lane.
       #
-      # Handed the artifact parse.sh just read, for parse.sh's own reason: this
-      # asserts what shipped, and the `@@include` that puts macos-confine.sh
-      # into a build is the step most able to go wrong. Naming it also keeps
-      # this step off assemble.sh, which it would otherwise call for itself.
-      - run: bash test/suite/confine-macos.sh test/out/lanes.cmd
+      # Handed the artifact its row builds and parses, for parse.sh's own
+      # reason: this asserts what shipped, and the `@@include` that puts
+      # macos-confine.sh into a build is the step most able to go wrong.
+      # Naming it also keeps this step off assemble.sh, which it would
+      # otherwise call for itself.
+      - run: bash test/run.sh macos confine
       # The engine walk, on the platform whose order it is now about. lanes.sh
       # is stub-driven and needs no display, and it ran on three Linux lanes and
       # nowhere else -- so the two assertions that name osascript had never
       # executed, and the ordering this lane depends on was asserted only where
       # osascript does not exist.
-      - run: bash test/suite/lanes.sh test/out/lanes.cmd
+      - timeout-minutes: 5
+        run: bash test/run.sh macos lanes
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
       # assembles anything -- once per sed, because the spelling of what it
@@ -2506,16 +2502,14 @@ jobs:
       # This step is an experiment and not a control: it names the process that
       # presents the alert, tries the two things that might dismiss it, and
       # prints what happened at each stage. It cannot fail the lane -- the
-      # script exits 0 whatever it finds -- and its whole output is a reading
-      # for the next round. Before the launch, because the point is to have the
-      # room settled before the first shutter, and because its own throwaway
-      # capture is then the one that provokes the alert rather than `00-initial`.
+      # script exits 0 whatever it finds, and its row is `soft`, so the leash
+      # cannot fail it either -- and its whole output is a reading for the next
+      # round. Before the launch, because the point is to have the room settled
+      # before the first shutter, and because its own throwaway capture is then
+      # the one that provokes the alert rather than `00-initial`.
       - name: the room the pictures are taken in
         timeout-minutes: 3
-        continue-on-error: true
-        run: |
-          bash test/apparatus/shotroom-macos.sh > ~/shotroom.log 2>&1 || true
-          cat ~/shotroom.log
+        run: bash test/run.sh macos shotroom
       # The last step in any lane with no way to be read, and it cost a merge.
       # It went red publishing nothing at all: verify-macos.sh exits before its
       # first screenshot when the window does not appear, so the artifact upload
@@ -2669,14 +2663,13 @@ jobs:
       # one nobody would then read.
       # The desktop's fonts, on the macOS lane.
       #
-      # The toolkit probe stays and stays continue-on-error, and on this lane it
+      # The toolkit probe stays, counted as it is on gjs, and on this lane it
       # is not redundant: there is no live test here, because macOS publishes no
       # notification for a UI font change and no scriptable knob to test one
       # against. So it is the only standing instrument that would notice a macOS
       # release moving a family, a size, or what weightOfFont: answers.
       - name: font probe
         if: always()
-        continue-on-error: true
         timeout-minutes: 8
         run: bash test/run.sh macos fontflip
       - name: fonts
