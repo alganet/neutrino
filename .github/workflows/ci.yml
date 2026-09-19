@@ -90,18 +90,17 @@ jobs:
       # name; the job's ceiling above is the backstop for a hang the leash did
       # not catch.
       - run: bash test/run.sh gjs
+      # The lane's page, built and published by .github/actions/sheet, which
+      # says what it is and why it cannot redden a lane.
       - name: sheet
         if: always()
         continue-on-error: true
-        run: |
-          bash test/report/sheet.sh --gather gjs ~/sheet/gjs.html \
-            "The suites=$HOME/screenshots" \
-            "netinstall=$HOME/netinstall-screenshots"
-      - uses: actions/upload-artifact@v7
-        if: always()
+        uses: ./.github/actions/sheet
         with:
-          name: gjs-sheet
-          path: ~/sheet/gjs.html
+          lane: gjs
+          sources: |
+            The suites=$HOME/screenshots
+            netinstall=$HOME/netinstall-screenshots
 
   # The rest of the engine walk, on one machine descending it.
   #
@@ -211,18 +210,17 @@ jobs:
       # python3 reading behind it.
       - if: always()
         run: bash test/run.sh linux-engines:py
+      # The lane's page, built and published by .github/actions/sheet, which
+      # says what it is and why it cannot redden a lane.
       - name: sheet
         if: always()
         continue-on-error: true
-        run: |
-          bash test/report/sheet.sh --gather linux-engines ~/sheet/linux-engines.html \
-            "cjs=$HOME/shots-cjs" \
-            "PyGObject=$HOME/screenshots"
-      - uses: actions/upload-artifact@v7
-        if: always()
+        uses: ./.github/actions/sheet
         with:
-          name: linux-engines-sheet
-          path: ~/sheet/linux-engines.html
+          lane: linux-engines
+          sources: |
+            cjs=$HOME/shots-cjs
+            PyGObject=$HOME/screenshots
 
   # The Qt lane's live theme half, which needs a desktop this runner cannot be.
   #
@@ -300,16 +298,14 @@ jobs:
           exit 1
 
       # Same as bsd: one log, and until now no way to read it but the job page.
+      # The lane's page, built and published by .github/actions/sheet, which
+      # says what it is and why it cannot redden a lane.
       - name: sheet
         if: always()
         continue-on-error: true
-        run: |
-          bash test/report/sheet.sh --gather kde-live ~/sheet/kde-live.html
-      - uses: actions/upload-artifact@v7
-        if: always()
+        uses: ./.github/actions/sheet
         with:
-          name: kde-live-sheet
-          path: ~/sheet/kde-live.html
+          lane: kde-live
 
   # Measured against a complete run rather than guessed: this lane took 12.6 min measured, and a netinstall step that may take 35.
   # Without a job ceiling the default is six hours, which is what a wedged step
@@ -338,17 +334,16 @@ jobs:
       - run: bash test/apparatus/nobrowser.sh
       # The lane, from test/suites.tsv, as one step; the gjs lane says why.
       - run: bash test/run.sh kde
+      # The lane's page, built and published by .github/actions/sheet, which
+      # says what it is and why it cannot redden a lane.
       - name: sheet
         if: always()
         continue-on-error: true
-        run: |
-          bash test/report/sheet.sh --gather kde ~/sheet/kde.html \
-            "The suites=$HOME/screenshots"
-      - uses: actions/upload-artifact@v7
-        if: always()
+        uses: ./.github/actions/sheet
         with:
-          name: kde-sheet
-          path: ~/sheet/kde.html
+          lane: kde
+          sources: |
+            The suites=$HOME/screenshots
 
   # The wayland splash, which nothing in this file had ever run.
   #
@@ -408,21 +403,16 @@ jobs:
       # does not come up fails the row before the splash can decline silently
       # on a machine with none.
       - run: bash test/run.sh wayland
-      # continue-on-error, because this is a reporting tool. A lane that passed
-      # every control it has and goes red because the page builder tripped is
-      # reporting about itself, and the thing it was built to report on is the
-      # one nobody would then read.
+      # The lane's page, built and published by .github/actions/sheet, which
+      # says what it is and why it cannot redden a lane.
       - name: sheet
         if: always()
         continue-on-error: true
-        run: |
-          bash test/report/sheet.sh --gather wayland ~/sheet/wayland.html \
-            "netinstall=$HOME/netinstall-screenshots"
-      - uses: actions/upload-artifact@v7
-        if: always()
+        uses: ./.github/actions/sheet
         with:
-          name: wayland-sheet
-          path: ~/sheet/wayland.html
+          lane: wayland
+          sources: |
+            netinstall=$HOME/netinstall-screenshots
 
   # netinstall away from the desktop lanes: cross-compiled for six targets, and
 
@@ -672,25 +662,19 @@ jobs:
         env:
           NETINSTALL_CC: zig cc
         run: bash test/run.sh windows-launch
+      # The lane's page, built and published by .github/actions/sheet, which
+      # says what it is and why it cannot redden a lane.
       - name: sheet
         if: always()
         continue-on-error: true
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          # Gathered rather than globbed in place: this lane's pictures and logs
-          # sit loose in the profile directory beside everything else the
-          # runner keeps there, and a recursive find pointed at $HOME would
-          # sweep all of it.
-          bash test/report/sheet.sh "--gather=The suites" windows-launch ~/sheet/windows-launch.html \
-            "netinstall=$HOME/netinstall-screenshots" \
-            "Under load, replica 1=$HOME/load-shots-1" \
-            "Under load, replica 2=$HOME/load-shots-2"
-      - uses: actions/upload-artifact@v7
-        if: always()
+        uses: ./.github/actions/sheet
         with:
-          name: windows-launch-sheet
-          path: ~/sheet/windows-launch.html
+          lane: windows-launch
+          gather: The suites
+          sources: |
+            netinstall=$HOME/netinstall-screenshots
+            Under load, replica 1=$HOME/load-shots-1
+            Under load, replica 2=$HOME/load-shots-2
 
   # What the page is allowed to do, and what the driver does with a document
   # that is not the one it was handed: hostile page content, the navigation
@@ -720,19 +704,18 @@ jobs:
       # the manifest's "pwsh rows" section says how a PowerShell suite is one.
       - shell: bash
         run: bash test/run.sh windows-content
+      # The lane's page, built and published by .github/actions/sheet, which
+      # says what it is and why it cannot redden a lane.
       - name: sheet
         if: always()
         continue-on-error: true
-        shell: bash
-        run: |
-          bash test/report/sheet.sh "--gather=The suites" windows-content ~/sheet/windows-content.html \
-            "docswap=$HOME/docswaplogs" \
-            "nav=$HOME/navlogs"
-      - uses: actions/upload-artifact@v7
-        if: always()
+        uses: ./.github/actions/sheet
         with:
-          name: windows-content-sheet
-          path: ~/sheet/windows-content.html
+          lane: windows-content
+          gather: The suites
+          sources: |
+            docswap=$HOME/docswaplogs
+            nav=$HOME/navlogs
 
   # Everything this platform has to say about a running app: the core launch
 
@@ -762,17 +745,16 @@ jobs:
         run: bash test/lib/selftest.sh
       # The lane, from test/suites.tsv, as one step; the gjs lane says why.
       - run: bash test/run.sh macos
+      # The lane's page, built and published by .github/actions/sheet, which
+      # says what it is and why it cannot redden a lane.
       - name: sheet
         if: always()
         continue-on-error: true
-        run: |
-          bash test/report/sheet.sh --gather macos ~/sheet/macos.html \
-            "The suites=$HOME/screenshots"
-      - uses: actions/upload-artifact@v7
-        if: always()
+        uses: ./.github/actions/sheet
         with:
-          name: macos-sheet
-          path: ~/sheet/macos.html
+          lane: macos
+          sources: |
+            The suites=$HOME/screenshots
 
   # The netinstall suite, alone. It is the longest single reading in the whole
   # matrix -- one run.sh that nothing here can split -- so it is what every
@@ -807,34 +789,16 @@ jobs:
       # alert, then the installer's whole suite. The gjs lane says why one
       # step, and the manifest says what each row is.
       - run: bash test/run.sh macos-netinstall
-      # One artifact, one file: this lane's logs and its one picture as a page
-      # that opens in a browser, the same page every other lane publishes. The
-      # sheet is the one place its assertions can be read without opening a
-      # job log.
-      #
-      # continue-on-error, because this is a reporting tool. A lane that passed
-      # every control it has and goes red because the page builder tripped is
-      # reporting about itself, and the thing it was built to report on is the
-      # one nobody would then read.
+      # The lane's page, built and published by .github/actions/sheet, which
+      # says what it is and why it cannot redden a lane.
       - name: sheet
         if: always()
         continue-on-error: true
-        run: |
-          # The suite's logs, gathered. They sit loose in the home directory, so
-          # every sheet this lane published before they were collected carried
-          # "logs=0". A sheet that cannot show what the lane asserted cannot be
-          # read for what the lane asserted.
-          # The suite's picture and its logs. `The suites=$HOME/screenshots`
-          # used to be named here and was never written on this lane -- that
-          # directory belongs to the `macos` job -- so the directory named is
-          # the one the suite step above pointed splash.sh at, and no other.
-          bash test/report/sheet.sh --gather macos-netinstall ~/sheet/macos-netinstall.html \
-            "netinstall=$HOME/netinstall-screenshots"
-      - uses: actions/upload-artifact@v7
-        if: always()
+        uses: ./.github/actions/sheet
         with:
-          name: macos-netinstall-sheet
-          path: ~/sheet/macos-netinstall.html
+          lane: macos-netinstall
+          sources: |
+            netinstall=$HOME/netinstall-screenshots
 
   # Every case, on every lane, in one grid.
   #
