@@ -83,6 +83,14 @@ nt_display_up() {
 
     case "$wm" in
         none) return 0 ;;
+        # A compositor beside the X server, not instead of it. The wayland lane
+        # is the only machine in the matrix with both, and two of the splash's
+        # cases are about the choice *between* them -- a stale WAYLAND_DISPLAY
+        # falling back to X11, a reachable compositor preferred when DISPLAY is
+        # also set -- so the Xvfb above is not redundancy there. The apparatus
+        # does the bringing up and says why sway; this is what sources what it
+        # wrote, so a manifest row can say `display=wayland` and nothing else.
+        wayland) nt_wayland_up; return ;;
     esac
     # One window manager, however many suites. pgrep on the name rather than a
     # pidfile: the lane may have started it in an earlier step and this function
@@ -116,4 +124,25 @@ nt_qt_env() {
 # GTK's, for the lanes that run WebKitGTK.
 nt_gtk_env() {
     export GDK_BACKEND="${GDK_BACKEND:-x11}"
+}
+
+# The compositor, from test/apparatus/wayland-up.sh, which writes the two
+# variables a client needs into a file for the caller to source. Sourced here
+# and exported, so the suite under step.sh inherits them the way it inherits
+# DISPLAY. A compositor that does not come up is a FAIL and not a report: the
+# splash declines silently where it cannot draw, so a lane that lost its
+# compositor would otherwise pass splash.sh by skipping every case in it.
+nt_wayland_up() {
+    local here envfile rc=0
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    envfile="${TMPDIR:-/tmp}/nt-wayland.env"
+    bash "$here/../apparatus/wayland-up.sh" "$envfile" "${NT_SCREEN%x*}" || rc=$?
+    if [ "$rc" != 0 ]; then
+        echo "  FAIL: no compositor came up (wayland-up.sh exit $rc); nothing below can draw on one"
+        return 1
+    fi
+    # shellcheck source=/dev/null
+    . "$envfile"
+    export XDG_RUNTIME_DIR WAYLAND_DISPLAY
+    echo "report: wayland display $WAYLAND_DISPLAY up beside $DISPLAY"
 }

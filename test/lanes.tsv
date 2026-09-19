@@ -29,13 +29,15 @@
 # to begin with, they only shared a default.
 #
 # windows-launch and macos-netinstall are here with no display and no toolkit
-# because the one row each runs -- netinstall -- draws with neither. The other
-# windows lane, wayland, bsd and kde-live have no row anywhere, and suites.tsv
-# says why for each.
+# because the one row each runs -- netinstall -- draws with neither. wayland's
+# `display=wayland` is an X server *and* a compositor, which display.sh says
+# why. The other windows lane, bsd and kde-live have no row anywhere, and
+# suites.tsv says why for each.
 gjs	display=metacity gtk timeout=480 toolkit=gtk
 linux-engines:cjs	display=metacity gtk timeout=480 toolkit=gtk shots=shots-cjs
 linux-engines:py	display=metacity gtk timeout=480 toolkit=gtk
 kde	display=openbox qt timeout=480 toolkit=qt
 macos	timeout=480 toolkit=macos
 macos-netinstall	timeout=480
+wayland	display=wayland timeout=480
 windows-launch	timeout=480

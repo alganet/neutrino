@@ -973,10 +973,9 @@ bash test/run.sh gjs               # the whole lane, which is what CI runs
 ```
 
 The exit status is the lane's failure count, and every bash lane in CI is one
-such step between its provisioning and its sheet. Three lanes have no rows and
+such step between its provisioning and its sheet. Two lanes have no rows and
 should not: `bsd` and `kde-live` each run one command — `netinstall/test/run.sh`
-inside a VM action, or `qtkde.sh` in a container — and `wayland` waits on
-`display.sh` learning to bring up a compositor.
+inside a VM action, or `qtkde.sh` in a container.
 
 ### Reading a CI run
 
