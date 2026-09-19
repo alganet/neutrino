@@ -88,7 +88,11 @@ esac
 # It does not shorten the build block: all three binaries are still built,
 # because the builds are seconds on a machine with a compiler and a suite list
 # that quietly changed what was compiled would be a worse thing to own.
-[ -n "${NEUTRINO_SUITES:-}" ] && SUITES="$NEUTRINO_SUITES"
+#
+# Commas as well as spaces, because the one place the list is now written is
+# a manifest column that is split on whitespace before it reaches a shell:
+# test/suites.tsv says `NEUTRINO_SUITES=env,e2e` and could not say "env e2e".
+[ -n "${NEUTRINO_SUITES:-}" ] && SUITES="$(printf '%s' "$NEUTRINO_SUITES" | tr ',' ' ')"
 
 # Where the wall clock went, per suite, in the order they ran.
 #
@@ -104,6 +108,15 @@ for t in $SUITES; do
     echo
     echo "### $t.sh"
     SUITE_T0=$SECONDS
+    # The suite files its rows under its own name, whatever this runner was
+    # called from. test/run.sh exports NT_SUITE=netinstall around this whole
+    # file, and test/lib/harness.sh takes an inherited name over its own
+    # `basename $0` -- so without this every row from sixteen suites would land
+    # in one netinstall.tsv and the sheet's table could not say which of them a
+    # row came from. The grid never reads the suite, so no cell moves either
+    # way; the name is for the person reading the sheet, and a person wants
+    # `splash`, not the runner that called it.
+    export NT_SUITE="$t"
     case "$t" in
         names) nt_timeout 600 bash "$HERE/$t.sh" "$HERE/../dist/netinstall-release$NT_EXE" ;;
         # No binary. Both build or find their own instrument: crashdump compiles

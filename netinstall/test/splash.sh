@@ -486,7 +486,12 @@ fi
 #
 # Only where the lane asked for it. NEUTRINO_SPLASH_SHOTS names the directory;
 # unset, the case is skipped rather than writing pictures into a developer's
-# home, and the skip is on the record.
+# home, and the skip is on the record. NT_SHOT_DIR is the same question in
+# test/lib/step.sh's words -- a manifest row says `shots=` and that is what
+# arrives -- and it is only ever set by something that asked for pictures, so
+# it is taken as the same answer. Run by hand, neither is set and nothing is
+# written.
+NEUTRINO_SPLASH_SHOTS="${NEUTRINO_SPLASH_SHOTS:-${NT_SHOT_DIR:-}}"
 STEP="the window photographed while it is up"
 FRAMES=6
 FRAME_GAP_MS=130

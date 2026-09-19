@@ -1380,7 +1380,13 @@ STRAYCEIL="$(awk '
 # --dry-run resolves for every lane, and what it prints parses back through
 # step.sh's own option loop. A directive that produced a flag step.sh does not
 # take would otherwise be found by a runner.
-for l in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$SUITES_TSV" | sort -u); do
+#
+# Over lanes.tsv's keys. This read suites.tsv's first column -- suite names --
+# and asked run.sh to dry-run a lane called `stdgeom`, which it did: the `*`
+# rows match any key at all, so every "lane" resolved to the same five rows and
+# no lane-specific row was ever parsed. The lane rows carried a phase-only
+# `shots=` for a whole commit before anything here read it.
+for l in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$LANES_TSV"); do
     out="$(bash "$RUNSH" --dry-run "$l" 2>&1)"
     if [ -z "$out" ]; then
         bad "run.sh --dry-run $l printed nothing"

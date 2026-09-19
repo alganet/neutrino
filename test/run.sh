@@ -325,10 +325,15 @@ REAP_PREFIX=""
 BUILD_SPECS=""
 SETUP_BAD=""
 SOFT=0
+SHOTS=""
+# What the environment said before any row spoke, so a row without `shots=`
+# gets step.sh's default -- or the caller's own NT_SHOT_DIR -- and not the
+# previous row's.
+NT_SHOT_DIR0="${NT_SHOT_DIR:-}"
 
 nt_setup() {
-    local wm="" tk="" leash="" cats="" dbus="" toolkit="" nodisp=0 d
-    APP_SPEC=""; BUILD_SPECS=""; REAP_PREFIX=""; SETUP_BAD=""; SOFT=0
+    local wm="" tk="" leash="" cats="" dbus="" toolkit="" shots="" nodisp=0 d
+    APP_SPEC=""; BUILD_SPECS=""; REAP_PREFIX=""; SETUP_BAD=""; SOFT=0; SHOTS=""
     for d in $1 $2; do
         [ "$d" = "-" ] && continue
         case "$d" in
@@ -381,6 +386,17 @@ nt_setup() {
             # command lines, and the runner is the thing that just decided what
             # that basename is.
             reap=*)    REAP_PREFIX="${d#reap=}" ;;
+            # Where the row's pictures go, as a directory name under $HOME.
+            # step.sh's comment says a row that wants a directory other than
+            # ~/screenshots names it with env(1) in its command column, and no
+            # row can: the column is split on whitespace and never sees a
+            # shell, so `$HOME` in it is four characters. A name and not a
+            # path, because the two callers want a sibling of ~/screenshots
+            # and nothing else -- netinstall's pictures go beside the suites'
+            # so the sheet can head them apart, and the cjs half of
+            # linux-engines parks its frames where the pygobject half will not
+            # write over them, which used to be an `mv` step between the two.
+            shots=*)   shots="${d#shots=}" ;;
             # continue-on-error, spelled once, for a row that reports a
             # reading nobody asserts: a red one is a lane that measured
             # something rather than a lane that failed. shotroom is the one
@@ -401,6 +417,7 @@ nt_setup() {
     [ -n "$cats" ] && STEP_ARGS="$STEP_ARGS$cats"
     [ -n "$dbus" ] && STEP_ARGS="$STEP_ARGS$dbus"
     [ -n "$toolkit" ] && STEP_ARGS="$STEP_ARGS --toolkit $toolkit"
+    SHOTS="$shots"
     return 0
 }
 
@@ -470,8 +487,18 @@ while IFS="$(printf '\t')" read -r suite setup command; do
         ART_ARGS="$ART_ARGS $OUT_DIR/$(nt_slot "$nt_s" "$suite").cmd"
     done
 
+    # Exported and not put in front of step.sh's argv, because step.sh reads
+    # it from the environment the way every suite under it does.
+    if [ -n "$SHOTS" ]; then
+        export NT_SHOT_DIR="$HOME/$SHOTS"
+    elif [ -n "$NT_SHOT_DIR0" ]; then
+        export NT_SHOT_DIR="$NT_SHOT_DIR0"
+    else
+        unset NT_SHOT_DIR
+    fi
+
     if [ "$DRY" = 1 ]; then
-        echo "$suite: bash $HERE/lib/step.sh$STEP_ARGS --log $suite $APP_ARG -- $command$ART_ARGS"
+        echo "$suite: ${NT_SHOT_DIR:+NT_SHOT_DIR=$NT_SHOT_DIR }bash $HERE/lib/step.sh$STEP_ARGS --log $suite $APP_ARG -- $command$ART_ARGS"
         continue
     fi
 
