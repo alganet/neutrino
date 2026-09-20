@@ -1366,3 +1366,32 @@ fontlive.win.flip	a running app is handed new fonts when the desktop's text size
 # there cannot be; the failure is already on stdout and the exit is already red.
 psparse.read	the sweep found PowerShell in every room it reads	windows-launch windows-content
 psparse.parses	every PowerShell file under test/ parses	windows-launch windows-content
+
+# ------------------------- the Evergreen runtime, and what jsc.exe can be made to do
+#
+# From test/suite/evergreen.ps1, the last suite in the tree with no voice at
+# all. It has thirty assertions and no `Pass`: every one of them speaks only
+# when it fails, so a run where the whole thing held emitted no verdict of any
+# kind, and the grid had nothing to show for the longest suite on the longest
+# lane. That is not a suite waiting to be converted for tidiness -- it is the
+# exact shape of defect this branch has been bitten by three times, where a
+# thing that stopped running and a thing that passed are the same silence.
+#
+# Six ids for ten sections. The other four -- runtime, exports, managed and
+# cominterop -- read the machine and report what they found: which runtime is
+# installed, what it exports, whether Core.dll is the wrapper this project
+# downloads, and whether the compiler will accept a COM callback at all. None
+# of them can fail, and readings must not become cases.
+#
+# One id per section rather than one per Fail, at the granularity assemble.sh
+# was converted at and for the same reason: the cell says which of the things
+# this suite establishes stopped being true, and the FAIL lines under it name
+# which assertion. The verdict is the failure count across the section rather
+# than a flag each assertion sets, because Fail is called from thirty places
+# and thirty call sites are thirty chances to forget one.
+evergreen.idl	the IIDs and the vtable order read out of the pinned package	windows-launch
+evergreen.table	the constants the artifact ships agree with that header	windows-launch
+evergreen.dllimport	jsc.exe can declare a native call	windows-launch
+evergreen.emitted	a COM interface and a callback built without the compiler	windows-launch
+evergreen.create	an Evergreen environment comes up with no package in reach	windows-launch
+evergreen.drive	a window, a document, and a message back from the page	windows-launch

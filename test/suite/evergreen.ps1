@@ -139,9 +139,65 @@
 $ErrorActionPreference = "Continue"
 
 $failures = 0
+. (Join-Path $PSScriptRoot "..\lib\harness.ps1")
+
 function Report($m) { Write-Output "report: $m" }
 function Fail($m) { Write-Output "FAIL: $m"; $script:failures++ }
-function Section($m) { Write-Output "report: === $m" }
+
+# Six of the ten sections below assert something; four only read the machine and
+# report what they found. The six file a case each, and the four do not, which
+# is the rule test/cases.tsv states in as many words: readings must not become
+# cases, because every row in that grid is supposed to be something that can be
+# true or false. `runtime`, `exports`, `managed` and `cominterop` say what is
+# installed and what the compiler will accept, and nothing in them can fail.
+#
+# One id per section and not one per Fail, which is the granularity assemble.sh
+# was converted at and for the same reason: what a reader wants from the grid is
+# which of the things this suite establishes stopped being true, and the FAIL
+# lines under the cell name which assertion it was. There are thirty of them and
+# none had a passing voice at all -- this file has no Pass, so a green run
+# emitted no verdict of any kind and the grid had nothing to show. That is the
+# whole reason it is here.
+#
+# The verdict is the failure count across the section rather than a flag each
+# assertion sets, because `Fail` is called from thirty places and thirty call
+# sites are thirty chances to forget. A section that added no failures held.
+$script:case = ""
+$script:caseName = ""
+$script:caseMark = 0
+
+# The section's own sentence is the verdict's sentence, which is why the name is
+# carried alongside the id. Six sections closing with "every assertion in this
+# section held" is six identical lines in a log, and a reader looking at the one
+# that failed has to count sections to find out which it was. The row carries
+# the id and the grid is fine either way; the log is the thing this fixes.
+function Close-Case() {
+    if ($script:case) {
+        if ($script:failures -eq $script:caseMark) {
+            nt_pass $script:case $script:caseName
+        } else {
+            nt_fail $script:case ("{0}: {1} assertion(s) failed here; the FAIL lines above name them" -f `
+                $script:caseName, ($script:failures - $script:caseMark))
+        }
+        $script:case = ""
+        $script:caseName = ""
+    }
+}
+
+# `assert_section` and not `Section` for the six, because the id has to be a
+# literal beside a name the registry scan in test/lib/selftest.sh knows. It
+# follows ids through a variable for a helper named assert_*, which is what
+# Close-Case above needs to be able to do; under any other name every id here
+# would come back as "in cases.tsv but emitted nowhere".
+function assert_section($id, $m) {
+    Close-Case
+    $script:case = $id
+    $script:caseName = $m
+    $script:caseMark = $script:failures
+    Write-Output "report: === $m"
+}
+
+function Section($m) { Close-Case; Write-Output "report: === $m" }
 
 Write-Output "=== evergreen: the runtime already on the machine ==="
 
@@ -427,7 +483,7 @@ if ($runtimeDir) {
 }
 
 # =====================================================================
-Section "idl - the IIDs and the vtable order, from the pinned package"
+assert_section evergreen.idl "idl - the IIDs and the vtable order, from the pinned package"
 # =====================================================================
 #
 # Every GUID and every slot index below comes out of the header in the package
@@ -593,7 +649,7 @@ if ($pinVersion) {
 }
 
 # =====================================================================
-Section "table - the constants the artifact ships, against that header"
+assert_section evergreen.table "table - the constants the artifact ships, against that header"
 # =====================================================================
 #
 # The section above prints the header's answer. This one asks whether the
@@ -751,7 +807,7 @@ if (-not $iidOf.Count) {
 }
 
 # =====================================================================
-Section "dllimport - can jsc.exe declare a native call at all"
+assert_section evergreen.dllimport "dllimport - can jsc.exe declare a native call at all"
 # =====================================================================
 #
 # The one construct the whole design needs and the one nobody can promise:
@@ -979,7 +1035,7 @@ if ($handlerIid) {
 Report "cominterop usable-spelling=$(if ($attrStyle) { $attrStyle } else { 'NONE' })"
 
 # =====================================================================
-Section "emitted - a COM interface and a callback built without the compiler"
+assert_section evergreen.emitted "emitted - a COM interface and a callback built without the compiler"
 # =====================================================================
 #
 # Both constructs the design needs are refused by jsc: a P/Invoke has nowhere to
@@ -1116,7 +1172,7 @@ if ($handlerIid) {
 Report "emitted usable=$emittedOk"
 
 # =====================================================================
-Section "create - the hypothesis, live and with no package in reach"
+assert_section evergreen.create "create - the hypothesis, live and with no package in reach"
 # =====================================================================
 #
 # Everything above, pointed at the runtime. Two emitted interfaces, an emitted
@@ -1353,7 +1409,7 @@ if (!loaded) {
 }
 
 # =====================================================================
-Section "drive - a window, a document, and a message back from the page"
+assert_section evergreen.drive "drive - a window, a document, and a message back from the page"
 # =====================================================================
 #
 # `create` proved the environment. Everything the driver actually does is on the
@@ -1851,7 +1907,7 @@ Environment.Exit(0);
     }
 }
 
+Close-Case
 Write-Output "report: kept $work"
 Write-Output "=== evergreen: $failures failure(s) ==="
-if ($failures -gt 0) { exit 1 }
-exit 0
+nt_finish
