@@ -1696,6 +1696,39 @@ NAMECOL="$(awk -F'\t' '{ print $2 }' "$NAMEDIR/the-row-name.tsv" 2>/dev/null | s
     && ok "and names it in the row's own suite column" \
     || bad "the suite column says '$NAMECOL' and not the-row-name"
 
+# And the same rule where this machine cannot run the suite to watch it.
+#
+# The check above is the bash path, proved by running a row. The PowerShell path
+# cannot be run here, and it was the one that was broken: verify-std.ps1 assigned
+# `$env:NT_SUITE = "verify-std"` over the name run.sh had just exported, so five
+# rows on windows-content filed under one word while the same five cases filed
+# under five row names everywhere else. A test that can only run on the platform
+# where the defect is not is a test that would never have found it.
+#
+# So the rule is asserted on the text instead, where it reads the same on every
+# machine: a suite may *default* the name it files under and may *derive* one
+# from something the row gave it, but it may not assign a literal over what it
+# was handed. A bare string on the right is the only shape that can win over the
+# manifest, so a bare string on the right is what this refuses.
+SUITELIT=""
+for f in "$ROOT"/test/suite/*.ps1 "$ROOT"/test/lib/*.ps1 "$ROOT"/test/apparatus/*.ps1; do
+    [ -f "$f" ] || continue
+    while IFS= read -r ln; do
+        # The guarded form is the one exception: it only fires when nothing was
+        # handed down, which is a hand run in a terminal.
+        [ -n "$ln" ] || continue
+        case "$ln" in
+            *'-not $env:NT_SUITE'*) continue ;;
+        esac
+        SUITELIT="$SUITELIT $(basename "$f")"
+    done <<EOF
+$(grep -nE '^[^#]*\$env:NT_SUITE[[:space:]]*=[[:space:]]*"[^$]*"' "$f" 2>/dev/null || true)
+EOF
+done
+[ -z "$SUITELIT" ] \
+    && ok "no PowerShell suite assigns a literal over the name its row was given" \
+    || bad "a suite overwrites the manifest's name for it with a literal:$SUITELIT"
+
 # ------------------------------------------------- the workflow lint, which ran nowhere
 
 echo

@@ -818,9 +818,17 @@ Write-Host "=== Every step the app reported ==="
 # launch and two under load. matrix.py folds repeats for one lane FAIL-over-PASS,
 # so the grid is right either way, but the sheet's suite column can only tell the
 # three apart if they are named apart. $AppName is what already differs between
-# them -- neutrinotest, neutrinoload1, neutrinoload2 -- so it is what names them,
-# rather than a parameter added to carry a name the caller already passes.
-$env:NT_SUITE = "verify-windows-$AppName"
+# them, so it is what names them, rather than a parameter added to carry a name
+# the caller already passes.
+#
+# $AppName alone, without the `verify-windows-` in front of it. That prefix was
+# the script's name and the three replicas are `walk`, `load` and `load-2` --
+# which are the manifest's names for them, because run.sh builds each row's
+# artifact into a slot it names after the row. So the prefix was not making the
+# three distinguishable, it was making all three disagree with the manifest and
+# with the four other lanes, where the same walk files under `walk`. What is
+# finer than a row here is the `-2`, and that survives on its own.
+$env:NT_SUITE = $AppName
 & bash (Join-Path $PSScriptRoot "../lib/walk.sh") $walkRec
 $walked = $LASTEXITCODE
 if ($null -eq $walked) { $walked = 0 }
