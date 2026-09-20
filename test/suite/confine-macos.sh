@@ -33,28 +33,80 @@
 # neutrino/sh, for the reason parse.sh gives about the splitter: an assertion
 # that reads the source cannot tell you what shipped. The `@@include` that puts
 # this file's subject into an artifact is the step most able to go wrong.
+#
+# It speaks test/lib/harness.sh now, where it used to carry its own pass/fail
+# pair and its own totals line. Three things go with that and each is worth
+# saying once.
+#
+# The rows reach the grid, which is the whole point: this file asserted fourteen
+# things into prose, on the one lane that runs it, so a run where it stopped
+# executing and a run where it passed produced the same empty column. The suite
+# exists because two defects hid in a gap nothing could see; reporting where
+# nothing can see it is the same gap one level up.
+#
+# The totals line says `confine` and not `confine-macos`, because the harness
+# takes the name from the row and the row is `confine`. That is the same name
+# netinstall's confinement suite files under on three other lanes, which is
+# right: they are the same subject asked of different things, and the ids keep
+# them apart.
+#
+# The private `fail` emitted `::error title=confine-macos::` on every failure.
+# The harness only annotates when NT_ANNOTATE is set, which nothing sets, and
+# that is deliberate -- GitHub keeps thirty annotations a job and drops the
+# earliest first, so a suite that spends them on itself spends them on behalf of
+# every other. Nothing is lost: test/run.sh annotates the lane once for a suite
+# that reported failures, which is the line a reader needs from the run page.
 
 set -uo pipefail
+
+. "$(cd "$(dirname "$0")/.." && pwd)/lib/harness.sh"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-FAILURES=0
+# Every case this file can file, in the order it files them.
+#
+# Named in one place because two branches below stop early -- the profile
+# builder not lifting, and the bare build coming back empty -- and everything
+# after such a stop has to be skipped *by name*. A case that files nothing on a
+# lane its `applies-to` names is a hole, and a hole is indistinguishable from a
+# lane that stopped reporting, which is the one thing the grid must never be
+# unable to tell. `assert_` is not decoration on these two helpers: the registry
+# scan in test/lib/selftest.sh follows ids through a variable only for a helper
+# named assert_*, and an id reaching nt_skip through $c under any other name
+# comes back as "in cases.tsv but emitted nowhere".
+NT_CASES="confine.macos.lifted confine.macos.no-heredoc confine.macos.built
+confine.macos.built-confined confine.macos.identical confine.macos.accepted
+confine.macos.control.write confine.macos.write-denied
+confine.macos.write-allowed confine.macos.control.exec confine.macos.noexec
+confine.macos.nest.outside confine.macos.nest.inside confine.macos.messages"
+NT_FILED=""
 
-pass() { echo "  PASS: $*"; }
-fail() {
-    echo "  FAIL: $*"
-    [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=confine-macos::$*"
-    FAILURES=$((FAILURES + 1))
+assert_filed() { NT_FILED="$NT_FILED $1"; }
+
+assert_rest_skipped() {
+    local c
+    for c in $NT_CASES; do
+        case " $NT_FILED " in
+            *" $c "*) continue ;;
+        esac
+        nt_skip "$c" "$1"
+    done
 }
 
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "confine-macos.sh: not macOS; nothing here applies"
-    exit 0
+    assert_rest_skipped "this is not macOS; the seatbelt profile is not a thing here"
+    nt_finish
 fi
 if [ ! -x /usr/bin/sandbox-exec ]; then
     echo "confine-macos.sh: no sandbox-exec on this machine"
-    exit 1
+    # A skip and not the failure this used to exit. A Mac with no sandbox-exec
+    # is a machine that cannot be asked, which is the other half of the contract
+    # every live half in this tree keeps -- and it used to leave the lane red
+    # with no case named in it at all.
+    assert_rest_skipped "no sandbox-exec on this machine, so nothing here can be asked"
+    nt_finish
 fi
 
 TARGET="${1:-}"
@@ -78,22 +130,25 @@ GEN="$WORK/gen.sh"
 } > "$GEN"
 for fn in nt_resolve nt_sbquote nt_macos_profile; do
     if ! grep -q "^$fn" "$GEN"; then
-        fail "could not lift $fn out of the artifact; the shell region has moved"
-        echo "report: totals confine-macos failures=$FAILURES"
-        exit 1
+        nt_fail confine.macos.lifted "could not lift $fn out of the artifact; the shell region has moved"
+        assert_filed confine.macos.lifted
+        assert_rest_skipped "the profile builder did not come out of the artifact, so there is no profile to ask about"
+        nt_finish
     fi
 done
-pass "lifted the profile builder out of the artifact"
+nt_pass confine.macos.lifted "lifted the profile builder out of the artifact"
+assert_filed confine.macos.lifted
 
 # A here-document in what was just lifted is the original defect returning by
 # another route -- a second one added elsewhere in the same function, or the
 # printf reverted. The text assertion below catches it under the sandbox that
 # denies /tmp, and this says which line to look at when it does.
 if grep -qE '<<-?[A-Za-z_'\''"]' "$GEN"; then
-    fail "the profile builder contains a here-document; bash 3.2 puts those in /tmp"
+    nt_fail confine.macos.no-heredoc "the profile builder contains a here-document; bash 3.2 puts those in /tmp"
 else
-    pass "the profile builder needs no temp file"
+    nt_pass confine.macos.no-heredoc "the profile builder needs no temp file"
 fi
+assert_filed confine.macos.no-heredoc
 
 # Under $HOME and not under $WORK, and that is the difference between these
 # assertions meaning the APPDIR rule and meaning nothing. mktemp puts $WORK in
@@ -110,11 +165,13 @@ echo "=== The profile is built, and is the same text under confinement ==="
 
 BARE="$WORK/bare.sb"
 if /bin/sh "$GEN" "$APPDIR" > "$BARE" 2>"$WORK/bare.err" && [ -s "$BARE" ]; then
-    pass "built in a bare shell ($(wc -c < "$BARE" | tr -d ' ') bytes)"
+    nt_pass confine.macos.built "built in a bare shell ($(wc -c < "$BARE" | tr -d ' ') bytes)"
+    assert_filed confine.macos.built
 else
-    fail "profile expected=non-empty actual=$(wc -c < "$BARE" | tr -d ' ') bytes, stderr: $(tr '\n' ' ' < "$WORK/bare.err")"
-    echo "report: totals confine-macos failures=$FAILURES"
-    exit 1
+    nt_fail confine.macos.built "profile expected=non-empty actual=$(wc -c < "$BARE" | tr -d ' ') bytes, stderr: $(tr '\n' ' ' < "$WORK/bare.err")"
+    assert_filed confine.macos.built
+    assert_rest_skipped "there is no profile text to compare, feed to seatbelt or probe with"
+    nt_finish
 fi
 
 # The netinstall profile, near enough for the one thing being asked: it denies
@@ -137,28 +194,31 @@ PROFILE
 CONFINED="$WORK/confined.sb"
 if /usr/bin/sandbox-exec -f "$OUTER_SB" -D APPDIR="$APPDIR" \
         /bin/sh "$GEN" "$APPDIR" > "$CONFINED" 2>"$WORK/confined.err"; then
-    pass "built inside a profile that denies /tmp"
+    nt_pass confine.macos.built-confined "built inside a profile that denies /tmp"
 else
-    fail "building inside an outer profile expected=ok actual=$(tr '\n' ' ' < "$WORK/confined.err")"
+    nt_fail confine.macos.built-confined "building inside an outer profile expected=ok actual=$(tr '\n' ' ' < "$WORK/confined.err")"
 fi
+assert_filed confine.macos.built-confined
 
 # The regression assertion, and the sharpest one in this file. The old builder
 # produced 1553 bytes in a bare shell and 0 under the profile above, and the
 # launcher could not tell the difference between that and a profile seatbelt
 # had refused.
 if cmp -s "$BARE" "$CONFINED"; then
-    pass "the confined build is byte-identical to the bare one"
+    nt_pass confine.macos.identical "the confined build is byte-identical to the bare one"
 else
-    fail "profile text expected=identical actual=bare $(wc -c < "$BARE" | tr -d ' ') vs confined $(wc -c < "$CONFINED" | tr -d ' ') bytes"
+    nt_fail confine.macos.identical "profile text expected=identical actual=bare $(wc -c < "$BARE" | tr -d ' ') vs confined $(wc -c < "$CONFINED" | tr -d ' ') bytes"
 fi
+assert_filed confine.macos.identical
 
 echo "=== Seatbelt takes it ==="
 
 if /usr/bin/sandbox-exec -p "$(cat "$BARE")" /usr/bin/true >/dev/null 2>&1; then
-    pass "sandbox-exec -p accepts the profile"
+    nt_pass confine.macos.accepted "sandbox-exec -p accepts the profile"
 else
-    fail "sandbox-exec expected=accepts actual=rejects: $(/usr/bin/sandbox-exec -p "$(cat "$BARE")" /usr/bin/true 2>&1 | tr '\n' ' ')"
+    nt_fail confine.macos.accepted "sandbox-exec expected=accepts actual=rejects: $(/usr/bin/sandbox-exec -p "$(cat "$BARE")" /usr/bin/true 2>&1 | tr '\n' ' ')"
 fi
+assert_filed confine.macos.accepted
 
 echo "=== And what it takes confines ==="
 
@@ -168,39 +228,52 @@ echo "=== And what it takes confines ==="
 OUTSIDE="$HOME/.neutrino-confine-probe.$$"
 rm -f "$OUTSIDE"
 if /bin/sh -c "echo x > '$OUTSIDE'" 2>/dev/null && [ -f "$OUTSIDE" ]; then
+    # The control had no passing voice until now: it spoke only when it failed,
+    # so the run where the whole apparatus worked filed nothing for it. That is
+    # the case whose entire job is to stop a green from being an accident.
+    nt_pass confine.macos.control.write "unconfined, a write to \$HOME does land, so the probe below means what it says"
     rm -f "$OUTSIDE"
     if /usr/bin/sandbox-exec -p "$(cat "$BARE")" \
             /bin/sh -c "echo x > '$OUTSIDE'" 2>/dev/null && [ -f "$OUTSIDE" ]; then
-        fail "a write to \$HOME expected=denied actual=written"
+        nt_fail confine.macos.write-denied "a write to \$HOME expected=denied actual=written"
         rm -f "$OUTSIDE"
     else
-        pass "a write outside the app dir is denied"
+        nt_pass confine.macos.write-denied "a write outside the app dir is denied"
     fi
 else
-    fail "the control write to \$HOME did not land; the probe proves nothing"
+    nt_fail confine.macos.control.write "the control write to \$HOME did not land; the probe proves nothing"
+    nt_skip confine.macos.write-denied "the control write did not land, so a denial here would prove nothing"
 fi
+assert_filed confine.macos.control.write
+assert_filed confine.macos.write-denied
 
 if /usr/bin/sandbox-exec -p "$(cat "$BARE")" \
         /bin/sh -c "echo x > '$APPDIR/probe'" 2>/dev/null && [ -f "$APPDIR/probe" ]; then
-    pass "a write to the app dir is allowed"
+    nt_pass confine.macos.write-allowed "a write to the app dir is allowed"
 else
-    fail "a write to the app dir expected=allowed actual=denied"
+    nt_fail confine.macos.write-allowed "a write to the app dir expected=allowed actual=denied"
 fi
+assert_filed confine.macos.write-allowed
 
 # Write xor execute, which is the reason the profile names every writable path
 # in its process-exec* rule and not just the app dir.
 printf '#!/bin/sh\necho ran\n' > "$APPDIR/exec-probe"
 chmod +x "$APPDIR/exec-probe"
 if [ "$("$APPDIR/exec-probe" 2>/dev/null)" = "ran" ]; then
+    # Same as the write control above, and for the same reason.
+    nt_pass confine.macos.control.exec "unconfined, the probe in the app dir does run, so the refusal below means what it says"
     if /usr/bin/sandbox-exec -p "$(cat "$BARE")" \
             "$APPDIR/exec-probe" >/dev/null 2>&1; then
-        fail "executing from the app dir expected=denied actual=ran"
+        nt_fail confine.macos.noexec "executing from the app dir expected=denied actual=ran"
     else
-        pass "what the app dir can hold, it cannot execute"
+        nt_pass confine.macos.noexec "what the app dir can hold, it cannot execute"
     fi
 else
-    fail "the control exec did not run; the w^x probe proves nothing"
+    nt_fail confine.macos.control.exec "the control exec did not run; the w^x probe proves nothing"
+    nt_skip confine.macos.noexec "the control exec did not run, so a refusal here would prove nothing"
 fi
+assert_filed confine.macos.control.exec
+assert_filed confine.macos.noexec
 
 echo "=== A profile does not nest, which is why the driver asks before it applies ==="
 
@@ -220,16 +293,18 @@ echo "=== A profile does not nest, which is why the driver asks before it applie
 # put a wrong sentence in macos-confine.sh for the length of one afternoon.
 PROBE='(version 1)(allow default)'
 if /usr/bin/sandbox-exec -p "$PROBE" /usr/bin/true >/dev/null 2>&1; then
-    pass "the nesting probe is accepted outside a profile"
+    nt_pass confine.macos.nest.outside "the nesting probe is accepted outside a profile"
 else
-    fail "nesting probe expected=accepted outside a profile actual=refused"
+    nt_fail confine.macos.nest.outside "nesting probe expected=accepted outside a profile actual=refused"
 fi
+assert_filed confine.macos.nest.outside
 if /usr/bin/sandbox-exec -f "$OUTER_SB" -D APPDIR="$APPDIR" \
         /usr/bin/sandbox-exec -p "$PROBE" /usr/bin/true >/dev/null 2>&1; then
-    fail "nesting probe expected=refused inside a profile actual=accepted (macOS now nests; run_macos should apply its own profile under netinstall)"
+    nt_fail confine.macos.nest.inside "nesting probe expected=refused inside a profile actual=accepted (macOS now nests; run_macos should apply its own profile under netinstall)"
 else
-    pass "the nesting probe is refused inside one"
+    nt_pass confine.macos.nest.inside "the nesting probe is refused inside one"
 fi
+assert_filed confine.macos.nest.inside
 
 # And the launcher's four messages, present in the artifact. A branch renamed
 # without its assertion being renamed is a suite that asserts a string nothing
@@ -248,14 +323,18 @@ do
     # the artifact carries only the text. The shell's one line has the prefix
     # written out; the driver's three do not, and one of them is split across a
     # source line, so each string here is a substring that survives the wrap.
+    # One id for four messages, folded rather than split. test/report/matrix.py
+    # takes the worst verdict when a lane reports a case more than once, which
+    # is the same rule decoflip relies on running its probe under two decoration
+    # settings: four branches missing and one missing are both "the artifact has
+    # lost a branch e2e.sh greps for", and the sentence names which.
     if grep -qF "$msg" "$TARGET"; then
-        pass "the artifact can say \"$msg\""
+        nt_pass confine.macos.messages "the artifact can say \"$msg\""
     else
-        fail "the artifact has no \"$msg\" branch; e2e.sh greps for these"
+        nt_fail confine.macos.messages "the artifact has no \"$msg\" branch; e2e.sh greps for these"
     fi
 done
+assert_filed confine.macos.messages
 
 echo ""
-echo "report: totals confine-macos failures=$FAILURES"
-[ "$FAILURES" -eq 0 ] || exit 1
-echo "launcher confinement assertions passed"
+nt_finish
