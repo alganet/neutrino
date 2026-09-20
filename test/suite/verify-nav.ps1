@@ -57,7 +57,10 @@ $lane = $args[0]
 # them, and a stale one here does not read as a wrong name -- it reads as an app
 # that never opened a window.
 $AppName = [System.IO.Path]::GetFileNameWithoutExtension($lane)
-$outDir = $args[1]
+# The second argument is where the log goes, and a manifest row cannot spell
+# a directory under $HOME -- its column never sees a shell -- so it defaults
+# to the one the step used to name, and the sheet step still names it.
+$outDir = if ($args.Count -gt 1 -and $args[1]) { $args[1] } else { Join-Path $HOME "navlogs" }
 if (-not $lane -or -not (Test-Path $lane) -or -not $outDir) {
     Write-Output "usage: verify-nav.ps1 <app.cmd> <outDir>"
     exit 2

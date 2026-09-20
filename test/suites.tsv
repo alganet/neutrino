@@ -127,7 +127,7 @@ lanes	kde macos	display=off timeout=300 build=test-testing	bash test/suite/lanes
 # whose exit it does not control, and the leash is the second half of that.
 # windows-launch runs it from its own step, because that lane's other suites
 # are pwsh and interleave with it.
-assemble	gjs macos	display=off timeout=300	bash test/suite/assemble.sh
+assemble	gjs macos windows-launch	display=off timeout=300	bash test/suite/assemble.sh
 #
 # ---------------------------------------------------------------------- the room
 #
@@ -458,21 +458,109 @@ fontlive	gjs linux-engines:py	timeout=600 build=live-font	env NT_FONTFLIP_HALF=l
 # parameter ends its command with that parameter, because run.sh appends the
 # path last; one that reads $args takes it positionally. `reap=` on a row
 # with no `app=` reaps the first build's slot by process name after the
-# suite, which is what the steps did by hand with Get-Process. A suite the
-# runner launches with `app=` is not a row here yet: step.sh launches with
-# bash, and on this platform the artifact is cmd.exe's.
+# suite, which is what the steps did by hand with Get-Process; with nothing
+# after the `=` it is the name alone. Where a row here is the Windows half of
+# a suite whose essay is above -- the standards probes, the flips, the fonts,
+# the app on the download page -- the essay is not repeated; what is said
+# here is what is true on this platform only.
+#
+# The suites this lane is made of are parsed before any of them runs, and the
+# artifact is compiled before anything is launched, for one reason with two
+# faces: an artifact that does not compile is an app that never appears, and
+# every suite that waits for a window then waits out its own timeout before
+# saying so. One reserved word in the jsc region cost windows-launch its
+# runner that way -- three suites spent fifty minutes between them against a
+# forty-minute job, the run was killed in the middle of the fourth, and
+# GitHub keeps no logs for a job killed like that. The compiler had said
+# exactly what was wrong, once, on the first launch of the first suite.
+# psparse is the same rule for the sixth language: a .ps1 that does not parse
+# has shipped twice and both times was found by a runner eighteen minutes
+# in, which is also why themeflip.ps1 is a file and not a `run:` block.
 psparse	windows-launch windows-content	timeout=300	pwsh -NoProfile -File test/build/psparse.ps1
 compile	windows-launch	timeout=300 build=test-release	pwsh -NoProfile -File test/suite/compile.ps1
 compile	windows-content	timeout=300 build=attack-release	pwsh -NoProfile -File test/suite/compile.ps1
+#
+# windows-launch: the launcher itself. winexec is the program the driver runs
+# and the tree it deletes; evergreen is the WebView2 pin and what the runtime
+# answers; walk is verify-windows.ps1 with -Launch, the six states watched
+# from outside, which on this platform derives the app folder from the
+# artifact and prints the launcher's own error log after its results. Then
+# the loader suites off one build: the exe compiled once and kept out of the
+# app's reach, the two standalone tiers, the exe race, the error dialog, and
+# launch time, which reports a number and asserts nothing and is `soft`.
+winexec	windows-launch	timeout=600 build=test-release	pwsh -NoProfile -File test/suite/winexec.ps1
+evergreen	windows-launch	timeout=900 build=test-release	pwsh -NoProfile -File test/suite/evergreen.ps1
+walk	windows-launch	timeout=1200 build=test-release reap=	pwsh -NoProfile -File test/suite/verify-windows.ps1 -Launch -Artifact
 appcache	windows-launch	timeout=900 build=loaders-testing	pwsh -NoProfile -File test/suite/appcache.ps1
 standalone	windows-launch	timeout=900 build=loaders-release build=testing:loaders-testing	pwsh -NoProfile -File test/suite/standalone.ps1
 exerace	windows-launch	timeout=900 build=loaders-testing reap=LOADERS	pwsh -NoProfile -File test/suite/exerace.ps1
 winerr	windows-launch	timeout=600 build=winerr reap=	pwsh -NoProfile -File test/suite/verify-winerr.ps1
 launchtime	windows-launch	timeout=600 build=loaders-testing soft	pwsh -NoProfile -File test/suite/launchtime.ps1 -Runs 5 -Fresh -Artifact
+#
+# windows-content: what the driver does with page content. The attack suite
+# is the hostile page, launched by the verifier itself now (-Artifact) since
+# a row has no line before it. A note it carried and should not:
+# `postnav=PENDING nav=PENDING` here is not the earliest of several reports;
+# verify-attack.ps1 prints `report:` exactly once, after settling, and says
+# in its own comment that the settled report is not expected on this
+# platform because there is no navigation refusal to refuse with. Measured:
+# matched=1 reports=1.
+#
+# nav is the navigation lane. The Windows driver subscribes to
+# NavigationStarting and NewWindowRequested, and this is the suite that says
+# so: against a target that answers, the driver without a guard reported
+# nav_arrived=YES and popup_arrived=YES opened=HANDLE, with the injected API
+# and the app author's own page script both present in the remote document.
+# test/probe/neutrinoattack.js could never see this -- it aims at a host that
+# never resolves, which test/probe/early-target.html's own comment calls not
+# a test, because the load fails on its own and a driver with a guard
+# reports the same "held" as one without. nav and docswap write their logs
+# under $HOME, in directories the sheet step names; the suites default to
+# them because this column cannot spell $HOME.
+attack	windows-content	timeout=900 build=attack-release reap=ATTACK	pwsh -NoProfile -File test/suite/verify-attack.ps1 -Artifact
+nav	windows-content	timeout=720 build=nav-hermetic reap=NAV- cat=navlogs/nav	pwsh -NoProfile -File test/suite/verify-nav.ps1
+docswap	windows-content	timeout=1200 build=docswap reap=DOCSWAP cat=docswaplogs/docswap	pwsh -NoProfile -File test/suite/docswap.ps1
+#
+# The standards probes, on the platform whose reader polls a clock. stdgeom
+# is decoflip.ps1: both halves and the differential, the decorated half first
+# because it is the control, and each half reaped by the suite itself -- the
+# row's `reap=` is the belt to its braces. Its budget is two probes' worth,
+# on the slowest lane, the first of which may be fetching WebView2.
+stdgeom	windows-content	timeout=840 cat=deco-a cat=deco-b build=geom build=none:geom-nodeco reap=STD-GEOM	pwsh -NoProfile -File test/suite/decoflip.ps1
 stddoc	windows-content	timeout=600 build=std-doc reap=STD-DOC	pwsh -NoProfile -File test/suite/verify-std.ps1 -Probe doc -Launch -Artifact
 stdwin	windows-content	timeout=720 build=std-win reap=STD-WIN	pwsh -NoProfile -File test/suite/verify-std.ps1 -Probe win -Launch -Artifact
 stdtheme	windows-content	timeout=600 build=std-theme reap=STD-THEME	pwsh -NoProfile -File test/suite/verify-std.ps1 -Probe theme -Launch -Artifact
+#
+# themeflip.ps1 owns both halves and, now, the differential: it runs
+# themediff.sh itself and exits what the differ says, as themeflip.sh does,
+# where a bash step used to do it afterwards. themelive is the live half,
+# which the two launches cannot see: they read the palette once at startup
+# each and compare, which is right for "did this value come from the
+# desktop" and wrong for "does the watcher work", since a watcher that never
+# fired would leave both green. Measured on a Windows 11 client before the
+# suite existed -- an accent moved through SetSysColors under a running app
+# arrived as four palettes, and a real contrast theme as one more -- so what
+# this adds is a runner that says so rather than a person with a VM.
+themeflip	windows-content	timeout=960 cat=flip-knobs cat=flip-a cat=flip-b build=std-theme reap=STD-THEME	pwsh -NoProfile -File test/suite/themeflip.ps1 -Artifact
 themelive	windows-content	timeout=600 build=live-theme reap=	pwsh -NoProfile -File test/suite/themelive.ps1 -Artifact
+#
+# The app on the download page, and this is the lane it broke on: its Close
+# button doing nothing on Windows, and working everywhere else, was found by
+# a person on Windows Home rather than by anything in this tree. A release
+# build, deliberately: everything else on this lane is --testing because it
+# needs the trace channel, and the thing under test here is the download.
 demo	windows-content	timeout=600 build=demo reap=	pwsh -NoProfile -File test/suite/demo.ps1 -Artifact
+#
+# The desktop's fonts, on the Windows lane. The toolkit probe is soft and
+# keeps its watch half, which is the instrument that re-measures avgReadMs --
+# the number the decision to ride the event loop's own tick rests on. stdfont
+# *runs* the app, which this lane once never did: verify-std.ps1 had no font
+# arm, so the artifact was built, parsed and discarded on the one platform
+# whose reader polls SystemFonts on a clock. fontlive carries a control
+# themelive does not need: this lane's knob is not the value the driver
+# reads, so the script asks SystemFonts itself whether anything moved before
+# it blames the app, and a knob that writes and changes no metric is a skip,
+# because there was nothing an app could have been told about.
+fontflip	windows-content	timeout=480 soft	powershell -ExecutionPolicy Bypass -File test/probe/fontprobe-windows.ps1 8
 stdfont	windows-content	timeout=600 build=std-font reap=STD-FONT cat=launch-stdfont-err	pwsh -NoProfile -File test/suite/verify-std.ps1 -Probe font -Launch -Artifact
 fontlive	windows-content	timeout=600 build=live-font	pwsh -NoProfile -File test/suite/fontlive.ps1 -Artifact
