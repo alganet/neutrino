@@ -413,6 +413,19 @@ nt_setup() {
             # directive. The Windows lanes' two probes -- warm and launch time
             # -- carry it too, since they became rows.
             soft)      SOFT=1 ;;
+            # This row's command is itself a runner, so the rows it produces are
+            # filed under names of its own and not under the row's.
+            #
+            # netinstall is the only one: netinstall/test/run.sh exports NT_SUITE
+            # per suite it runs, so the five netinstall rows file under `env`,
+            # `e2e`, `splash`, `phases` and a dozen more, and never under
+            # `netinstall`. It changes nothing about how the row runs -- there is
+            # no STEP_ARGS for it below -- and it is here so that
+            # test/report/matrix.py can tell that row apart from a row that filed
+            # nothing because it has no cases. Without it the one check that
+            # would catch the next silent suite has a permanent false positive
+            # and stops being read.
+            subsuites) : ;;
             *)         SETUP_BAD="$d"; return 1 ;;
         esac
     done

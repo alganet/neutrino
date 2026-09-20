@@ -591,6 +591,72 @@ if command -v "$(nt_python)" >/dev/null 2>&1 && [ -f "$WORK/sheet.html" ]; then
     else
         bad "matrix.py --strict failed two lanes that reported all their cases"
     fi
+
+    # A row that ran and filed nothing under its own name.
+    #
+    # The three checks above all start from cases.tsv, so between them they can
+    # only see a suite that registered ids and then did not emit them. A suite
+    # that registers none at all is invisible to every one of them -- no holes,
+    # no quiet lane, no stray id -- and eleven rows across six suites were in
+    # exactly that state until 2026-09-20, one of them with thirty assertions
+    # and no passing voice at all. Every one was found by reading sheets by
+    # hand. This is the check that finds the next one.
+    #
+    # The fixture sheet's lane is `selftest` and its rows say `verify-std`, so a
+    # manifest naming a row that lane never filed is the defect, and the same
+    # manifest naming the row it did file is the control.
+    MSUI="$WORK/fixture-suites.tsv"
+    # All three ids declared, or the undeclared-id check fires instead and
+    # the four below would be passing for the wrong reason.
+    {
+        printf 'sheet.probe.a	a control	selftest
+'
+        printf 'sheet.probe.b	a control	selftest
+'
+        printf 'sheet.probe.c	a control	selftest
+'
+    } > "$MREG"
+    printf 'neverran	selftest	timeout=10	bash -c :
+' > "$MSUI"
+    if "$(nt_python)" "$ROOT/test/report/matrix.py" --strict --registry "$MREG" \
+        --suites "$MSUI" "$WORK/sheet.html" >/dev/null 2>&1; then
+        bad "matrix.py --strict passed a row that ran and filed no case of its own"
+    else
+        ok "matrix.py --strict fails a row that filed no case under its own name"
+    fi
+    printf 'verify-std	selftest	timeout=10	bash -c :
+' > "$MSUI"
+    if "$(nt_python)" "$ROOT/test/report/matrix.py" --strict --registry "$MREG" \
+        --suites "$MSUI" "$WORK/sheet.html" >/dev/null 2>&1; then
+        ok "and passes the row that did file one"
+    else
+        bad "matrix.py --strict failed a row that filed a case under its own name"
+    fi
+    # The two kinds of row that are not expected to file, each saying which it
+    # is in its own setup column: `soft` is a reading nobody asserts, and
+    # `subsuites` is a row whose command is a runner that files under names of
+    # its own. Without these the one check that catches the next silent suite
+    # has a permanent false positive and stops being read.
+    printf 'neverran	selftest	timeout=10 soft	bash -c :
+' > "$MSUI"
+    "$(nt_python)" "$ROOT/test/report/matrix.py" --strict --registry "$MREG" \
+        --suites "$MSUI" "$WORK/sheet.html" >/dev/null 2>&1 \
+        && ok "and a soft row is not expected to file one" \
+        || bad "matrix.py --strict failed a soft row for filing no cases"
+    printf 'neverran	selftest	timeout=10 subsuites	bash -c :
+' > "$MSUI"
+    "$(nt_python)" "$ROOT/test/report/matrix.py" --strict --registry "$MREG" \
+        --suites "$MSUI" "$WORK/sheet.html" >/dev/null 2>&1 \
+        && ok "nor is a row whose command is itself a runner" \
+        || bad "matrix.py --strict failed a subsuites row for filing no cases"
+    # And the check that could most easily be lost: a manifest that was not read
+    # makes the silent-row list empty, which reads exactly like every row having
+    # filed. --strict says the run was structurally sound and a check that could
+    # not run has not established that.
+    "$(nt_python)" "$ROOT/test/report/matrix.py" --strict --registry "$MREG" \
+        --suites "$WORK/no-such-manifest.tsv" "$WORK/sheet.html" >/dev/null 2>&1 \
+        && bad "matrix.py --strict passed with a manifest it could not read" \
+        || ok "matrix.py --strict fails when it could not read the suites manifest"
 else
     echo "  SKIP: no python3 or no sheet, so matrix.py --strict did not run"
 fi

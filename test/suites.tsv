@@ -297,10 +297,10 @@ early	macos	build=early-testing	bash test/suite/early.sh
 # On windows-launch the compiler is the step's `env:`, not the row's: it is
 # what setup-zig put on the machine, and a row is not the place to say what a
 # machine has.
-netinstall	gjs	timeout=1500 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=x11 bash netinstall/test/run.sh
-netinstall	wayland	timeout=600 shots=netinstall-screenshots	env NEUTRINO_SUITES=splash NEUTRINO_SPLASH_EXPECT=wayland bash netinstall/test/run.sh
-netinstall	kde	timeout=1500 dbus	env NEUTRINO_SUITES=env,e2e QTWEBENGINE_DISABLE_SANDBOX=1 bash netinstall/test/run.sh
-netinstall	macos-netinstall	timeout=1800 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=appkit bash netinstall/test/run.sh
+netinstall	gjs	timeout=1500 shots=netinstall-screenshots subsuites	env NEUTRINO_SPLASH_EXPECT=x11 bash netinstall/test/run.sh
+netinstall	wayland	timeout=600 shots=netinstall-screenshots subsuites	env NEUTRINO_SUITES=splash NEUTRINO_SPLASH_EXPECT=wayland bash netinstall/test/run.sh
+netinstall	kde	timeout=1500 dbus subsuites	env NEUTRINO_SUITES=env,e2e QTWEBENGINE_DISABLE_SANDBOX=1 bash netinstall/test/run.sh
+netinstall	macos-netinstall	timeout=1800 shots=netinstall-screenshots subsuites	env NEUTRINO_SPLASH_EXPECT=appkit bash netinstall/test/run.sh
 #
 # ---------------------------------------------------------- the navigation guard
 #
@@ -587,7 +587,7 @@ winerr	windows-launch	timeout=600 build=winerr reap=	pwsh -NoProfile -File test/
 # here and not with its four siblings because file order is run order -- and
 # then load, which is the walk again, twice, under cpus*3 spinners; the file
 # says what that measures and why two.
-netinstall	windows-launch	timeout=1200 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=win32 bash netinstall/test/run.sh
+netinstall	windows-launch	timeout=1200 shots=netinstall-screenshots subsuites	env NEUTRINO_SPLASH_EXPECT=win32 bash netinstall/test/run.sh
 load	windows-launch	timeout=900 build=test-testing build=2:test-testing	pwsh -NoProfile -File test/suite/load.ps1
 #
 # windows-content: what the driver does with page content. The attack suite
