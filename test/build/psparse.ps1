@@ -57,10 +57,12 @@ $sweeps = @(
 )
 
 $files = @()
+$empty = @()
 foreach ($sweep in $sweeps) {
-    if (-not (Test-Path -LiteralPath $sweep.Dir)) { continue }
-    foreach ($f in @(Get-ChildItem -LiteralPath $sweep.Dir -Filter *.ps1 |
-            Sort-Object Name)) {
+    if (-not (Test-Path -LiteralPath $sweep.Dir)) { $empty += $sweep.Prefix; continue }
+    $found = @(Get-ChildItem -LiteralPath $sweep.Dir -Filter *.ps1 | Sort-Object Name)
+    if ($found.Count -lt 1) { $empty += $sweep.Prefix }
+    foreach ($f in $found) {
         $files += [pscustomobject]@{
             Path = $f.FullName
             Name = $sweep.Prefix + $f.Name
@@ -68,12 +70,29 @@ foreach ($sweep in $sweeps) {
     }
 }
 
+# What this file could not say until now: that it read anything.
+#
+# A room renamed, or moved out from under test/, and every sweep above takes its
+# `continue` and finds nothing -- and the loop below then iterates an empty list,
+# reports no failure, and prints "every suite parses" on the way to exit 0. A
+# parse gate that swept nothing is a parse gate that passed for free, and it is
+# the first step on both Windows lanes, so everything behind it would have run
+# unparsed with this saying it was fine.
+#
+# Per room and not merely in total, because `suite/` holding nineteen files
+# hides `probe/` holding none. A room that is missing entirely and a room that
+# is present and empty are the same defect from here and are reported as one.
+$read = $files.Count
+Write-Output "report: psparse read $read file(s) across $($sweeps.Count) room(s)"
+
+$unparseable = @()
 foreach ($file in $files) {
     $errors = $null
     $null = [System.Management.Automation.Language.Parser]::ParseFile(
         $file.Path, [ref]$null, [ref]$errors)
     if ($errors -and $errors.Count -gt 0) {
         $bad++
+        $unparseable += $file.Name
         foreach ($e in $errors) {
             Write-Output ("FAIL: {0}:{1} {2}" -f $file.Name,
                 $e.Extent.StartLineNumber, $e.Message)
@@ -83,6 +102,53 @@ foreach ($file in $files) {
     }
 }
 
+# The rows, and the order they are filed in is the whole of the design.
+#
+# This file is the one that reports on a broken lib/harness.ps1 -- that is why
+# the sweep above reads lib/ at all, and the comment there says so. Dot-sourcing
+# the harness to file rows would make the reporter depend on the thing it
+# reports on: a parse error in harness.ps1 would take psparse down with it, and
+# the lane would fail at its first step with no reading and no name.
+#
+# So the harness is loaded only after this file has proved it parses, which it
+# has just done along with the other twenty-two. That is not a trick; it is the
+# only order in which the dependency is safe, and it is available here because
+# proving it is what this file already does.
+#
+# When it does not parse, there are no rows and there cannot be. The failure is
+# already on stdout by name and line, `$bad` is non-zero, and the exit below
+# makes the lane red -- which is the outcome that matters and the one this gate
+# has always produced.
+# From $Dir and not from $PSScriptRoot, so the harness that files these rows
+# is the one out of the tree that was just swept. They are the same path for
+# the only caller there is, and keeping them one expression is what stops
+# them drifting apart if a second one ever passes -Dir.
+$harness = Join-Path $Dir "lib\harness.ps1"
+if ((Test-Path -LiteralPath $harness) -and ($unparseable -notcontains "lib/harness.ps1")) {
+    . $harness
+    if ($empty.Count -gt 0) {
+        nt_fail psparse.read ("psparse swept no .ps1 in: {0}; those rooms moved and this check measured nothing there" -f ($empty -join " "))
+    } else {
+        nt_pass psparse.read "the sweep found PowerShell in every room it reads ($read file(s) across $($sweeps.Count))"
+    }
+    if ($unparseable.Count -gt 0) {
+        nt_fail psparse.parses ("{0} file(s) would not parse: {1}" -f $unparseable.Count, ($unparseable -join " "))
+    } elseif ($read -lt 1) {
+        nt_skip psparse.parses "there were no files to parse, which the case above is the failure for"
+    } else {
+        nt_pass psparse.parses "every PowerShell file under test/ parses ($read of them)"
+    }
+    nt_finish
+}
+
+# Below here only when the harness could not be loaded, which is a parse error
+# in harness.ps1 or its absence. Both are already on stdout above; this is the
+# status, and the empty-room check has to be repeated because the row that
+# normally carries it was not reachable.
+if ($empty.Count -gt 0) {
+    Write-Output ("FAIL: psparse swept no .ps1 in: {0}; those rooms moved and this check measured nothing there" -f ($empty -join " "))
+    $bad++
+}
 if ($bad -gt 0) {
     Write-Output "psparse: $bad file(s) would not parse"
     exit 1
