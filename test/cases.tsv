@@ -1214,3 +1214,47 @@ e2e.slot.reused	a second launch runs the kept exe and compiles nothing	windows-l
 e2e.slot.nodigest	and takes no digest nothing would have read	windows-launch
 e2e.slot.secondup	and comes up from it	windows-launch
 e2e.launcher.confine	the launcher finds netinstall's profile in force and says nothing	macos-netinstall
+
+# ------------------------------------------- the seatbelt profile, as a value
+#
+# From test/suite/confine-macos.sh, which ran on macos filing nothing at all
+# until now. It is the only suite in the tree whose subject is a profile rather
+# than a running app: whether the launcher's own seatbelt profile can be built,
+# whether it is the same text under a profile that denies /tmp, whether seatbelt
+# takes it, and whether what it takes actually confines.
+#
+# That subject is why it had no cases and needed them most. Every other macOS
+# suite launches the launcher and asks about the window -- a title, a page, a
+# palette -- and all of those pass with the profile silently missing, because a
+# window does not depend on it. Two defects lived in exactly that gap: a
+# here-document that bash 3.2 puts in /tmp, so the build produced nothing under
+# netinstall's profile and the launcher took its unconfined fallback; and a
+# fallback that then blamed seatbelt for a shell failure. The suite was written
+# to close the gap and then reported into prose, where the grid could not see
+# whether it had run.
+#
+# The two `control` ids are the ones to look at first. They had no passing voice
+# at all -- they spoke only when they failed -- so the run where the apparatus
+# worked filed nothing for the two cases whose whole job is to stop a green from
+# being an accident. A write that is denied means nothing unless the same write
+# lands when unconfined; an exec that is refused means nothing unless the probe
+# runs at all.
+#
+# confine.macos.messages is one id filed once per message, folded by
+# test/report/matrix.py the way decoflip's two decoration settings are. Four
+# missing branches and one are both "the artifact lost a branch e2e.sh greps
+# for", and the sentence names which.
+confine.macos.lifted	the profile builder lifts out of a built artifact	macos
+confine.macos.no-heredoc	the profile builder needs no temp file	macos
+confine.macos.built	the profile builds in a bare shell	macos
+confine.macos.built-confined	and builds inside a profile that denies /tmp	macos
+confine.macos.identical	the confined build is byte-identical to the bare one	macos
+confine.macos.accepted	seatbelt accepts the profile	macos
+confine.macos.control.write	unconfined, a write to $HOME lands	macos
+confine.macos.write-denied	a write outside the app dir is denied	macos
+confine.macos.write-allowed	a write to the app dir is allowed	macos
+confine.macos.control.exec	unconfined, a probe in the app dir runs	macos
+confine.macos.noexec	what the app dir can hold, it cannot execute	macos
+confine.macos.nest.outside	the nesting probe is accepted outside a profile	macos
+confine.macos.nest.inside	and refused inside one	macos
+confine.macos.messages	the artifact carries the branches e2e.sh greps for	macos
