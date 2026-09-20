@@ -41,3 +41,4 @@ macos	timeout=480 toolkit=macos
 macos-netinstall	timeout=480
 wayland	display=wayland timeout=480
 windows-launch	timeout=480
+windows-content	timeout=480

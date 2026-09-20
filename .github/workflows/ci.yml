@@ -679,11 +679,8 @@ jobs:
       # is a suite that never runs, found by running it. `$run:` is a scope and
       # not a variable followed by a colon, launchtime.ps1 shipped one, and the
       # lane spent eighteen minutes and skipped `core launch` to say so.
-      - timeout-minutes: 5
-        shell: pwsh
-        run: |
-          & .\test\build\psparse.ps1 *>&1 | Tee-Object -FilePath "$HOME\psparse.log"
-          exit $LASTEXITCODE
+      - shell: bash
+        run: bash test/run.sh windows-launch psparse
       # Before anything is launched, because an artifact that does not compile
       # is an app that never appears -- and every suite that waits for a window
       # then waits out its own timeout before saying so. One reserved word in
@@ -695,11 +692,8 @@ jobs:
       #
       # A second or so, and it compiles the artifact the way the launcher does
       # -- with the reference list read out of the artifact's own jsc line.
-      - timeout-minutes: 5
-        shell: pwsh
-        run: |
-          & .\test\suite\compile.ps1 test\out\lanes.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
-          exit $LASTEXITCODE
+      - shell: bash
+        run: bash test/run.sh windows-launch compile
       # The assembler, and the stamp it says it applied. Pure shell, no display
       # and about a second, so it runs beside parse.sh on every lane that
       # assembles anything -- once per sed, because the spelling of what it
@@ -861,20 +855,7 @@ jobs:
       # what the stamp's certutil costs -- are the numbers the launcher's own
       # comment about size and modification time has been waiting for.
       - shell: bash
-        timeout-minutes: 6
-        run: bash test/run.sh --build launchtime=loaders-testing
-      - name: launch time
-        timeout-minutes: 10
-        # continue-on-error, for the reason the sheet step gives: this is a
-        # reporting tool. A lane that passed every control it has and goes red
-        # because the thing measuring it would not parse is reporting about
-        # itself -- and it took `core launch` down with it, which is a control.
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          & .\test\suite\launchtime.ps1 -Artifact test\out\launchtime.cmd -Runs 5 -Fresh *>&1 |
-            Tee-Object -FilePath "$HOME\launchtime.log"
-          exit 0
+        run: bash test/run.sh windows-launch launchtime
       # The netinstall step below has had a timeout all along and this one has
       # not, so anything that fails to exit here stops the whole run rather
       # than the step. The app not exiting is exactly what a missing close
@@ -938,16 +919,8 @@ jobs:
       # Same finding as kde-appdir in a different mechanism: there the launcher
       # wrote the program every launch into a directory anyone could rewrite,
       # here it wrote it once and trusted a stamp beside it afterwards.
-      - if: always()
-        timeout-minutes: 6
-        shell: bash
-        run: bash test/run.sh --build appcache=loaders-testing
-      - if: always()
-        timeout-minutes: 15
-        shell: pwsh
-        run: |
-          & .\test\suite\appcache.ps1 .\test\out\appcache.cmd *>&1 | Tee-Object -FilePath "$HOME\appcache.log"
-          exit $LASTEXITCODE
+      - shell: bash
+        run: bash test/run.sh windows-launch appcache
       # The document the exe renders, and who gets to name it. It used to come
       # from NEUTRINO_SCRIPT_PATH, which the batch region set and netinstall's
       # allowlist passed through intact; getScriptPath derives it from the
@@ -956,28 +929,14 @@ jobs:
       # must ignore the variable, and the testing build must still read it, or
       # a driver that reads it on no tier at all measures the same as one that
       # reads it on the right one.
-      - if: always()
-        timeout-minutes: 6
-        shell: bash
-        run: |
-          bash test/run.sh --build standalone=loaders-release standalone-testing=loaders-testing
-      - if: always()
-        timeout-minutes: 15
-        shell: pwsh
-        run: |
-          & .\test\suite\standalone.ps1 .\test\out\standalone.cmd .\test\out\standalone-testing.cmd *>&1 |
-              Tee-Object -FilePath "$HOME\standalone.log"
-          exit $LASTEXITCODE
+      - shell: bash
+        run: bash test/run.sh windows-launch standalone
       # It launches the app some forty times over three probing modes, and the
       # first version of it was half an hour that nobody could overlap. Ninety
       # seconds now, which is what makes it a step again rather than a job.
       # Nothing here depends on what ran before it: it builds its own artifact
       # and measures the launch path's own file I/O, and it is gated
       # `if: always()` so it is measured whether or not appcache was.
-      - if: always()
-        timeout-minutes: 6
-        shell: bash
-        run: bash test/run.sh --build exerace=loaders-testing
       # The gap between the compile and the START, asserted shut. The batch
       # region MOVEs the freshly compiled exe onto a predictable name in the app
       # folder, writes a manifest, and only then STARTs it -- and appcache.ps1
@@ -988,17 +947,8 @@ jobs:
       # rename ERROR_ACCESS_DENIED and overwrite ERROR_SHARING_VIOLATION. This
       # asserts none lands before the process starts, so the day a Windows
       # change opens the window the suite goes red and names the mode and round.
-      - if: always()
-        timeout-minutes: 15
-        shell: pwsh
-        run: |
-          & .\test\suite\exerace.ps1 .\test\out\exerace.cmd *>&1 | Tee-Object -FilePath "$HOME\exerace.log"
-          $raceExit = $LASTEXITCODE
-          Get-Process | Where-Object { $_.MainWindowTitle -like "LOADERS*" } |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          Get-Process -Name "exerace" -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $raceExit
+      - shell: bash
+        run: bash test/run.sh windows-launch exerace
       # A failed initialisation has to end, and has to leave a record. Both
       # halves were measured absent before this: the driver sat holding a modal
       # box ninety seconds after the download threw, and its app folder held
@@ -1018,19 +968,8 @@ jobs:
       # That makes this the suite that measures the fallback, which nothing else
       # does: an Evergreen path that fails has to end up on the package path,
       # and the only proof of it is a build that gets all the way to the 404.
-      - if: always()
-        timeout-minutes: 6
-        shell: bash
-        run: |
-          bash test/run.sh --build winerr=winerr
-      - if: always()
-        timeout-minutes: 10
-        shell: pwsh
-        run: |
-          & .\test\suite\verify-winerr.ps1 .\test\out\winerr.cmd *>&1 | Tee-Object -FilePath "$HOME\winerr-verify.log"
-          $testExit = $LASTEXITCODE
-          Get-Process -Name "winerr" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $testExit
+      - shell: bash
+        run: bash test/run.sh windows-launch winerr
       - if: always()
         uses: mlugg/setup-zig@v2
         with:
@@ -1214,11 +1153,8 @@ jobs:
         run: bash test/run.sh --build attack=attack-release
       # The suites this lane is made of, parsed before any of them runs, for
       # the same reason the compile below happens first -- see psparse.ps1.
-      - timeout-minutes: 5
-        shell: pwsh
-        run: |
-          & .\test\build\psparse.ps1 *>&1 | Tee-Object -FilePath "$HOME\psparse.log"
-          exit $LASTEXITCODE
+      - shell: bash
+        run: bash test/run.sh windows-content psparse
       # Before anything is launched, because an artifact that does not compile
       # is an app that never appears -- and every suite that waits for a window
       # then waits out its own timeout before saying so. One reserved word in
@@ -1230,11 +1166,8 @@ jobs:
       #
       # A second or so, and it compiles the artifact the way the launcher does
       # -- with the reference list read out of the artifact's own jsc line.
-      - timeout-minutes: 5
-        shell: pwsh
-        run: |
-          & .\test\suite\compile.ps1 test\out\attack.cmd *>&1 | Tee-Object -FilePath "$HOME\compile.log"
-          exit $LASTEXITCODE
+      - shell: bash
+        run: bash test/run.sh windows-content compile
       - timeout-minutes: 15
         shell: pwsh
         run: |
@@ -1337,7 +1270,7 @@ jobs:
       - if: always()
         shell: bash
         run: |
-          bash test/run.sh --build stdgeom=geom stdgeom-none=geom-nodeco stddoc=std-doc
+          bash test/run.sh --build stdgeom=geom stdgeom-none=geom-nodeco
       # Both halves and the differential, in place of the single launch this
       # step used to make -- the decorated half is that launch, it runs first
       # because it is the control, and its verifier exit is carried into this
@@ -1367,17 +1300,8 @@ jobs:
               Stop-Process -Force -ErrorAction SilentlyContinue
           }
           exit $e
-      - if: always()
-        timeout-minutes: 10
-        shell: pwsh
-        run: |
-          & .\test\suite\verify-std.ps1 -Probe doc -ScreenshotDir $env:USERPROFILE `
-            -Launch -Artifact .\test\out\stddoc.cmd *>&1 |
-            Tee-Object -FilePath "$HOME\stddoc.log"
-          $e = $LASTEXITCODE
-          Get-Process -Name stddoc -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $e
+      - shell: bash
+        run: bash test/run.sh windows-content stddoc
       # Round 2. Whether the standard window verbs do anything and can be
       # taken over if they do not, and whether `neutrino.theme` is redundant
       # with CSS. Round 1 is what earns these their place: it said the
@@ -1394,32 +1318,10 @@ jobs:
       # so that "unsupported" is distinguishable from a value -- and this round
       # deliberately does not flip the desktop palette, so it reports what each
       # engine says and settles nothing about where the value came from.
-      - if: always()
-        shell: bash
-        run: |
-          bash test/run.sh --build stdwin=std-win stdtheme=std-theme
-      - if: always()
-        timeout-minutes: 12
-        shell: pwsh
-        run: |
-          & .\test\suite\verify-std.ps1 -Probe win -ScreenshotDir $env:USERPROFILE `
-            -Launch -Artifact .\test\out\stdwin.cmd *>&1 |
-            Tee-Object -FilePath "$HOME\stdwin.log"
-          $e = $LASTEXITCODE
-          Get-Process -Name stdwin -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $e
-      - if: always()
-        timeout-minutes: 10
-        shell: pwsh
-        run: |
-          & .\test\suite\verify-std.ps1 -Probe theme -ScreenshotDir $env:USERPROFILE `
-            -Launch -Artifact .\test\out\stdtheme.cmd *>&1 |
-            Tee-Object -FilePath "$HOME\stdtheme.log"
-          $e = $LASTEXITCODE
-          Get-Process -Name stdtheme -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $e
+      - shell: bash
+        run: bash test/run.sh windows-content stdwin
+      - shell: bash
+        run: bash test/run.sh windows-content stdtheme
       # Round 3: where each colour came from.
       #
       # The single-launch theme step above says what an engine reports and
@@ -1475,21 +1377,8 @@ jobs:
       # SetSysColors under a running app arrived as four palettes, and a real
       # contrast theme as one more -- so what this adds is a runner that says
       # so rather than a person with a VM.
-      - if: always()
-        shell: bash
-        run: |
-          bash test/run.sh --build themelive=live-theme
-      - if: always()
-        timeout-minutes: 10
-        shell: pwsh
-        run: |
-          $testExit = 0
-          & .\test\suite\themelive.ps1 -Artifact .\test\out\themelive.cmd *>&1 |
-            Tee-Object -FilePath "$HOME\themelive.log"
-          if ($LASTEXITCODE -ne 0) { $testExit = $LASTEXITCODE }
-          Get-Process -Name themelive -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $testExit
+      - shell: bash
+        run: bash test/run.sh windows-content themelive
       # The app on the download page, and this is the lane it broke on.
       #
       # Everything else here builds a probe written by someone who knew which
@@ -1502,22 +1391,9 @@ jobs:
       # A release build, deliberately: everything else on this lane is
       # --testing because it needs the trace channel, and the thing under test
       # here is the download.
-      - if: always()
+      - name: the app on the download page
         shell: bash
-        run: |
-          bash test/run.sh --build demo=demo
-      - if: always()
-        name: the app on the download page
-        timeout-minutes: 10
-        shell: pwsh
-        run: |
-          & .\test\suite\demo.ps1 -ScreenshotDir $env:USERPROFILE `
-              -Artifact .\test\out\demo.cmd *>&1 |
-            Tee-Object -FilePath "$HOME\demo.log"
-          $e = $LASTEXITCODE
-          Get-Process -Name demo -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          exit $e
+        run: bash test/run.sh windows-content demo
       # One artifact, one file: the lane's pictures and logs as a page that opens
       # in a browser. What it replaces is a directory of PNGs in a zip, which
       # made comparing the decorated frame against the chromeless one a matter
@@ -1545,27 +1421,9 @@ jobs:
         shell: pwsh
         run: |
           powershell -ExecutionPolicy Bypass -File test/probe/fontprobe-windows.ps1 8 2>&1 | Tee-Object -FilePath ~/fontprobe.log
-      - name: fonts
-        if: always()
-        timeout-minutes: 10
-        shell: pwsh
-        run: |
-          bash test/run.sh --build stdfont=std-font
-          & .\test\suite\verify-std.ps1 -Probe font -ScreenshotDir $env:USERPROFILE `
-            -Launch -Artifact .\test\out\stdfont.cmd *>&1 |
-            Tee-Object -FilePath "$HOME\stdfont.log"
-          $e = $LASTEXITCODE
-          Get-Process -Name stdfont -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-          # The app's own stderr, in the step that ran it.
-          #
-          # The first round this step failed it said `fonts=null` and nothing
-          # else, while the reason -- the reader naming the property it could
-          # not read and quoting the exception -- sat in a different job's log
-          # entirely. A step that can fail should carry the line that says why.
-          $err = Join-Path $env:USERPROFILE "launch-stdfont-err.log"
-          if (Test-Path $err) { Write-Host "--- the app's own stderr"; Get-Content $err }
-          exit $e
+      - if: always()
+        shell: bash
+        run: bash test/run.sh windows-content stdfont
       # And a running app, with the desktop's text size moved underneath it.
       #
       # fontlive.ps1 carries a control themelive.ps1 does not need: this lane's
@@ -1573,15 +1431,9 @@ jobs:
       # itself whether anything moved before it blames the app. A knob that
       # writes and changes no metric is reported as a skip, because there was
       # nothing an app could have been told about.
-      - name: fonts live
-        if: always()
-        timeout-minutes: 10
-        shell: pwsh
-        run: |
-          bash test/run.sh --build fontlive=live-font
-          & .\test\suite\fontlive.ps1 -Artifact .\test\out\fontlive.cmd `
-            *>&1 | Tee-Object -FilePath "$HOME\fontlive.log"
-          exit $LASTEXITCODE
+      - if: always()
+        shell: bash
+        run: bash test/run.sh windows-content fontlive
       - name: sheet
         if: always()
         continue-on-error: true

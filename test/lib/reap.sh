@@ -53,6 +53,14 @@ LIMIT="${NT_REAP_LIMIT:-20}"
 # An ancestor is by construction the caller and not the callee, so the whole
 # chain comes out. Walked once here rather than asked per candidate: ps is a
 # fork apiece and this loop already runs one.
+# No pgrep, no xdotool: the Windows runners' bash has neither, and what they
+# have is pwsh. reap.ps1 is this file's contract on that platform, so a row's
+# `reap=` is one directive everywhere rather than a thing the Windows lanes
+# spelled by hand after every suite.
+if ! command -v pgrep >/dev/null 2>&1 && command -v pwsh >/dev/null 2>&1; then
+    exec pwsh -NoProfile -File "$(cd "$(dirname "$0")" && pwd)/reap.ps1" "$PATTERN" "$PREFIX"
+fi
+
 ANCESTRY=""
 nt_ancestry() {
     local p="$$" n=0
