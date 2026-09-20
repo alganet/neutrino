@@ -89,7 +89,7 @@ def applies(spec, lane):
 
 
 def build(paths, reg):
-    lanes, grid = [], {}
+    lanes, grid, filed = [], {}, {}
     for p in sorted(paths):
         d = load(p)
         if not d:
@@ -114,7 +114,48 @@ def build(paths, reg):
             if prev == "PASS" and c["v"] == "SKIP":
                 continue
             grid[c["id"]][lane] = c["v"]
-    return lanes, grid
+            filed.setdefault(lane, set()).add(c.get("suite", ""))
+    return lanes, grid, filed
+
+
+def manifest(path):
+    """The rows a lane is expected to run, from test/suites.tsv: a dict of
+    lane -> set of suite names, leaving out the rows that are not expected to
+    file anything under their own name.
+
+    Two kinds are left out and each says so in the row. `soft` is the manifest's
+    word for a reading nobody asserts -- cases.tsv says readings must not become
+    cases, so a soft row filing nothing is the row working. `subsuites` is a row
+    whose command is itself a runner: netinstall/test/run.sh exports NT_SUITE per
+    suite it runs, so those five rows file under `env`, `e2e`, `splash` and a
+    dozen more and never under `netinstall`.
+
+    None when the file could not be read at all, and a dict -- possibly an empty
+    one -- when it could. The difference matters and cost a round to find: a
+    manifest whose every row is `soft` or `subsuites` is readable and yields
+    nothing to check, which is not the same as a manifest that is not there.
+    Collapsing the two made --strict refuse a run whose manifest it had read
+    perfectly well."""
+    rows = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("#") or not line.strip():
+                    continue
+                part = line.rstrip("\n").split("\t")
+                if len(part) < 4:
+                    continue
+                suite, lanespec, setup = part[0], part[1].split(), part[2].split()
+                if "soft" in setup or "subsuites" in setup:
+                    continue
+                for l in lanespec:
+                    # `<lane>:<phase>` names one pass of a lane that runs its
+                    # list twice. Everything left of the colon is what reaches
+                    # $NT_LANE, so it is what a sheet is keyed on.
+                    rows.setdefault(l.split(":")[0], set()).add(suite)
+    except OSError:
+        return None
+    return rows
 
 
 def rows(lanes, grid, reg):
@@ -193,6 +234,7 @@ def markdown(lanes, grid, reg, holes):
 
 def main(argv):
     fmt, reg_path, paths, strict = "text", "test/cases.tsv", [], False
+    suites_path = "test/suites.tsv"
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -205,6 +247,9 @@ def main(argv):
         elif a == "--registry":
             i += 1
             reg_path = argv[i]
+        elif a == "--suites":
+            i += 1
+            suites_path = argv[i]
         else:
             paths.append(a)
         i += 1
@@ -214,7 +259,7 @@ def main(argv):
         return 2
 
     reg = registry(reg_path)
-    lanes, grid = build(paths, reg)
+    lanes, grid, filed = build(paths, reg)
     if not lanes:
         print("no sheet carried a digest; nothing to compare", file=sys.stderr)
         return 1
@@ -275,6 +320,31 @@ def main(argv):
     # called `500x400` and `900x600`.
     stray = sorted(cid for cid in grid if cid not in reg)
 
+    # A row that ran and filed nothing under its own name.
+    #
+    # The three checks above all start from cases.tsv, so they can only see a
+    # suite that registered ids and then failed to emit them. The suite that
+    # registers none at all is invisible to every one of them: no holes, no
+    # quiet lane, no stray id, and a green run that asserts into prose. That was
+    # true of eleven rows across six suites until 2026-09-20, one of which had
+    # thirty assertions and no passing voice at all, and every one of them was
+    # found by reading sheets by hand rather than by anything here.
+    #
+    # So this starts from the manifest instead: every row the lane was asked to
+    # run should have filed at least one case under its own name. The two kinds
+    # of row that should not are left out by manifest() above, and each of them
+    # says which it is in its own setup column rather than being named here.
+    #
+    # Only lanes that published are considered, for the reason the hole check
+    # gives: a lane that did not run is a different problem and this is not the
+    # tool that notices it.
+    rows = manifest(suites_path)
+    silent = []
+    for lane in lanes:
+        for suite in sorted((rows or {}).get(lane, ())):
+            if suite not in filed.get(lane, ()):
+                silent.append((lane, suite))
+
     if quiet:
         print()
         print("lanes that published a sheet and reported none of their cases (%d):"
@@ -286,6 +356,16 @@ def main(argv):
         print("case ids in a sheet that cases.tsv does not declare (%d):" % len(stray))
         for cid in stray:
             print("  %s   on: %s" % (cid, " ".join(sorted(grid[cid]))))
+    if silent:
+        print()
+        print("rows that ran and filed no case under their own name (%d):"
+              % len(silent))
+        for lane, suite in silent:
+            print("  %-20s %s" % (lane, suite))
+    elif rows is None:
+        print()
+        print("no suites manifest was read, so nothing was checked for silent rows")
+        print("  (--suites names it; the default is test/suites.tsv)")
 
     # Holes count too, and did not until now. This asked only about `quiet` and
     # `stray`, so a case its registry says applies to four lanes and three
@@ -297,7 +377,20 @@ def main(argv):
     # A hole is the same failure as a quiet lane at a finer grain: the lane
     # published, the registry expected the case, and nothing was filed. There is
     # no reason for one of those to fail the run and the other to pass it.
-    if strict and (quiet or stray or holes):
+    # An unread manifest fails --strict, and this is the check that would
+    # otherwise be the easiest of the four to lose. A missing registry already
+    # fails loudly by accident -- every id in every sheet becomes a stray -- but
+    # a missing manifest makes `silent` empty, which reads exactly like every
+    # row having filed. That is the shape of defect this whole check was added
+    # for, and it would have been in the checker itself.
+    #
+    # --strict means this run was structurally sound, and a check that could not
+    # run has not established that. A caller reading sheets from somewhere else
+    # can point --suites at the manifest those sheets were produced by, the way
+    # --registry pins cases.tsv, or leave --strict off.
+    if strict and rows is None:
+        return 1
+    if strict and (quiet or stray or holes or silent):
         return 1
     return 0
 
