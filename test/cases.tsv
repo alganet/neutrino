@@ -20,9 +20,12 @@
 # of the four report now, and rather more than they did: all sixteen suites in
 # netinstall/test speak this vocabulary, so bsd carries eight families off the
 # reduced OpenBSD list, macos-netinstall carries eleven, and wayland carries the
-# one it asks for. kde-live is still the only lane with no row anywhere here; it
-# runs test/apparatus/qtkde.sh and nothing else, and until that suite has a vocabulary it
-# is a lane the registry has nothing to say about.
+# one it asks for. kde-live was the last with no row anywhere here -- it ran
+# test/apparatus/qtkde.sh and nothing else, and a lane whose whole verdict is an exit
+# status is a column of dots the registry cannot tell from a lane that stopped.
+# It has two rows now, below, and they were worth having the day they were
+# written: that lane had in fact stopped asking its own question, and nothing
+# in this file could have shown it.
 #
 # A suite absent from here is not always one waiting to be converted, and the
 # manifest is where the difference is written. A row that is `soft` in
@@ -454,6 +457,34 @@ themescheme.clean-start	no STD-THEME- window was up before this launch	gjs linux
 themescheme.reported	the app reported a palette	gjs linux-engines
 themescheme.control.theme-loaded	the palette read is the palette this file wrote	gjs linux-engines
 themescheme.control.dark	the launcher calls that palette dark	gjs linux-engines
+
+# The live colour scheme on a desktop that has one, from test/suite/themelive-kde.sh
+# -- the two cases kde-live had none of.
+#
+# The lane runs test/apparatus/qtkde.sh, which brings up a Fedora 42 container with
+# Plasma 6 in it and runs themeflip.sh's live half inside, because no runner in
+# this matrix can answer the question: Ubuntu ships plasma-integration built
+# against Qt 5, so Qt finds no Qt 6 KDE plugin and falls back to QGtk3Theme,
+# which delivers nothing live. Three probe rounds established that.
+#
+# The control is a case and not a reading, which is the one judgement in this
+# pair worth arguing. `themelive.kde.flip` failing can mean the app ignored a
+# palette it was handed, or that the desktop never handed it one -- and those
+# are the same failing assertion from the far side. So themeflip.sh sets two
+# schemes, each *before* a process starts, and reads a fresh window back for
+# each: if the two readings differ the knob reaches Qt on this machine, and
+# only then is a flip under a running process worth anything. That is a fact
+# about the apparatus that can be true or false, which is what a case is, and
+# it is the difference between "the product did not react" and "the machine
+# never moved".
+#
+# Both skip rather than fail where the container, the desktop or the plugin is
+# not there. A skip is a verdict and a dot is not, which is the whole reason
+# this lane needed a vocabulary: it spent ten days running the GTK half on a
+# KDE image, reporting that no knob delivers a theme change to GTK, exiting 0,
+# and filing nothing -- and the grid had no cell in which any of that could show.
+themelive.kde.control	two schemes set before a launch give a fresh window different palettes	kde-live
+themelive.kde.flip	a running app is handed a new palette when the desktop's colour scheme moves	kde-live
 
 # The desktop's fonts, from test/suite/fontflip.sh -- two halves that were one `soft`
 # row and one that was not.
