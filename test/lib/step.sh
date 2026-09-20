@@ -34,7 +34,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 NT_WM=""; NT_QT=0; NT_GTK=0; NT_LOG=""; NT_TIMEOUT=""; NT_APP=""
-NT_CAT=""; NT_REAP=""; NT_DBUS=0
+NT_CAT=""; NT_REAP=""; NT_DBUS=0; NT_DBUS_CMD=0
 NT_TOOLKIT="${NT_TOOLKIT:-}"
 
 usage() {
@@ -99,6 +99,20 @@ if [ -n "$NT_LOG" ]; then
     NT_LOGFILE="$HOME/$NT_LOG.log"
 fi
 
+# Whether this machine can put a session bus around anything, said once and
+# reported when it cannot.
+#
+# The answer used to be a bare `command -v` inside the launch below, which made
+# a missing dbus-run-session a silent fallback to no bus at all: the row asked
+# for one, did not get one, and the only evidence was the failure of whatever
+# needed it. A row that asks for a bus on a machine with no way to start one is
+# a lane misconfigured, and the log should say so before the suite does.
+nt_has_dbus() {
+    command -v dbus-run-session >/dev/null 2>&1 && return 0
+    echo "report: this row asked for a session bus and dbus-run-session is not on this machine"
+    return 1
+}
+
 # The app under test, launched and reaped by the thing that watches it.
 #
 # Twenty-six steps in the workflow did this by hand:
@@ -149,7 +163,13 @@ if [ -n "$NT_APP" ]; then
     # difference between lanes, which is what the setup column is for -- and it
     # cannot go in the command column, because the command is the verifier and
     # the artifact is launched by this file.
-    if [ "$NT_DBUS" = 1 ] && command -v dbus-run-session >/dev/null 2>&1; then
+    #
+    # A row with no artifact gets the bus around its command instead; see
+    # run_it below. The directive means the same thing in both places -- this
+    # row runs under a session bus -- and the difference is only which process
+    # this file is in a position to put it around.
+    if [ "$NT_DBUS" = 1 ] && nt_has_dbus; then
+        echo "report: this row's artifact runs under a session bus of its own"
         dbus-run-session -- bash "$NT_APP" > "$NT_APP_LOG" 2>&1 &
     else
         bash "$NT_APP" > "$NT_APP_LOG" 2>&1 &
@@ -221,6 +241,24 @@ nt_watchdog() {
 }
 
 run_it() {
+    # The bus around the command, for a row that has no artifact for the launch
+    # above to put one around.
+    #
+    # `dbus` was a directive that did nothing on such a row -- NT_DBUS was read
+    # in one place, inside `if [ -n "$NT_APP" ]`, so a row without `app=` set
+    # the flag and got no bus and no complaint. The one row that needed it
+    # therefore spelled `dbus-run-session --` in its command column, which is
+    # the file saying one thing two ways: a directive for the rows that launch
+    # an artifact and a prefix for the rows that launch their own.
+    #
+    # Inside the leash and not outside it, so a timeout kills dbus-run-session
+    # and the bus goes with the command it was started for. Outside `env`, not
+    # inside it as the hand-written prefix was -- the bus process does not read
+    # the row's variables, and the command still does, because dbus-run-session
+    # passes its environment through and adds DBUS_SESSION_BUS_ADDRESS to it.
+    if [ "$NT_DBUS_CMD" = 1 ]; then
+        set -- dbus-run-session -- "$@"
+    fi
     if [ -z "$NT_TIMEOUT" ]; then
         "$@"
     elif command -v timeout >/dev/null 2>&1; then
@@ -229,6 +267,24 @@ run_it() {
         nt_watchdog "$@"
     fi
 }
+
+# Asked and answered here rather than inside run_it, because run_it's output is
+# the suite's log when the row has one -- and a report about the lane's setup
+# that lands in the suite's own log is a report the job page does not carry.
+#
+# Reported and not only done. The bus used to be `dbus-run-session --` written
+# into the row's command column, where a reader could at least see it; as a
+# directive its whole effect is a variable inside a process that leaves no
+# trace in the log, and a lane that quietly stopped getting a bus would look
+# exactly like a lane that never needed one. This line is what tells those two
+# apart, and it is the same line whether the answer is yes or no.
+NT_DBUS_CMD=0
+if [ "$NT_DBUS" = 1 ] && [ -z "$NT_APP" ]; then
+    if nt_has_dbus; then
+        NT_DBUS_CMD=1
+        echo "report: this row runs under a session bus of its own (dbus-run-session, no artifact to wrap)"
+    fi
+fi
 
 if [ -n "$NT_LOGFILE" ]; then
     run_it "$@" > "$NT_LOGFILE" 2>&1

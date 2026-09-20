@@ -1415,6 +1415,54 @@ for l in $(awk -F'\t' '!/^#/ && NF { print $1 }' "$LANES_TSV"); do
 done
 ok "run.sh --dry-run resolves every lane in the manifest"
 
+# `dbus` puts a bus around the command when the row has no artifact.
+#
+# The directive was read in exactly one place, inside `if [ -n "$NT_APP" ]`, so
+# a row without `app=` set the flag and got nothing: no bus, no warning, and a
+# suite that needed one failing for a reason nowhere near the directive that
+# was supposed to supply it. The one row that needed it -- netinstall on kde,
+# whose runner launches its own binaries -- wrote `dbus-run-session --` into
+# its command column instead, which is the manifest saying one thing two ways.
+#
+# Asserted through the environment the command is handed rather than through
+# the process tree, because that is the whole observable effect: a bus with an
+# address the command can reach. Skipped where dbus-run-session is not
+# installed, which is macos and MSYS -- no lane there asks for a bus, and this
+# check is about the wiring, not about the platform.
+#
+# Compared against the address this process already has, not merely asserted to
+# be non-empty. A developer's desktop exports DBUS_SESSION_BUS_ADDRESS into
+# every shell it starts, so "the command can see a bus" is true there whether
+# or not step.sh started one -- the check would have passed on the machine it
+# was written on with the feature removed. A bus that dbus-run-session started
+# has an address of its own, so what proves the wiring is that the two differ.
+nt_step_bus() {
+    bash "$ROOT/test/lib/step.sh" "$@" -- \
+        sh -c 'echo "bus=${DBUS_SESSION_BUS_ADDRESS:-none}"' 2>&1 |
+        sed -n 's/^bus=//p'
+}
+if command -v dbus-run-session >/dev/null 2>&1; then
+    OUTER="${DBUS_SESSION_BUS_ADDRESS:-none}"
+    INNER="$(nt_step_bus --dbus)"
+    if [ -z "$INNER" ] || [ "$INNER" = none ]; then
+        bad "a --dbus step with no --app ran its command with no session bus"
+    elif [ "$INNER" = "$OUTER" ]; then
+        bad "a --dbus step with no --app passed this shell's bus through, and started none"
+    else
+        ok "a --dbus step with no --app runs its command under a session bus of its own"
+    fi
+    # And the row that does have an artifact keeps the bus on the artifact,
+    # which is where it was. The directive names one process, not two: wrapping
+    # the verifier as well would put the thing watching a window in a session
+    # the window's own process is not in.
+    PLAIN="$(nt_step_bus)"
+    [ "$PLAIN" = "$OUTER" ] &&
+        ok "a step with no --dbus hands the command the bus this shell already had" ||
+        bad "a step with no --dbus changed the command's bus: $OUTER became $PLAIN"
+else
+    ok "the session-bus wiring is not asserted here (no dbus-run-session on this machine)"
+fi
+
 # No pattern in the tree uses a GNU-only regex operator.
 #
 # Two of them, and they fail the same way. `\b` is a word boundary POSIX ERE does
