@@ -497,7 +497,21 @@ $recLines = foreach ($r in $rec.Rows) {
 
 # Named, so the rows land under the suite a reader knows rather than under
 # `analyse` -- harness.sh takes the suite from $0, and $0 there is analyse.sh.
-$env:NT_SUITE = "verify-std"
+#
+# Defaulted and not assigned, which is the whole difference. run.sh exports the
+# manifest's name for the row before it runs anything, and an assignment here
+# wins over it: five rows on windows-content -- stdgeom, stddoc, stdwin,
+# stdtheme and stdfont -- all reach this file, and all five filed their rows
+# under the one word `verify-std` while the same five cases on gjs, kde,
+# linux-engines and macos filed under the five row names. The case ids were
+# right, so the grid was right and nothing was red; only the suite column said
+# the wrong thing, on one lane out of five, which is the kind of disagreement
+# that is read as a fact about Windows rather than as a bug.
+#
+# run.sh's own comment said this would happen -- "verify-std.ps1 spells the
+# literal `verify-std` ... and it will quietly win over the manifest on the day
+# that row is written". The row was written; this is the day.
+if (-not $env:NT_SUITE) { $env:NT_SUITE = "verify-std" }
 & bash (Join-Path $PSScriptRoot "../lib/analyse.sh") $Probe $recPath
 $analysed = $LASTEXITCODE
 if ($null -eq $analysed) { $analysed = 0 }
