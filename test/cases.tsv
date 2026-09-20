@@ -1305,3 +1305,36 @@ assemble.conf.badconf	a malformed config document is refused	gjs macos windows-l
 assemble.shell-sequences	the sequences that are this file's structure are refused	gjs macos windows-launch
 assemble.shell-region	the shell region runs as far as the engine search	gjs macos windows-launch
 assemble.mkapp-overlay	the test helper writes the overlay it says it does	gjs macos windows-launch
+
+# ------------------------------- the Windows live halves, which reported to nobody
+#
+# From test/suite/themelive.ps1 and test/suite/fontlive.ps1 on windows-content.
+# Both ask the question every live half in this tree asks -- does a *running*
+# app notice the desktop moving under it -- and both answered it into prose,
+# with `Write-Host "PASS: ..."` and an exit status, while their bash
+# counterparts on gjs and linux-engines filed seven rows each.
+#
+# `.win` and not shared with fontflip.live.* or themelive.kde.*. The Linux half
+# moves GtkSettings and asks about a ui font and a monospace font separately;
+# the Qt half moves a Plasma colour scheme through DBus; these move a registry
+# value and an accessibility text scale. One cell carrying two mechanisms would
+# mean a different thing depending on the column, which is the one thing a grid
+# cell may not do. The ids are parallel because the questions are parallel.
+#
+# fontlive.win.knob is the control, and it is the case this pair exists to
+# separate. The knob is the text scale and what the driver reads is
+# System.Drawing.SystemFonts, which is not promised to follow a bare registry
+# write -- Windows moves those metrics through a WM_SETTINGCHANGE broadcast that
+# the Settings app sends and Set-ItemProperty does not. So "the app was not
+# told" and "there was nothing to tell it" are different readings and only one
+# is about the watcher.
+#
+# On the runner today that control skips: the value writes and the metrics hold
+# still, measured. It was a `Note` and an exit 0 before, which is
+# indistinguishable in a grid from a lane that asserted the thing and was happy.
+# A skip is a verdict and says which.
+themelive.win.reported	the live theme probe came up and read a toolkit	windows-content
+themelive.win.flip	a running app is handed a new palette when the app theme changes	windows-content
+fontlive.win.reported	the live font probe came up and read a toolkit	windows-content
+fontlive.win.knob	control the text-scale knob reached the metrics the driver reads	windows-content
+fontlive.win.flip	a running app is handed new fonts when the desktop's text size moves	windows-content

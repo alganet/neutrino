@@ -61,10 +61,27 @@ if (-not $Artifact) { throw "usage: fontlive.ps1 -Artifact <app.cmd>" }
 $ErrorActionPreference = "Continue"
 $key  = "HKCU:\Software\Microsoft\Accessibility"
 $name = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)
-$rc   = 0
 
 Add-Type -AssemblyName System.Drawing | Out-Null
 
+. (Join-Path $PSScriptRoot "..\lib\harness.ps1")
+
+# Three cases, one more than themelive.ps1, and the extra one is the control
+# this file's header argues for at length. The knob here is the accessibility
+# text scale and what the driver reads is System.Drawing.SystemFonts, which is
+# not promised to follow a bare registry write -- so "the app was not told" and
+# "there was nothing to tell it" are two different readings and only one of them
+# is about the watcher. fontlive.win.knob is the case that separates them.
+#
+# On the runner today it is the branch that fires: the value writes and the
+# metrics do not move, because nothing here broadcasts WM_SETTINGCHANGE. That
+# files a skip and says so, where before it was a `Note` and an exit 0 -- which
+# is indistinguishable, in a grid, from a lane that asserted the thing and was
+# happy.
+#
+# `.win` for the same reason themelive.ps1 gives: the Linux half's knob is
+# GtkSettings and its ids are fontflip.live.*, which ask about a ui font and a
+# monospace font separately. This asks one question of a different mechanism.
 function Note($t) { Write-Host "report: $t" }
 
 function Read-Knob() {
@@ -123,21 +140,28 @@ try {
     }
     $before = Get-Title
     if (-not $before.StartsWith("STD-LIVEFONT")) {
-        Write-Host "FAIL: no STD-LIVEFONT window in ${UpTimeout}s; the probe never came up"
-        exit 1
+        nt_fail fontlive.win.reported "no STD-LIVEFONT window in ${UpTimeout}s; the probe never came up"
+        nt_skip fontlive.win.knob "the probe never came up, so the knob was never asked"
+        nt_skip fontlive.win.flip "the probe never came up, so there was nothing to flip under"
+        nt_finish
     }
     Note "live before: $before"
     if ($before -match 'src=null') {
-        Write-Host "FAIL: the probe read no toolkit, so a flip would prove nothing"
-        exit 1
+        nt_fail fontlive.win.reported "the probe read no toolkit, so a flip would prove nothing"
+        nt_skip fontlive.win.knob "the probe read no toolkit, so the knob was never asked"
+        nt_skip fontlive.win.flip "the probe read no toolkit, so a flip would prove nothing"
+        nt_finish
     }
+
+    nt_pass fontlive.win.reported "the live probe came up and read a toolkit"
 
     Set-Knob 150
     $now = Read-Knob
     if ($now -ne "150") {
-        Note "the knob would not take (reads $now); this machine refuses the write"
         Note "skipping: that is a reading about the runner and not about the watcher"
-        exit 0
+        nt_skip fontlive.win.knob "the knob would not take (reads $now); this machine refuses the write"
+        nt_skip fontlive.win.flip "the knob would not take, so nothing moved for an app to be told about"
+        nt_finish
     }
     Note "knob after: TextScaleFactor=$now"
 
@@ -153,12 +177,13 @@ try {
     }
     Note "metrics after: $(Read-Metrics)"
     if (-not $moved) {
-        Note "SystemFonts did not move in this process either, so there was nothing"
-        Note "  an app could have been told about. The knob writes the value and"
-        Note "  nothing broadcasts WM_SETTINGCHANGE, which is the mechanism that"
-        Note "  moves SPI_GETNONCLIENTMETRICS. Skipping rather than blaming the lane."
-        exit 0
+        Note "  The knob writes the value and nothing broadcasts WM_SETTINGCHANGE,"
+        Note "  which is the mechanism that moves SPI_GETNONCLIENTMETRICS."
+        nt_skip fontlive.win.knob "SystemFonts did not move in this process either, so there was nothing an app could have been told about"
+        nt_skip fontlive.win.flip "the knob never reached SystemFonts, so a watcher that did not fire would be the right answer"
+        nt_finish
     }
+    nt_pass fontlive.win.knob "the knob moved SystemFonts in this process, so an app had something to be told about"
 
     $waited = 0
     while ($waited -lt ($MoveTimeout * 2)) {
@@ -170,13 +195,11 @@ try {
     Note "live after: $after"
 
     if ($after -match 'moved=yes') {
-        Write-Host "PASS: the running app was handed new fonts when the desktop's text size moved"
+        nt_pass fontlive.win.flip "the running app was handed new fonts when the desktop's text size moved"
     } elseif ($after.StartsWith("STD-LIVEFONT")) {
-        Write-Host "FAIL: SystemFonts moved under a running app and it was handed nothing; the font watcher did not fire"
-        $rc = 1
+        nt_fail fontlive.win.flip "SystemFonts moved under a running app and it was handed nothing; the font watcher did not fire"
     } else {
-        Write-Host "FAIL: the probe stopped writing its title after the flip"
-        $rc = 1
+        nt_fail fontlive.win.flip "the probe stopped writing its title after the flip"
     }
 } finally {
     # Put the desktop back where it was found, on every path out.
@@ -189,4 +212,4 @@ try {
     Stop-App
 }
 
-exit $rc
+nt_finish
