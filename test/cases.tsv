@@ -1338,3 +1338,31 @@ themelive.win.flip	a running app is handed a new palette when the app theme chan
 fontlive.win.reported	the live font probe came up and read a toolkit	windows-content
 fontlive.win.knob	control the text-scale knob reached the metrics the driver reads	windows-content
 fontlive.win.flip	a running app is handed new fonts when the desktop's text size moves	windows-content
+
+# --------------------------------------- the parse gate, and whether it read anything
+#
+# From test/build/psparse.ps1, the first step on both Windows lanes. It parses
+# every .ps1 under test/ before any suite runs, so a syntax error is named at
+# the top of the lane rather than surfacing as whatever a half-loaded suite
+# does. Its failures were always loud -- a FAIL line per error and exit 1 -- and
+# it filed nothing, so the grid could not tell a run where it passed from a run
+# where it never executed.
+#
+# psparse.read is the case it could not make at all. The sweep is four named
+# rooms and each one `continue`s when it is not there, so a room renamed or
+# moved out from under test/ left the parse loop iterating an empty list,
+# reporting nothing, and printing "every suite parses" on the way to exit 0. A
+# parse gate that swept nothing passes for free, and everything behind it would
+# have run unparsed with this saying it was fine. It is asserted per room and
+# not merely in total, because suite/ holding nineteen files hides probe/
+# holding none.
+#
+# The rows are filed only after this file has proved lib/harness.ps1 parses,
+# which it does along with the other twenty-two. It is the file that reports on
+# a broken harness -- that is why the sweep reads lib/ at all -- so dot-sourcing
+# the harness unconditionally would make the reporter depend on the thing it
+# reports on, and a parse error there would take the lane's first step down with
+# no reading and no name. When the harness will not load there are no rows and
+# there cannot be; the failure is already on stdout and the exit is already red.
+psparse.read	the sweep found PowerShell in every room it reads	windows-launch windows-content
+psparse.parses	every PowerShell file under test/ parses	windows-launch windows-content
