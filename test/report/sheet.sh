@@ -27,8 +27,22 @@
 
 set -uo pipefail
 
-LANE="${1:?usage: sheet.sh <lane> <out.html> [<label>=]<dir>...}"
-OUT="${2:?usage: sheet.sh <lane> <out.html> [<label>=]<dir>...}"
+# --gather[=<label>]: the lane's loose evidence, collected here rather than by
+# the step. The verifier logs sit loose in the home directory -- ~/stdgeom.log,
+# ~/themediff.log, ~/deco-a.log and a dozen more -- and the harness rows sit
+# in NT_RESULTS_DIR, and every sheet this tree published before they were
+# collected carried "logs=0" while the Windows ones carried sixteen. A sheet
+# that cannot show what the lane asserted cannot be read for what the lane
+# asserted. Eight sheet steps each spelled the same three lines to gather them;
+# this is those lines, once, and the label is what the Windows lanes call the
+# directory because their pictures land in $HOME too.
+GATHER=""
+case "${1:-}" in
+    --gather)   GATHER="Logs"; shift ;;
+    --gather=*) GATHER="${1#--gather=}"; shift ;;
+esac
+LANE="${1:?usage: sheet.sh [--gather[=<label>]] <lane> <out.html> [<label>=]<dir>...}"
+OUT="${2:?usage: sheet.sh [--gather[=<label>]] <lane> <out.html> [<label>=]<dir>...}"
 shift 2
 
 # GNU base64 wraps at 76 columns unless told -w0; BSD base64 has no -w and does
@@ -126,8 +140,18 @@ nt_rows_only() {
     awk -F'\t' 'NF == 5 && ($4 == "PASS" || $4 == "FAIL" || $4 == "SKIP")' "$1"
 }
 
-SHOTS="$(mktemp)"; LOGS="$(mktemp)"; ROWS="$(mktemp)"
-trap 'rm -f "$SHOTS" "$LOGS" "$ROWS"' EXIT
+SHOTS="$(mktemp)"; LOGS="$(mktemp)"; ROWS="$(mktemp)"; GATHERED=""
+trap 'rm -f "$SHOTS" "$LOGS" "$ROWS"; [ -z "$GATHERED" ] || rm -rf "$GATHERED"' EXIT
+if [ -n "$GATHER" ]; then
+    GATHERED="$(mktemp -d)"
+    # The same default lib/harness.sh takes, so a row filed there is found here.
+    NT_RESULTS_DIR="${NT_RESULTS_DIR:-${RUNNER_TEMP:+$RUNNER_TEMP/nt-results}}"
+    cp "$HOME"/*.log "$HOME"/*.png "$GATHERED"/ 2>/dev/null || true
+    [ -z "$NT_RESULTS_DIR" ] || cp "$NT_RESULTS_DIR"/*.tsv "$GATHERED"/ 2>/dev/null || true
+    # First when it was given a name, last when it is only the logs: the Windows
+    # lanes' pictures are in it and led their sheets before this existed.
+    if [ "$GATHER" = Logs ]; then set -- "$@" "$GATHER=$GATHERED"; else set -- "$GATHER=$GATHERED" "$@"; fi
+fi
 for arg in "$@"; do
     case "$arg" in
         *=*) label="${arg%%=*}"; src="${arg#*=}" ;;

@@ -50,14 +50,6 @@ jobs:
       NT_LANE: gjs
     steps:
       - uses: actions/checkout@v7
-      # Where the harness files its rows. Written to $GITHUB_ENV rather than
-      # set on the job, because a job-level `env` may not read the `runner`
-      # context and $RUNNER_TEMP is the only writable path outside the checkout
-      # that every runner agrees on.
-      - shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/nt-results"
-          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       # The harness, and the verifiers on top of it, with no display and no app.
       # Five seconds, and it runs before anything that needs a desktop: a broken
       # reporter makes every reading behind it unreadable, so it is worth
@@ -102,18 +94,9 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          # The verifier logs, gathered. They sit loose in the home directory --
-          # ~/stdgeom.log, ~/themediff.log, ~/deco-a.log and a dozen more -- so
-          # every sheet this lane has published carried "logs=0" while the
-          # Windows ones carried sixteen. A sheet that cannot show what the lane
-          # asserted cannot be read for what the lane asserted twice.
-          mkdir -p ~/sheetsrc
-          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
-          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/report/sheet.sh gjs ~/sheet/gjs.html \
+          bash test/report/sheet.sh --gather gjs ~/sheet/gjs.html \
             "The suites=$HOME/screenshots" \
-            "netinstall=$HOME/netinstall-screenshots" \
-            "Logs=$HOME/sheetsrc"
+            "netinstall=$HOME/netinstall-screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -156,14 +139,6 @@ jobs:
       NT_LANE: linux-engines
     steps:
       - uses: actions/checkout@v7
-      # Where the harness files its rows. Written to $GITHUB_ENV rather than set
-      # on the job, because a job-level `env` may not read the `runner` context
-      # and $RUNNER_TEMP is the only writable path outside the checkout that
-      # every runner agrees on.
-      - shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/nt-results"
-          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       - run: |
           sudo apt update
           sudo apt remove -y gjs || true
@@ -240,18 +215,9 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          # The verifier logs, gathered. They sit loose in the home directory --
-          # ~/stdgeom.log, ~/themediff.log, ~/deco-a.log and a dozen more -- so
-          # every sheet this lane has published carried "logs=0" while the
-          # Windows ones carried sixteen. A sheet that cannot show what the lane
-          # asserted cannot be read for what the lane asserted twice.
-          mkdir -p ~/sheetsrc
-          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
-          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/report/sheet.sh linux-engines ~/sheet/linux-engines.html \
+          bash test/report/sheet.sh --gather linux-engines ~/sheet/linux-engines.html \
             "cjs=$HOME/shots-cjs" \
-            "PyGObject=$HOME/screenshots" \
-            "Logs=$HOME/sheetsrc"
+            "PyGObject=$HOME/screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -338,9 +304,7 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          mkdir -p ~/sheetsrc ~/sheet
-          cp ~/qtkde.log ~/sheetsrc/ 2>/dev/null || true
-          bash test/report/sheet.sh kde-live ~/sheet/kde-live.html "Logs=$HOME/sheetsrc"
+          bash test/report/sheet.sh --gather kde-live ~/sheet/kde-live.html
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -359,14 +323,6 @@ jobs:
       NT_LANE: kde
     steps:
       - uses: actions/checkout@v7
-      # Where the harness files its rows. Written to $GITHUB_ENV rather than set
-      # on the job, because a job-level `env` may not read the `runner` context
-      # and $RUNNER_TEMP is the only writable path outside the checkout that
-      # every runner agrees on.
-      - shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/nt-results"
-          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       - run: |
           sudo apt update
           sudo apt install -y xvfb imagemagick x11-xserver-utils x11-utils mesa-utils libgl1-mesa-dri libegl-mesa0 openbox \
@@ -386,17 +342,8 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          # The verifier logs, gathered. They sit loose in the home directory --
-          # ~/stdgeom.log, ~/themediff.log, ~/deco-a.log and a dozen more -- so
-          # every sheet this lane has published carried "logs=0" while the
-          # Windows ones carried sixteen. A sheet that cannot show what the lane
-          # asserted cannot be read for what the lane asserted twice.
-          mkdir -p ~/sheetsrc
-          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
-          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/report/sheet.sh kde ~/sheet/kde.html \
-            "The suites=$HOME/screenshots" \
-            "Logs=$HOME/sheetsrc"
+          bash test/report/sheet.sh --gather kde ~/sheet/kde.html \
+            "The suites=$HOME/screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -440,16 +387,6 @@ jobs:
       NT_LANE: wayland
     steps:
       - uses: actions/checkout@v7
-      # Where the harness files its rows. This lane runs netinstall/test/run.sh,
-      # and splash.sh speaks the harness now -- so without this the rows it
-      # writes have nowhere to go and the `cp` below copies a directory that was
-      # never created. It was doing exactly that: `${NT_RESULTS_DIR:-/nonexistent}`
-      # with a `|| true` on the end cannot fail, so the lane looked wired and
-      # reported nothing.
-      - shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/nt-results"
-          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       # sway rather than weston, which is also in the archive and is the
       # reference implementation. See test/apparatus/wayland-up.sh: the deciding
       # difference is that this lane has to come away with a picture, and grim
@@ -479,12 +416,8 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          mkdir -p ~/sheetsrc
-          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
-          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/report/sheet.sh wayland ~/sheet/wayland.html \
-            "netinstall=$HOME/netinstall-screenshots" \
-            "Logs=$HOME/sheetsrc"
+          bash test/report/sheet.sh --gather wayland ~/sheet/wayland.html \
+            "netinstall=$HOME/netinstall-screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -721,15 +654,6 @@ jobs:
       NT_LANE: windows-launch
     steps:
       - uses: actions/checkout@v7
-      # Where the harness files its rows. Written to $GITHUB_ENV rather than
-      # set on the job, because a job-level `env` may not read the `runner`
-      # context and $RUNNER_TEMP is the only writable path outside the checkout
-      # that every runner agrees on.
-      - shell: bash
-        timeout-minutes: 2
-        run: |
-          mkdir -p "$RUNNER_TEMP/nt-results"
-          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       # MSYS's turn at the harness. See the gjs lane for why this runs on three.
       - timeout-minutes: 5
         shell: bash
@@ -1254,11 +1178,7 @@ jobs:
           # sit loose in the profile directory beside everything else the
           # runner keeps there, and a recursive find pointed at $HOME would
           # sweep all of it.
-          mkdir -p ~/sheetsrc
-          cp ~/*.png ~/*.log ~/sheetsrc/ 2>/dev/null || true
-          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/report/sheet.sh windows-launch ~/sheet/windows-launch.html \
-            "The suites=$HOME/sheetsrc" \
+          bash test/report/sheet.sh "--gather=The suites" windows-launch ~/sheet/windows-launch.html \
             "netinstall=$HOME/netinstall-screenshots" \
             "Under load, replica 1=$HOME/load-shots-1" \
             "Under load, replica 2=$HOME/load-shots-2"
@@ -1290,14 +1210,6 @@ jobs:
       NT_LANE: windows-content
     steps:
       - uses: actions/checkout@v7
-      # Where the harness files its rows. Written to $GITHUB_ENV rather than set
-      # on the job, because a job-level `env` may not read the `runner` context
-      # and $RUNNER_TEMP is the only writable path outside the checkout that
-      # every runner agrees on.
-      - shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/nt-results"
-          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       - shell: bash
         run: bash test/run.sh --build attack=attack-release
       # The suites this lane is made of, parsed before any of them runs, for
@@ -1675,11 +1587,7 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          mkdir -p ~/sheetsrc
-          cp ~/*.png ~/*.log ~/sheetsrc/ 2>/dev/null || true
-          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/report/sheet.sh windows-content ~/sheet/windows-content.html \
-            "The suites=$HOME/sheetsrc" \
+          bash test/report/sheet.sh "--gather=The suites" windows-content ~/sheet/windows-content.html \
             "docswap=$HOME/docswaplogs" \
             "nav=$HOME/navlogs"
       - uses: actions/upload-artifact@v7
@@ -1710,14 +1618,6 @@ jobs:
       NT_LANE: macos
     steps:
       - uses: actions/checkout@v7
-      # Where the harness files its rows. Written to $GITHUB_ENV rather than
-      # set on the job, because a job-level `env` may not read the `runner`
-      # context and $RUNNER_TEMP is the only writable path outside the checkout
-      # that every runner agrees on.
-      - shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/nt-results"
-          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       # The BSD userland's turn at the harness. See the gjs lane for why this
       # runs on three.
       - timeout-minutes: 5
@@ -1728,17 +1628,8 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          # The verifier logs, gathered. They sit loose in the home directory --
-          # ~/stdgeom.log, ~/themediff.log, ~/deco-a.log and a dozen more -- so
-          # every sheet this lane has published carried "logs=0" while the
-          # Windows ones carried sixteen. A sheet that cannot show what the lane
-          # asserted cannot be read for what the lane asserted twice.
-          mkdir -p ~/sheetsrc
-          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
-          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
-          bash test/report/sheet.sh macos ~/sheet/macos.html \
-            "The suites=$HOME/screenshots" \
-            "Logs=$HOME/sheetsrc"
+          bash test/report/sheet.sh --gather macos ~/sheet/macos.html \
+            "The suites=$HOME/screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -1774,16 +1665,6 @@ jobs:
       NT_LANE: macos-netinstall
     steps:
       - uses: actions/checkout@v7
-      # Where the harness files its rows. This lane runs netinstall/test/run.sh,
-      # and splash.sh speaks the harness now -- so without this the rows it
-      # writes have nowhere to go and the `cp` below copies a directory that was
-      # never created. It was doing exactly that: `${NT_RESULTS_DIR:-/nonexistent}`
-      # with a `|| true` on the end cannot fail, so the lane looked wired and
-      # reported nothing.
-      - shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/nt-results"
-          echo "NT_RESULTS_DIR=$RUNNER_TEMP/nt-results" >> "$GITHUB_ENV"
       # The lane, from test/suites.tsv, as one step: the room cleared of its
       # alert, then the installer's whole suite. The gjs lane says why one
       # step, and the manifest says what each row is.
@@ -1805,16 +1686,12 @@ jobs:
           # every sheet this lane published before they were collected carried
           # "logs=0". A sheet that cannot show what the lane asserted cannot be
           # read for what the lane asserted.
-          mkdir -p ~/sheetsrc
-          cp ~/*.log ~/sheetsrc/ 2>/dev/null || true
-          cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ~/sheetsrc/ 2>/dev/null || true
           # The suite's picture and its logs. `The suites=$HOME/screenshots`
           # used to be named here and was never written on this lane -- that
           # directory belongs to the `macos` job -- so the directory named is
           # the one the suite step above pointed splash.sh at, and no other.
-          bash test/report/sheet.sh macos-netinstall ~/sheet/macos-netinstall.html \
-            "netinstall=$HOME/netinstall-screenshots" \
-            "Logs=$HOME/sheetsrc"
+          bash test/report/sheet.sh --gather macos-netinstall ~/sheet/macos-netinstall.html \
+            "netinstall=$HOME/netinstall-screenshots"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

@@ -87,8 +87,13 @@ grep -q "a reading" "$WORK/unit.tsv" \
 
 # Prose only, when nothing asked for rows. A developer running one suite in a
 # terminal should not have a results file appear beside it.
+#
+# $RUNNER_TEMP unset too, because that is what a desk is: on a runner the
+# harness defaults the rows' directory from it, and with it left in place this
+# fixture filed `c.one` into the lane's real results on three lanes and the
+# grid called it an undeclared case.
 (
-    unset NT_RESULTS NT_RESULTS_DIR
+    unset NT_RESULTS NT_RESULTS_DIR RUNNER_TEMP
     export NT_LANE=selftest NT_SUITE=prose
     . "$ROOT/test/lib/harness.sh"
     nt_pass c.one "held"

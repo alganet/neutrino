@@ -45,8 +45,25 @@ NT_LANE="${NT_LANE:-local}"
 NT_SUITE="${NT_SUITE:-$(basename "${0%.sh}")}"
 
 # Where the rows go. Unset means prose only, which is what a suite run by hand
-# in a terminal wants; NT_RESULTS_DIR is what CI and test/run.sh set, so every
-# suite in a lane lands its rows beside the others without any call site knowing.
+# in a terminal wants; NT_RESULTS_DIR is what CI sets, so every suite in a lane
+# lands its rows beside the others without any call site knowing.
+#
+# On a GitHub runner it defaults to $RUNNER_TEMP/nt-results, which is the one
+# writable path outside the checkout every runner agrees on. Eight jobs each
+# carried a step writing exactly that into $GITHUB_ENV -- a job-level `env`
+# may not read the `runner` context, so a step was the only place it could be
+# said -- and a lane that lost the step went quiet: macos-netinstall had no
+# such step for a round, its rows had nowhere to go, and the sheet's
+# `cp "${NT_RESULTS_DIR:-/nonexistent}"/*.tsv ... || true` could not fail. A
+# default here cannot be forgotten by a lane. sheet.sh derives the same path
+# for the same reason, and the bsd guest, which has no $RUNNER_TEMP, sets its
+# own.
+#
+# Unset, and not empty: `NT_RESULTS_DIR=` is a caller saying it wants prose and
+# no rows, on a runner or off it, and the default must not overrule that.
+if [ -z "${NT_RESULTS_DIR+set}" ] && [ -n "${RUNNER_TEMP:-}" ]; then
+    NT_RESULTS_DIR="$RUNNER_TEMP/nt-results"
+fi
 if [ -z "${NT_RESULTS:-}" ] && [ -n "${NT_RESULTS_DIR:-}" ]; then
     mkdir -p "$NT_RESULTS_DIR" 2>/dev/null || true
     NT_RESULTS="$NT_RESULTS_DIR/$NT_SUITE.tsv"
