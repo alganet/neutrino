@@ -95,10 +95,11 @@ exec su probe -c "
     export XDG_CURRENT_DESKTOP=KDE
     export QT_FORCE_STDERR_LOGGING=1
     export NT_FLIP_LIVE_ONLY=1
+    export NT_TOOLKIT=qt
+    export NT_SHOT_DIR=/home/probe/shots
     cd /home/probe/neutrino
     xvfb-run -a --server-args=\"-screen 0 1024x768x24\" \
       dbus-run-session -- \
-      bash test/suite/themeflip.sh qt \
-        /home/probe/std.cmd /home/probe/shots /home/probe/live.cmd
+      bash test/suite/themeflip.sh /home/probe/std.cmd /home/probe/live.cmd
 "
 '

@@ -1729,6 +1729,40 @@ done
     && ok "no PowerShell suite assigns a literal over the name its row was given" \
     || bad "a suite overwrites the manifest's name for it with a literal:$SUITELIT"
 
+# themeflip.sh refuses the signature it used to have.
+#
+# The toolkit was argv until 2026-09-09 and is $NT_TOOLKIT now. The ten rows in
+# suites.tsv moved with it; test/apparatus/qtkde.sh did not, and nothing said
+# so for ten days. What made it silent is worth stating, because it is the
+# shape rather than the typo: `qt` was read as the artifact path, the artifact
+# path was read as the live probe, the mode fell back to `gtk`, and the GTK
+# knob check returns before anything opens a file -- so the whole lane reported
+# that no knob delivers a theme change to GTK, which is true of a KDE container
+# and is not the question that lane exists to ask, and exited 0 while it did.
+#
+# This is asserted by running it rather than by grepping for callers, because a
+# grep only knows the callers that are in this tree today. The guard is in the
+# file, so it holds for the next caller too.
+for tk in gtk qt macos; do
+    FLIPOUT="$(NT_TOOLKIT="" bash "$ROOT/test/suite/themeflip.sh" "$tk" 2>&1)"
+    FLIPRC=$?
+    case "$FLIPOUT" in
+        *"where the artifact goes"*) : ;;
+        *) bad "themeflip.sh took '$tk' as an artifact instead of refusing it: $FLIPOUT" ;;
+    esac
+    [ "$FLIPRC" = 0 ] && bad "themeflip.sh exited 0 when handed the old signature '$tk'"
+done
+ok "themeflip.sh refuses a toolkit word where the artifact goes"
+
+# And no caller in this tree is still passing one, which the guard above would
+# only report on the lane that runs it -- kde-live runs in a container on one
+# job, so a reading from there costs a full CI round to see.
+FLIPOLD="$(grep -rnE 'themeflip\.sh[[:space:]]+(gtk|qt|macos)([[:space:]]|$)' \
+    "$ROOT/test" "$ROOT/.github" 2>/dev/null | grep -v selftest || true)"
+[ -z "$FLIPOLD" ] \
+    && ok "no caller passes themeflip.sh a toolkit word" \
+    || bad "a caller still passes the toolkit positionally: $(echo $FLIPOLD)"
+
 # ------------------------------------------------- the workflow lint, which ran nowhere
 
 echo
