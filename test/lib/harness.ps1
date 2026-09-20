@@ -68,16 +68,21 @@ $script:NT_SUITE = if ($env:NT_SUITE) {
 }
 
 # Where the rows go. Unset means prose only -- what a suite run by hand in a
-# terminal wants. Both Windows jobs write NT_RESULTS_DIR into $GITHUB_ENV from a
-# `shell: bash` step, so every later `shell: pwsh` step inherits it and no call
-# site has to know.
+# terminal wants. On a runner it is $RUNNER_TEMP\nt-results unless NT_RESULTS_DIR
+# says otherwise, which is the default lib/harness.sh takes and for the reason
+# written there: the step that used to write it into $GITHUB_ENV was one a
+# lane could forget, and one did.
 $script:NT_RESULTS = $null
+$script:NT_RESULTS_DIR = $env:NT_RESULTS_DIR
+if (-not $script:NT_RESULTS_DIR -and $env:RUNNER_TEMP) {
+    $script:NT_RESULTS_DIR = Join-Path $env:RUNNER_TEMP "nt-results"
+}
 if ($env:NT_RESULTS) {
     $script:NT_RESULTS = $env:NT_RESULTS
-} elseif ($env:NT_RESULTS_DIR) {
+} elseif ($script:NT_RESULTS_DIR) {
     try {
-        $null = New-Item -ItemType Directory -Force -Path $env:NT_RESULTS_DIR
-        $script:NT_RESULTS = Join-Path $env:NT_RESULTS_DIR "$($script:NT_SUITE).tsv"
+        $null = New-Item -ItemType Directory -Force -Path $script:NT_RESULTS_DIR
+        $script:NT_RESULTS = Join-Path $script:NT_RESULTS_DIR "$($script:NT_SUITE).tsv"
     } catch {
         $script:NT_RESULTS = $null
     }
