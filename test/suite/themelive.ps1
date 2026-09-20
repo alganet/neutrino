@@ -34,8 +34,21 @@ if (-not $Artifact) { throw "usage: themelive.ps1 -Artifact <app.cmd>" }
 $ErrorActionPreference = "Continue"
 $key  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 $name = [System.IO.Path]::GetFileNameWithoutExtension($Artifact)
-$rc   = 0
 
+. (Join-Path $PSScriptRoot "..\lib\harness.ps1")
+
+# Two cases, the same pair the Qt half on kde-live files and for the same
+# reason. `themelive.win.reported` is the precondition -- a probe that never
+# came up, or came up reading no toolkit, cannot be flipped under -- and
+# `themelive.win.flip` is the question. Separated because a failing flip and a
+# probe that never started look identical from one verdict, which is the
+# confusion every live half in this tree is built to avoid.
+#
+# `.win` and not shared with themelive.kde.*: the knobs are different mechanisms
+# asked of different desktops -- a registry value the driver itself reads here, a
+# Plasma colour scheme through DBus there -- so one cell carrying both would mean
+# two things depending on the column. The ids are parallel because the questions
+# are parallel; they are not the same question.
 function Note($t) { Write-Host "report: $t" }
 
 function Read-Knob() {
@@ -97,14 +110,18 @@ try {
         $waited++
     }
     if ($before -notlike "STD-LIVE*") {
-        Write-Host "FAIL: live half: no STD-LIVE window in ${UpTimeout}s; the probe never came up"
-        Stop-App; exit 1
+        nt_fail themelive.win.reported "live half: no STD-LIVE window in ${UpTimeout}s; the probe never came up"
+        nt_skip themelive.win.flip "the probe never came up, so there was nothing to flip under"
+        Stop-App; nt_finish
     }
     Note "live before: $before"
     if ($before -like "*src=null*") {
-        Write-Host "FAIL: live half: the probe read no toolkit, so a flip would prove nothing"
-        Stop-App; exit 1
+        nt_fail themelive.win.reported "live half: the probe read no toolkit, so a flip would prove nothing"
+        nt_skip themelive.win.flip "the probe read no toolkit, so a flip would prove nothing"
+        Stop-App; nt_finish
     }
+
+    nt_pass themelive.win.reported "the live probe came up and read a toolkit"
 
     Set-Knob 0
     Note "live knob after the flip: AppsUseLightTheme=$(Read-Knob)"
@@ -113,8 +130,8 @@ try {
     # that refused the write is an apparatus defect and reads exactly like a
     # watcher that did not fire.
     if ((Read-Knob) -ne "0") {
-        Note "live half: the registry refused the write; no live flip to observe"
-        Stop-App; exit 0
+        nt_skip themelive.win.flip "the registry refused the write; no live flip to observe"
+        Stop-App; nt_finish
     }
 
     $waited = 0
@@ -131,18 +148,16 @@ try {
     $n = "?"
     if ($after -match ' n=(\d+)') { $n = $Matches[1] }
     if ($after -like "*moved=yes*") {
-        Write-Host "PASS: the running app was handed a new palette when the app theme changed"
+        nt_pass themelive.win.flip "the running app was handed a new palette when the app theme changed"
         Note "live readings n=$n"
     } elseif ($after -like "STD-LIVE*") {
-        Write-Host "FAIL: the app theme changed under a running app and it was handed nothing (n=$n); the theme watcher did not fire"
-        $rc = 1
+        nt_fail themelive.win.flip "the app theme changed under a running app and it was handed nothing (n=$n); the theme watcher did not fire"
     } else {
-        Write-Host "FAIL: live half: the probe stopped writing its title after the flip"
-        $rc = 1
+        nt_fail themelive.win.flip "live half: the probe stopped writing its title after the flip"
     }
 } finally {
     Stop-App
     if ($was -eq "<absent:light>") { Set-Knob 1 } else { Set-Knob ([int]$was) }
     Note "live knob restored: AppsUseLightTheme=$(Read-Knob)"
 }
-exit $rc
+nt_finish
