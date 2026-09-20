@@ -52,7 +52,10 @@
 $ErrorActionPreference = "Continue"
 
 $src = $args[0]
-$outDir = $args[1]
+# The second argument is where the log goes, and a manifest row cannot spell
+# a directory under $HOME -- its column never sees a shell -- so it defaults
+# to the one the step used to name, and the sheet step still names it.
+$outDir = if ($args.Count -gt 1 -and $args[1]) { $args[1] } else { Join-Path $HOME "docswaplogs" }
 if (-not $src -or -not (Test-Path $src) -or -not $outDir) {
     Write-Output "usage: docswap.ps1 <app.cmd built from test/probe/neutrinodoc.js> <outDir>"
     exit 2

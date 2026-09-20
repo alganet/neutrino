@@ -52,7 +52,12 @@ $ErrorActionPreference = "Stop"
 # app that never came up, which is a finding about the launcher rather than
 # about this file's argv.
 if (-not $Artifact) { throw "usage: verify-windows.ps1 -Artifact <app.cmd> -AppDir <dir> [-Launch]" }
-if (-not $AppDir)   { throw "usage: verify-windows.ps1 -Artifact <app.cmd> -AppDir <dir> [-Launch]" }
+# The app folder is beside the artifact and named after it -- that is what the
+# launcher derives -- so it need not be said twice; a caller with a reason to
+# point elsewhere still can.
+if (-not $AppDir) {
+    $AppDir = Join-Path (Split-Path -Parent $Artifact) ([System.IO.Path]::GetFileNameWithoutExtension($Artifact))
+}
 if (-not $AppName)  { $AppName = [System.IO.Path]::GetFileNameWithoutExtension($Artifact) }
 
 Add-Type -AssemblyName System.Drawing
@@ -830,6 +835,18 @@ if ($walked -eq 127) {
 
 Write-Host "=== WebView2 package: pinned, and nothing else unpacked ==="
 Assert-WebView2Package $Artifact (Join-Path $AppDir "Microsoft.Web.WebView2")
+
+# The app's own account, when this file launched it. The step used to append
+# the launcher's error log to the verifier's after the fact; it is one log now.
+if ($Launch) {
+    $errLog = Join-Path $AppDir "neutrino-error.log"
+    if (Test-Path $errLog) {
+        Write-Host "=== the app's own account ==="
+        Get-Content $errLog | ForEach-Object { Write-Host $_ }
+    } else {
+        Write-Host "=== the app recorded no failure of its own ==="
+    }
+}
 
 Write-Host ""
 Write-Host "=== Results: $Failures failure(s) ==="

@@ -19,7 +19,6 @@
 # the day either of those moves back it shows up as a failure instead of as a
 # comment nobody reread.
 
-$ErrorActionPreference = "Stop"
 
 # The six words, and the first PowerShell suite to speak them. This file and
 # test/suite/verify-attack.sh have always been a twin pair -- same probe, same
@@ -27,6 +26,15 @@ $ErrorActionPreference = "Stop"
 # and they asserted the same twelve facts in two sets of sentences that no
 # reader downstream could line up. The ids are what say the two lanes asserted
 # one thing; see lib/harness.ps1 for why they are spelled the way they are.
+# The artifact, when this file is asked to launch it. The step used to run
+# `.\test\out\attack.cmd` on the line before this file, and a manifest row has
+# no line before: with -Artifact the launch is here, the same hidden cmd.exe
+# demo.ps1 uses, and without it the verifier waits for a window something else
+# put up, as it always did.
+param([string]$Artifact = "")
+
+$ErrorActionPreference = "Stop"
+
 . (Join-Path $PSScriptRoot "..\lib\harness.ps1")
 
 $Timeout = 120
@@ -48,6 +56,12 @@ function nt_skip_fields($why) {
     nt_skip attack.forge.refused $why
     nt_skip attack.nav.refused $why
     nt_skip attack.postnav.channel $why
+}
+
+if ($Artifact) {
+    Write-Host "=== Launching $Artifact ==="
+    Start-Process -FilePath "cmd.exe" -WorkingDirectory (Get-Location).Path `
+        -ArgumentList "/c", $Artifact -WindowStyle Hidden | Out-Null
 }
 
 Write-Host "=== Waiting for the attack app to report ==="
