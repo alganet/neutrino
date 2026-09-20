@@ -284,17 +284,22 @@ early	macos	build=early-testing	bash test/suite/early.sh
 # lost its display server would pass splash.sh by skipping every case in it.
 # Measured on run 33750772253, not hoped for.
 #
-# The command is `dbus-run-session -- bash ...` on kde and not the `dbus`
-# directive, because that directive puts a bus around the artifact step.sh
-# launches, and here there is no artifact: the runner under it launches its
-# own. NEUTRINO_SUITES takes commas as well as spaces for this column's sake.
+# `dbus` on kde, the same directive the walk row on that lane uses, and for the
+# same reason: QtWebEngine wants a session bus and the container has no desktop
+# to inherit one from. It used to be `dbus-run-session -- bash ...` spelled in
+# the command column, because the directive only ever put a bus around the
+# artifact step.sh launches and this row has no artifact -- the runner under it
+# launches its own. So the file said one thing two ways, and the directive was
+# a silent no-op on exactly the rows that had to spell it out. step.sh puts the
+# bus around the command when there is no artifact to put it around instead.
+# NEUTRINO_SUITES takes commas as well as spaces for this column's sake.
 #
 # On windows-launch the compiler is the step's `env:`, not the row's: it is
 # what setup-zig put on the machine, and a row is not the place to say what a
 # machine has.
 netinstall	gjs	timeout=1500 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=x11 bash netinstall/test/run.sh
 netinstall	wayland	timeout=600 shots=netinstall-screenshots	env NEUTRINO_SUITES=splash NEUTRINO_SPLASH_EXPECT=wayland bash netinstall/test/run.sh
-netinstall	kde	timeout=1500	env NEUTRINO_SUITES=env,e2e QTWEBENGINE_DISABLE_SANDBOX=1 dbus-run-session -- bash netinstall/test/run.sh
+netinstall	kde	timeout=1500 dbus	env NEUTRINO_SUITES=env,e2e QTWEBENGINE_DISABLE_SANDBOX=1 bash netinstall/test/run.sh
 netinstall	macos-netinstall	timeout=1800 shots=netinstall-screenshots	env NEUTRINO_SPLASH_EXPECT=appkit bash netinstall/test/run.sh
 #
 # ---------------------------------------------------------- the navigation guard
