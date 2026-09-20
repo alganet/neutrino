@@ -28,15 +28,34 @@
 
 set -uo pipefail
 
+. "$(cd "$(dirname "$0")/.." && pwd)/lib/harness.sh"
+
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-FAILURES=0
+# The verdicts are test/lib/harness.sh's now, and its nt_eq prints exactly what
+# this file's own `eq` printed -- `PASS: <name> (<actual>)` and `FAIL: <name>
+# expected=<want> actual=<got>` -- so every one of the 233 sentences this suite
+# speaks is unchanged. What is new is that each one carries a case id, and the
+# rows reach the grid.
+#
+# It had none. This is the largest suite in the tree by assertions and it ran on
+# three lanes -- gjs, macos and windows-launch -- which is the whole point of it:
+# the awk, sed and base64 it leans on are different programs on GNU, BSD and
+# MSYS, and a disagreement between them is exactly what a cross-lane grid is for.
+# None of that was ever in the grid. A run where this suite stopped executing and
+# a run where all 233 held produced the same empty column.
+#
+# One id per section rather than one per assertion, and the two table-driven
+# groups split by the helper that drives them. 233 ids would be six times the
+# largest suite here and would say less: what a reader wants from this grid is
+# which of the thirteen things the assembler must get right disagrees between
+# userlands, and the log under the cell says which assertion it was.
+# test/report/matrix.py folds a case reported more than once on a lane, worst
+# verdict first, which is what makes a section-sized id mean "everything here
+# held" rather than "the last one did".
 report() { echo "report: $*"; }
-pass()   { echo "  PASS: $*"; }
-fail()   { echo "  FAIL: $*"; FAILURES=$((FAILURES + 1)); }
-eq()     { if [ "$2" = "$3" ]; then pass "$1 ($2)"; else fail "$1 expected=$3 actual=$2"; fi; }
 # Sizes through `wc -c` and never `stat`: the two spellings of stat in this
 # matrix take different flags and the reading is a number either way.
 size()   { if [ -f "$1" ]; then wc -c < "$1" | tr -d ' '; else echo missing; fi; }
@@ -125,12 +144,12 @@ report "section: controls"
 echo "=== the assembler builds, with and without an overlay ==="
 T="$(tree plain)"
 bash "$T/neutrino/assemble.sh" "$T/bare.cmd" > "$WORK/plain.log" 2>&1
-eq "a build with no overlay succeeds" "$?" "0"
+nt_eq assemble.builds "a build with no overlay succeeds" "$?" "0"
 
 bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/app.cmd" > "$WORK/app.log" 2>&1
-eq "a build with an app overlay succeeds" "$?" "0"
-eq "and the app is in it" "$(grep -c 'document.title = "example";' "$T/app.cmd" | head -1)" "1"
-eq "and the app is inside the runWeb slot" \
+nt_eq assemble.builds "a build with an app overlay succeeds" "$?" "0"
+nt_eq assemble.builds "and the app is in it" "$(grep -c 'document.title = "example";' "$T/app.cmd" | head -1)" "1"
+nt_eq assemble.builds "and the app is inside the runWeb slot" \
    "$(sed -n '/^    NeutrinoWebview.runWeb = function () {$/,/^    };$/p' "$T/app.cmd" |
       grep -c 'document.title = "example";' | head -1)" "1"
 
@@ -138,8 +157,8 @@ eq "and the app is inside the runWeb slot" \
 # This is the hazard the old suite was mostly about, asserted the other way
 # round: not "the substitution had a range" but "there is no substitution".
 bash "$T/neutrino/assemble.sh" --overlay "$APP_TIERS" "$T/tiers.cmd" >/dev/null 2>&1
-eq "an app carrying a tiers: line builds" "$?" "0"
-eq "and its line is untouched" \
+nt_eq assemble.builds "an app carrying a tiers: line builds" "$?" "0"
+nt_eq assemble.builds "and its line is untouched" \
    "$(sed -n '/^    NeutrinoWebview.runWeb = function () {$/,/^    };$/s/^ *tiers: "\(.*\)",$/\1/p' "$T/tiers.cmd" | head -1)" \
    "offline,tight"
 
@@ -160,18 +179,18 @@ printf 'i-am-from-a{color:red}\n'     > "$OV_A/style.css"
 printf 'document.title = "from B";\n' > "$OV_B/app.js"
 
 bash "$T/neutrino/assemble.sh" --overlay "$OV_A" --overlay "$OV_B" "$T/ab.cmd" >/dev/null 2>&1
-eq "the later overlay's part wins" "$(grep -c 'from B' "$T/ab.cmd" | head -1)" "1"
-eq "and the earlier one's is not in the file" "$(grep -c 'from A' "$T/ab.cmd" | head -1)" "0"
-eq "while a part only the earlier one has still arrives" \
+nt_eq assemble.overlay.order "the later overlay's part wins" "$(grep -c 'from B' "$T/ab.cmd" | head -1)" "1"
+nt_eq assemble.overlay.order "and the earlier one's is not in the file" "$(grep -c 'from A' "$T/ab.cmd" | head -1)" "0"
+nt_eq assemble.overlay.order "while a part only the earlier one has still arrives" \
    "$(grep -c 'i-am-from-a' "$T/ab.cmd" | head -1)" "1"
 # Without this, "the later one wins" is also what a program that ignores the
 # earlier overlay entirely would report.
 bash "$T/neutrino/assemble.sh" --overlay "$OV_B" --overlay "$OV_A" "$T/ba.cmd" >/dev/null 2>&1
-eq "and the order is the argument order, not the alphabet" \
+nt_eq assemble.overlay.order "and the order is the argument order, not the alphabet" \
    "$(grep -c 'from A' "$T/ba.cmd" | head -1)" "1"
 
 # neutrino/ is last, so a part no overlay carries is the launcher's.
-eq "a part no overlay carries comes from the tree" \
+nt_eq assemble.overlay.order "a part no overlay carries comes from the tree" \
    "$(grep -c 'Welcome to neutrino' "$T/ab.cmd" | head -1)" "1"
 
 # Any part, and not only the four an app usually writes. An overlay carrying a
@@ -181,7 +200,7 @@ rm -rf "$WORK/ov-deep"; mkdir -p "$WORK/ov-deep/js"
 printf 'NeutrinoWebview.somethingOfMyOwn = function () { return 42; };\n' \
     > "$WORK/ov-deep/js/note.js"
 bash "$T/neutrino/assemble.sh" --overlay "$WORK/ov-deep" "$T/deep.cmd" >/dev/null 2>&1
-eq "an overlay may replace a part inside a subdirectory" \
+nt_eq assemble.overlay.order "an overlay may replace a part inside a subdirectory" \
    "$(grep -c 'somethingOfMyOwn' "$T/deep.cmd" | head -1)" "1"
 
 # A part named by an include and carried by nobody is a refusal before a byte is
@@ -192,22 +211,22 @@ T2="$(tree overlay-missing)"
 printf '@@include js/nothing-here.js\n' >> "$T2/neutrino/js/parts.list"
 rm -f "$T2/out.cmd"
 bash "$T2/neutrino/assemble.sh" "$T2/out.cmd" > "$WORK/missing.log" 2>&1
-eq "a part nothing carries is refused" "$?" "1"
-eq "and says which one" "$(grep -c 'no such part' "$WORK/missing.log" | head -1)" "1"
-eq "and no artifact is left behind" "$(size "$T2/out.cmd")" "missing"
+nt_eq assemble.overlay.order "a part nothing carries is refused" "$?" "1"
+nt_eq assemble.overlay.order "and says which one" "$(grep -c 'no such part' "$WORK/missing.log" | head -1)" "1"
+nt_eq assemble.overlay.order "and no artifact is left behind" "$(size "$T2/out.cmd")" "missing"
 
 # The control for that refusal: the same include, satisfied by an overlay.
 rm -rf "$WORK/ov-fills"; mkdir -p "$WORK/ov-fills/js"
 printf 'NeutrinoWebview.filled = 1;\n' > "$WORK/ov-fills/js/nothing-here.js"
 bash "$T2/neutrino/assemble.sh" --overlay "$WORK/ov-fills" "$T2/filled.cmd" >/dev/null 2>&1
-eq "and an overlay that carries it builds" "$?" "0"
+nt_eq assemble.overlay.order "and an overlay that carries it builds" "$?" "0"
 
 # An include may not climb out of the roots it is resolved against.
 T3="$(tree overlay-escape)"
 printf '@@include ../../../etc/passwd\n' >> "$T3/neutrino/js/parts.list"
 bash "$T3/neutrino/assemble.sh" "$T3/out.cmd" > "$WORK/escape.log" 2>&1
-eq "an include that leaves the tree is refused" "$?" "1"
-eq "and says so" "$(grep -c 'leaves the source tree' "$WORK/escape.log" | head -1)" "1"
+nt_eq assemble.overlay.order "an include that leaves the tree is refused" "$?" "1"
+nt_eq assemble.overlay.order "and says so" "$(grep -c 'leaves the source tree' "$WORK/escape.log" | head -1)" "1"
 
 # =====================================================================
 # The strip
@@ -225,12 +244,12 @@ bash "$T/neutrino/assemble.sh" --comments --overlay "$APP_TEST" "$T/full.cmd" >/
 bash "$T/neutrino/assemble.sh"             --overlay "$APP_TEST" "$T/thin.cmd" >/dev/null 2>&1
 FULL="$(size "$T/full.cmd")"; THIN="$(size "$T/thin.cmd")"
 report "full=$FULL thin=$THIN"
-eq "the stripped artifact is smaller" \
+nt_eq assemble.strip "the stripped artifact is smaller" \
    "$([ "${THIN:-0}" -lt "${FULL:-0}" ] 2>/dev/null && echo smaller || echo not-smaller)" "smaller"
 # Under a third of what it was would mean whole regions had gone missing, and
 # over nine tenths would mean the strip had stopped running. Neither is a size
 # anybody should have to eyeball in a log.
-eq "and not so much smaller that something is missing" \
+nt_eq assemble.strip "and not so much smaller that something is missing" \
    "$([ "${THIN:-0}" -gt "$((FULL / 3))" ] && [ "${THIN:-0}" -lt "$((FULL * 9 / 10))" ] \
         && echo in-range || echo out-of-range)" "in-range"
 # Three spellings of prose, one per family of language in the file: a batch REM
@@ -248,9 +267,9 @@ for nt_kind in "REM:^REM " "hash:^# " "slash:^[[:space:]]*// [A-Z]"; do
     nt_after="$(grep "$nt_pat" "$T/thin.cmd" | grep -vc 'SPDX-' | head -1)"
     report "prose $nt_name before=$nt_before after=$nt_after"
     if [ "${nt_before:-0}" -lt 1 ]; then
-        fail "no $nt_name prose in the commented artifact; the count below measured nothing"
+        nt_fail assemble.strip "no $nt_name prose in the commented artifact; the count below measured nothing"
     else
-        eq "no $nt_name prose survives the strip" "$nt_after" "0"
+        nt_eq assemble.strip "no $nt_name prose survives the strip" "$nt_after" "0"
     fi
 done
 
@@ -258,7 +277,7 @@ done
 # than by restating the rules here, because a second copy of the rules is a
 # second thing to keep right -- and this catches a line that was rewritten as
 # well as one that was invented, which no rule-shaped check would.
-eq "every line the stripped artifact carries is a line of the commented one" \
+nt_eq assemble.strip "every line the stripped artifact carries is a line of the commented one" \
    "$(diff "$T/full.cmd" "$T/thin.cmd" | grep -c '^>' | head -1)" "0"
 
 # And the notice survives. Built from an app that carries one of its own, so
@@ -272,11 +291,11 @@ document.title = "x";
 EOF
 )"
 bash "$T/neutrino/assemble.sh" --overlay "$APP_SPDX" "$T/spdx.cmd" >/dev/null 2>&1
-eq "the app's licence notice survives the strip" \
+nt_eq assemble.strip "the app's licence notice survives the strip" \
    "$(grep -c 'SPDX-License-Identifier: MIT' "$T/spdx.cmd" | head -1)" "1"
-eq "and its copyright line does too" \
+nt_eq assemble.strip "and its copyright line does too" \
    "$(grep -c 'nobody@example.invalid' "$T/spdx.cmd" | head -1)" "1"
-eq "while the comment beside them does not" \
+nt_eq assemble.strip "while the comment beside them does not" \
    "$(grep -c 'An ordinary comment' "$T/spdx.cmd" | head -1)" "0"
 
 # CSS is the one language whose comments come off whatever was asked for, and
@@ -308,18 +327,18 @@ for nt_mode in "" "--comments"; do
         bash "$T/neutrino/assemble.sh" --overlay "$OV_CSS" "$T/css.cmd" >/dev/null 2>&1
     fi
     nt_label="${nt_mode:---stripped}"
-    eq "a stylesheet with comments builds ($nt_label)" "$?" "0"
+    nt_eq assemble.stylesheet "a stylesheet with comments builds ($nt_label)" "$?" "0"
     # grep -cE, and the `\|` this replaced is why. BSD reads it as two literal
     # characters, so on the macos lane -- and this file runs there on purpose --
     # the pattern was one long literal that appears nowhere, the count was 0, and
     # 0 is what this asserts. An assertion that expects nothing and asks a
     # question that can only answer nothing passes without looking.
-    eq "no comment survives ($nt_label)" \
+    nt_eq assemble.stylesheet "no comment survives ($nt_label)" \
        "$(grep -cE 'a normal comment|runs across|trailing, and on a line' "$T/css.cmd" | head -1)" "0"
-    eq "not even the licence header ($nt_label)" \
+    nt_eq assemble.stylesheet "not even the licence header ($nt_label)" \
        "$(grep -c 'SPDX-License-Identifier: MIT' "$T/css.cmd" | head -1)" "0"
     for nt_rule in 'q{color:green}' 'r{color:blue}' 's{color:pink}' 't{color:grey}'; do
-        eq "the rule $nt_rule survives ($nt_label)" \
+        nt_eq assemble.stylesheet "the rule $nt_rule survives ($nt_label)" \
            "$(grep -cF "$nt_rule" "$T/css.cmd" | head -1)" "1"
     done
 done
@@ -327,7 +346,7 @@ done
 # A stylesheet is written across as many lines as it wants to be. The document
 # used to be one physical line -- the style and the body were folded into it --
 # and an app's CSS arrived as one long run with its structure gone.
-eq "and the stylesheet keeps its own lines" \
+nt_eq assemble.stylesheet "and the stylesheet keeps its own lines" \
    "$(sed -n '/^<!doctype html><html>/,/^<script type=text\/javascript>/p' "$T/css.cmd" |
       grep -c '^[qrst]{color:' | head -1)" "4"
 
@@ -358,7 +377,7 @@ PARTS_JS="$(ls "$T"/neutrino/js/*.js "$T"/neutrino/else/*.js 2>/dev/null | wc -l
 PARTS_SH="$(ls "$T"/neutrino/sh/*.sh 2>/dev/null | wc -l | tr -d ' ')"
 report "parts js=$PARTS_JS sh=$PARTS_SH"
 if [ "${PARTS_JS:-0}" -lt 10 ] || [ "${PARTS_SH:-0}" -lt 5 ]; then
-    fail "the tree has $PARTS_JS js and $PARTS_SH sh parts; the checks below measured nothing"
+    nt_fail assemble.parts "the tree has $PARTS_JS js and $PARTS_SH sh parts; the checks below measured nothing"
 else
     # One node for all of them, and not `node --check` per file. Twenty-three
     # interpreter startups is a third of a second each on the Windows runner and
@@ -389,7 +408,7 @@ else
             });
             process.stdout.write(bad.join(" "));
         ' $NT_DOCS "$T/fragment.js")"
-        eq "the only javascript part that does not parse is the fragment control" \
+        nt_eq assemble.parts "the only javascript part that does not parse is the fragment control" \
            "${NT_BAD:-none}" "fragment.js"
     else
         report "node absent: the js/ parts were not parsed"
@@ -417,23 +436,23 @@ else
     # about what is written in these files.
     NT_DIRECTIVE='@(if|elif|end)([^A-Za-z0-9_]|$)'
     NT_BAD="$(grep -rnE "$NT_DIRECTIVE" "$T"/neutrino/else/ 2>/dev/null || true)"
-    eq "no part in else/ names a conditional-compilation directive" \
+    nt_eq assemble.parts "no part in else/ names a conditional-compilation directive" \
        "${NT_BAD:-none}" "none"
     # The control, because a grep that has stopped matching passes forever.
     printf '\n    // it looks for @end even here\n' >> "$T/neutrino/else/note.js"
-    eq "and the check would see one if it were there" \
+    nt_eq assemble.parts "and the check would see one if it were there" \
        "$(grep -rlE "$NT_DIRECTIVE" "$T"/neutrino/else/ 2>/dev/null | wc -l | tr -d ' ')" "1"
 
     NT_BAD=""
     for nt_part in "$T"/neutrino/sh/*.sh; do
         bash -n "$nt_part" 2>/dev/null || NT_BAD="$NT_BAD $(basename "$nt_part")"
     done
-    eq "every sh/ part parses as a shell script" "${NT_BAD:-none}" "none"
+    nt_eq assemble.parts "every sh/ part parses as a shell script" "${NT_BAD:-none}" "none"
 
     if command -v python3 >/dev/null 2>&1; then
         python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' \
             "$T/neutrino/py/shim.py" >/dev/null 2>&1
-        eq "the PyGObject shim compiles as Python" "$?" "0"
+        nt_eq assemble.parts "the PyGObject shim compiles as Python" "$?" "0"
     else
         report "python3 absent: the shim was not compiled"
     fi
@@ -450,7 +469,7 @@ else
     # mean fifty node startups and on the Windows runner that was a step that
     # timed out at five minutes with nothing else wrong.
     bash "$T/neutrino/assemble.sh" --check 2> "$WORK/verify.log"
-    eq "the assembler's own region checks pass" "$?" "0"
+    nt_eq assemble.parts "the assembler's own region checks pass" "$?" "0"
     if [ -s "$WORK/verify.log" ]; then
         report "verify said: $(sed -n '1p' "$WORK/verify.log")"
     fi
@@ -464,9 +483,9 @@ else
     # sits inside the range both lifts take and an app carrying either line
     # moves where they end.
     bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/anchors.cmd" >/dev/null 2>&1
-    eq "the artifact opens the object on exactly one line" \
+    nt_eq assemble.parts "the artifact opens the object on exactly one line" \
        "$(grep -c '^    var NeutrinoWebview = {$' "$T/anchors.cmd" | head -1)" "1"
-    eq "and starts it on exactly one line" \
+    nt_eq assemble.parts "and starts it on exactly one line" \
        "$(grep -c '^    NeutrinoWebview\.run();$' "$T/anchors.cmd" | head -1)" "1"
 
     # And the control on the check itself, which is a different question from
@@ -482,8 +501,8 @@ else
     T4="$(tree parts-missing)"
     rm -f "$T4/neutrino/else/parts.list"
     bash "$T4/neutrino/assemble.sh" --check > "$WORK/missing.log" 2>&1
-    eq "a region that cannot be found is refused" "$?" "1"
-    eq "and the refusal names the part" \
+    nt_eq assemble.parts "a region that cannot be found is refused" "$?" "1"
+    nt_eq assemble.parts "and the refusal names the part" \
        "$(grep -c 'no such part: else/parts.list' "$WORK/missing.log" || true)" "1"
 
     # The control: a part broken in a way no per-file check would see, since the
@@ -491,7 +510,7 @@ else
     T2="$(tree parts-broken)"
     printf 'NeutrinoWebview.nope = function () {\n' >> "$T2/neutrino/js/launch.js"
     bash "$T2/neutrino/assemble.sh" --check > /dev/null 2>&1
-    eq "and a region that does not parse is refused" \
+    nt_eq assemble.parts "and a region that does not parse is refused" \
        "$([ "$?" = "0" ] && echo accepted || echo refused)" "refused"
 
     # The same check, reaching into an overlay. An app is part of the assembly
@@ -502,7 +521,7 @@ function unclosed() {
 EOF
 )"
     bash "$T/neutrino/assemble.sh" --check --overlay "$APP_BROKEN" > /dev/null 2>&1
-    eq "and so is an app whose javascript does not parse" \
+    nt_eq assemble.parts "and so is an app whose javascript does not parse" \
        "$([ "$?" = "0" ] && echo accepted || echo refused)" "refused"
 fi
 
@@ -540,27 +559,37 @@ EOL_CRS="$(tr -dc "$NT_CRCH" < "$T/neutrino/skeleton.cmd" | wc -c | tr -d ' ')"
 EOL_LINES="$(wc -l < "$T/neutrino/skeleton.cmd" | tr -d ' ')"
 report "fixture returns=$EOL_CRS lines=$EOL_LINES"
 if [ "$EOL_CRS" != "$EOL_LINES" ]; then
-    # Reported and not failed. The sed that writes the fixture is the platform's
-    # and this suite runs on four of them; a lane that cannot spell a carriage
-    # return has measured nothing here, which is not the same as a defect.
-    report "this sed does not write CRLF: the line-ending assertions were not run"
+    # A skip and not a report, and not a failure either. The sed that writes the
+    # fixture is the platform's and this suite runs on three of them; a lane that
+    # cannot spell a carriage return has measured nothing here, which is not the
+    # same as a defect.
+    #
+    # It was a bare `report` until this file filed cases, and that was the right
+    # shape only while nothing was registered: this is the one section whose
+    # every assertion lives inside the else, so a lane taking this branch filed
+    # nothing at all for assemble.crlf -- a hole in the grid, which reads the
+    # same as a lane that stopped reporting. A skip is a verdict and says which.
+    nt_skip assemble.crlf "this sed does not write CRLF, so the line-ending assertions were not run"
 else
     bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/eol.cmd" > "$WORK/eol.log" 2>&1
     EOL_RC=$?
-    eq "a CRLF checkout builds" "$EOL_RC" "0"
+    nt_eq assemble.crlf "a CRLF checkout builds" "$EOL_RC" "0"
     if [ "$EOL_RC" != "0" ]; then
         # The two below read the artifact. Without this they read a file that
-        # is not there, and "no returns in it" is what an empty read says.
+        # is not there, and "no returns in it" is what an empty read says. The
+        # build failing is already a FAIL on this id above, so these two are
+        # skipped by name rather than left unsaid.
         report "no artifact: $(sed -n '1p' "$WORK/eol.log")"
+        nt_skip assemble.crlf "the build produced no artifact, so its line endings were not read"
     else
-        eq "and the artifact it produces has no returns in it" \
+        nt_eq assemble.crlf "and the artifact it produces has no returns in it" \
            "$(tr -dc "$NT_CRCH" < "$T/eol.cmd" | wc -c | tr -d ' ')" "0"
         T2="$(tree eol-unix)"
         bash "$T2/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T2/eol.cmd" > /dev/null 2>&1
         if cmp -s "$T/eol.cmd" "$T2/eol.cmd"; then
-            pass "and it is byte for byte the artifact the unix checkout builds"
+            nt_pass assemble.crlf "and it is byte for byte the artifact the unix checkout builds"
         else
-            fail "the two checkouts disagree ($(size "$T/eol.cmd") against $(size "$T2/eol.cmd"))"
+            nt_fail assemble.crlf "the two checkouts disagree ($(size "$T/eol.cmd") against $(size "$T2/eol.cmd"))"
         fi
     fi
 fi
@@ -582,11 +611,11 @@ for nt_out in neutrino/skeleton.cmd neutrino/js/message.js neutrino/anything.cmd
     rm -f "$WORK/marker"
     cp "$T/$nt_out" "$WORK/marker" 2>/dev/null
     bash "$T/neutrino/assemble.sh" "$T/$nt_out" > "$WORK/out.log" 2>&1
-    eq "the output $nt_out is refused" "$?" "1"
-    eq "and says why" "$(grep -c 'that tree is what this build reads' "$WORK/out.log" | head -1)" "1"
+    nt_eq assemble.output-inside "the output $nt_out is refused" "$?" "1"
+    nt_eq assemble.output-inside "and says why" "$(grep -c 'that tree is what this build reads' "$WORK/out.log" | head -1)" "1"
     if [ -f "$WORK/marker" ]; then
-        cmp -s "$WORK/marker" "$T/$nt_out" && pass "and $nt_out is untouched" \
-            || fail "$nt_out was modified by a build that refused"
+        cmp -s "$WORK/marker" "$T/$nt_out" && nt_pass assemble.output-inside "and $nt_out is untouched" \
+            || nt_fail assemble.output-inside "$nt_out was modified by a build that refused"
     fi
 done
 # The control. The refusal is about the roots and not about every path with the
@@ -594,7 +623,7 @@ done
 # everything reports.
 mkdir -p "$T/neutrino-apps"
 bash "$T/neutrino/assemble.sh" "$T/neutrino-apps/out.cmd" > /dev/null 2>&1
-eq "a directory merely named like the source is not refused" "$?" "0"
+nt_eq assemble.output-inside "a directory merely named like the source is not refused" "$?" "0"
 
 # An app is a root too, so its own parts are unnameable as an output. This is
 # the shape that used to be spelled "the output is one of the inputs", and it
@@ -603,9 +632,9 @@ eq "a directory merely named like the source is not refused" "$?" "0"
 # what it had already written and a 116-byte app came out 213225 bytes.
 cp "$APP_PLAIN/app.js" "$WORK/app-before.js"
 bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$APP_PLAIN/app.js" > "$WORK/selfout.log" 2>&1
-eq "an overlay's own part is refused as the output" "$?" "1"
-cmp -s "$WORK/app-before.js" "$APP_PLAIN/app.js" && pass "and the app is untouched" \
-    || fail "the app was destroyed by a build that refused"
+nt_eq assemble.output-inside "an overlay's own part is refused as the output" "$?" "1"
+cmp -s "$WORK/app-before.js" "$APP_PLAIN/app.js" && nt_pass assemble.output-inside "and the app is untouched" \
+    || nt_fail assemble.output-inside "the app was destroyed by a build that refused"
 
 # A directory is not an output either, and it used to be accepted: `mv -f` moves
 # a file *into* a directory of that name, so the artifact came out as
@@ -613,10 +642,10 @@ cmp -s "$WORK/app-before.js" "$APP_PLAIN/app.js" && pass "and the app is untouch
 # that reads as leftover rubbish, from a build that exited 0.
 mkdir -p "$T/adir"
 bash "$T/neutrino/assemble.sh" "$T/adir" > "$WORK/dirout.log" 2>&1
-eq "a directory named as the output is refused" "$?" "1"
-eq "and says which it wanted" \
+nt_eq assemble.output-inside "a directory named as the output is refused" "$?" "1"
+nt_eq assemble.output-inside "and says which it wanted" \
    "$(grep -c "the output is the artifact's own path" "$WORK/dirout.log" | head -1)" "1"
-eq "and nothing was written into it" "$(ls -A "$T/adir" | wc -l | tr -d ' ')" "0"
+nt_eq assemble.output-inside "and nothing was written into it" "$(ls -A "$T/adir" | wc -l | tr -d ' ')" "0"
 
 # And nothing this program writes outlives a failure. build.sh wrote three
 # temporaries beside the output and cleared its trap after the `mv`, which left
@@ -625,7 +654,7 @@ eq "and nothing was written into it" "$(ls -A "$T/adir" | wc -l | tr -d ' ')" "0
 # whatever is in its output directory.
 rm -rf "$T/clean"; mkdir -p "$T/clean"
 bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/clean/out.cmd" >/dev/null 2>&1
-eq "a build that succeeds leaves one file behind" \
+nt_eq assemble.output-inside "a build that succeeds leaves one file behind" \
    "$(ls -A "$T/clean" | wc -l | tr -d ' ')" "1"
 
 # =====================================================================
@@ -644,18 +673,18 @@ report "section: pages"
 echo "=== the site builder refuses anything it was not meant to remove ==="
 PAGES="$ROOT/pages/build.sh"
 if [ ! -f "$PAGES" ]; then
-    fail "no pages/build.sh in this tree; nothing below is a reading"
+    nt_fail assemble.site-builder "no pages/build.sh in this tree; nothing below is a reading"
 else
     rm -rf "$WORK/pagesdir"; mkdir -p "$WORK/pagesdir"
     printf 'keep me\n' > "$WORK/pagesdir/notes.txt"
     bash "$PAGES" "$WORK/pagesdir" > "$WORK/pages.log" 2>&1
-    eq "a directory it did not write is refused" "$?" "1"
-    eq "and the file in it survives" "$(size "$WORK/pagesdir/notes.txt")" "8"
+    nt_eq assemble.site-builder "a directory it did not write is refused" "$?" "1"
+    nt_eq assemble.site-builder "and the file in it survives" "$(size "$WORK/pagesdir/notes.txt")" "8"
     printf 'an app\n' > "$WORK/anapp.js"
     bash "$PAGES" "$WORK/anapp.js" "$WORK/out.cmd" > "$WORK/pages2.log" 2>&1
-    eq "an app build passed to it is refused" "$?" "1"
-    eq "and the app survives" "$(size "$WORK/anapp.js")" "7"
-    eq "and it says which program was meant" \
+    nt_eq assemble.site-builder "an app build passed to it is refused" "$?" "1"
+    nt_eq assemble.site-builder "and the app survives" "$(size "$WORK/anapp.js")" "7"
+    nt_eq assemble.site-builder "and it says which program was meant" \
        "$(grep -c 'that is a different program' "$WORK/pages2.log" | head -1)" "1"
 fi
 
@@ -676,9 +705,9 @@ report "section: tiers"
 echo "=== a release build does not carry the testing scaffolding ==="
 T="$(tree tiers)"
 bash "$T/neutrino/assemble.sh" "$T/release.cmd" >/dev/null 2>&1
-eq "a release build assembles" "$?" "0"
+nt_eq assemble.release-scaffolding "a release build assembles" "$?" "0"
 bash "$T/neutrino/assemble.sh" --overlay "$T/neutrino/build/testing" "$T/testing.cmd" >/dev/null 2>&1
-eq "the testing overlay assembles" "$?" "0"
+nt_eq assemble.release-scaffolding "the testing overlay assembles" "$?" "0"
 
 # One overlay left, and the probes are the same shape they were: each names a
 # thing that must not be in a shipped app -- a file it writes beside itself, an
@@ -695,9 +724,9 @@ eq "the testing overlay assembles" "$?" "0"
 for nt_text in "neutrino-title.txt" "neutrino-trace.log" \
                "NEUTRINO_WEBVIEW2_LIB_DIR\")" "no-sandbox" \
                "QTWEBENGINE_DISABLE_SANDBOX"; do
-    eq "the testing build carries [$nt_text]" \
+    nt_eq assemble.release-scaffolding "the testing build carries [$nt_text]" \
        "$([ "$(grep -cF -- "$nt_text" "$T/testing.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
-    eq "and the release build does not" \
+    nt_eq assemble.release-scaffolding "and the release build does not" \
        "$(grep -cF -- "$nt_text" "$T/release.cmd" || true)" "0"
 done
 
@@ -718,14 +747,14 @@ done
 # shell building the text, sandbox_init_with_parameters is the driver applying
 # it. A build carrying the first and not the second computes a profile nobody
 # imposes, which is the shape of defect this section exists to catch.
-eq "the release build builds a seatbelt profile" \
+nt_eq assemble.release-scaffolding "the release build builds a seatbelt profile" \
    "$([ "$(grep -cF -- "nt_macos_profile" "$T/release.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
-eq "and applies it" \
+nt_eq assemble.release-scaffolding "and applies it" \
    "$([ "$(grep -cF -- "sandbox_init_with_parameters" "$T/release.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
 
 # And the release build is smaller for the scaffolding it does not carry, which
 # is the same fact said as a number. Not asserted to a size -- the direction is.
-eq "the release build is smaller than the testing one" \
+nt_eq assemble.release-scaffolding "the release build is smaller than the testing one" \
    "$([ "$(size "$T/release.cmd")" -lt "$(size "$T/testing.cmd")" ] && echo smaller || echo not-smaller)" \
    "smaller"
 
@@ -742,20 +771,20 @@ nt_policy() {
 # nothing on a page's path evals now, so the document says what it always meant
 # to. A build that quietly went back to 'unsafe-eval' would still pass every
 # behavioural suite in this repository, which is why the spelling is pinned.
-eq "the release document carries the policy that runs no script" \
+nt_eq assemble.release-scaffolding "the release document carries the policy that runs no script" \
    "$(nt_policy "$T/release.cmd" | grep -c "^script-src 'none'" || true)" "1"
-eq "and carries exactly one" \
+nt_eq assemble.release-scaffolding "and carries exactly one" \
    "$(grep -c 'Content-Security-Policy' "$T/release.cmd" || true)" "1"
-eq "and nothing rewrites the document at launch" \
+nt_eq assemble.release-scaffolding "and nothing rewrites the document at launch" \
    "$(grep -c 'applyContentPolicy' "$T/release.cmd" || true)" "0"
 
-eq "externalAllowed answers true" \
+nt_eq assemble.release-scaffolding "externalAllowed answers true" \
    "$(sed -n '/NeutrinoWebview.externalAllowed = function/,/^    };$/p' "$T/release.cmd" |
       grep -c "return true;" || true)" "1"
 
 # Nothing reads a tier at run time, because there is nothing to read.
 for nt_gone in "hasTier" "has_tier" "//#" '"tiers"'; do
-    eq "no artifact carries [$nt_gone]" \
+    nt_eq assemble.release-scaffolding "no artifact carries [$nt_gone]" \
        "$(cat "$T"/release.cmd "$T"/testing.cmd |
           grep -cF -- "$nt_gone" || true)" "0"
 done
@@ -787,9 +816,9 @@ accepts() {
     rm -f "$T/out.cmd"
     bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/conf.log" 2>&1
     if [ "$?" != "0" ]; then
-        fail "$nt_name was refused: $(sed -n '1p' "$WORK/conf.log")"
+        nt_fail assemble.conf.accepts "$nt_name was refused: $(sed -n '1p' "$WORK/conf.log")"
     else
-        pass "$nt_name builds"
+        nt_pass assemble.conf.accepts "$nt_name builds"
     fi
 }
 refuses() {
@@ -799,13 +828,13 @@ refuses() {
     rm -f "$T/out.cmd"
     bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/conf.log" 2>&1
     if [ "$?" = "0" ]; then
-        fail "$nt_name was accepted"
+        nt_fail assemble.conf.refuses "$nt_name was accepted"
     elif ! grep -q 'config.json' "$WORK/conf.log"; then
-        fail "$nt_name was refused without naming the file"
+        nt_fail assemble.conf.refuses "$nt_name was refused without naming the file"
     else
-        pass "$nt_name is refused"
+        nt_pass assemble.conf.refuses "$nt_name is refused"
     fi
-    eq "and no artifact is left behind ($nt_name)" "$(size "$T/out.cmd")" "missing"
+    nt_eq assemble.conf.refuses "and no artifact is left behind ($nt_name)" "$(size "$T/out.cmd")" "missing"
 }
 
 # The control first: the ordinary case has to build, or every refusal below is
@@ -862,7 +891,7 @@ badconf() {
     cat > "$nt_d/config.json"
     rm -f "$T/out.cmd"
     bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/conf.log" 2>&1
-    if [ "$?" = "0" ]; then fail "$nt_name was accepted"; else pass "$nt_name is refused"; fi
+    if [ "$?" = "0" ]; then nt_fail assemble.conf.badconf "$nt_name was accepted"; else nt_pass assemble.conf.badconf "$nt_name is refused"; fi
 }
 
 # A tier is not a config key any more, so a config naming one is a config with
@@ -933,16 +962,16 @@ EOF
 nt_d="$(confdir good)"
 mkconf "A Title" 10 20 "#010203" "none" > "$nt_d/config.json"
 bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/good.cmd" >/dev/null 2>&1
-eq "a full config builds" "$?" "0"
+nt_eq assemble.conf "a full config builds" "$?" "0"
 for nt_pair in "title:A Title" "width:10" "height:20" \
                "background:#010203" "decorations:none"; do
-    eq "the ${nt_pair%%:*} reaches the artifact" \
+    nt_eq assemble.conf "the ${nt_pair%%:*} reaches the artifact" \
        "$(conf "$T/good.cmd" "${nt_pair%%:*}")" "${nt_pair#*:}"
 done
 if command -v node >/dev/null 2>&1; then
     cp "$T/good.cmd" "$T/good.js"
     node --check "$T/good.js" >/dev/null 2>&1
-    eq "and the artifact still parses as JavaScript" "$?" "0"
+    nt_eq assemble.conf "and the artifact still parses as JavaScript" "$?" "0"
 else
     report "node absent: the config artifact was not parsed"
 fi
@@ -962,11 +991,11 @@ cat > "$nt_d/config.json" <<'EOF'
 }
 EOF
 bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/quoted.cmd" >/dev/null 2>&1
-eq "a title carrying a quote and a backslash builds" "$?" "0"
+nt_eq assemble.conf "a title carrying a quote and a backslash builds" "$?" "0"
 if command -v node >/dev/null 2>&1; then
     cp "$T/quoted.cmd" "$T/quoted.js"
     node --check "$T/quoted.js" >/dev/null 2>&1
-    eq "and the artifact still parses as JavaScript" "$?" "0"
+    nt_eq assemble.conf "and the artifact still parses as JavaScript" "$?" "0"
 fi
 
 # =====================================================================
@@ -987,13 +1016,13 @@ shellrefuses() {
     rm -f "$T/out.cmd"
     bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/out.cmd" > "$WORK/refuse.log" 2>&1
     if [ "$?" = "0" ]; then
-        fail "$nt_name was accepted"
+        nt_fail assemble.shell-sequences "$nt_name was accepted"
     elif ! grep -qE 'the early shell contains|content policies, wanted' "$WORK/refuse.log"; then
-        fail "$nt_name was refused without saying why"
+        nt_fail assemble.shell-sequences "$nt_name was refused without saying why"
     else
-        pass "$nt_name is refused ($(sed -n -e 's/.*contains `\([^`]*\)`.*/\1/p' -e 's/.*carries \([0-9]* content policies\).*/\1/p' "$WORK/refuse.log" | head -1))"
+        nt_pass assemble.shell-sequences "$nt_name is refused ($(sed -n -e 's/.*contains `\([^`]*\)`.*/\1/p' -e 's/.*carries \([0-9]* content policies\).*/\1/p' "$WORK/refuse.log" | head -1))"
     fi
-    eq "and no artifact is left behind ($nt_name)" "$(size "$T/out.cmd")" "missing"
+    nt_eq assemble.shell-sequences "and no artifact is left behind ($nt_name)" "$(size "$T/out.cmd")" "missing"
 }
 # The pair has to survive comment removal to be a hazard, so it is written
 # inside a string rather than inside a comment -- a comment carrying it would be
@@ -1017,19 +1046,19 @@ nt_d="$WORK/sr-ok"; rm -rf "$nt_d"; mkdir -p "$nt_d"
 printf 'q{color:green}\n' > "$nt_d/style.css"
 printf '<p id=x>hi</p>\n' > "$nt_d/body.html"
 bash "$T/neutrino/assemble.sh" --overlay "$nt_d" "$T/ok.cmd" >/dev/null 2>&1
-eq "an ordinary early shell builds" "$?" "0"
+nt_eq assemble.shell-sequences "an ordinary early shell builds" "$?" "0"
 DOCREGION() {
     sed -n '/^<!doctype html><html>/,/^<script type=text\/javascript>/p' "$1"
 }
-eq "and the style is the one that was given" \
+nt_eq assemble.shell-sequences "and the style is the one that was given" \
    "$(DOCREGION "$T/ok.cmd" | grep -c 'q{color:green}' | head -1)" "1"
-eq "and the body is the one that was given" \
+nt_eq assemble.shell-sequences "and the body is the one that was given" \
    "$(DOCREGION "$T/ok.cmd" | grep -c '<p id=x>hi</p>' | head -1)" "1"
 # The content policy is the launcher's own, carried through rather than written
 # by the assembler, because the offline tier is one string replace against it. A
 # second spelling would be one that can drift, and the drift shows up as a build
 # that refuses at launch instead of at assembly.
-eq "and the policy the offline tier swaps is there exactly once" \
+nt_eq assemble.shell-sequences "and the policy the offline tier swaps is there exactly once" \
    "$(DOCREGION "$T/ok.cmd" | grep -c 'Content-Security-Policy' | head -1)" "1"
 
 # =====================================================================
@@ -1050,7 +1079,7 @@ report "launch section: substituting the engine search"
 echo "=== the shell region runs as far as the engine search ==="
 T="$(tree runtime)"
 bash "$T/neutrino/assemble.sh" --overlay "$APP_PLAIN" "$T/out.cmd" >/dev/null 2>&1
-eq "the artifact builds" "$?" "0"
+nt_eq assemble.shell-region "the artifact builds" "$?" "0"
 
 # The anchor is the reserved-status assignment rather than a `command -v` line,
 # because there is no longer one line that names the engine. The search is a
@@ -1061,7 +1090,7 @@ eq "the artifact builds" "$?" "0"
 SEARCH='nt_ex_noengine=69'
 HITS="$(grep -cF "$SEARCH" "$T/out.cmd" | head -1)"
 if [ "${HITS:-0}" != "1" ]; then
-    fail "the launcher was rewritten and this suite was not: engine search x${HITS:-0}, wanted 1"
+    nt_fail assemble.shell-region "the launcher was rewritten and this suite was not: engine search x${HITS:-0}, wanted 1"
 else
     awk -v find="$SEARCH" '
         !done && index($0, find) {
@@ -1075,8 +1104,8 @@ else
     # "nothing printed an error": it says every line of the shell region above
     # it ran, on this platform, in the artifact as assembled.
     bash "$T/halted.cmd" > "$WORK/halted.log" 2>&1
-    eq "it runs to the engine search" "$?" "3"
-    eq "and said nothing on the way" \
+    nt_eq assemble.shell-region "it runs to the engine search" "$?" "3"
+    nt_eq assemble.shell-region "and said nothing on the way" \
        "$(grep -vc 'reached the engine search' "$WORK/halted.log" || true)" "0"
 fi
 
@@ -1091,41 +1120,41 @@ report "section: mkapp"
 echo "=== the test helper writes the overlay it says it does ==="
 MK="$ROOT/test/build/mkapp.sh"
 if [ ! -f "$MK" ]; then
-    fail "no test/build/mkapp.sh in this tree; every other suite builds with it"
+    nt_fail assemble.mkapp-overlay "no test/build/mkapp.sh in this tree; every other suite builds with it"
 else
     printf 'document.title = "example";\n' > "$WORK/plainapp.js"
     bash "$MK" "$WORK/plainapp.js" "$WORK/mk-default.cmd" > "$WORK/mk.log" 2>&1
-    eq "a build with no flags succeeds" "$?" "0"
+    nt_eq assemble.mkapp-overlay "a build with no flags succeeds" "$?" "0"
     for nt_key in title width height background decorations; do
-        eq "and $nt_key is the tree's default" \
+        nt_eq assemble.mkapp-overlay "and $nt_key is the tree's default" \
            "$(conf "$WORK/mk-default.cmd" "$nt_key")" "$(default_of "$nt_key")"
     done
-    eq "and the app is in it" \
+    nt_eq assemble.mkapp-overlay "and the app is in it" \
        "$(grep -c 'document.title = "example";' "$WORK/mk-default.cmd" | head -1)" "1"
 
     # --testing lays neutrino/build/testing over the launcher. Asserted on what
     # the artifact carries, because there is no stamp to read back -- and never
     # was, since the tier stamp went before the tiers did.
     bash "$MK" --testing "$WORK/plainapp.js" "$WORK/mk-tier.cmd" >/dev/null 2>&1
-    eq "--testing puts the scaffolding in" \
+    nt_eq assemble.mkapp-overlay "--testing puts the scaffolding in" \
        "$([ "$(grep -cF 'neutrino-title.txt' "$WORK/mk-tier.cmd" || true)" -gt 0 ] && echo yes || echo no)" "yes"
-    eq "and a build without it has none" \
+    nt_eq assemble.mkapp-overlay "and a build without it has none" \
        "$(grep -cF 'neutrino-title.txt' "$WORK/mk-default.cmd" || true)" "0"
     # --tier is refused by name rather than as an unknown option: every call
     # site in this suite spelled it until the word went, and a caller who still
     # spells it should be told what replaced it rather than told it is a typo.
     rm -f "$WORK/mk-bogus.cmd"
     bash "$MK" --tier=testing "$WORK/plainapp.js" "$WORK/mk-bogus.cmd" >"$WORK/mk-tier.err" 2>&1
-    eq "--tier is refused" "$?" "1"
-    eq "and the refusal names --testing" \
+    nt_eq assemble.mkapp-overlay "--tier is refused" "$?" "1"
+    nt_eq assemble.mkapp-overlay "and the refusal names --testing" \
        "$([ "$(grep -c -- '--testing' "$WORK/mk-tier.err" || true)" -gt 0 ] && echo yes || echo no)" "yes"
 
     bash "$MK" --title "My App" --size 1024x768 --background '#12141a' --decorations=none \
         "$WORK/plainapp.js" "$WORK/mk-full.cmd" >/dev/null 2>&1
-    eq "a full set of flags builds" "$?" "0"
+    nt_eq assemble.mkapp-overlay "a full set of flags builds" "$?" "0"
     for nt_pair in "title:My App" "width:1024" "height:768" \
                    "background:#12141a" "decorations:none"; do
-        eq "and the ${nt_pair%%:*} reaches the artifact" \
+        nt_eq assemble.mkapp-overlay "and the ${nt_pair%%:*} reaches the artifact" \
            "$(conf "$WORK/mk-full.cmd" "${nt_pair%%:*}")" "${nt_pair#*:}"
     done
 
@@ -1133,27 +1162,25 @@ else
     # no second copy of the rules to keep right.
     rm -f "$WORK/mk-bad.cmd"
     bash "$MK" --background 'chartreuse' "$WORK/plainapp.js" "$WORK/mk-bad.cmd" >/dev/null 2>&1
-    eq "a bad value is refused" "$?" "1"
-    eq "and no artifact is left behind" "$(size "$WORK/mk-bad.cmd")" "missing"
+    nt_eq assemble.mkapp-overlay "a bad value is refused" "$?" "1"
+    nt_eq assemble.mkapp-overlay "and no artifact is left behind" "$(size "$WORK/mk-bad.cmd")" "missing"
 
     # And an overlay passed through it still applies, which is how a case builds
     # one app against two different early shells.
     nt_d="$WORK/mk-ov"; rm -rf "$nt_d"; mkdir -p "$nt_d"
     printf 'passed-through{color:red}\n' > "$nt_d/style.css"
     bash "$MK" --overlay "$nt_d" "$WORK/plainapp.js" "$WORK/mk-ov.cmd" >/dev/null 2>&1
-    eq "an overlay passed through the helper applies" \
+    nt_eq assemble.mkapp-overlay "an overlay passed through the helper applies" \
        "$(grep -c 'passed-through' "$WORK/mk-ov.cmd" | head -1)" "1"
-    eq "and the app it wrote still wins" \
+    nt_eq assemble.mkapp-overlay "and the app it wrote still wins" \
        "$(grep -c 'document.title = "example";' "$WORK/mk-ov.cmd" | head -1)" "1"
 fi
 
 echo
-if [ "$FAILURES" = "0" ]; then
-    echo "assembler assertions passed"
-else
-    echo "$FAILURES assertion(s) failed"
-fi
-# The count, and not whether there was one. This file makes a hundred and eleven
-# assertions and told test/run.sh about at most one of them, and run.sh adds a
-# lane up by summing what its suites exit with rather than parsing a log.
-exit "$FAILURES"
+# The count, and not whether there was one. run.sh adds a lane up by summing
+# what its suites exit with rather than parsing a log, and nt_finish exits
+# $NT_FAILURES for exactly that contract. The totals line it prints replaces the
+# two sentences that used to be here, and says the same thing with the skips in
+# it -- which this suite can now produce, where before a section that could not
+# run said so in prose and counted as nothing.
+nt_finish

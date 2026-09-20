@@ -1258,3 +1258,50 @@ confine.macos.noexec	what the app dir can hold, it cannot execute	macos
 confine.macos.nest.outside	the nesting probe is accepted outside a profile	macos
 confine.macos.nest.inside	and refused inside one	macos
 confine.macos.messages	the artifact carries the branches e2e.sh greps for	macos
+
+# --------------------------------- the assembler, thirteen things it must do
+#
+# From test/suite/assemble.sh, the largest suite in this tree by assertions --
+# 233 of them -- and until now the largest thing in it the grid could not see.
+#
+# It runs on gjs, macos and windows-launch, and that is the whole point of it.
+# The awk, sed and base64 it leans on are different programs on GNU, BSD and
+# MSYS, and a disagreement between those three is exactly what a cross-lane grid
+# is for. None of it was ever in the grid: a run where this suite stopped
+# executing and a run where all 233 assertions held produced the same empty
+# column on three lanes at once.
+#
+# One id per section, not per assertion. 233 ids would be six times the largest
+# suite registered here and would say less than these do: what a reader wants
+# from this grid is which of the thirteen things the assembler must get right
+# disagrees between userlands, and the log under the cell says which assertion
+# it was. test/report/matrix.py folds a case a lane reports more than once,
+# worst verdict first, which is what lets a section-sized id mean "everything
+# in here held" rather than "the last one did".
+#
+# The two table-driven groups are split by the helper that drives them, because
+# without that the config section alone is 97 of the 233 and would be one cell
+# carrying two fifths of the suite. `accepts` and `refuses` are the same config
+# offered two ways; `badconf` is the malformed-document group; shellrefuses is
+# its own section already.
+#
+# assemble.crlf is the one that skips. Its every assertion lives inside a branch
+# taken only where the platform's sed can write a carriage return, so a lane
+# without one files a skip by name -- a verdict -- rather than nothing, which
+# would be a hole and would read as a lane that stopped.
+assemble.builds	the assembler builds, with and without an overlay	gjs macos windows-launch
+assemble.overlay.order	the last overlay named is the first root searched	gjs macos windows-launch
+assemble.strip	the strip removes comments and nothing else	gjs macos windows-launch
+assemble.stylesheet	a stylesheet's comments never reach the artifact	gjs macos windows-launch
+assemble.parts	every part is a document its own language can read	gjs macos windows-launch
+assemble.crlf	a CRLF checkout builds the same artifact as a unix one	gjs macos windows-launch
+assemble.output-inside	the output may not be inside anything this build reads	gjs macos windows-launch
+assemble.site-builder	the site builder refuses anything it was not meant to remove	gjs macos windows-launch
+assemble.release-scaffolding	a release build does not carry the testing scaffolding	gjs macos windows-launch
+assemble.conf	a config the launcher could not use is refused	gjs macos windows-launch
+assemble.conf.accepts	a config the launcher can use is accepted	gjs macos windows-launch
+assemble.conf.refuses	a config it cannot use is refused, and leaves no artifact	gjs macos windows-launch
+assemble.conf.badconf	a malformed config document is refused	gjs macos windows-launch
+assemble.shell-sequences	the sequences that are this file's structure are refused	gjs macos windows-launch
+assemble.shell-region	the shell region runs as far as the engine search	gjs macos windows-launch
+assemble.mkapp-overlay	the test helper writes the overlay it says it does	gjs macos windows-launch
