@@ -5,7 +5,12 @@
 # themeflip.sh - two launches of the theme probe with the desktop flipped
 # between them, and the differential that reads them.
 #
-# Usage: themeflip.sh <gtk|qt|macos> <artifact> [screenshot-dir]
+# Usage: themeflip.sh <artifact> [live-artifact]
+#
+# The toolkit is $NT_TOOLKIT and the screenshot directory is $NT_SHOT_DIR;
+# neither is argv any more. This line said otherwise for ten days and that
+# is how test/apparatus/qtkde.sh went on calling the old signature -- a
+# reader who checked was told the old form was right.
 #
 # The sequencing is here rather than in six copies of a workflow step, because
 # two things about it are easy to get wrong and neither is visible in YAML.
@@ -39,6 +44,24 @@ set -uo pipefail
 # repeating a word that was already declared beside them.
 MODE="${NT_TOOLKIT:-gtk}"
 ART="${1:?usage: themeflip.sh <app.cmd> [live.cmd]}"
+# The old signature, refused by name.
+#
+# The toolkit was argv until 2026-09-09 and is $NT_TOOLKIT now. Ten rows in
+# test/suites.tsv were moved over; test/apparatus/qtkde.sh was not, and went
+# on passing `qt` where the artifact goes. Nothing complained: `qt` became
+# the artifact path, the artifact path became the live probe, the mode fell
+# back to gtk, and the GTK knob check bailed before anything touched a file
+# that was not there -- so the lane built to ask the Qt question spent every
+# run reporting that no knob delivers a theme change to GTK, and exited 0.
+#
+# A toolkit word here can only be that mistake. No artifact is named `gtk`,
+# `qt` or `macos`, so there is nothing to weigh against saying so loudly.
+case "$ART" in
+    gtk|qt|macos)
+        echo "FAIL: themeflip.sh: '$ART' was passed where the artifact goes."
+        echo "FAIL: themeflip.sh: the toolkit is \$NT_TOOLKIT now, not argv."
+        exit 1 ;;
+esac
 SHOTS="${NT_SHOT_DIR:-$HOME/screenshots}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOGDIR="${NT_FLIP_LOGDIR:-$HOME}"
