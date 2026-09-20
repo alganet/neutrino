@@ -448,3 +448,31 @@ fontflip	gjs linux-engines:py	-	env NT_FONTFLIP_HALF=probe bash test/suite/fontf
 fontflip	macos	-	env NT_FONTFLIP_HALF=probe bash test/suite/fontflip.sh 0
 stdfont	gjs linux-engines:py kde macos	app=std-font	bash test/suite/verify-std.sh font
 fontlive	gjs linux-engines:py	timeout=600 build=live-font	env NT_FONTFLIP_HALF=live bash test/suite/fontflip.sh 8
+#
+# ------------------------------------------------------------ the pwsh rows
+#
+# The Windows lanes' suites are PowerShell, and this column is argv for
+# bash; what makes them rows anyway is that MSYS bash can start pwsh, step.sh
+# can leash it, log it and reap after it, and run.sh hands it the artifact
+# spelled the way cmd.exe reads it. A suite that names its artifact by a
+# parameter ends its command with that parameter, because run.sh appends the
+# path last; one that reads $args takes it positionally. `reap=` on a row
+# with no `app=` reaps the first build's slot by process name after the
+# suite, which is what the steps did by hand with Get-Process. A suite the
+# runner launches with `app=` is not a row here yet: step.sh launches with
+# bash, and on this platform the artifact is cmd.exe's.
+psparse	windows-launch windows-content	timeout=300	pwsh -NoProfile -File test/build/psparse.ps1
+compile	windows-launch	timeout=300 build=test-release	pwsh -NoProfile -File test/suite/compile.ps1
+compile	windows-content	timeout=300 build=attack-release	pwsh -NoProfile -File test/suite/compile.ps1
+appcache	windows-launch	timeout=900 build=loaders-testing	pwsh -NoProfile -File test/suite/appcache.ps1
+standalone	windows-launch	timeout=900 build=loaders-release build=testing:loaders-testing	pwsh -NoProfile -File test/suite/standalone.ps1
+exerace	windows-launch	timeout=900 build=loaders-testing reap=LOADERS	pwsh -NoProfile -File test/suite/exerace.ps1
+winerr	windows-launch	timeout=600 build=winerr reap=	pwsh -NoProfile -File test/suite/verify-winerr.ps1
+launchtime	windows-launch	timeout=600 build=loaders-testing soft	pwsh -NoProfile -File test/suite/launchtime.ps1 -Runs 5 -Fresh -Artifact
+stddoc	windows-content	timeout=600 build=std-doc reap=STD-DOC	pwsh -NoProfile -File test/suite/verify-std.ps1 -Probe doc -Launch -Artifact
+stdwin	windows-content	timeout=720 build=std-win reap=STD-WIN	pwsh -NoProfile -File test/suite/verify-std.ps1 -Probe win -Launch -Artifact
+stdtheme	windows-content	timeout=600 build=std-theme reap=STD-THEME	pwsh -NoProfile -File test/suite/verify-std.ps1 -Probe theme -Launch -Artifact
+themelive	windows-content	timeout=600 build=live-theme reap=	pwsh -NoProfile -File test/suite/themelive.ps1 -Artifact
+demo	windows-content	timeout=600 build=demo reap=	pwsh -NoProfile -File test/suite/demo.ps1 -Artifact
+stdfont	windows-content	timeout=600 build=std-font reap=STD-FONT cat=launch-stdfont-err	pwsh -NoProfile -File test/suite/verify-std.ps1 -Probe font -Launch -Artifact
+fontlive	windows-content	timeout=600 build=live-font	pwsh -NoProfile -File test/suite/fontlive.ps1 -Artifact

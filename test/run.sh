@@ -326,6 +326,7 @@ fi
 STEP_ARGS=""
 APP_SPEC=""
 REAP_PREFIX=""
+REAP_ON=0
 BUILD_SPECS=""
 SETUP_BAD=""
 SOFT=0
@@ -337,7 +338,7 @@ NT_SHOT_DIR0="${NT_SHOT_DIR:-}"
 
 nt_setup() {
     local wm="" tk="" leash="" cats="" dbus="" toolkit="" shots="" nodisp=0 d
-    APP_SPEC=""; BUILD_SPECS=""; REAP_PREFIX=""; SETUP_BAD=""; SOFT=0; SHOTS=""
+    APP_SPEC=""; BUILD_SPECS=""; REAP_PREFIX=""; REAP_ON=0; SETUP_BAD=""; SOFT=0; SHOTS=""
     for d in $1 $2; do
         [ "$d" = "-" ] && continue
         case "$d" in
@@ -389,7 +390,9 @@ nt_setup() {
             # artifact's basename spelled by hand -- reap.sh pgreps it against
             # command lines, and the runner is the thing that just decided what
             # that basename is.
-            reap=*)    REAP_PREFIX="${d#reap=}" ;;
+            # `reap=` with nothing after it is a row that wants the reap and has
+            # no title to add to it: the process name is enough on Windows.
+            reap=*)    REAP_PREFIX="${d#reap=}"; REAP_ON=1 ;;
             # Where the row's pictures go, as a directory name under $HOME.
             # step.sh's comment says a row that wants a directory other than
             # ~/screenshots names it with env(1) in its command column, and no
@@ -437,6 +440,9 @@ nt_slot() {
     esac
 }
 nt_spec_build() { printf '%s' "${1##*:}"; }
+nt_native() {
+    if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}
 
 # ----------------------------------------------------------------------- the run
 
@@ -468,6 +474,14 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     fi
 
     APP_ARG=""
+    # A row with `reap=` and no `app=` launches its artifact itself -- every
+    # PowerShell suite does, through cmd.exe -- and wants the runner to reap
+    # it afterwards by the same name: the first build's slot, which is what
+    # the launcher names the process after.
+    if [ -z "$APP_SPEC" ] && [ "$REAP_ON" = 1 ] && [ -n "$BUILD_SPECS" ]; then
+        set -- $BUILD_SPECS
+        APP_ARG="--reap $(nt_slot "$1" "$suite"):$REAP_PREFIX"
+    fi
     if [ -n "$APP_SPEC" ]; then
         nt_app_slot="$(nt_slot "$APP_SPEC" "$suite")"
         APP_ARG="--app $OUT_DIR/$nt_app_slot.cmd"
@@ -477,7 +491,7 @@ while IFS="$(printf '\t')" read -r suite setup command; do
         # filename rather than the row. The artifact is the suite's now, so this
         # is the suite's too, and it needs saying in neither place.
         APP_ARG="$APP_ARG --cat $nt_app_slot-app"
-        [ -z "$REAP_PREFIX" ] || APP_ARG="$APP_ARG --reap $nt_app_slot:$REAP_PREFIX"
+        [ "$REAP_ON" = 1 ] && APP_ARG="$APP_ARG --reap $nt_app_slot:$REAP_PREFIX"
     fi
 
     # The artifacts the command is handed, appended in the order the row names
@@ -485,10 +499,16 @@ while IFS="$(printf '\t')" read -r suite setup command; do
     # one of them the path was a thing the runner had just built and already
     # knew -- so a row said `neutrinostdgeom.cmd` and nothing checked that any
     # build produced it. A suite's argv is unchanged: it still reads $1 and $2.
+    #
+    # Spelled the way the machine's own tools spell it. On the Windows runners
+    # this file runs under MSYS bash, where $OUT_DIR is /d/a/.../test/out and
+    # everything that runs an artifact there is cmd.exe, which does not read
+    # that. cygpath is what MSYS provides for exactly this and is absent
+    # everywhere else, so the conversion happens where it exists and nowhere.
     ART_ARGS=""
     for nt_s in $BUILD_SPECS; do
         [ "$nt_s" = "$APP_SPEC" ] && continue
-        ART_ARGS="$ART_ARGS $OUT_DIR/$(nt_slot "$nt_s" "$suite").cmd"
+        ART_ARGS="$ART_ARGS $(nt_native "$OUT_DIR/$(nt_slot "$nt_s" "$suite").cmd")"
     done
 
     # Exported and not put in front of step.sh's argv, because step.sh reads
